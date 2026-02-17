@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,13 +33,12 @@ import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TxnScoreboardPoolFactory;
+import io.questdb.cairo.TxnScoreboardPoolV2;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -110,7 +109,6 @@ public class TableReaderReloadBenchmark {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> Numbers.LONG_NULL,
                 cairoEngine
         );
         writer.truncate();
@@ -126,7 +124,7 @@ public class TableReaderReloadBenchmark {
         appendRow(MicrosFormatUtils.parseTimestamp("2012-03-09T00:00:00.000000Z"));
         appendRow(MicrosFormatUtils.parseTimestamp("2012-03-10T00:00:00.000000Z"));
         writer.commit();
-        reader = new TableReader(0, configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration));
+        reader = new TableReader(0, configuration, tableToken, new TxnScoreboardPoolV2(configuration));
 
         // ensure reader opens all partitions and maps all data
         for (int i = 0; i < reader.getPartitionCount(); i++) {

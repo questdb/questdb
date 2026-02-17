@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,11 +25,12 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
-import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.SecurityContext;
@@ -441,11 +442,19 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         // validate that parser entities do not contain NULLs
                         TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
                         for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
-                            if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
+                            final int columnType = tsa.getColumnType(i);
+                            if (columnType == LineTcpParser.ENTITY_TYPE_NULL) {
                                 throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
+                            } else if (columnType == ColumnType.DECIMAL) {
+                                throw CairoException.nonCritical()
+                                        .put("decimal columns cannot be created automatically [table=")
+                                        .put(tableNameUtf16)
+                                        .put(", columnName=")
+                                        .put(tsa.getColumnName(i))
+                                        .put(']');
                             }
                         }
-                        engine.createTable(securityContext, ddlMem, path, true, tsa, false);
+                        engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
                     }
                     // by the time we get here, the table should exist on disk
                     // check the global idle cache - TUD can be there
@@ -477,13 +486,19 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             }
                             continue; // go for another spin
                         }
+                        if (tableToken.isView()) {
+                            throw CairoException.nonCritical()
+                                    .put("cannot modify view [view=")
+                                    .put(tableToken.getTableName())
+                                    .put(']');
+                        }
                         if (tableToken.isMatView()) {
                             throw CairoException.nonCritical()
                                     .put("cannot modify materialized view [view=")
                                     .put(tableToken.getTableName())
                                     .put(']');
                         }
-                        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
+                        TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetryEvent.ILP_RESERVE_WRITER);
                         if (engine.isWalTable(tableToken)) {
                             // create WAL-oriented TUD and DON'T add it to the global cache
                             tud = new WalTableUpdateDetails(

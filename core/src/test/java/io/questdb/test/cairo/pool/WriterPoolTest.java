@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -96,7 +96,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         }
                     }
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     errors1.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
@@ -114,7 +114,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     }
 
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     errors2.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
@@ -344,7 +344,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         pool.close();
                     } catch (Exception e) {
                         exceptionCount.incrementAndGet();
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                     } finally {
                         stopLatch.countDown();
                     }
@@ -360,7 +360,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         }
                     } catch (Exception e) {
                         exceptionCount.incrementAndGet();
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                     } finally {
                         stopLatch.countDown();
                     }
@@ -395,7 +395,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         pool.releaseInactive();
                     } catch (Exception e) {
                         exceptionCount.incrementAndGet();
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                     } finally {
                         Path.clearThreadLocals();
                         stopLatch.countDown();
@@ -412,7 +412,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         }
                     } catch (Exception e) {
                         exceptionCount.incrementAndGet();
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                     } finally {
                         Path.clearThreadLocals();
                         stopLatch.countDown();
@@ -483,7 +483,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     } catch (EntryUnavailableException ignored) {
                         result.set(true);
                     } catch (CairoException e) {
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                         result.set(false);
                     }
                     done.countDown();
@@ -536,7 +536,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         pool.releaseInactive();
                     } catch (Exception e) {
                         exceptionCount.incrementAndGet();
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                     } finally {
                         stopLatch.countDown();
                     }
@@ -551,7 +551,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         }
                     } catch (Exception e) {
                         exceptionCount.incrementAndGet();
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                     } finally {
                         Path.clearThreadLocals();
                         stopLatch.countDown();
@@ -602,7 +602,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                                 Os.pause();
                             }
                         } catch (Exception e) {
-                            e.printStackTrace();
+                            e.printStackTrace(System.out);
                             errors.incrementAndGet();
                         } finally {
                             Path.clearThreadLocals();
@@ -712,7 +712,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                     DefaultLifecycleManager.INSTANCE,
                     engine.getConfiguration().getDbRoot(),
                     engine.getDdlListener(tableToken),
-                    engine.getCheckpointStatus(),
                     engine
             );
             for (int i = 0; i < 100; i++) {
@@ -763,7 +762,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             } catch (EntryUnavailableException ignored) {
                             }
                         } catch (Exception e) {
-                            e.printStackTrace();
+                            e.printStackTrace(System.out);
                             errors.incrementAndGet();
                         } finally {
                             Path.clearThreadLocals();
@@ -816,7 +815,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                                 pool.unlock(zTableToken);
                             }
                         } catch (Exception e) {
-                            e.printStackTrace();
+                            e.printStackTrace(System.out);
                             errors.incrementAndGet();
                         } finally {
                             Path.clearThreadLocals();
@@ -856,7 +855,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Not lock owner");
                     }
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     errors.incrementAndGet();
                 } finally {
                     latch.countDown();
@@ -1008,7 +1007,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, engine)) {
+            try (WriterPool pool = new WriterPool(configuration, engine, engine.getRecentWriteTracker())) {
                 code.run(pool);
             }
         });

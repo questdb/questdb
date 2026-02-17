@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,6 +45,97 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
      */
     public IntervalFwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
         super(intervalModel, timestampIndex);
+    }
+
+    @Override
+    public void calculateSize(RecordCursor.Counter counter) {
+        int intervalsLo1 = this.intervalsLo;
+        int intervalsHi1 = this.intervalsHi;
+        int partitionLo1 = this.partitionLo;
+        int partitionHi1 = this.partitionHi;
+        long partitionLimit1 = this.partitionLimit;
+        long size = this.sizeSoFar;
+
+        while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
+            // We don't need to worry about column tops and null column because we
+            // are working with timestamp. Timestamp column cannot be added to existing table.
+            final long rowCount = reader.getPartitionRowCountFromMetadata(partitionLo1);
+            if (rowCount > 0) {
+                final TimestampFinder timestampFinder = initTimestampFinder(partitionLo1, rowCount);
+
+                final long intervalLo = intervals.getQuick(intervalsLo1 * 2);
+                final long intervalHi = intervals.getQuick(intervalsLo1 * 2 + 1);
+
+                final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
+                // interval is wholly below partition, skip interval
+                if (partitionTimestampLoApprox > intervalHi) {
+                    intervalsLo1++;
+                    continue;
+                }
+
+                final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
+                // interval is wholly above partition, skip partition
+                if (partitionTimestampHiApprox < intervalLo) {
+                    partitionLimit1 = -1;
+                    partitionLo1++;
+                    continue;
+                }
+
+                reader.openPartition(partitionLo1);
+                timestampFinder.prepare();
+
+                final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
+                // interval is wholly above partition, skip interval
+                if (partitionTimestampLoExact > intervalHi) {
+                    intervalsLo1++;
+                    continue;
+                }
+
+                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
+                // interval is wholly below partition, skip partition
+                if (partitionTimestampHiExact < intervalLo) {
+                    partitionLimit1 = -1;
+                    partitionLo1++;
+                    continue;
+                }
+
+                // calculate intersection
+                long lo;
+                if (partitionTimestampLoExact >= intervalLo) {
+                    lo = 0;
+                } else {
+                    // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
+                    // and then do index + 1 to skip to top of where we need to be.
+                    lo = timestampFinder.findTimestamp(intervalLo - 1, partitionLimit1 == -1 ? 0 : partitionLimit1, rowCount - 1) + 1;
+                }
+
+                // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
+                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1) + 1;
+                if (lo < hi) {
+                    size += (hi - lo);
+
+                    // we do have whole partition of fragment?
+                    if (hi == rowCount) {
+                        // whole partition, will need to skip to next one
+                        partitionLimit1 = -1;
+                        partitionLo1++;
+                    } else {
+                        // only fragment, need to skip to next interval
+                        partitionLimit1 = hi;
+                        intervalsLo1++;
+                    }
+                    continue;
+                }
+                // interval yielded empty partition frame
+                partitionLimit1 = hi;
+                intervalsLo1++;
+            } else {
+                // partition was empty, just skip to next
+                partitionLo1++;
+            }
+        }
+
+        counter.add(size - this.sizeSoFar);
     }
 
     @Override
@@ -130,9 +222,9 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                     final byte format = reader.getPartitionFormat(partitionLo);
                     if (format == PartitionFormat.PARQUET) {
-                        assert parquetDecoder.getFileAddr() != -1 : "parquet decoder is not initialized";
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetDecoder = parquetDecoder;
+                        frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(partitionLo);
+                        assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
                     } else {
                         assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;

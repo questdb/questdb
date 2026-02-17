@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -116,13 +116,13 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     NAME,
                     rowsLo,
                     rowsHi,
-                    framingMode == WindowColumn.FRAMING_RANGE,
+                    framingMode == WindowExpression.FRAMING_RANGE,
                     partitionByRecord,
                     Numbers.LONG_NULL);
         }
 
         if (partitionByRecord != null) {
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // moving max over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(
@@ -207,7 +207,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                         throw th;
                     }
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
@@ -290,7 +290,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 }
             }
         } else { // no partition key
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new MaxMinOverWholeResultSetFunction(args.get(0), GREATER_THAN, NAME);
@@ -338,7 +338,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                         throw th;
                     }
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new MaxMinOverUnboundedRowsFrameFunction(args.get(0), GREATER_THAN, NAME);

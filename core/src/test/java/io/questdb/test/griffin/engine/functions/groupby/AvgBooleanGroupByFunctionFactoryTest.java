@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,13 +32,17 @@ public class AvgBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAll() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "avg\tmax\tmin\n" +
-                        "0.7\t1.0\t0.0\n", "select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)"
+                """
+                        avg\tmax\tmin
+                        0.7\t1.0\t0.0
+                        """, "select avg(rnd_boolean()), max(rnd_boolean()), min(rnd_boolean()) from long_sequence(10)"
         ));
 
         assertMemoryLeak(() -> assertSql(
-                "avg\n" +
-                        "0.4\n", "select avg(rnd_double() >= 0.5) from long_sequence(10)"
+                """
+                        avg
+                        0.4
+                        """, "select avg(rnd_double() >= 0.5) from long_sequence(10)"
         ));
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1682,6 +1682,40 @@ Java_io_questdb_std_Vect_shiftCopyArrayColumnAux(JNIEnv *env, jclass cl, jlong s
                 __JLONG_REINTERPRET_CAST__(int64_t, srcLo),
                 __JLONG_REINTERPRET_CAST__(int64_t, srcHi),
                 reinterpret_cast<int64_t *>(dst)
+        );
+    });
+}
+
+DECLARE_DISPATCHER(set_memory_vanilla_int128);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setMemoryLong128(JNIEnv *env, jclass cl, jlong pData, jlong long0,
+                                       jlong long1, jlong count) {
+    measure_time(19, [=]() {
+        set_memory_vanilla_int128(
+                reinterpret_cast<long_128bit *>(pData),
+                long_128bit{
+                    .long0 = (uint64_t)long0,
+                    .long1 = (uint64_t)long1
+                },
+                (int64_t) (count)
+        );
+    });
+}
+
+DECLARE_DISPATCHER(set_memory_vanilla_int256);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_setMemoryLong256(JNIEnv *env, jclass cl, jlong pData, jlong long0,
+                                       jlong long1, jlong long2, jlong long3, jlong count) {
+    measure_time(19, [=]() {
+        set_memory_vanilla_int256(
+                reinterpret_cast<long_256bit *>(pData),
+                long_256bit{
+                    .long0 = (uint64_t)long0,
+                    .long1 = (uint64_t)long1,
+                    .long2 = (uint64_t)long2,
+                    .long3 = (uint64_t)long3
+                },
+                (int64_t) (count)
         );
     });
 }

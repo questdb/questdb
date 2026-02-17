@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ public abstract class AbstractLowerCaseUtf8SequenceHashSet implements Mutable {
         free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
-        keys = new Utf8String[len];
+        keys = new Utf8Sequence[len];
         hashCodes = new int[len];
         mask = len - 1;
     }

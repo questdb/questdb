@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,13 +30,12 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class WindowContextImpl implements WindowContext, Mutable {
-    private boolean baseSupportsRandomAccess;
     private boolean empty = true;
     private int exclusionKind;
     private int exclusionKindPos;
@@ -54,11 +53,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private long rowsLo;
     private int rowsLoKindPos;
     private int timestampIndex;
-
-    @Override
-    public boolean baseSupportsRandomAccess() {
-        return baseSupportsRandomAccess;
-    }
+    private int timestampType;
 
     @Override
     public void clear() {
@@ -69,15 +64,15 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.ordered = false;
         this.orderByDirection = RecordCursorFactory.SCAN_DIRECTION_OTHER;
         this.orderByPos = 0;
-        this.baseSupportsRandomAccess = false;
-        this.framingMode = WindowColumn.FRAMING_ROWS;
+        this.framingMode = WindowExpression.FRAMING_ROWS;
         this.rowsLo = Long.MIN_VALUE;
         this.rowsHi = Long.MAX_VALUE;
-        this.exclusionKind = WindowColumn.EXCLUDE_NO_OTHERS;
+        this.exclusionKind = WindowExpression.EXCLUDE_NO_OTHERS;
         this.rowsLoKindPos = 0;
         this.rowsHiKindPos = 0;
         this.exclusionKindPos = 0;
         this.timestampIndex = -1;
+        this.timestampType = ColumnType.UNDEFINED;
         this.ignoreNulls = false;
         this.nullsDescPos = 0;
     }
@@ -120,7 +115,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
     }
 
     public long getRowsHi() {
-        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW && rowsHi == 0) {
+        if (exclusionKind == WindowExpression.EXCLUDE_CURRENT_ROW && rowsHi == 0) {
             return -1;
         }
         return rowsHi;
@@ -146,10 +141,15 @@ public class WindowContextImpl implements WindowContext, Mutable {
     }
 
     @Override
+    public int getTimestampType() {
+        return timestampType;
+    }
+
+    @Override
     public boolean isDefaultFrame() {
         // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
         // anything other than that is custom
-        return framingMode == WindowColumn.FRAMING_RANGE
+        return framingMode == WindowExpression.FRAMING_RANGE
                 && rowsLo == Long.MIN_VALUE
                 && (rowsHi == 0 || rowsHi == Long.MAX_VALUE);
     }
@@ -180,7 +180,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
             boolean ordered,
             int orderByDirection,
             int orderByPos,
-            boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
             char rowsLoUint,
@@ -202,7 +201,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.ordered = ordered;
         this.orderByDirection = orderByDirection;
         this.orderByPos = orderByPos;
-        this.baseSupportsRandomAccess = baseSupportsRandomAccess;
         this.framingMode = framingMode;
         this.rowsLo = rowsLo;
         if (rowsLoUint != 0 && ColumnType.isTimestamp(timestampType)) {
@@ -217,8 +215,10 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.exclusionKind = exclusionKind;
         this.exclusionKindPos = exclusionKindPos;
         this.timestampIndex = timestampIndex;
+        this.timestampType = timestampType;
         this.ignoreNulls = ignoreNulls;
         this.nullsDescPos = nullsDescPos;
+        this.timestampType = timestampType;
     }
 
     @Override
@@ -246,19 +246,19 @@ public class WindowContextImpl implements WindowContext, Mutable {
 
         int exclusionKind = getExclusionKind();
         int exclusionKindPos = getExclusionKindPos();
-        if (exclusionKind != WindowColumn.EXCLUDE_NO_OTHERS
-                && exclusionKind != WindowColumn.EXCLUDE_CURRENT_ROW) {
+        if (exclusionKind != WindowExpression.EXCLUDE_NO_OTHERS
+                && exclusionKind != WindowExpression.EXCLUDE_CURRENT_ROW) {
             throw SqlException.$(exclusionKindPos, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
         }
 
-        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW) {
+        if (exclusionKind == WindowExpression.EXCLUDE_CURRENT_ROW) {
             // assumes frame doesn't use 'following'
             if (rowsHi == Long.MAX_VALUE) {
                 throw SqlException.$(exclusionKindPos, "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary");
             }
         }
 
-        if (getFramingMode() == WindowColumn.FRAMING_GROUPS) {
+        if (getFramingMode() == WindowExpression.FRAMING_GROUPS) {
             throw SqlException.$(position, "function not implemented for given window parameters");
         }
     }

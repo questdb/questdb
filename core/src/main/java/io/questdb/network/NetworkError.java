@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,6 +53,10 @@ public class NetworkError extends Error implements Sinkable, FlyweightMessageCon
 
     public NetworkError couldNotBindSocket(CharSequence who, int ipv4, int port) {
         return this.put("could not bind socket [who=").put(who).put(", bindTo=").ip(ipv4).put(':').put(port).put(']');
+    }
+
+    public int getErrno() {
+        return errno;
     }
 
     @Override

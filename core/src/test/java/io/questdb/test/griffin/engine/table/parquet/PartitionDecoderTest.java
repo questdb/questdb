@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600) a_ts," +
-                            " timestamp_sequence(500000000000::timestamp_ns, 600000) a_ns," +
+                            " timestamp_sequence_ns(500000000000, 600000) a_ns," +
                             " timestamp_sequence(400000000000, 500) designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
@@ -46,27 +47,31 @@ public class FullBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testReload() throws Exception {
-        final String expected = "-409854405\t339631474\t1970-01-04T00:00:00.000000Z\n" +
-                "1569490116\t1573662097\t1970-01-03T16:00:00.000000Z\n" +
-                "806715481\t1545253512\t1970-01-03T08:00:00.000000Z\n" +
-                "-1436881714\t-1575378703\t1970-01-03T00:00:00.000000Z\n" +
-                "-1191262516\t-2041844972\t1970-01-02T16:00:00.000000Z\n" +
-                "1868723706\t-847531048\t1970-01-02T08:00:00.000000Z\n" +
-                "1326447242\t592859671\t1970-01-02T00:00:00.000000Z\n" +
-                "73575701\t-948263339\t1970-01-01T16:00:00.000000Z\n" +
-                "1548800833\t-727724771\t1970-01-01T08:00:00.000000Z\n" +
-                "-1148479920\t315515118\t1970-01-01T00:00:00.000000Z\n";
+        final String expected = """
+                -409854405\t339631474\t1970-01-04T00:00:00.000000Z
+                1569490116\t1573662097\t1970-01-03T16:00:00.000000Z
+                806715481\t1545253512\t1970-01-03T08:00:00.000000Z
+                -1436881714\t-1575378703\t1970-01-03T00:00:00.000000Z
+                -1191262516\t-2041844972\t1970-01-02T16:00:00.000000Z
+                1868723706\t-847531048\t1970-01-02T08:00:00.000000Z
+                1326447242\t592859671\t1970-01-02T00:00:00.000000Z
+                73575701\t-948263339\t1970-01-01T16:00:00.000000Z
+                1548800833\t-727724771\t1970-01-01T08:00:00.000000Z
+                -1148479920\t315515118\t1970-01-01T00:00:00.000000Z
+                """;
 
-        final String expectedNext = "-1975183723\t-1252906348\t1975-01-04T00:00:00.000000Z\n" +
-                "-1125169127\t1631244228\t1975-01-03T16:00:00.000000Z\n" +
-                "1404198\t-1715058769\t1975-01-03T08:00:00.000000Z\n" +
-                "-1101822104\t-1153445279\t1975-01-03T00:00:00.000000Z\n" +
-                "-1844391305\t-1520872171\t1975-01-02T16:00:00.000000Z\n" +
-                "-85170055\t-1792928964\t1975-01-02T08:00:00.000000Z\n" +
-                "-1432278050\t426455968\t1975-01-02T00:00:00.000000Z\n" +
-                "1125579207\t-1849627000\t1975-01-01T16:00:00.000000Z\n" +
-                "-1532328444\t-1458132197\t1975-01-01T08:00:00.000000Z\n" +
-                "1530831067\t1904508147\t1975-01-01T00:00:00.000000Z\n";
+        final String expectedNext = """
+                -1975183723\t-1252906348\t1975-01-04T00:00:00.000000Z
+                -1125169127\t1631244228\t1975-01-03T16:00:00.000000Z
+                1404198\t-1715058769\t1975-01-03T08:00:00.000000Z
+                -1101822104\t-1153445279\t1975-01-03T00:00:00.000000Z
+                -1844391305\t-1520872171\t1975-01-02T16:00:00.000000Z
+                -85170055\t-1792928964\t1975-01-02T08:00:00.000000Z
+                -1432278050\t426455968\t1975-01-02T00:00:00.000000Z
+                1125579207\t-1849627000\t1975-01-01T16:00:00.000000Z
+                -1532328444\t-1458132197\t1975-01-01T08:00:00.000000Z
+                1530831067\t1904508147\t1975-01-01T00:00:00.000000Z
+                """;
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.INT).
@@ -90,10 +95,10 @@ public class FullBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
 
-                try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(writer.getTableToken(), 0, GenericRecordMetadata.deepCopyOf(writer.getMetadata()), ORDER_DESC)) {
+                try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(writer.getTableToken(), 0, GenericRecordMetadata.copyOfNew(writer.getMetadata()), ORDER_DESC, null, 0, false)) {
                     final TestTableReaderRecord record = new TestTableReaderRecord();
 
-                    try (final PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC)) {
+                    try (final PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), new IntList(), ORDER_DESC)) {
                         printCursor(record, cursor);
 
                         TestUtils.assertEquals(expected, sink);
@@ -118,7 +123,7 @@ public class FullBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     writer.removeColumn("a");
 
                     try {
-                        factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC);
+                        factory.getCursor(new SqlExecutionContextStub(engine), new IntList(), ORDER_DESC);
                         Assert.fail();
                     } catch (TableReferenceOutOfDateException ignored) {
                     }

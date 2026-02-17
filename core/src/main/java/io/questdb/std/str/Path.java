@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.SecurePath;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -99,6 +100,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         // on close and the next time a new object is created.
         PATH.close();
         PATH2.close();
+        SecurePath.clearThreadLocals();
     }
 
     public static Path getThreadLocal(CharSequence root) {

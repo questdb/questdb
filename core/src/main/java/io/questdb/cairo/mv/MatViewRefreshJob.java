@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -104,18 +105,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Estimates how many buckets are needed to contain a target number of rows.
+     * <p>
+     * Formula: bucketsForRows = (totalBuckets * targetRows) / tableRows
+     * where totalBuckets = (partitionDuration / bucket) * partitionCount
+     */
     // kept public for testing
-    public static long estimateRowsPerBucket(long tableRows, long bucket, long partitionDuration, int partitionCount) {
-        if (partitionCount > 0) {
-            final double bucketToPartition = (double) bucket / partitionDuration;
-            return Math.max(1, (long) ((bucketToPartition * tableRows) / partitionCount));
+    public static long estimateBucketsForRows(long targetRows, long tableRows, long bucket, long partitionDuration, int partitionCount) {
+        if (partitionCount > 0 && tableRows > 0) {
+            // totalBuckets = (partitionDuration / bucket) * partitionCount
+            // bucketsForRows = totalBuckets * targetRows / tableRows
+            // Reorder to avoid overflow: (partitionDuration * partitionCount * targetRows) / (bucket * tableRows)
+            // Use double to handle large values without overflow
+            final double totalBuckets = ((double) partitionDuration / bucket) * partitionCount;
+            return Math.max(1, (long) ((totalBuckets * targetRows) / tableRows));
         }
         return 1;
     }
 
     @Override
     public void close() {
-        LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
+        LOG.debug().$("materialized view refresh job closing [workerId=").$(workerId).I$();
         Misc.free(refreshSqlExecutionContext);
         Misc.free(txnRangeLoader);
     }
@@ -136,15 +147,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Estimates density of rows per SAMPLE BY bucket. The estimate is not very precise as
-     * it doesn't use exact min/max timestamps for each partition, but it should do the job
-     * of splitting large refresh table scans into multiple smaller scans.
+     * Estimates how many buckets are needed to contain a target number of rows.
      */
-    private static long estimateRowsPerBucket(@NotNull TimestampDriver driver, @NotNull TableReader baseTableReader, long bucket) {
+    private static long estimateBucketsForRows(long targetRows, @NotNull TimestampDriver driver, @NotNull TableReader baseTableReader, long bucket) {
         final long tableRows = baseTableReader.size();
         final long partitionDuration = driver.approxPartitionDuration(baseTableReader.getPartitionedBy());
         final int partitionCount = baseTableReader.getPartitionCount();
-        return estimateRowsPerBucket(tableRows, bucket, partitionDuration, partitionCount);
+        return estimateBucketsForRows(targetRows, tableRows, bucket, partitionDuration, partitionCount);
     }
 
     private static void intersectIntervals(LongList intervals, long lo, long hi) {
@@ -331,7 +340,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (periodLo == Numbers.LONG_NULL) {
                     periodLo = baseTableReader.getMinTimestamp();
                 }
-                if (periodLo < rangeTo) {
+                // Check the last refresh txn: -1 means that there was no initial refresh, and we can
+                // ignore this range refresh. If we don't ignore it and later on the base table/view
+                // gets any range replace txns, the subsequent initial refresh may leave some dangling
+                // rows in the view since it only considers min/max timestamps from the table reader.
+                if (periodLo < rangeTo && viewState.getLastRefreshBaseTxn() != -1) {
                     minTs = periodLo;
                     maxTs = rangeTo;
                     // Bump lastPeriodHi once we're done. Its value is exclusive.
@@ -429,10 +442,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (minTs <= maxTs) {
             final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
             final long approxBucketSize = timestampSampler.getApproxBucketSize();
-            final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, approxBucketSize);
-            final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
+            final long rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
 
-            int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+            long step = estimateBucketsForRows(rowsPerQuery, driver, baseTableReader, approxBucketSize);
             final long maxStepDuration = driver.fromMicros(configuration.getMatViewMaxRefreshStepUs());
             while (step > 1 && approxStepDuration(step, approxBucketSize) > maxStepDuration) {
                 // the step is too large, check the duration of a 2x smaller step;
@@ -459,9 +471,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", fromTxn=").$(lastRefreshTxn)
                     .$(", toTxn=").$(refreshContext.toBaseTxn)
                     .$(", periodHi=").$ts(driver, refreshContext.periodHi)
-                    .$(", iteratorMinTs>=").$ts(driver, iteratorMinTs)
-                    .$(", iteratorMaxTs<").$ts(driver, iteratorMaxTs)
-                    .$(", iteratorStep=").$(step)
+                    .$(", iteratorMinTs=").$ts(driver, iteratorMinTs)
+                    .$(", iteratorMaxTs=").$ts(driver, iteratorMaxTs)
+                    .$("), iteratorStep=").$(step)
                     .I$();
 
             refreshContext.intervalIterator = intervalIterator;
@@ -571,7 +583,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 compiler.getAsm(),
                 factory.getMetadata(),
                 tableWriter.getMetadata(),
-                columnFilter
+                columnFilter,
+                configuration
         );
     }
 
@@ -581,8 +594,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable MatViewStateStore stateStore,
             @Nullable MatViewRefreshTask refreshTask
     ) {
-        if (th instanceof CairoException) {
-            CairoException ex = (CairoException) th;
+        if (th instanceof CairoException ex) {
             if (ex.isTableDoesNotExist()) {
                 // Can be that the mat view underlying table is in the middle of being renamed at this moment,
                 // do not invalidate the view in this case.
@@ -657,11 +669,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        int intervalStep = intervalIterator.getStep();
+        long intervalStep = intervalIterator.getStep();
         try {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
 
+            OUTER:
             for (int i = 0; i <= maxRetries; i++) {
                 try {
                     if (factory == null) {
@@ -710,7 +723,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long replacementTimestampHi = Long.MIN_VALUE;
 
                     while (intervalIterator.next()) {
-                        refreshSqlExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi(), viewDefinition.getBaseTableTimestampDriver().getTimestampType());
+                        refreshSqlExecutionContext.setRange(
+                                intervalIterator.getTimestampLo(),
+                                intervalIterator.getTimestampHi(),
+                                viewDefinition.getBaseTableTimestampDriver().getTimestampType()
+                        );
                         if (replacementTimestampHi != intervalIterator.getTimestampLo()) {
                             if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch
@@ -731,6 +748,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         try (RecordCursor cursor = factory.getCursor(refreshSqlExecutionContext)) {
                             final Record record = cursor.getRecord();
                             final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+                            long insertedRows = 0;
                             while (cursor.hasNext()) {
                                 final long timestamp = record.getTimestamp(cursorTimestampIndex);
                                 if (timestamp < replacementTimestampLo || timestamp > replacementTimestampHi) {
@@ -741,11 +759,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                             .put(']');
                                 }
                                 final TableWriter.Row row = walWriter.newRow(timestamp);
-                                copier.copy(record, row);
+                                copier.copy(refreshSqlExecutionContext, record, row);
                                 row.append();
-                                rowCount++;
+                                insertedRows++;
                             }
 
+                            // Check if we've inserted a lot of rows in a single iteration.
+                            if (insertedRows > batchSize && i < maxRetries && intervalStep > 1) {
+                                // Yes, the transaction is large, thus try once again with a proportionally smaller step.
+                                final double transactionRatio = (double) batchSize / insertedRows;
+                                intervalStep = Math.max((long) (transactionRatio * intervalStep) - 1, 1);
+                                walWriter.rollback();
+                                LOG.info().$("inserted too many rows in a single iteration, retrying with a reduced step [view=").$(viewTableToken)
+                                        .$(", insertedRows=").$(insertedRows)
+                                        .$(", batchSize=").$(batchSize)
+                                        .$(", intervalStep=").$(intervalStep)
+                                        .I$();
+                                continue OUTER;
+                            }
+
+                            rowCount += insertedRows;
                             if (rowCount >= commitTarget) {
                                 if (intervalIterator.isLast()) {
                                     commitMatView(
@@ -787,6 +820,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     break;
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
+                    walWriter.rollback();
                     if (i == maxRetries) {
                         LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewTableToken)
                                 .$(", totalAttempts=").$(maxRetries)
@@ -797,9 +831,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
+                    walWriter.rollback();
                     if (th instanceof CairoException && CairoException.isCairoOomError(th) && i < maxRetries && intervalStep > 1) {
                         intervalStep /= 2;
-                        LOG.info().$("query failed with out-of-memory, retrying with a reduced intervalStep [view=").$(viewTableToken)
+                        LOG.info().$("query failed with out-of-memory, retrying with a reduced step [view=").$(viewTableToken)
                                 .$(", intervalStep=").$(intervalStep)
                                 .$(", error=").$safe(((CairoException) th).getFlyweightMessage())
                                 .I$();
@@ -811,10 +846,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         } catch (Throwable th) {
             Misc.free(factory);
-            LOG.error()
+            int errno = Integer.MIN_VALUE;
+            if (th instanceof CairoException e) {
+                if (e.isInterruption() && engine.isClosing()) {
+                    // The query was cancelled, because a questdb shutdown.
+                    LOG.info().$("materialized view refresh cancelled on shutdown [view=").$(viewTableToken)
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .I$();
+                    return false;
+                } else {
+                    errno = e.getErrno();
+                }
+            }
+
+            LogRecord log = LOG.error()
                     .$("could not refresh materialized view [view=").$(viewTableToken)
-                    .$(", ex=").$(th)
-                    .I$();
+                    .$(", ex=").$(th);
+
+            if (errno != Integer.MIN_VALUE) {
+                log.$(", errno=").$(errno);
+            }
+            log.I$();
+
             refreshFailState(viewDefinition, viewState, walWriter, th);
             return false;
         }
@@ -830,7 +883,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable LongList refreshIntervals,
             long minTs,
             long maxTs,
-            int step
+            long step
     ) {
         if (tzRules == null || tzRules.hasFixedOffset()) {
             long fixedTzOffset = tzRules != null ? tzRules.getOffset(0) : 0;
@@ -1109,7 +1162,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         stateStore.notifyBaseRefreshed(refreshTask, minRefreshToTxn);
 
         if (refreshed) {
-            LOG.info().$("refreshed materialized views dependent on [baseTable=").$(baseTableToken).I$();
+            LOG.info().$("refreshed materialized views dependent on [baseTable=").$(baseTableToken)
+                    .$(", lastSeqTxn=").$(minRefreshToTxn).I$();
         }
         return refreshed;
     }
@@ -1399,6 +1453,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 return viewState.getRefreshIntervals();
             } catch (CairoException ex) {
+                if (configuration.isMatViewRefreshMissingWalFilesFatal()) {
+                    LOG.critical().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
+                            .$(", ex=").$safe(ex.getFlyweightMessage())
+                            .$(", errno=").$(ex.getErrno())
+                            .I$();
+                    throw ex;
+                }
                 LOG.error().$("could not read WAL transactions, falling back to full refresh [view=").$(viewToken)
                         .$(", ex=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())

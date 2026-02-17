@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,34 +46,19 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
 import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
 
-@RunWith(Parameterized.class)
 public class ParallelLatestByTest extends AbstractTest {
     private final boolean convertToParquet;
     private final StringSink sink = new StringSink();
     private final TestTimestampType timestampType;
 
-    public ParallelLatestByTest(boolean convertToParquet, TestTimestampType timestampType) {
-        this.convertToParquet = convertToParquet;
-        this.timestampType = timestampType;
-    }
-
-    @Parameterized.Parameters(name = "parquet={0}, timestampType={1}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {true, TestTimestampType.MICRO},
-                {true, TestTimestampType.NANO},
-                {false, TestTimestampType.MICRO},
-                {false, TestTimestampType.NANO}
-        });
+    public ParallelLatestByTest() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        this.convertToParquet = rnd.nextBoolean();
+        this.timestampType = TestUtils.getTimestampType(rnd);
     }
 
     @Before

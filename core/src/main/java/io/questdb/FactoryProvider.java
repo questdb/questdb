@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -31,6 +32,7 @@ import io.questdb.cutlass.http.DefaultRejectProcessorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpHeaderParserFactory;
+import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.RejectProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportRequestHeaderProcessor;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
@@ -45,6 +47,9 @@ public interface FactoryProvider extends QuietCloseable {
     }
 
     @NotNull
+    TickCalendarServiceFactory getTickCalendarServiceFactory();
+
+    @NotNull
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
 
     @NotNull
@@ -55,6 +60,9 @@ public interface FactoryProvider extends QuietCloseable {
 
     @NotNull
     SocketFactory getHttpMinSocketFactory();
+
+    @NotNull
+    HttpSessionStore getHttpSessionStore();
 
     @NotNull
     SocketFactory getHttpSocketFactory();

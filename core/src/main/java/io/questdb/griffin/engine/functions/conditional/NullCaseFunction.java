@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -38,17 +40,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class NullCaseFunction implements CaseFunction {
-    private final ObjList<Function> args;
-
-    public NullCaseFunction(ObjList<Function> args) {
-        this.args = args;
-    }
-
-    @Override
-    public ObjList<Function> getArgs() {
-        return args;
-    }
+public record NullCaseFunction(ObjList<Function> args) implements CaseFunction {
 
     @Override
     public ArrayView getArray(Record rec) {
@@ -82,6 +74,36 @@ class NullCaseFunction implements CaseFunction {
 
     @Override
     public long getDate(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
         throw new UnsupportedOperationException();
     }
 

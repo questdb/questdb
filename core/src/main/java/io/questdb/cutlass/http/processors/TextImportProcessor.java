@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,9 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -56,6 +59,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.TelemetryTask;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.text.TextLoadWarning.*;
@@ -84,6 +88,7 @@ public class TextImportProcessor implements HttpMultipartContentProcessor, HttpR
     private final CairoEngine engine;
     private final TextImportRequestHeaderProcessor requestHeaderProcessor;
     private final byte requiredAuthType;
+    private final Telemetry<TelemetryTask> telemetry;
     private HttpConnectionContext transientContext;
     private TextImportProcessorState transientState;
 
@@ -91,6 +96,7 @@ public class TextImportProcessor implements HttpMultipartContentProcessor, HttpR
         engine = cairoEngine;
         requiredAuthType = configuration.getRequiredAuthType();
         requestHeaderProcessor = configuration.getFactoryProvider().getTextImportRequestHeaderProcessor();
+        telemetry = cairoEngine.getTelemetry();
     }
 
     @Override
@@ -476,6 +482,7 @@ public class TextImportProcessor implements HttpMultipartContentProcessor, HttpR
         // Copy written state to state, text loader, parser can be closed before re-attempt to send the response
         state.snapshotStateAndCloseWriter();
         if (state.state == TextImportProcessorState.STATE_OK) {
+            TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_TEXT_IMPORT);
             response.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
             response.sendHeader();
             doResumeSend(state, response);

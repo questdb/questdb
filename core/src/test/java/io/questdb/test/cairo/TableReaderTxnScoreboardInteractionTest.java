@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
-import io.questdb.cairo.TxnScoreboardV1;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -163,19 +162,11 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
     }
 
     private void assertMin(int min, TxnScoreboard txnScoreboard) {
-        if (txnScoreboard instanceof TxnScoreboardV2) {
-            Assert.assertTrue(min == ((TxnScoreboardV2) txnScoreboard).getMin() || -1 == ((TxnScoreboardV2) txnScoreboard).getMin());
-        } else {
-            Assert.assertEquals(min, ((TxnScoreboardV1) txnScoreboard).getMin());
-        }
+        Assert.assertTrue(min == ((TxnScoreboardV2) txnScoreboard).getMin() || -1 == ((TxnScoreboardV2) txnScoreboard).getMin());
     }
 
     private static long getMin(TxnScoreboard scoreboard) {
-        if (scoreboard instanceof TxnScoreboardV2) {
-            return ((TxnScoreboardV2) scoreboard).getMin();
-        } else {
-            return ((TxnScoreboardV1) scoreboard).getMin();
-        }
+        return ((TxnScoreboardV2) scoreboard).getMin();
     }
 
     private static void addRow(TableWriter w) {

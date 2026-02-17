@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,12 +28,15 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
@@ -55,6 +58,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -74,11 +78,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncGroupByRecordCursor cursor;
     private final PageFrameSequence<AsyncGroupByAtom> frameSequence;
-    private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> recordFunctions; // includes groupByFunctions
     private final int workerCount;
 
     public AsyncGroupByRecordCursorFactory(
+            @NotNull CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
@@ -96,14 +100,14 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
-            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
     ) {
         super(groupByMetadata);
         try {
             this.base = base;
-            this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
@@ -120,10 +124,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     bindVarMemory,
                     bindVarFunctions,
                     filter,
+                    filterUsedColumnIndexes,
                     perWorkerFilters,
                     workerCount
             );
             this.frameSequence = new PageFrameSequence<>(
+                    engine,
                     configuration,
                     messageBus,
                     atom,
@@ -132,7 +138,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     workerCount,
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
-            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions, messageBus);
+            this.cursor = new AsyncGroupByRecordCursor(engine, recordFunctions, messageBus);
             this.workerCount = workerCount;
         } catch (Throwable th) {
             close();
@@ -163,8 +169,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public boolean recordCursorSupportsLongTopK() {
-        return true;
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        final int columnType = getMetadata().getColumnType(columnIndex);
+        return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
     }
 
     @Override
@@ -181,7 +188,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
         sink.meta("workers").val(workerCount);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
-        sink.optAttr("values", groupByFunctions, true);
+        sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
         sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
     }
@@ -211,31 +218,29 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         record.init(frameMemory);
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
-            final RecordSink mapSink = atom.getMapSink(slotId);
-            try {
-                if (atom.isSharded()) {
-                    fragment.shard();
-                }
+            fragment.resetLocalStats();
 
-                record.setRowIndex(0);
-                long baseRowId = record.getRowId();
-
-                if (fragment.isNotSharded()) {
-                    aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
-                } else {
-                    aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
-                }
-
-                atom.requestSharding(fragment);
-            } finally {
-                atom.release(slotId);
+            if (atom.isSharded()) {
+                fragment.shard();
             }
+
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+
+            if (fragment.isNotSharded()) {
+                aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+            } else {
+                aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+            }
+
+            atom.maybeEnableSharding(fragment);
         } finally {
-            task.releaseFrameMemory();
+            atom.release(slotId);
         }
     }
 
@@ -366,53 +371,68 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getFilteredRows();
         final PageFrameSequence<AsyncGroupByAtom> frameSequence = task.getFrameSequence(AsyncGroupByAtom.class);
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-
-        rows.clear();
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
 
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
-        final AsyncGroupByAtom atom = frameSequence.getAtom();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+
+        final PageFrameMemory frameMemory;
+        if (useLateMaterialization) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
+        record.init(frameMemory);
+
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledFilter();
+        final Function filter = atom.getFilter(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledFilter();
-            final Function filter = atom.getFilter(slotId);
-            final RecordSink mapSink = atom.getMapSink(slotId);
-            try {
-                if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                    // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                    applyFilter(filter, rows, record, frameRowCount);
-                } else {
-                    applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-                }
+            fragment.resetLocalStats();
 
-                if (atom.isSharded()) {
-                    fragment.shard();
-                }
-
-                record.setRowIndex(0);
-                long baseRowId = record.getRowId();
-
-                if (fragment.isNotSharded()) {
-                    aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
-                } else {
-                    aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
-                }
-
-                atom.requestSharding(fragment);
-            } finally {
-                atom.release(slotId);
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
+                applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
+
+            if (isParquetFrame) {
+                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+            }
+            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, false)) {
+                PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = atom.getPageFrameFilteredMemoryRecord(slotId);
+                filteredMemoryRecord.of(frameMemory, record, atom.getFilterUsedColumnIndexes());
+                record = filteredMemoryRecord;
+            }
+
+            if (atom.isSharded()) {
+                fragment.shard();
+            }
+
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+
+            if (fragment.isNotSharded()) {
+                aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+            } else {
+                aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+            }
+
+            atom.maybeEnableSharding(fragment);
         } finally {
-            task.releaseFrameMemory();
+            atom.release(slotId);
         }
     }
 

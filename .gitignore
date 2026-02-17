@@ -3,7 +3,6 @@
 *.log
 .idea
 .ignore
-CLAUDE.md
 out
 benchmarks/target
 core/target
@@ -53,3 +52,4 @@ compat/src/test/php/vendor/
 compat/src/test/php/composer.lock
 compat/src/test/golang/gorunner
 compat/src/test/rust/scenarios/target/
+/core/rust/qdb-core/Cargo.lock

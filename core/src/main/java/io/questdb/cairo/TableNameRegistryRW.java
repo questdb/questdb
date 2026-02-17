@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -77,14 +77,14 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isMatView, boolean isWal) {
+    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isWal) {
         final TableToken registeredRecord = tableNameToTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
             boolean isProtected = tableFlagResolver.isProtected(tableName);
             boolean isSystem = tableFlagResolver.isSystem(tableName);
             boolean isPublic = tableFlagResolver.isPublic(tableName);
             String dbLogName = engine.getConfiguration().getDbLogName();
-            return new TableToken(tableName, dirName, dbLogName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
+            return new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
         }
@@ -103,8 +103,10 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         }
 
         // This most unsafe, can throw, run it first.
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(tableToken);
+        if (!tableToken.isView()) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(tableToken);
+            }
         }
 
         if (tableToken.isWal()) {
@@ -112,7 +114,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         }
         dirNameToTableTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
 
-        // Finish the name registration, table is queriable from this moment.
+        // Finish the name registration, table is queryable from this moment.
         boolean stillLocked = tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken);
         assert stillLocked;
     }

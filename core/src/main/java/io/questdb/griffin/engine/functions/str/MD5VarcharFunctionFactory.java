@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -57,9 +57,9 @@ public class MD5VarcharFunctionFactory implements FunctionFactory {
 
     private static class MD5Func extends VarcharFunction implements UnaryFunction {
         private final Function data;
+        private final Digest hashFn = new Digest(Digest.DigestAlgorithm.MD5);
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
-        private final Digest hashFn = new Digest(Digest.DigestAlgorithm.MD5);
 
         public MD5Func(final Function data) {
             this.data = data;

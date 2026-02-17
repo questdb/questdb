@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -108,15 +108,15 @@ public class CharSequenceIntHashMapTest {
             CharSequence cs = rnd.nextChars(15);
             rnd.nextInt();
             if (rnd2.nextPositiveInt() % 16 != 0) {
-                map.increment(cs);
+                map.inc(cs);
                 int index = map.keyIndex(cs);
                 Assert.assertTrue(index < 0);
                 Assert.assertEquals(rnd3.nextInt() + 1, map.valueAt(index));
             } else {
-                map.increment(cs);
+                map.inc(cs);
                 int index = map.keyIndex(cs);
                 Assert.assertTrue(index < 0);
-                Assert.assertEquals(0, map.valueAt(index));
+                Assert.assertEquals(1, map.valueAt(index));
             }
         }
 
@@ -139,7 +139,7 @@ public class CharSequenceIntHashMapTest {
             } else {
                 int index = map2.keyIndex(cs);
                 Assert.assertTrue(index < 0);
-                Assert.assertEquals(0, map2.valueAt(index));
+                Assert.assertEquals(1, map2.valueAt(index));
             }
         }
 

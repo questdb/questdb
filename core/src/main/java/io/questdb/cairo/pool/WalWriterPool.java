@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,12 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.std.str.CharSink;
@@ -53,39 +53,54 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
     @Override
     protected WalWriterTenant newTenant(
             TableToken tableToken,
+            Entry<WalWriterTenant> rootEntry,
             Entry<WalWriterTenant> entry,
             int index,
             @Nullable ResourcePoolSupervisor<WalWriterTenant> supervisor
     ) {
         return new WalWriterTenant(
                 this,
+                rootEntry,
                 entry,
                 index,
                 tableToken,
                 engine.getTableSequencerAPI(),
                 engine.getDdlListener(tableToken),
                 engine.getWalDirectoryPolicy(),
-                engine.getMetrics()
+                engine.getWalLocker(),
+                engine.getRecentWriteTracker()
         );
     }
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant<WalWriterTenant> {
         private final int index;
+        private final Entry<WalWriterTenant> rootEntry;
         private Entry<WalWriterTenant> entry;
         private AbstractMultiTenantPool<WalWriterTenant> pool;
 
-        public WalWriterTenant(
+        private WalWriterTenant(
                 AbstractMultiTenantPool<WalWriterTenant> pool,
+                Entry<WalWriterTenant> rootEntry,
                 Entry<WalWriterTenant> entry,
                 int index,
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
                 DdlListener ddlListener,
                 WalDirectoryPolicy walDirectoryPolicy,
-                Metrics metrics
+                WalLocker walLocker,
+                RecentWriteTracker recentWriteTracker
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy);
+            super(
+                    pool.getConfiguration(),
+                    tableToken,
+                    tableSequencerAPI,
+                    ddlListener,
+                    walDirectoryPolicy,
+                    walLocker,
+                    recentWriteTracker
+            );
             this.pool = pool;
+            this.rootEntry = rootEntry;
             this.entry = entry;
             this.index = index;
         }
@@ -123,6 +138,12 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
             return index;
         }
 
+        @Override
+        public Entry<WalWriterTenant> getRootEntry() {
+            return rootEntry;
+        }
+
+        @Override
         public void goodbye() {
             entry = null;
             pool = null;
@@ -141,6 +162,11 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void toSink(@NotNull CharSink<?> sink) {
             sink.put("WalWriterTenant{index=").put(index).put(", tableToken=").put(getTableToken()).put('}');
+        }
+
+        @Override
+        public void updateTableToken(TableToken tableToken) {
+            super.updateTableToken(tableToken);
         }
     }
 }

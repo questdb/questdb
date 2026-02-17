@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,13 +35,15 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarRuntimeConstantsWithConstant() throws SqlException {
-        execute("create table MovementLog(\n" +
-                "ts timestamp,\n" +
-                "initParticipantId long,\n" +
-                "initParticipantIdType symbol,\n" +
-                "movementBusinessDate date,\n" +
-                "slotId timestamp\n" +
-                ") timestamp(ts) partition by day wal\n");
+        execute("""
+                create table MovementLog(
+                ts timestamp,
+                initParticipantId long,
+                initParticipantIdType symbol,
+                movementBusinessDate date,
+                slotId timestamp
+                ) timestamp(ts) partition by day wal
+                """);
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -54,11 +56,12 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
-                "FROM 'MovementLog'\n" +
-                "WHERE movementBusinessDate=$1 AND slotId IN ($2, '1970-01-01T00:00:00.005000Z', $3)\n" +
-                "ORDER BY participantId\n" +
-                "LIMIT 0,6", tuples);
+        assertSql("""
+                SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType
+                FROM 'MovementLog'
+                WHERE movementBusinessDate=$1 AND slotId IN ($2, '1970-01-01T00:00:00.005000Z', $3)
+                ORDER BY participantId
+                LIMIT 0,6""", tuples);
     }
 
     @Test
@@ -69,10 +72,12 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
                 "simple",
-                "a\tts\n" +
-                        "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
-                        "315515118\t1970-01-01T00:00:00.001000Z\n" +
-                        "-948263339\t1970-01-01T00:00:00.005000Z\n",
+                """
+                        a\tts
+                        -1148479920\t1970-01-01T00:00:00.000000Z
+                        315515118\t1970-01-01T00:00:00.001000Z
+                        -948263339\t1970-01-01T00:00:00.005000Z
+                        """,
                 bindVariableService -> {
                     bindVariableService.setInt(0, 0);
                     bindVariableService.setInt(1, 1000);
@@ -82,10 +87,12 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
         tuples.add(new BindVariableTestTuple(
                 "type change",
-                "a\tts\n" +
-                        "1326447242\t1970-01-01T00:00:00.006000Z\n" +
-                        "592859671\t1970-01-01T00:00:00.007000Z\n" +
-                        "-1191262516\t1970-01-01T00:00:00.010000Z\n",
+                """
+                        a\tts
+                        1326447242\t1970-01-01T00:00:00.006000Z
+                        592859671\t1970-01-01T00:00:00.007000Z
+                        -1191262516\t1970-01-01T00:00:00.010000Z
+                        """,
                 bindVariableService -> {
                     bindVariableService.setLong(0, 6000);
                     bindVariableService.setStr(1, "1970-01-01T00:00:00.007000Z");
@@ -95,10 +102,12 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
         tuples.add(new BindVariableTestTuple(
                 "type change with varchar",
-                "a\tts\n" +
-                        "1326447242\t1970-01-01T00:00:00.006000Z\n" +
-                        "-1191262516\t1970-01-01T00:00:00.010000Z\n" +
-                        "-2041844972\t1970-01-01T00:00:00.011000Z\n",
+                """
+                        a\tts
+                        1326447242\t1970-01-01T00:00:00.006000Z
+                        -1191262516\t1970-01-01T00:00:00.010000Z
+                        -2041844972\t1970-01-01T00:00:00.011000Z
+                        """,
                 bindVariableService -> {
                     bindVariableService.setLong(0, 6000);
                     bindVariableService.setVarchar(1, new Utf8String("1970-01-01T00:00:00.011000Z"));
@@ -115,16 +124,20 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
         // baseline
         assertSql(
-                "timestamp_floor\tcount\n" +
-                        "1970-01-01T00:00:02.000000Z\t1000\n",
+                """
+                        timestamp_floor\tcount
+                        1970-01-01T00:00:02.000000Z\t1000
+                        """,
                 "select timestamp_floor('1s', ts), count() from test where ts in '1970-01-01T00:00:02'"
         );
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
                 "2s",
-                "timestamp_floor\tcount\n" +
-                        "1970-01-01T00:00:02.000000Z\t1000\n",
+                """
+                        timestamp_floor\tcount
+                        1970-01-01T00:00:02.000000Z\t1000
+                        """,
                 bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:02")
         ));
 
@@ -137,8 +150,10 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
         tuples.add(new BindVariableTestTuple(
                 "2s",
-                "timestamp_floor\tcount\n" +
-                        "1970-01-01T00:00:03.000000Z\t1000\n",
+                """
+                        timestamp_floor\tcount
+                        1970-01-01T00:00:03.000000Z\t1000
+                        """,
                 bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:03")
         ));
 
@@ -153,10 +168,12 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
         assertSql(
-                "a\tts\n" +
-                        "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
-                        "-2144581835\t1970-01-01T00:00:00.070000Z\n" +
-                        "-296610933\t1970-01-01T00:00:00.077000Z\n",
+                """
+                        a\tts
+                        -1148479920\t1970-01-01T00:00:00.000000Z
+                        -2144581835\t1970-01-01T00:00:00.070000Z
+                        -296610933\t1970-01-01T00:00:00.077000Z
+                        """,
                 "test where ts in ('1970-01-01T00:00:00.070000Z', 77000, '1970-01-01'::date)"
         );
     }

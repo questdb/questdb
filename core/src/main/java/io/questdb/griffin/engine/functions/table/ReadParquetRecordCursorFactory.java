@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,13 +24,13 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -38,20 +38,28 @@ import io.questdb.std.str.Path;
 /**
  * Factory for single-threaded read_parquet() SQL function.
  */
-public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
+public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFactory {
     private ReadParquetRecordCursor cursor;
     private Path path;
 
-    public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata, FilesFacade ff) {
+    public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata) {
         super(metadata);
         this.path = new Path().of(path);
-        this.cursor = new ReadParquetRecordCursor(ff, metadata);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(path.$());
-        return cursor;
+        if (cursor == null) {
+            final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+            cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata());
+        }
+        try {
+            cursor.of(path.$());
+            return cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -62,6 +70,7 @@ public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("parquet file sequential scan");
+        sink.attr("columns").val(getMetadata());
     }
 
     @Override

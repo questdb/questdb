@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -44,6 +45,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
@@ -59,7 +61,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private final boolean readonly;
     private final MemoryMR roMetaMem;
     private final AtomicLong structureVersion = new AtomicLong(-1);
-    private volatile boolean suspended;
     private int tableId;
     private TableToken tableToken;
 
@@ -138,6 +139,15 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.sync(false);
         metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
 
+        if (writeInitialMetadata && tableStruct.isView()) {
+            assert tableStruct.getViewDefinition() != null;
+            try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
+                writer.of(path.trimTo(pathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+                ViewDefinition.append(tableStruct.getViewDefinition(), writer);
+            }
+            path.trimTo(pathLen);
+        }
+
         if (writeInitialMetadata && tableStruct.isMatView()) {
             assert tableStruct.getMatViewDefinition() != null;
             try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
@@ -147,6 +157,16 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             path.trimTo(pathLen);
         }
 
+        switchTo(path, pathLen);
+    }
+
+    /**
+     * Creates sequencer metadata files from Table Structure object, needed for enterprise incremental backup/restore.
+     */
+    @SuppressWarnings("unused")
+    public void createMetaFile(TableStructure tableStruct, Path path, int pathLen, int tableId, int structureVersion) {
+        copyFrom(tableStruct, tableId);
+        this.structureVersion.set(structureVersion);
         switchTo(path, pathLen);
     }
 
@@ -211,12 +231,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             metaMem.jumpTo(size);
         }
 
-        loadSequencerMetadata(roMetaMem);
+        loadSequencerMetadata(path, roMetaMem);
         structureVersion.set(roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION));
         columnCount = columnMetadata.size();
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
-        suspended = roMetaMem.getBool(SEQ_META_SUSPENDED);
         this.tableToken = tableToken;
 
         if (readonly) {
@@ -283,11 +302,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     private void copyFrom(TableStructure tableStruct, TableToken tableToken, int tableId) {
-        reset();
+        copyFrom(tableStruct, tableId);
         this.tableToken = tableToken;
+    }
+
+    private void copyFrom(TableStructure tableStruct, int tableId) {
+        reset();
         this.timestampIndex = tableStruct.getTimestampIndex();
         this.tableId = tableId;
-        this.suspended = false;
 
         for (int i = 0, n = tableStruct.getColumnCount(); i < n; i++) {
             addColumn0(
@@ -306,25 +328,25 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnCount = columnMetadata.size();
     }
 
-    private void loadSequencerMetadata(MemoryMR metaMem) {
+    private void loadSequencerMetadata(Utf8Sequence metaPath, MemoryMR metaMem) {
         columnMetadata.clear();
         columnNameIndexMap.clear();
         readColumnOrder.clear();
 
         try {
             final long memSize = Math.min(checkMemSize(metaMem, SEQ_META_OFFSET_COLUMNS), metaMem.getInt(SEQ_META_OFFSET_WAL_LENGTH));
-            validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, WAL_FORMAT_VERSION);
-            final int columnCount = TableUtils.getColumnCount(metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
-            final int timestampIndex = TableUtils.getTimestampIndex(metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
+            validateMetaVersion(metaPath, metaMem, SEQ_META_OFFSET_WAL_VERSION, WAL_FORMAT_VERSION);
+            final int columnCount = TableUtils.getColumnCount(metaPath, metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
+            final int timestampIndex = TableUtils.getTimestampIndex(metaPath, metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
 
             // load column types and names
             long checkSum = columnCount;
             long offset = SEQ_META_OFFSET_COLUMNS;
             for (int i = 0; i < columnCount; i++) {
-                final int type = TableUtils.getColumnType(metaMem, memSize, offset, i);
+                final int type = TableUtils.getColumnType(metaPath, metaMem, memSize, offset, i);
                 offset += Integer.BYTES;
 
-                final String name = TableUtils.getColumnName(metaMem, memSize, offset, i).toString();
+                final String name = TableUtils.getColumnName(metaPath, metaMem, memSize, offset, i).toString();
                 offset += Vm.getStorageLength(name);
 
                 if (type > 0) {
@@ -345,7 +367,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             if (timestampIndex != -1) {
                 final int timestampType = columnMetadata.getQuick(timestampIndex).getColumnType();
                 if (!ColumnType.isTimestamp(timestampType)) {
-                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
+                    throw validationException().put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
                 }
             }
 
@@ -381,25 +403,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         timestampIndex = -1;
         tableToken = null;
         tableId = -1;
-        suspended = false;
     }
 
     private void switchTo(Path path, int pathLen) {
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-        syncToMetaFile();
-    }
-
-    boolean isSuspended() {
-        return suspended;
-    }
-
-    void resumeTable() {
-        suspended = false;
-        syncToMetaFile();
-    }
-
-    void suspendTable() {
-        suspended = true;
         syncToMetaFile();
     }
 
@@ -412,7 +419,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
-        metaMem.putBool(suspended);
+        // we do not persist suspended flag anymore, suspended flag is in SeqTxnTracker
+        // field is kept for backwards compatibility only, the value is irrelevant
+        metaMem.putBool(false);
         long checkSum = columnCount;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = getColumnType(i);

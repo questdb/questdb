@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,6 +45,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration;
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration;
+    private final WorkerPoolConfiguration exportPoolConfiguration;
+    private final WorkerPoolConfiguration viewCompilerPoolConfiguration;
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGConfiguration pgWireConfiguration = new DefaultPGConfiguration();
@@ -62,6 +64,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         this.sharedPoolQueryConfiguration = new DefaultWorkerPoolConfiguration("shared_query");
         this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write");
         this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh");
+        this.exportPoolConfiguration = new DefaultWorkerPoolConfiguration("export");
+        this.viewCompilerPoolConfiguration = new DefaultWorkerPoolConfiguration("view_compiler");
         this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply");
     }
 
@@ -100,8 +104,18 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
+        return viewCompilerPoolConfiguration;
+    }
+
+    @Override
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         return matViewRefreshPoolConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        return exportPoolConfiguration;
     }
 
     @Override
@@ -149,14 +163,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         return walApplyPoolConfiguration;
     }
 
-    private static class DefaultWorkerPoolConfiguration implements WorkerPoolConfiguration {
-
-
-        private final String name;
-
-        private DefaultWorkerPoolConfiguration(String name) {
-            this.name = name;
-        }
+    private record DefaultWorkerPoolConfiguration(String name) implements WorkerPoolConfiguration {
 
         @Override
         public String getPoolName() {
@@ -167,6 +174,5 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         public int getWorkerCount() {
             return 2;
         }
-
     }
 }

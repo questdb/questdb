@@ -78,6 +78,7 @@ pub fn bytes_to_page<const N: usize>(
         primitive_type,
         options,
         Encoding::Plain,
+        false,
     )
     .map(Page::Data)
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,8 +53,7 @@ public class ScoreboardHandlingTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (
                     ServerMain main = startWithEnvVariables(
-                            PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
-                            PropertyKey.CAIRO_SQL_BACKUP_ROOT.getEnvVarName(), backupRoot
+                            PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
 
                     );
                     TestHttpClient httpClient = new TestHttpClient()
@@ -100,7 +99,6 @@ public class ScoreboardHandlingTest extends AbstractBootstrapTest {
 
                 ddl(httpClient, main, "alter table old_trades attach partition list '2023-07-01'");
                 ddl(httpClient, main, "alter table old_trades drop partition list '2023-07-01'");
-                ddl(httpClient, main, "backup table old_trades");
 
                 exec(
                         httpClient,

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,7 +53,7 @@ import java.util.concurrent.TimeUnit;
 public class GroupByUtf8SequenceLongHashMapBenchmark {
     private static final GroupByAllocator allocator = new FastGroupByAllocator(128 * 1024, Numbers.SIZE_1GB);
     private static final int initialCapacity = 64;
-    private static final double loadFactor = 0.7;
+    private static final double loadFactor = 0.5;
     private static final GroupByUtf8SequenceLongHashMap groupByUtf8SequenceLongHashMap = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, 0, 0);
     private static final Rnd rnd = new Rnd();
     private static final Utf8SequenceLongHashMap utf8SequenceLongHashMap = new Utf8SequenceLongHashMap(initialCapacity);
@@ -75,7 +75,7 @@ public class GroupByUtf8SequenceLongHashMapBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        allocator.close();
+        allocator.clear();
         groupByUtf8SequenceLongHashMap.setAllocator(allocator);
         mapPtr = 0;
         rnd.reset();

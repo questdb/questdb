@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1202,9 +1202,9 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     .put(DETACHED_DIR_MARKER)
                     .concat(META_FILE_NAME)
                     .$();
-            Assert.assertTrue(Files.remove(path.$()));
+            Assert.assertTrue(TestUtils.remove(path.$()));
             path.parent().concat(COLUMN_VERSION_FILE_NAME).$();
-            Assert.assertTrue(Files.remove(path.$()));
+            Assert.assertTrue(TestUtils.remove(path.$()));
             renameDetachedToAttachable(tableName, "2022-06-01", "2022-06-02");
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
             assertContent(
@@ -2777,7 +2777,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
                         .$();
-                Assert.assertTrue(Files.remove(path.$()));
+                Assert.assertTrue(TestUtils.remove(path.$()));
                 other.of(configuration.getDbRoot())
                         .concat(engine.verifyTableName(brokenTableName))
                         .concat("2022-06-02")

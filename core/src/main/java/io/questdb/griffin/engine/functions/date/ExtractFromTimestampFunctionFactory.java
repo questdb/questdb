@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -100,6 +100,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
 
         if (SqlKeywords.isMillenniumKeyword(part)) {
             return new MillenniumFunction(arg, driver);
+        }
+
+        if (SqlKeywords.isNanosecondsKeyword(part)) {
+            return new NanosecondsFunction(arg, driver);
         }
 
         if (SqlKeywords.isMillisecondsKeyword(part)) {
@@ -265,6 +269,18 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
             return driver.getMicrosOfSecond(value);
+        }
+    }
+
+    static final class NanosecondsFunction extends IntExtractFunction {
+        public NanosecondsFunction(Function arg, TimestampDriver driver) {
+            super(arg, driver);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            return driver.getNanosOfSecond(value);
         }
     }
 

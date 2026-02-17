@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -45,7 +47,7 @@ import org.jetbrains.annotations.Nullable;
  * Symbol API allows record cursor consumers to store "int" value of symbol function
  * and then retrieve CharSequence values via SymbolTable. Symbol Table is typically
  * populated by function dynamically, in that values that have not yet been returned via
- * getInt() are not cached.*
+ * getInt() are not cached.
  */
 public abstract class SymbolFunction implements Function, SymbolTable {
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
@@ -84,6 +86,36 @@ public abstract class SymbolFunction implements Function, SymbolTable {
 
     @Override
     public final long getDate(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final byte getDecimal8(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -224,6 +256,11 @@ public abstract class SymbolFunction implements Function, SymbolTable {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Returns true if the symbol table is static (immutable).
+     *
+     * @return true if the symbol table is static
+     */
     public abstract boolean isSymbolTableStatic();
 
     /**

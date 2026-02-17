@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,8 +56,6 @@ public class WalReader implements Closeable {
     private final int columnCount;
     private final ObjList<MemoryCMR> columns;
     private final WalDataCursor dataCursor = new WalDataCursor();
-    private final WalEventCursor eventCursor;
-    private final WalEventReader events;
     private final FilesFacade ff;
     private final SequencerMetadata metadata;
     private final Path path;
@@ -65,6 +63,8 @@ public class WalReader implements Closeable {
     private final long rowCount;
     private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
     private final String tableName;
+    private final WalEventCursor walEventCursor;
+    private final WalEventReader walEventReader;
     private final String walName;
 
     public WalReader(CairoConfiguration configuration, TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
@@ -81,14 +81,14 @@ public class WalReader implements Closeable {
             metadata = new SequencerMetadata(configuration, true);
             metadata.open(path.slash().put(segmentId), rootLen, tableToken);
             columnCount = metadata.getColumnCount();
-            events = new WalEventReader(configuration);
+            walEventReader = new WalEventReader(configuration);
             LOG.debug().$("open [table=").$(tableToken).I$();
             int pathLen = path.size();
-            eventCursor = events.of(path.slash().put(segmentId), -1);
+            walEventCursor = walEventReader.of(path.slash().put(segmentId), -1);
             path.trimTo(pathLen);
-            openSymbolMaps(eventCursor, configuration);
+            openSymbolMaps(walEventCursor, configuration);
             path.slash().put(segmentId);
-            eventCursor.reset();
+            walEventCursor.reset();
 
             final int capacity = 2 * columnCount + 2;
             columns = new ObjList<>(capacity);
@@ -104,7 +104,7 @@ public class WalReader implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(events);
+        Misc.free(walEventReader);
         Misc.free(metadata);
         Misc.freeObjList(columns);
         Misc.free(path);
@@ -132,10 +132,6 @@ public class WalReader implements Closeable {
         return dataCursor;
     }
 
-    public WalEventCursor getEventCursor() {
-        return eventCursor;
-    }
-
     public int getRealColumnCount() {
         return metadata.getRealColumnCount();
     }
@@ -151,6 +147,10 @@ public class WalReader implements Closeable {
 
     public int getTimestampIndex() {
         return metadata.getTimestampIndex();
+    }
+
+    public WalEventCursor getWalEventCursor() {
+        return walEventCursor;
     }
 
     public String getWalName() {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -120,6 +121,55 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
+    private static final ArrayValueAppender VALUE_APPENDER_VARCHAR = ArrayTypeDriver::appendVarcharFromArrayToSink;
+
+    /**
+     * Appends an array in compact format, used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
+     * <p>
+     * Layout:
+     * <pre>
+     * | dataSize  |   dim0  |  dim1  | ... |     dimN-1     | array data |
+     * +-----------+---------+--------+-----+----------------+------------+
+     * |  4 bytes  |                 N * 4 bytes             |     -      |
+     * +-----------+-----------------------------------------+------------+
+     * </pre>
+     * <p>
+     * This differs from {@link #appendPlainValue} which includes an 8-byte totalSize field
+     * and a 4-byte type field. This compact format omits the type (known from context) and
+     * uses a 4-byte dataSize instead of 8-byte totalSize.
+     *
+     * @param addr     the memory address to write to
+     * @param value    the array to append
+     * @param nDims    the number of dimensions
+     * @param elemSize the size of each element in bytes
+     */
+    public static void appendCompactPlainValue(long addr, ArrayView value, int nDims, int elemSize) {
+        if (value == null || value.isNull()) {
+            Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
+            return;
+        }
+
+        int dataSize = value.getCardinality() * elemSize;
+
+        Unsafe.getUnsafe().putInt(addr, dataSize);
+        addr += Integer.BYTES;
+
+        for (int i = 0; i < nDims; i++) {
+            Unsafe.getUnsafe().putInt(addr, value.getDimLen(i));
+            addr += Integer.BYTES;
+        }
+
+        if (value.isVanilla()) {
+            short elemType = value.getElemType();
+            if (elemType == ColumnType.DOUBLE) {
+                value.flatView().appendPlainDoubleValue(addr, value.getFlatViewOffset(), value.getFlatViewLength());
+            } else {
+                throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+            }
+        } else {
+            appendToMemRecursive(value, 0, 0, addr);
+        }
+    }
 
     public static void appendDoubleFromArrayToSink(
             @NotNull ArrayView array,
@@ -270,6 +320,53 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     public static long getAuxVectorOffsetStatic(long row) {
         return ARRAY_AUX_WIDTH_BYTES * row;
+    }
+
+    /**
+     * Reads an array from compact format (see {@link #appendCompactPlainValue} for layout).
+     * <p>
+     * This is the counterpart to {@link #appendCompactPlainValue} and differs from {@link #getPlainValue}
+     * which expects an 8-byte size field and a type field in the layout.
+     *
+     * @param addr  the memory address to read from
+     * @param type  the encoded array type (provided from context)
+     * @param nDims the number of dimensions
+     * @param value the borrowed array to populate
+     * @return the populated array
+     */
+    public static BorrowedArray getCompactPlainValue(long addr, int type, int nDims, @NotNull BorrowedArray value) {
+        final int dataSize = Unsafe.getUnsafe().getInt(addr);
+        if (dataSize < 0) {
+            value.ofNull();
+            return value;
+        }
+
+        addr += Integer.BYTES;
+        int shapeLen = nDims * Integer.BYTES;
+        value.of(type, addr, addr + shapeLen, dataSize);
+        return value;
+    }
+
+    /**
+     * Calculates the size needed to store an array in compact format.
+     * This is used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
+     * <p>
+     * The size includes:
+     * <ul>
+     *     <li>4 bytes for dataSize field</li>
+     *     <li>N * 4 bytes for shape (dimension lengths)</li>
+     *     <li>cardinality * elemSize bytes for array data</li>
+     * </ul>
+     * <p>
+     * This method uses {@link ArrayView#getCardinality()} which works for all array types.
+     *
+     * @param value the array to calculate size for (must not be null)
+     * @return the total size in bytes needed to store the array in compact format
+     */
+    public static long getCompactPlainValueSize(@NotNull ArrayView value) {
+        long elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(value.getType()));
+        long intBytes = Integer.BYTES;
+        return intBytes + value.getDimCount() * intBytes + value.getCardinality() * elemSize;
     }
 
     public static BorrowedArray getPlainValue(long addr, @NotNull BorrowedArray value) {
@@ -744,6 +841,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             case ColumnType.LONG:
             case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
+            case ColumnType.VARCHAR:
+                return VALUE_APPENDER_VARCHAR;
             default:
                 if (array.isEmpty()) {
                     return VALUE_APPENDER_LONG;
@@ -811,6 +910,15 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         } else {
             // todo: wtf is this?
             sink.put(d);
+        }
+    }
+
+    static void appendVarcharFromArrayToSink(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink, @NotNull String nullLiteral) {
+        Utf8Sequence utf8Sequence = array.getVarchar(index);
+        if (utf8Sequence == null) {
+            sink.put(nullLiteral);
+        } else {
+            sink.put(utf8Sequence);
         }
     }
 

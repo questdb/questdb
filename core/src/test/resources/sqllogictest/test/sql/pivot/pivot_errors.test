@@ -1,0 +1,24 @@
+statement ok
+CREATE TABLE test(i INT, j VARCHAR);
+
+query 1
+test PIVOT (sum(test.i) FOR j IN ('a', 'b'));
+----
+NULL NULL
+
+query 2
+test PIVOT (sum(41) over() FOR j IN ('a', 'b'));
+----
+NULL NULL
+
+#PIVOT test ON j IN ('a', 'b') USING get_current_timestamp();
+query error
+test PIVOT (now() FOR j IN ('a', 'b'));
+----
+db error: ERROR: expected aggregate function [col=now()]
+
+#PIVOT test ON j IN ('a', 'b') USING sum(sum(41) over ());
+query 3
+test PIVOT (sum(sum(41) over()) FOR j IN ('a', 'b'));
+----
+NULL NULL

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,13 +24,14 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -69,7 +70,7 @@ public class ShardedMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public boolean hasNext() throws DataUnavailableException {
+    public boolean hasNext() {
         if (currentCursor.hasNext()) {
             recordA.of(currentCursor.getRecord(), currentIndex);
             return true;
@@ -113,7 +114,7 @@ public class ShardedMapCursor implements MapRecordCursor {
     }
 
     @Override
-    public long size() throws DataUnavailableException {
+    public long size() {
         long size = 0;
         for (int i = 0, n = shardCursors.size(); i < n; i++) {
             size += shardCursors.getQuick(i).size();
@@ -190,6 +191,36 @@ public class ShardedMapCursor implements MapRecordCursor {
         @Override
         public char getChar(int columnIndex) {
             return baseRecord.getChar(columnIndex);
+        }
+
+        @Override
+        public void getDecimal128(int col, Decimal128 sink) {
+            baseRecord.getDecimal128(col, sink);
+        }
+
+        @Override
+        public short getDecimal16(int columnIndex) {
+            return baseRecord.getDecimal16(columnIndex);
+        }
+
+        @Override
+        public void getDecimal256(int col, Decimal256 sink) {
+            baseRecord.getDecimal256(col, sink);
+        }
+
+        @Override
+        public int getDecimal32(int columnIndex) {
+            return baseRecord.getDecimal32(columnIndex);
+        }
+
+        @Override
+        public long getDecimal64(int columnIndex) {
+            return baseRecord.getDecimal64(columnIndex);
+        }
+
+        @Override
+        public byte getDecimal8(int columnIndex) {
+            return baseRecord.getDecimal8(columnIndex);
         }
 
         @Override

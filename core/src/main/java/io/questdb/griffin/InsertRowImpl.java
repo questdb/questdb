@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -82,10 +82,10 @@ public final class InsertRowImpl implements QuietCloseable {
         }
     }
 
-    public void append(TableWriterAPI writer) {
+    public void append(SqlExecutionContext context, TableWriterAPI writer) {
         final TableWriter.Row row = rowFactory.getRow(writer);
         try {
-            copier.copy(virtualRecord, row);
+            copier.copy(context, virtualRecord, row);
             row.append();
         } catch (Throwable e) {
             row.cancel();

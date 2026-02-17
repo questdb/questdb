@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 
@@ -87,7 +88,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public TableToken getTokenByDirName(CharSequence dirName) {
+    public @Nullable TableToken getTokenByDirName(CharSequence dirName) {
         ReverseTableMapItem entry = dirNameToTableTokenMap.get(dirName);
         return entry == null ? null : entry.getToken();
     }

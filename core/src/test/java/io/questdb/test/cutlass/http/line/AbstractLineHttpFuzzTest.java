@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,26 +25,18 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.client.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkError;
-import io.questdb.std.Chars;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.Numbers;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
@@ -118,30 +110,21 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     public static int changeColumnTypeTo(Rnd rnd, int columnType) {
         int nextColType = columnType;
-        switch (columnType) {
-            case ColumnType.STRING:
-                return rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
-            case ColumnType.SYMBOL:
-                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
-            case ColumnType.VARCHAR:
-                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
+        return switch (columnType) {
+            case ColumnType.STRING -> rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
+            case ColumnType.SYMBOL -> rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
+            case ColumnType.VARCHAR -> rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> {
                 while (nextColType == columnType) { // disallow noop conversion
                     nextColType = integerColumnTypes[rnd.nextInt(integerColumnTypes.length)];
                 }
-                return nextColType;
-            case ColumnType.FLOAT:
-                return ColumnType.DOUBLE;
-            case ColumnType.DOUBLE:
-                return ColumnType.FLOAT;
-            case TIMESTAMP:
-                return ColumnType.LONG;
-
-        }
-        return columnType;
+                yield nextColType;
+            }
+            case ColumnType.FLOAT -> ColumnType.DOUBLE;
+            case ColumnType.DOUBLE -> ColumnType.FLOAT;
+            case TIMESTAMP -> ColumnType.LONG;
+            default -> columnType;
+        };
     }
 
     @BeforeClass
@@ -152,6 +135,12 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     @AfterClass
     public static void tearDownStatic() {
         AbstractBootstrapTest.tearDownStatic();
+    }
+
+    protected static void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+        cursor.toTop();
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
     }
 
     public void ingest(CairoEngine engine, int port, Rnd rnd) {
@@ -503,12 +492,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         return thread;
     }
 
-    protected static void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-        cursor.toTop();
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-    }
-
     protected LineData generateLine(CharSequence tableName, AbstractLineHttpSender httpSender) {
         final LineData line = new LineData(timestampMicros.incrementAndGet());
         httpSender.table(tableName);
@@ -527,7 +510,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
             addDuplicateColumn(line, colIndex, colName, httpSender);
             addNewColumn(line, httpSender);
         }
-        httpSender.at(line.getTimestamp(), ChronoUnit.NANOS);
+        httpSender.at(line.getTimestamp(), ChronoUnit.MICROS);
         return line;
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ import io.questdb.std.Pool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.WeakClosableObjectPool;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -207,7 +207,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getDefaultColumnTypeForTimestamp() {
+            public int getDefaultCreateTimestampColumnType() {
                 return timestampType.getTimestampType();
             }
 
@@ -232,7 +232,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public Clock getMicrosecondClock() {
+            public MicrosecondClock getMicrosecondClock() {
                 return new MicrosecondClockImplInner();
             }
 

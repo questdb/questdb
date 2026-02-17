@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,7 +40,6 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     private final RecordSink keyMapSink;
     private final Map map;
     private final RecordCursor mapCursor;
-    private boolean hasNextPending;
     private boolean isMapBuildPending;
     private boolean isOpen;
     private long rowId;
@@ -122,7 +121,6 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
             map.reopen();
         }
         rowId = 0;
-        hasNextPending = false;
         isMapBuildPending = true;
     }
 
@@ -130,7 +128,6 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     public void toTop() {
         super.toTop();
         rowId = 0;
-        hasNextPending = false;
         isMapBuildPending = true;
     }
 
@@ -142,41 +139,34 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         }
 
         final long next = timestampSampler.nextTimestamp(localEpoch);
-        boolean baseHasNext = true;
-        while (baseHasNext) {
-            if (!hasNextPending) {
-                long timestamp = getBaseRecordTimestamp();
-                if (timestamp < next) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+        do {
+            long timestamp = getBaseRecordTimestamp();
+            if (timestamp < next) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
 
-                    adjustDstInFlight(timestamp - tzOffset);
-                    final MapKey key = map.withKey();
-                    keyMapSink.copy(baseRecord, key);
-                    MapValue value = key.createValue();
-                    if (value.isNew()) {
-                        groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
-                    } else {
-                        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
-                    }
+                adjustDstInFlight(timestamp - tzOffset);
+                final MapKey key = map.withKey();
+                keyMapSink.copy(baseRecord, key);
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
                 } else {
-                    // map value is conditional and only required when clock goes back
-                    // we override base method for when this happens
-                    // see: updateValueWhenClockMovesBack()
-                    timestamp = adjustDst(timestamp, null, next);
-                    if (timestamp != Long.MIN_VALUE) {
-                        nextSamplePeriod(timestamp);
-                        // reset map iterator
-                        map.getCursor();
-                        isMapBuildPending = true;
-                        return;
-                    }
+                    groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
+                }
+            } else {
+                // map value is conditional and only required when clock goes back
+                // we override base method for when this happens
+                // see: updateValueWhenClockMovesBack()
+                timestamp = adjustDst(timestamp, null, next);
+                if (timestamp != Long.MIN_VALUE) {
+                    nextSamplePeriod(timestamp);
+                    // reset map iterator
+                    map.getCursor();
+                    isMapBuildPending = true;
+                    return;
                 }
             }
-
-            hasNextPending = true;
-            baseHasNext = baseCursor.hasNext();
-            hasNextPending = false;
-        }
+        } while (baseCursor.hasNext());
 
         // we ran out of data, make sure hasNext() returns false at the next
         // opportunity, after we stream map that is.

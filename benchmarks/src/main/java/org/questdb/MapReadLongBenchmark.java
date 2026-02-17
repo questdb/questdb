@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,14 @@ import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -75,7 +82,7 @@ public class MapReadLongBenchmark {
 
         hmap = new HashMap<>(size, (float) loadFactor);
         orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
-        unordered8map = new Unordered8Map(new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
+        unordered8map = new Unordered8Map(ColumnType.LONG, new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
 
         for (long i = 0; i < size; i++) {
             MapKey key = orderedMap.withKey();

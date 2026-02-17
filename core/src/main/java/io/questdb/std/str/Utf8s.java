@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -64,6 +64,10 @@ public final class Utf8s {
      * sequences that contain characters outside the Basic Multilingual Plane (BMP).
      * <br>
      * This method assume that the sequences are valid UTF-8 sequences and does not perform any validation.
+     * <br>
+     * This method is optimized for VARCHAR column values which store a 6-byte prefix in the auxiliary vector.
+     * When comparing such values, it first compares the prefixes (from aux memory) and only accesses the
+     * data vector if the prefixes are equal and the strings are longer than 6 bytes.
      *
      * @param l left sequence
      * @param r right sequence
@@ -73,25 +77,44 @@ public final class Utf8s {
         if (l == r) {
             return 0;
         }
-
         if (l == null) {
             return -1;
         }
-
         if (r == null) {
             return 1;
         }
 
+        final long lPrefix = l.zeroPaddedSixPrefix();
+        final long rPrefix = r.zeroPaddedSixPrefix();
+        if (lPrefix != rPrefix) {
+            // Compare prefixes as big-endian for correct lexicographic order.
+            // Since the prefix is stored in little-endian, we reverse bytes first.
+            return Long.compareUnsigned(Long.reverseBytes(lPrefix), Long.reverseBytes(rPrefix));
+        }
+
+        // Prefixes are equal - compare remaining bytes from data vector.
         final int ll = l.size();
         final int rl = r.size();
         final int min = Math.min(ll, rl);
 
-        for (int i = 0; i < min; i++) {
+        // Compare 8 bytes at a time.
+        int i = VARCHAR_INLINED_PREFIX_BYTES;
+        for (; i <= min - Long.BYTES; i += Long.BYTES) {
+            final long lLong = l.longAt(i);
+            final long rLong = r.longAt(i);
+            if (lLong != rLong) {
+                return Long.compareUnsigned(Long.reverseBytes(lLong), Long.reverseBytes(rLong));
+            }
+        }
+
+        // Compare remaining bytes.
+        for (; i < min; i++) {
             final int k = Numbers.compareUnsigned(l.byteAt(i), r.byteAt(i));
             if (k != 0) {
                 return k;
             }
         }
+
         return Integer.compare(ll, rl);
     }
 
@@ -821,7 +844,7 @@ public final class Utf8s {
     public static boolean isAscii(long ptr, int size) {
         long i = 0;
         for (; i + 7 < size; i += 8) {
-            if (isAscii(Unsafe.getUnsafe().getLong(ptr + i))) {
+            if (!isAscii(Unsafe.getUnsafe().getLong(ptr + i))) {
                 return false;
             }
         }
@@ -990,7 +1013,10 @@ public final class Utf8s {
     }
 
     public static boolean startsWith(
-            @NotNull Utf8Sequence seq, long seqSixPrefix, @NotNull Utf8Sequence startsWith, long startsWithSixPrefix
+            @NotNull Utf8Sequence seq,
+            long seqSixPrefix,
+            @NotNull Utf8Sequence startsWith,
+            long startsWithSixPrefix
     ) {
         final int startsWithSize = startsWith.size();
         return startsWithSize == 0 || seq.size() >= startsWithSize &&

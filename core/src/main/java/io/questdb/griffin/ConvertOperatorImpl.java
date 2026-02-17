@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -194,6 +194,7 @@ public class ConvertOperatorImpl implements Closeable {
     ) {
         try {
             this.columnName = columnName;
+
             if (ColumnType.isSymbol(newType)) {
                 if (symbolMapper == null) {
                     symbolMapper = new SymbolMapper();
@@ -323,17 +324,31 @@ public class ConvertOperatorImpl implements Closeable {
             if (asyncProcessingErrorCount.get() == 0) {
 
                 SymbolTable symbolTable = ColumnType.isSymbol(existingType) ? symbolMapReader.newSymbolTableView() : null;
-                boolean ok = ColumnTypeConverter.convertColumn(0, rowCount,
-                        existingType, srcFixFd, srcVarFd, symbolTable,
-                        newType, dstFixFd, dstVarFd, symbolMapper,
-                        ff, appendPageSize, noopConversionOffsetSink);
+                boolean ok = ColumnTypeConverter.convertColumn(
+                        0,
+                        rowCount,
+                        existingType,
+                        srcFixFd,
+                        srcVarFd,
+                        symbolTable,
+                        newType,
+                        dstFixFd,
+                        dstVarFd,
+                        symbolMapper,
+                        ff,
+                        appendPageSize,
+                        noopConversionOffsetSink
+                );
 
                 if (!ok) {
                     LOG.critical().$("failed to convert column, column is corrupt [at=")
                             .$(tableWriter.getTableToken())
-                            .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
-                            .$(", to=").$(ColumnType.nameOf(newType)).$(", srcFixFd=").$(srcFixFd)
-                            .$(", srcVarFd=").$(srcVarFd).$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
+                            .$(", column=").$safe(columnName)
+                            .$(", from=").$(ColumnType.nameOf(existingType))
+                            .$(", to=").$(ColumnType.nameOf(newType))
+                            .$(", srcFixFd=").$(srcFixFd)
+                            .$(", srcVarFd=").$(srcVarFd)
+                            .$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
                 }
@@ -342,10 +357,12 @@ public class ConvertOperatorImpl implements Closeable {
             asyncProcessingErrorCount.incrementAndGet();
             LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=")
                     .$(tableWriter.getTableToken())
-                    .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                    .$(", column=").$safe(columnName)
+                    .$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
-                    .$(", srcFixFd=").$(srcFixFd).$(", srcVarFd=")
-                    .$(srcVarFd).$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp);
+                    .$(", srcFixFd=").$(srcFixFd)
+                    .$(", srcVarFd=").$(srcVarFd)
+                    .$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp);
             if (th instanceof CairoException) {
                 log.$(", errno=").$(((CairoException) th).getErrno());
             }

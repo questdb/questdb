@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,17 +31,15 @@ import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.Nullable;
 
 public class WithClauseModel implements Mutable {
-
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
     private QueryModel model;
     private LowerCaseCharSequenceObjHashMap<WithClauseModel> originalWithClauses;
-
-    /* Size of withClauses at time of `of()` method call . We need to maintain the 'snapshot' because
-       map can grow and subsequent WITH clause can override table used by current one, leading to stack overflow on re-evaluation .*/
-    private int originalWithClausesSize;
+    // Size of withClauses at time of `of()` method call. We need to maintain the 'snapshot' because
+    // map can grow and subsequent WITH clause can override table used by current one,
+    // leading to stack overflow on re-evaluation.
+    private int originalWithClausesSize = -1;
     private int position;
     private LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses;
-
     private boolean withClausesInitialized;
 
     private WithClauseModel() {
@@ -87,7 +85,6 @@ public class WithClauseModel implements Mutable {
         if (originalWithClausesSize == 0) {
             return null;
         } else {
-
             LowerCaseCharSequenceObjHashMap<WithClauseModel> subMap = new LowerCaseCharSequenceObjHashMap<>();
             ObjList<CharSequence> keys = originalWithClauses.keys();
             for (int i = 0; i < originalWithClausesSize; i++) {

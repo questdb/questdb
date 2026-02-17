@@ -11,7 +11,7 @@ jobs:
     pool:
       vmImage: $(imageName)
       name: $(poolName)
-    timeoutInMinutes: 15
+    timeoutInMinutes: 55
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
@@ -44,3 +44,14 @@ jobs:
           options:
             "compile javadoc:javadoc -DskipTests -P javadoc -P qdbr-release $(MAVEN_RUN_OPTS)"
           jdkVersionOption: $(jdk)
+
+      # Check bytecode size
+      - bash: |
+          JAR_FILE=$(find core/target -maxdepth 1 -name "questdb-*.jar" ! -name "*-tests.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | head -1)
+          if [[ -z "$JAR_FILE" ]]; then
+            echo "Error: No QuestDB JAR file found in core/target"
+            exit 1
+          fi
+          echo "Checking JAR: $JAR_FILE"
+          ./ci/check-bytecode-size.sh --jar "$JAR_FILE" --threshold 8000
+        displayName: "Check bytecode size"

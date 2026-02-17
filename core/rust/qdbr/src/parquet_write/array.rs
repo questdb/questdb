@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,8 +22,6 @@
  *
  ******************************************************************************/
 
-use std::mem;
-
 use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -33,6 +31,7 @@ use parquet2::read::levels::get_bit_width;
 use parquet2::statistics::ParquetStatistics;
 use parquet2::write::Version;
 use qdb_core::col_driver::ArrayAuxEntry;
+use std::mem;
 
 use crate::parquet_write::util;
 use parquet2::encoding::{delta_bitpacked, Encoding};
@@ -477,6 +476,7 @@ pub fn array_to_raw_page(
         primitive_type,
         options,
         encoding,
+        false,
     )
     .map(Page::Data)
 }
@@ -559,6 +559,93 @@ impl<'a> LevelsIterator<'a> {
             last_def_level: -1,
             clear_pending: false,
         })
+    }
+
+    #[inline]
+    pub fn has_lookahead(&self) -> bool {
+        self.last_rep_level > -1
+    }
+
+    #[inline]
+    pub fn take_lookahead(&mut self) -> (u32, u32) {
+        debug_assert!(self.has_lookahead());
+        let rep = self.last_rep_level as u32;
+        let def = self.last_def_level as u32;
+        self.last_rep_level = -1;
+        self.last_def_level = -1;
+        self.levels.clear();
+        self.clear_pending = false;
+        (rep, def)
+    }
+
+    #[inline]
+    pub fn set_lookahead(&mut self, rep: u32, def: u32) {
+        self.last_rep_level = rep as i64;
+        self.last_def_level = def as i64;
+    }
+
+    #[inline]
+    pub fn next_rep_def(&mut self) -> Option<ParquetResult<(u32, u32)>> {
+        let rep = self.rep_levels_iter.next();
+        let def = self.def_levels_iter.next();
+        if rep.is_none() || def.is_none() {
+            return None;
+        }
+        let rep = match rep.unwrap() {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e.into())),
+        };
+        let def = match def.unwrap() {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e.into())),
+        };
+        Some(Ok((rep, def)))
+    }
+
+    pub fn skip_rows(&mut self, n: usize, max_def_level: u32) -> ParquetResult<usize> {
+        if n == 0 {
+            return Ok(0);
+        }
+
+        let mut rows_skipped = 0usize;
+        let mut non_null_count = 0usize;
+        let mut has_elements = false;
+
+        if self.last_rep_level > -1 {
+            if self.last_def_level as u32 == max_def_level {
+                non_null_count += 1;
+            }
+            self.last_rep_level = -1;
+            self.last_def_level = -1;
+            has_elements = true;
+        }
+        self.levels.clear();
+        self.clear_pending = false;
+
+        loop {
+            match self.next_rep_def() {
+                None => {
+                    break;
+                }
+                Some(Err(e)) => return Err(e),
+                Some(Ok((rep, def))) => {
+                    if rep == 0 && has_elements {
+                        rows_skipped += 1;
+                        if rows_skipped >= n {
+                            self.last_rep_level = rep as i64;
+                            self.last_def_level = def as i64;
+                            break;
+                        }
+                    }
+                    has_elements = true;
+                    if def == max_def_level {
+                        non_null_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(non_null_count)
     }
 
     pub fn next_levels(&mut self) -> Option<ParquetResult<&Levels>> {
@@ -741,15 +828,58 @@ pub fn append_array_nulls(
     data_mem: &[u8],
     count: usize,
 ) -> ParquetResult<()> {
-    for _ in 0..count {
-        append_array_null(aux_mem, data_mem)?;
+    match count {
+        0 => Ok(()),
+        1 => append_array_null(aux_mem, data_mem),
+        2 => {
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)
+        }
+        3 => {
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)
+        }
+        4 => {
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)?;
+            append_array_null(aux_mem, data_mem)
+        }
+        _ => {
+            const ENTRY_SIZE: usize = 16; // 8 bytes offset + 8 bytes header
+
+            let mut null_entry = [0u8; ENTRY_SIZE];
+            null_entry[..8].copy_from_slice(&data_mem.len().to_le_bytes());
+            let base = aux_mem.len();
+            let total_bytes = count
+                .checked_mul(ENTRY_SIZE)
+                .ok_or_else(|| fmt_err!(Layout, "append_array_nulls overflow"))?;
+
+            aux_mem.reserve(total_bytes)?;
+            unsafe {
+                let ptr = aux_mem.as_mut_ptr().add(base);
+                for i in 0..count {
+                    std::ptr::copy_nonoverlapping(
+                        null_entry.as_ptr(),
+                        ptr.add(i * ENTRY_SIZE),
+                        ENTRY_SIZE,
+                    );
+                }
+                let new_len = base
+                    .checked_add(total_bytes)
+                    .ok_or_else(|| fmt_err!(Layout, "append_array_nulls overflow"))?;
+                aux_mem.set_len(new_len);
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::allocator::TestAllocatorState;
 
     #[test]
     fn test_null_or_empty() {
@@ -1048,5 +1178,58 @@ mod tests {
             level_pairs.push((levels.rep_levels.clone(), levels.def_levels.clone()));
         }
         Ok(level_pairs)
+    }
+
+    #[test]
+    fn test_append_array_nulls() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let data_mem: &[u8] = &[1, 2, 3, 4]; // data_mem.len() = 4
+
+        let mut aux = AcVec::new_in(allocator.clone());
+        append_array_nulls(&mut aux, data_mem, 0).unwrap();
+        assert_eq!(aux.len(), 0);
+
+        // Test count = 1..=4 (fast path)
+        for count in 1..=4 {
+            let mut aux = AcVec::new_in(allocator.clone());
+            append_array_nulls(&mut aux, data_mem, count).unwrap();
+            assert_eq!(aux.len(), count * 16, "count={}", count);
+
+            for i in 0..count {
+                let offset = i * 16;
+                let stored_offset = u64::from_le_bytes(aux[offset..offset + 8].try_into().unwrap());
+                let stored_header =
+                    u64::from_le_bytes(aux[offset + 8..offset + 16].try_into().unwrap());
+                assert_eq!(stored_offset, 4, "count={}, i={}", count, i); // data_mem.len()
+                assert_eq!(stored_header, 0, "count={}, i={}", count, i); // null header
+            }
+        }
+
+        // Test count > 4 (general path)
+        for count in [5, 10, 100] {
+            let mut aux = AcVec::new_in(allocator.clone());
+            append_array_nulls(&mut aux, data_mem, count).unwrap();
+            assert_eq!(aux.len(), count * 16, "count={}", count);
+
+            for i in 0..count {
+                let offset = i * 16;
+                let stored_offset = u64::from_le_bytes(aux[offset..offset + 8].try_into().unwrap());
+                let stored_header =
+                    u64::from_le_bytes(aux[offset + 8..offset + 16].try_into().unwrap());
+                assert_eq!(stored_offset, 4, "count={}, i={}", count, i);
+                assert_eq!(stored_header, 0, "count={}, i={}", count, i);
+            }
+        }
+
+        let data_mem_large: Vec<u8> = vec![0; 1000];
+        let mut aux = AcVec::new_in(allocator.clone());
+        append_array_nulls(&mut aux, &data_mem_large, 3).unwrap();
+        assert_eq!(aux.len(), 48);
+        for i in 0..3 {
+            let offset = i * 16;
+            let stored_offset = u64::from_le_bytes(aux[offset..offset + 8].try_into().unwrap());
+            assert_eq!(stored_offset, 1000);
+        }
     }
 }

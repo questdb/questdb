@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -123,7 +123,7 @@ public class Worker extends Thread {
                     }
                 } else {
                     if (log != null) {
-                        log.info().$("os scheduled worker started [name=").$(workerName).I$();
+                        log.debug().$("os scheduled worker started [name=").$(workerName).I$();
                     }
                 }
 
@@ -195,7 +195,7 @@ public class Worker extends Thread {
                 try {
                     onHaltAction.run(ex);
                     if (log != null) {
-                        log.info().$("cleaned worker [name=").$(poolName).$(", worker=").$(workerId).I$();
+                        log.debug().$("cleaned worker [name=").$(poolName).$(", worker=").$(workerId).I$();
                     }
                 } catch (Throwable t) {
                     stdErrCritical(t);
@@ -203,7 +203,7 @@ public class Worker extends Thread {
             }
             haltLatch.countDown();
             if (log != null) {
-                log.info().$("os scheduled worker stopped [name=").$(getName()).I$();
+                log.debug().$("os scheduled worker stopped [name=").$(getName()).I$();
             }
         }
     }

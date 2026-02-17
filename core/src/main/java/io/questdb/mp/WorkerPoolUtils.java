@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,13 +36,29 @@ import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
+import io.questdb.std.AsyncMunmapJob;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 
 public class WorkerPoolUtils {
+
+    public static void setupAsyncMunmapJob(WorkerPool pool, CairoEngine engine) {
+        CairoConfiguration config = engine.getConfiguration();
+        if (config.getAsyncMunmapEnabled()) {
+            assert Os.isPosix();
+            Files.ASYNC_MUNMAP_ENABLED = true;
+            AsyncMunmapJob asyncMunmapJob = new AsyncMunmapJob();
+            pool.assign(asyncMunmapJob);
+        } else {
+            Files.ASYNC_MUNMAP_ENABLED = false;
+        }
+    }
 
     public static void setupQueryJobs(
             WorkerPool sharedPoolQuery,
@@ -57,6 +73,7 @@ public class WorkerPoolUtils {
         if (configuration.isSqlParallelGroupByEnabled()) {
             sharedPoolQuery.assign(new GroupByVectorAggregateJob(messageBus));
             sharedPoolQuery.assign(new GroupByMergeShardJob(messageBus));
+            sharedPoolQuery.assign(new GroupByLongTopKJob(messageBus));
         }
 
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
@@ -65,9 +82,9 @@ public class WorkerPoolUtils {
             for (int i = 0; i < workerCount; i++) {
                 // create job per worker to allow each worker to have own shard walk sequence
                 final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
+                        cairoEngine,
                         messageBus,
-                        new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
-                        configuration.getCircuitBreakerConfiguration()
+                        new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks())
                 );
                 sharedPoolQuery.assign(i, pageFrameReduceJob);
                 sharedPoolQuery.freeOnExit(pageFrameReduceJob);

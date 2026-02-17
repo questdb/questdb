@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,33 +33,35 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final VirtualFunctionRecordCursor cursor;
     private final ObjList<Function> functions;
     private final VirtualRecordCursorFactorySymbolTableSource internalSymbolTableSource;
-    private final RecordMetadata priorityMetadata;
+    private final PriorityMetadata priorityMetadata;
     private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
-            RecordMetadata virtualMetadata,
-            RecordMetadata priorityMetadata,
-            ObjList<Function> functions,
-            RecordCursorFactory base,
-            int virtualColumnReservedSlots,
-            boolean allowMemoization
+            @NotNull RecordMetadata virtualMetadata,
+            @NotNull PriorityMetadata priorityMetadata,
+            @NotNull ObjList<Function> functions,
+            @NotNull RecordCursorFactory base,
+            int virtualColumnReservedSlots
     ) {
         super(virtualMetadata);
         this.base = base;
         this.functions = functions;
         int functionCount = functions.size();
         boolean supportsRandomAccess = base.recordCursorSupportsRandomAccess();
-        final ObjList<Function> memoizedFunctions = new ObjList<>();
+        final ObjList<MemoizerFunction> memoizedFunctions = new ObjList<>();
         int randomCount = 0;
         for (int i = 0; i < functionCount; i++) {
             Function function = functions.getQuick(i);
@@ -71,19 +73,25 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
                 randomCount++;
             }
 
-            if (allowMemoization && function.shouldMemoize()) {
-                memoizedFunctions.add(function);
+            if (function instanceof MemoizerFunction) {
+                memoizedFunctions.add((MemoizerFunction) function);
             }
         }
         this.supportsRandomAccess = supportsRandomAccess && randomCount == 0;
-        this.cursor = new VirtualFunctionRecordCursor(functions, memoizedFunctions, this.supportsRandomAccess, virtualColumnReservedSlots);
+        this.cursor = new VirtualFunctionRecordCursor(
+                priorityMetadata,
+                functions,
+                memoizedFunctions,
+                this.supportsRandomAccess,
+                virtualColumnReservedSlots
+        );
         this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
         this.priorityMetadata = priorityMetadata;
     }
 
     @Override
-    public boolean followedLimitAdvice() {
-        return base.followedLimitAdvice();
+    public void changePageFrameSizes(int minRows, int maxRows) {
+        base.changePageFrameSizes(minRows, maxRows);
     }
 
     @Override
@@ -123,6 +131,15 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
+    }
+
+    @Override
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        final int baseColumnIndex = cursor.getLongTopKColumnIndex(columnIndex);
+        if (baseColumnIndex != -1) {
+            return base.recordCursorSupportsLongTopK(baseColumnIndex);
+        }
+        return false;
     }
 
     @Override

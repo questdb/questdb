@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -75,7 +75,7 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
         operators.addAll(simpleComparisonOperators());
         operators.addAll(complexComparisonOperators());
         final int length = rnd.nextInt(20) + 2;
-        fuzzTestValidExpressionAgainstOperators(rnd, engine, operators, length, 1024);
+        fuzzTestValidExpressionAgainstOperators(rnd, engine, operators, length);
     }
 
     private ArrayList<ExpressionElement> complexComparisonOperators() {
@@ -111,8 +111,8 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
      * 4. Run SqlParser over infix representation with custom ExpressionParserListener which just creates infix notation with all braces in place (similar to infixNoAmbiguities)
      * 5. Compare infixNoAmbiguities with final result from SqlParser
      */
-    private void fuzzTestValidExpressionAgainstOperators(Rnd rnd, CairoEngine engine, List<ExpressionElement> operators, int literals, int attempts) {
-        for (int attempt = 0; attempt < attempts; attempt++) {
+    private void fuzzTestValidExpressionAgainstOperators(Rnd rnd, CairoEngine engine, List<ExpressionElement> operators, int literals) {
+        for (int attempt = 0; attempt < 1024; attempt++) {
             List<ExpressionElement> expressions = randomExpression(rnd, operators, literals);
             String infix = "";
             try {
@@ -241,16 +241,12 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
 
     private ExpressionElement randomLiteral(Rnd rnd) {
         int choice = rnd.nextInt(4);
-        switch (choice) {
-            case 0:
-                return randomNumberLiteral(rnd);
-            case 1:
-                return randomStringLiteral(rnd);
-            case 2:
-                return randomFloatLiteral(rnd);
-            default:
-                return randomBoolLiteral(rnd);
-        }
+        return switch (choice) {
+            case 0 -> randomNumberLiteral(rnd);
+            case 1 -> randomStringLiteral(rnd);
+            case 2 -> randomFloatLiteral(rnd);
+            default -> randomBoolLiteral(rnd);
+        };
     }
 
     private ExpressionElement randomNumberLiteral(Rnd rnd) {
@@ -402,14 +398,11 @@ public class ExpressionParserFuzzTest extends AbstractCairoTest {
 
         public String wrap(ExpressionContext context, List<String> arguments) {
             if (this.wrapFunc == null) {
-                switch (this.arity) {
-                    case 1:
-                        return token.length() == 1 ? token + arguments.get(0) : token + " " + arguments.get(0);
-                    case 2:
-                        return arguments.get(0) + " " + token + " " + arguments.get(1);
-                    default:
-                        throw new RuntimeException("no default wrap method for expression element " + token);
-                }
+                return switch (this.arity) {
+                    case 1 -> token.length() == 1 ? token + arguments.get(0) : token + " " + arguments.get(0);
+                    case 2 -> arguments.get(0) + " " + token + " " + arguments.get(1);
+                    default -> throw new RuntimeException("no default wrap method for expression element " + token);
+                };
             }
             return this.wrapFunc.apply(context, arguments);
         }

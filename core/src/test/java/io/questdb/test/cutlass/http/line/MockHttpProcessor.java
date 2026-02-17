@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,6 +47,28 @@ import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+
+class MockErrorSettingsProcessor implements HttpRequestProcessor, HttpRequestHandler {
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpChunkedResponse r = context.getChunkedResponse();
+        r.status(HttpURLConnection.HTTP_UNAUTHORIZED, "text/plain");
+        r.sendHeader();
+        r.put("bad thing happened");
+        r.sendChunk(true);
+    }
+}
 
 final class MockHttpProcessor implements HttpPostPutProcessor, HttpRequestHandler {
     private static final long MAX_DELIVERY_DELAY_NANOS = TimeUnit.SECONDS.toNanos(10);
@@ -272,7 +294,7 @@ class MockSettingsProcessor implements HttpRequestHandler, HttpRequestProcessor 
         r.status(HttpURLConnection.HTTP_OK, "application/json");
         r.sendHeader();
         r.put("{\"release.type\":\"OSS\",\"release.version\":\"[DEVELOPMENT]\",\"acl.enabled\":false," +
-                "\"line.proto.support.versions\":[1,2]," +
+                "\"line.proto.support.versions\":[1,2,3]," +
                 "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                 "\"posthog.enabled\":false,\"posthog.api.key\":null}");
         r.sendChunk(true);
@@ -296,33 +318,6 @@ class MockSettingsProcessorOldServer implements HttpRequestProcessor, HttpReques
         r.status(HttpURLConnection.HTTP_OK, "application/json");
         r.sendHeader();
         r.put("{ \"release.type\": \"OSS\", \"release.version\": \"[DEVELOPMENT]\", \"acl.enabled\": false, \"posthog.enabled\": false, \"posthog.api.key\": null }");
-        r.sendChunk(true);
-    }
-}
-
-class MockErrorSettingsProcessor implements HttpRequestProcessor, HttpRequestHandler {
-    private final String error;
-
-    public MockErrorSettingsProcessor(String error) {
-        this.error = error;
-    }
-
-    @Override
-    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
-        return this;
-    }
-
-    @Override
-    public byte getRequiredAuthType() {
-        return SecurityContext.AUTH_TYPE_NONE;
-    }
-
-    @Override
-    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final HttpChunkedResponse r = context.getChunkedResponse();
-        r.status(HttpURLConnection.HTTP_UNAUTHORIZED, "text/plain");
-        r.sendHeader();
-        r.put("bad thing happened");
         r.sendChunk(true);
     }
 }

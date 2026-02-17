@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.Target;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import org.junit.rules.TemporaryFolder;
@@ -83,7 +83,7 @@ public class HttpMinTestBuilder {
                 httpServer.registerClosable(requestStatePool);
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public ObjList<String> getUrls() {
+                    public ObjHashSet<String> getUrls() {
                         return httpConfiguration.getContextPathMetrics();
                     }
 
@@ -98,7 +98,7 @@ public class HttpMinTestBuilder {
                 // It mirrors the setup of the min http server.
                 httpServer.bind(new HttpRequestHandlerFactory() {
                     @Override
-                    public ObjList<String> getUrls() {
+                    public ObjHashSet<String> getUrls() {
                         return httpConfiguration.getContextPathStatus();
                     }
 

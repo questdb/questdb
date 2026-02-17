@@ -6,7 +6,7 @@
   ~    \__\_\\__,_|\___||___/\__|____/|____/
   ~
   ~  Copyright (c) 2014-2019 Appsicle
-  ~  Copyright (c) 2019-2024 QuestDB
+  ~  Copyright (c) 2019-2026 QuestDB
   ~
   ~  Licensed under the Apache License, Version 2.0 (the "License");
   ~  you may not use this file except in compliance with the License.
@@ -33,21 +33,6 @@
             <directory>${project.build.directory}/site/package/dist/</directory>
             <includes>
                 <include>**/*</include>
-            </includes>
-            <excludes>
-                <exclude>**/*.woff</exclude>
-                <exclude>**/*.ttf</exclude>
-            </excludes>
-            <outputDirectory>.</outputDirectory>
-            <fileMode>755</fileMode>
-            <lineEnding>unix</lineEnding>
-        </fileSet>
-        <!-- font files are included separately to avoid corrupting them due to lineEnding -->
-        <fileSet>
-            <directory>${project.build.directory}/site/package/dist/</directory>
-            <includes>
-                <include>**/*.woff</include>
-                <include>**/*.ttf</include>
             </includes>
             <outputDirectory>.</outputDirectory>
             <fileMode>755</fileMode>

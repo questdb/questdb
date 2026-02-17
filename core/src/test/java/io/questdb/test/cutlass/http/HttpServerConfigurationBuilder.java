@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,32 +34,35 @@ import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.test.std.TestFilesFacadeImpl;
 
 public class HttpServerConfigurationBuilder {
+    private final int rerunProcessingQueueSize = 4096;
     private boolean allowDeflateBeforeSend;
     private String baseDir;
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
     private boolean dumpTraffic;
     private FactoryProvider factoryProvider;
+    private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+    private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private String httpProtocolVersion = "HTTP/1.1 ";
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
-    private long multipartIdleSpinCount = -1;
-    private Clock nanosecondClock = StationaryNanosClock.INSTANCE;
+    private NanosecondClock nanosecondClock = StationaryNanosClock.INSTANCE;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
     private int port = -1;
+    private QueryFutureUpdateListener queryFutureUpdateListener;
     private int receiveBufferSize = 1024 * 1024;
-    private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
     private boolean serverKeepAlive = true;
     private int tcpSndBufSize;
@@ -71,6 +74,11 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public int getConnectionCheckFrequency() {
                     return 1_000_000;
+                }
+
+                @Override
+                public long getExportTimeout() {
+                    return 300_000;
                 }
 
                 @Override
@@ -99,8 +107,13 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public Clock getNanosecondClock() {
+                public NanosecondClock getNanosecondClock() {
                     return nanosecondClock;
+                }
+
+                @Override
+                public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                    return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
                 }
             };
             private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
@@ -154,6 +167,16 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
+                    public int getForceRecvFragmentationChunkSize() {
+                        return forceRecvFragmentationChunkSize;
+                    }
+
+                    @Override
+                    public int getForceSendFragmentationChunkSize() {
+                        return forceSendFragmentationChunkSize;
+                    }
+
+                    @Override
                     public String getHttpVersion() {
                         return httpProtocolVersion;
                     }
@@ -164,13 +187,7 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
-                    public long getMultipartIdleSpinCount() {
-                        if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
-                        return multipartIdleSpinCount;
-                    }
-
-                    @Override
-                    public Clock getNanosecondClock() {
+                    public NanosecondClock getNanosecondClock() {
                         return nanosecondClock;
                     }
 
@@ -219,6 +236,11 @@ public class HttpServerConfigurationBuilder {
             @Override
             public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
                 return staticContentProcessorConfiguration;
+            }
+
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return factoryProvider != null ? factoryProvider : super.getFactoryProvider();
             }
 
             @Override
@@ -288,6 +310,16 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
+    public HttpServerConfigurationBuilder withForceRecvFragmentationChunkSize(int forceRecvFragmentationChunkSize) {
+        this.forceRecvFragmentationChunkSize = forceRecvFragmentationChunkSize;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withForceSendFragmentationChunkSize(int forceSendFragmentationChunkSize) {
+        this.forceSendFragmentationChunkSize = forceSendFragmentationChunkSize;
+        return this;
+    }
+
     public HttpServerConfigurationBuilder withHealthCheckAuthRequired(byte httpHealthCheckAuthType) {
         this.httpHealthCheckAuthType = httpHealthCheckAuthType;
         return this;
@@ -298,12 +330,7 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
-    public HttpServerConfigurationBuilder withMultipartIdleSpinCount(long multipartIdleSpinCount) {
-        this.multipartIdleSpinCount = multipartIdleSpinCount;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withNanosClock(Clock nanosecondClock) {
+    public HttpServerConfigurationBuilder withNanosClock(NanosecondClock nanosecondClock) {
         this.nanosecondClock = nanosecondClock;
         return this;
     }
@@ -318,6 +345,11 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
+    public HttpServerConfigurationBuilder withQueryFutureUpdateListener(QueryFutureUpdateListener queryFutureUpdateListener) {
+        this.queryFutureUpdateListener = queryFutureUpdateListener;
+        return this;
+    }
+
     public HttpServerConfigurationBuilder withPort(int port) {
         this.port = port;
         return this;
@@ -325,11 +357,6 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withReceiveBufferSize(int receiveBufferSize) {
         this.receiveBufferSize = receiveBufferSize;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withRerunProcessingQueueSize(int rerunProcessingQueueSize) {
-        this.rerunProcessingQueueSize = rerunProcessingQueueSize;
         return this;
     }
 

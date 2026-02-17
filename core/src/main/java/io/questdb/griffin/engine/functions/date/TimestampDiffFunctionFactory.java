@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -68,6 +69,11 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
             TimestampDriver.TimestampDiffMethod diffMethod = driver.getTimestampDiffMethod(period);
 
             if (diffMethod != null) {
+                if (start.isConstant() && end.isConstant() && start.getTimestamp(null) != Numbers.LONG_NULL && end.getTimestamp(null) != Numbers.LONG_NULL) {
+                    long startTimestamp = start.getTimestamp(null);
+                    long endTimestamp = end.getTimestamp(null);
+                    return new LongConstant(diffMethod.diff(driver.from(startTimestamp, startType), driver.from(endTimestamp, endType)));
+                }
                 if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NULL) {
                     return new DiffVarConstFunction(end, driver.from(start.getTimestamp(null), startType), diffMethod, driver, endType, period);
                 }

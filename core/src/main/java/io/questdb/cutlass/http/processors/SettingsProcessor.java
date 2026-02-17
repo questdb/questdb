@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,9 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.ServerConfiguration;
+import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
@@ -46,6 +49,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.tasks.TelemetryTask;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.integer;
 import static java.net.HttpURLConnection.*;
@@ -64,11 +68,12 @@ public class SettingsProcessor implements HttpRequestHandler {
     private final byte requiredAuthTypeForUpdate;
     private final ServerConfiguration serverConfiguration;
     private final SettingsStore settingsStore;
+    private final Telemetry<TelemetryTask> telemetry;
 
     public SettingsProcessor(CairoEngine engine, ServerConfiguration serverConfiguration) {
         this.serverConfiguration = serverConfiguration;
         this.settingsStore = engine.getSettingsStore();
-
+        this.telemetry = engine.getTelemetry();
         requiredAuthTypeForUpdate = serverConfiguration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getRequiredAuthType();
     }
 
@@ -99,6 +104,7 @@ public class SettingsProcessor implements HttpRequestHandler {
 
         @Override
         public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_SETTINGS_READ);
             final Utf8StringSink settings = LV_GET_SINK.get(context);
             settings.clear();
             settings.putAscii('{');
@@ -203,6 +209,7 @@ public class SettingsProcessor implements HttpRequestHandler {
         }
 
         private void sendOk(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_SETTINGS_WRITE);
             transientState.clear();
             transientState.setStatusCode(HTTP_OK);
             transientState.send(context);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,11 +55,17 @@ pub enum ColumnTypeTag {
     IPv4 = 25,
     Varchar = 26,
     Array = 27,
+    Decimal8 = 28,
+    Decimal16 = 29,
+    Decimal32 = 30,
+    Decimal64 = 31,
+    Decimal128 = 32,
+    Decimal256 = 33,
 }
 
 impl ColumnTypeTag {
     #[cfg(test)]
-    const VALUES: [Self; 23] = [
+    const VALUES: [Self; 29] = [
         Self::Boolean,
         Self::Byte,
         Self::Short,
@@ -83,6 +89,12 @@ impl ColumnTypeTag {
         Self::IPv4,
         Self::Varchar,
         Self::Array,
+        Self::Decimal8,
+        Self::Decimal16,
+        Self::Decimal32,
+        Self::Decimal64,
+        Self::Decimal128,
+        Self::Decimal256,
     ];
 
     /// If true, the column is encoded with both data and aux vectors.
@@ -95,25 +107,33 @@ impl ColumnTypeTag {
     /// N.B. Symbol columns are _also_ considered fixed size.
     pub const fn fixed_size(self) -> Option<usize> {
         match self {
-            ColumnTypeTag::Boolean | ColumnTypeTag::GeoByte | ColumnTypeTag::Byte => Some(1),
+            ColumnTypeTag::Boolean
+            | ColumnTypeTag::GeoByte
+            | ColumnTypeTag::Byte
+            | ColumnTypeTag::Decimal8 => Some(1),
 
-            ColumnTypeTag::Short | ColumnTypeTag::GeoShort | ColumnTypeTag::Char => Some(2),
+            ColumnTypeTag::Short
+            | ColumnTypeTag::GeoShort
+            | ColumnTypeTag::Char
+            | ColumnTypeTag::Decimal16 => Some(2),
 
             ColumnTypeTag::Float
             | ColumnTypeTag::Int
             | ColumnTypeTag::IPv4
             | ColumnTypeTag::GeoInt
-            | ColumnTypeTag::Symbol => Some(4),
+            | ColumnTypeTag::Symbol
+            | ColumnTypeTag::Decimal32 => Some(4),
 
             ColumnTypeTag::Double
             | ColumnTypeTag::Long
             | ColumnTypeTag::Date
             | ColumnTypeTag::GeoLong
-            | ColumnTypeTag::Timestamp => Some(8),
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::Decimal64 => Some(8),
 
-            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => Some(16),
+            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid | ColumnTypeTag::Decimal128 => Some(16),
 
-            ColumnTypeTag::Long256 => Some(32),
+            ColumnTypeTag::Long256 | ColumnTypeTag::Decimal256 => Some(32),
 
             _ => None,
         }
@@ -144,6 +164,12 @@ impl ColumnTypeTag {
             ColumnTypeTag::IPv4 => "ipv4",
             ColumnTypeTag::Varchar => "varchar",
             ColumnTypeTag::Array => "array",
+            ColumnTypeTag::Decimal8 => "decimal8",
+            ColumnTypeTag::Decimal16 => "decimal16",
+            ColumnTypeTag::Decimal32 => "decimal32",
+            ColumnTypeTag::Decimal64 => "decimal64",
+            ColumnTypeTag::Decimal128 => "decimal128",
+            ColumnTypeTag::Decimal256 => "decimal256",
         }
     }
 
@@ -151,7 +177,7 @@ impl ColumnTypeTag {
     // of constructing an invalid `ColumnType`, e.g. one without the appropriate
     // extra type info for Geo types.
     #[cfg(test)]
-    pub(crate) fn into_type(self) -> ColumnType {
+    pub(crate) const fn into_type(self) -> ColumnType {
         ColumnType::new(self, 0)
     }
 }
@@ -184,6 +210,12 @@ impl TryFrom<u8> for ColumnTypeTag {
             25 => Ok(ColumnTypeTag::IPv4),
             26 => Ok(ColumnTypeTag::Varchar),
             27 => Ok(ColumnTypeTag::Array),
+            28 => Ok(ColumnTypeTag::Decimal8),
+            29 => Ok(ColumnTypeTag::Decimal16),
+            30 => Ok(ColumnTypeTag::Decimal32),
+            31 => Ok(ColumnTypeTag::Decimal64),
+            32 => Ok(ColumnTypeTag::Decimal128),
+            33 => Ok(ColumnTypeTag::Decimal256),
             _ => Err(fmt_err!(
                 InvalidType,
                 "unknown QuestDB column tag code: {}",
@@ -198,6 +230,12 @@ fn tag_of(col_type: i32) -> u8 {
 }
 
 const TYPE_FLAG_DESIGNATED_TIMESTAMP: i32 = 1i32 << 17;
+
+/// Bit 20 represents the designated timestamp column order.
+/// For historical compatibility:
+/// - 0 = ascending order (default)
+/// - 1 = descending order
+const TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING: i32 = 1i32 << 20;
 const ARRAY_ELEMTYPE_FIELD_MASK: i32 = 0x3F;
 const ARRAY_ELEMTYPE_FIELD_POS: i32 = 8;
 const ARRAY_NDIMS_LIMIT: i32 = 32; // inclusive
@@ -208,12 +246,11 @@ const ARRAY_NDIMS_FIELD_POS: i32 = 14;
 #[derive(Copy, Clone, PartialEq, Serialize, Ord, PartialOrd, Eq)]
 #[serde(transparent)]
 pub struct ColumnType {
-    // Optimization so `Option<ColumnType>` is the same size as `ColumnType`.
     code: NonZeroI32,
 }
 
 impl ColumnType {
-    pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
+    pub const fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
         let shifted_extra_type_info = extra_type_info << 8;
         let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
             .expect("column type code should never be zero");
@@ -229,7 +266,16 @@ impl ColumnType {
             && ((self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0)
     }
 
+    pub fn is_designated_timestamp_ascending(&self) -> bool {
+        self.is_designated()
+            && (self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING) == 0
+    }
+
     pub fn into_designated(self) -> CoreResult<ColumnType> {
+        self.into_designated_with_order(true)
+    }
+
+    pub fn into_designated_with_order(self, ascending: bool) -> CoreResult<ColumnType> {
         if self.tag() != ColumnTypeTag::Timestamp {
             return Err(fmt_err!(
                 InvalidType,
@@ -237,7 +283,11 @@ impl ColumnType {
                 self
             ));
         }
-        let code = NonZeroI32::new(self.code() | TYPE_FLAG_DESIGNATED_TIMESTAMP).unwrap();
+        let mut flags = TYPE_FLAG_DESIGNATED_TIMESTAMP;
+        if !ascending {
+            flags |= TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING;
+        }
+        let code = NonZeroI32::new(self.code() | flags).unwrap();
         Ok(Self { code })
     }
 
@@ -249,7 +299,12 @@ impl ColumnType {
                 self
             ));
         }
-        let code = NonZeroI32::new(self.code() & !TYPE_FLAG_DESIGNATED_TIMESTAMP).unwrap();
+        let code = NonZeroI32::new(
+            self.code()
+                & !(TYPE_FLAG_DESIGNATED_TIMESTAMP
+                    | TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING),
+        )
+        .unwrap();
         Ok(Self { code })
     }
 
@@ -284,6 +339,15 @@ impl ColumnType {
         let tag = (self.code() >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK;
         let tag = ColumnTypeTag::try_from(tag as u8)?;
         Ok(tag)
+    }
+
+    pub fn has_flag(&self, flag: i32) -> bool {
+        let flag_shifted: i32 = flag << 8;
+        self.code.get() & flag_shifted == flag_shifted
+    }
+
+    pub fn is_symbol(&self) -> bool {
+        self.tag() == ColumnTypeTag::Symbol
     }
 }
 
@@ -405,6 +469,12 @@ mod tests {
         assert_eq!(ColumnTypeTag::String.fixed_size(), None);
         assert_eq!(ColumnTypeTag::Varchar.fixed_size(), None);
         assert_eq!(ColumnTypeTag::Array.fixed_size(), None);
+        assert_eq!(ColumnTypeTag::Decimal8.fixed_size(), Some(1));
+        assert_eq!(ColumnTypeTag::Decimal16.fixed_size(), Some(2));
+        assert_eq!(ColumnTypeTag::Decimal32.fixed_size(), Some(4));
+        assert_eq!(ColumnTypeTag::Decimal64.fixed_size(), Some(8));
+        assert_eq!(ColumnTypeTag::Decimal128.fixed_size(), Some(16));
+        assert_eq!(ColumnTypeTag::Decimal256.fixed_size(), Some(32));
     }
 
     #[test]
@@ -446,6 +516,35 @@ mod tests {
         assert!(typ.is_ok());
         let typ = typ.unwrap();
         assert!(!typ.is_designated());
+    }
+
+    #[test]
+    fn test_designated_timestamp_ascending() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Timestamp {
+                assert!(!ColumnType::new(tag, 0).is_designated_timestamp_ascending());
+            }
+        }
+        let typ = ColumnType::new(ColumnTypeTag::Timestamp, 0);
+        assert!(!typ.is_designated_timestamp_ascending());
+
+        let typ_asc = ColumnType::new(ColumnTypeTag::Timestamp, 0)
+            .into_designated()
+            .unwrap();
+        assert!(typ_asc.is_designated());
+        assert!(typ_asc.is_designated_timestamp_ascending());
+
+        let typ_desc = ColumnType::new(ColumnTypeTag::Timestamp, 0)
+            .into_designated_with_order(false)
+            .unwrap();
+        assert!(typ_desc.is_designated());
+        assert!(!typ_desc.is_designated_timestamp_ascending());
+
+        let typ_non_designated = typ_asc.into_non_designated().unwrap();
+        assert!(!typ_non_designated.is_designated_timestamp_ascending());
+
+        let typ_non_designated = typ_desc.into_non_designated().unwrap();
+        assert!(!typ_non_designated.is_designated_timestamp_ascending());
     }
 
     #[test]

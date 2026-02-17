@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,6 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxnScoreboard;
-import io.questdb.cairo.TxnScoreboardV1;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlExecutionContext;
@@ -1134,20 +1133,12 @@ public class ImportIODispatcherTest extends AbstractTest {
                     // Check that txn_scoreboard is fully unlocked, e.g., no reader scoreboard leaks after the failure
                     TableToken tableToken = engine.verifyTableName("xyz");
                     try (TxnScoreboard txnScoreboard = engine.getTxnScoreboard(tableToken)) {
-                        long min = getMin(txnScoreboard);
+                        long min = ((TxnScoreboardV2) txnScoreboard).getMin();
                         Assert.assertTrue(2 == min || min == -1);
                         Assert.assertTrue(txnScoreboard.acquireTxn(10, 3));
                         Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
                     }
                 });
-    }
-
-    private static long getMin(TxnScoreboard scoreboard) {
-        if (scoreboard instanceof TxnScoreboardV2) {
-            return ((TxnScoreboardV2) scoreboard).getMin();
-        } else {
-            return ((TxnScoreboardV1) scoreboard).getMin();
-        }
     }
 
     private static int stringLen(int number) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -85,40 +85,12 @@ public class LongHashSet extends AbstractLongHashSet implements Sinkable {
         return keyIndex(key) < 0;
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        LongHashSet that = (LongHashSet) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (int i = 0, n = list.size(); i < n; i++) {
-            long key = list.getQuick(i);
-            if (key != noEntryKeyValue && that.excludes(key)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     public long get(int index) {
         return list.getQuick(index);
     }
 
     public long getLast() {
         return list.getLast();
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKeyValue) {
-                hashCode += (int) keys[i];
-            }
-        }
-        return hashCode;
     }
 
     public void removeAt(int index) {

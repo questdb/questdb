@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,10 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -55,6 +59,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Returns true when the context doesn't require all SQL functions to be deterministic.
     // Deterministic-only functions are enforced e.g. when compiling a mat view.
     boolean allowNonDeterministicFunctions();
+
+    void changePageFrameSizes(int minRows, int maxRows);
 
     void clearWindowContext();
 
@@ -106,6 +112,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean getCloneSymbolTables();
 
+    Decimal128 getDecimal128();
+
+    Decimal256 getDecimal256();
+
+    Decimal64 getDecimal64();
+
     int getIntervalFunctionType();
 
     int getJitMode();
@@ -135,6 +147,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     long getNow(int timestampType);
 
     int getNowTimestampType();
+
+    int getPageFrameMaxRows();
+
+    int getPageFrameMinRows();
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
@@ -183,14 +199,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     WindowContext getWindowContext();
 
+    int hasInterval();
+
     void initNow();
 
     boolean isCacheHit();
-
-    boolean isColumnPreTouchEnabled();
-
-    // Used to disable column pre-touch without affecting the explain plan
-    boolean isColumnPreTouchEnabledOverride();
 
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
@@ -205,11 +218,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelTopKEnabled();
 
+    boolean isParallelWindowJoinEnabled();
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
         return false;
     }
+
+    boolean isValidationOnly();
 
     boolean isWalApplication();
 
@@ -219,11 +236,23 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
     }
 
+    RuntimeIntrinsicIntervalModel peekIntervalModel();
+
+    void popHasInterval();
+
+    void popIntervalModel();
+
     void popTimestampRequiredFlag();
+
+    void pushHasInterval(int hasInterval);
+
+    void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel);
 
     void pushTimestampRequiredFlag(boolean flag);
 
-    void resetFlags();
+    void reset();
+
+    void restoreToDefaultPageFrameSizes();
 
     void setAllowNonDeterministicFunction(boolean value);
 
@@ -232,11 +261,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCancelledFlag(AtomicBoolean cancelled);
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
-
-    void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
-
-    // Used to disable column pre-touch without affecting the explain plan
-    void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
 
     void setIntervalFunctionType(int intervalType);
 
@@ -251,6 +275,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
+    void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
 
     void setRandom(Rnd rnd);
 

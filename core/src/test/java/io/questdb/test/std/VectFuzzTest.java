@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,7 +63,6 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public class VectFuzzTest {
-
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     private Rnd rnd = new Rnd();
@@ -83,14 +82,14 @@ public class VectFuzzTest {
                     this.sizeBytes = sizeBytes;
                 }
 
-                abstract void run(long ptr, long count);
+                abstract void run(long ptr, long count, long countPtr);
             }
 
             final int nMax = 1024;
             final TestCase[] testCases = new TestCase[]{
                     new TestCase(Short.BYTES) {
                         @Override
-                        void run(long ptr, long count) {
+                        void run(long ptr, long count, long countPtr) {
                             if (count == 0) {
                                 Assert.assertEquals("short sum, count: 0", Numbers.LONG_NULL, Vect.sumShort(ptr, 0));
                                 Assert.assertEquals("short min, count: 0", Numbers.INT_NULL, Vect.minShort(ptr, 0));
@@ -104,14 +103,16 @@ public class VectFuzzTest {
                     },
                     new TestCase(Integer.BYTES) {
                         @Override
-                        void run(long ptr, long count) {
+                        void run(long ptr, long count, long countPtr) {
                             if (count == 0) {
                                 Assert.assertEquals("int sum, count: 0", Numbers.LONG_NULL, Vect.sumInt(ptr, 0));
+                                Assert.assertEquals("int sum acc, count: 0", Double.NaN, Vect.sumIntAcc(ptr, 0, countPtr), 0.001);
                                 Assert.assertEquals("int min, count: 0", Numbers.INT_NULL, Vect.minInt(ptr, 0));
                                 Assert.assertEquals("int max, count: 0", Numbers.INT_NULL, Vect.maxInt(ptr, 0));
                                 Assert.assertEquals("int count, count: 0", 0, Vect.countInt(ptr, 0));
                             } else {
                                 Assert.assertEquals("int sum, count: " + count, 0, Vect.sumInt(ptr, count));
+                                Assert.assertEquals("int sum acc, count: " + count, 0, Vect.sumIntAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("int min, count: " + count, 0, Vect.minInt(ptr, count));
                                 Assert.assertEquals("int max, count: " + count, 0, Vect.maxInt(ptr, count));
                                 Assert.assertEquals("int count, count: " + count, count, Vect.countInt(ptr, count));
@@ -120,14 +121,16 @@ public class VectFuzzTest {
                     },
                     new TestCase(Long.BYTES) {
                         @Override
-                        void run(long ptr, long count) {
+                        void run(long ptr, long count, long countPtr) {
                             if (count == 0) {
                                 Assert.assertEquals("long sum, count: 0", Numbers.LONG_NULL, Vect.sumLong(ptr, 0));
+                                Assert.assertEquals("long sum acc, count: 0", Double.NaN, Vect.sumLongAcc(ptr, 0, countPtr), 0.001);
                                 Assert.assertEquals("long min, count: 0", Numbers.LONG_NULL, Vect.minLong(ptr, 0));
                                 Assert.assertEquals("long max, count: 0", Numbers.LONG_NULL, Vect.maxLong(ptr, 0));
                                 Assert.assertEquals("long count, count: 0", 0, Vect.countLong(ptr, 0));
                             } else {
                                 Assert.assertEquals("long sum, count: " + count, 0, Vect.sumLong(ptr, count));
+                                Assert.assertEquals("long sum acc, count: " + count, 0, Vect.sumLongAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("long min, count: " + count, 0, Vect.minLong(ptr, count));
                                 Assert.assertEquals("long max, count: " + count, 0, Vect.maxLong(ptr, count));
                                 Assert.assertEquals("long count, count: " + count, count, Vect.countLong(ptr, count));
@@ -136,9 +139,10 @@ public class VectFuzzTest {
                     },
                     new TestCase(Double.BYTES) {
                         @Override
-                        void run(long ptr, long count) {
+                        void run(long ptr, long count, long countPtr) {
                             if (count == 0) {
                                 Assert.assertTrue("double sum, count: 0", Double.isNaN(Vect.sumDouble(ptr, 0)));
+                                Assert.assertTrue("double sum acc, count: 0", Double.isNaN(Vect.sumDoubleAcc(ptr, 0, countPtr)));
                                 Assert.assertTrue("double Kahan sum, count: 0", Double.isNaN(Vect.sumDoubleKahan(ptr, 0)));
                                 Assert.assertTrue("double Neumaier sum, count: 0", Double.isNaN(Vect.sumDoubleNeumaier(ptr, 0)));
                                 Assert.assertTrue("double min, count: 0", Double.isNaN(Vect.minDouble(ptr, 0)));
@@ -146,6 +150,7 @@ public class VectFuzzTest {
                                 Assert.assertEquals("double count, count: 0", 0, Vect.countDouble(ptr, 0));
                             } else {
                                 Assert.assertEquals("double sum, count: " + count, 0.0, Vect.sumDouble(ptr, count), 0.001);
+                                Assert.assertEquals("double sum acc, count: " + count, 0.0, Vect.sumDoubleAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("double Kahan sum, count: " + count, 0.0, Vect.sumDoubleKahan(ptr, count), 0.001);
                                 Assert.assertEquals("double Neumaier sum, count: " + count, 0.0, Vect.sumDoubleNeumaier(ptr, count), 0.001);
                                 Assert.assertEquals("double min, count: " + count, 0.0, Vect.minDouble(ptr, count), 0.001);
@@ -160,11 +165,13 @@ public class VectFuzzTest {
                 for (int i = 0; i < nMax; i++) {
                     final long size = i * testCase.sizeBytes;
                     final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                    final long countPtr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                     Vect.memset(ptr, size, 0);
                     try {
-                        testCase.run(ptr, i);
+                        testCase.run(ptr, i, countPtr);
                     } finally {
                         Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(countPtr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                     }
                 }
             }
@@ -174,7 +181,6 @@ public class VectFuzzTest {
     @Test
     public void testBinarySearchIndexT() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             int count = 1000;
             final int size = count * 2 * Long.BYTES;
             final long addr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
@@ -301,7 +307,6 @@ public class VectFuzzTest {
 
                 try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
                     try (DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)) {
-
                         colBuffs.setDedupColumnCount(keyCount);
                         long dedupColBuffPtr = colBuffs.allocateBlock();
                         for (int k = 0; k < keyCount; k++) {
@@ -529,7 +534,6 @@ public class VectFuzzTest {
     @Test
     public void testMergeDedupIndexEmptySrc() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             int srcLen = 10000;
             Rnd rnd = TestUtils.generateRandom(null);
             try (DirectLongList src = new DirectLongList(srcLen, MemoryTag.NATIVE_DEFAULT)) {
@@ -993,7 +997,6 @@ public class VectFuzzTest {
     @Test
     public void testOooMergeCopyVarcharColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             // todo: shuffle vectors
             int rowCount = 10_000;
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;

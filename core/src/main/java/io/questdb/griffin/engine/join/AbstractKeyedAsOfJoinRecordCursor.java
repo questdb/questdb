@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,11 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Rows;
 
 /**
@@ -38,8 +37,6 @@ import io.questdb.std.Rows;
  * shared between different keyed ASOF JOIN implementations.
  */
 public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoinFastRecordCursor {
-    protected final SingleRecordSink masterSinkTarget;
-    protected final SingleRecordSink slaveSinkTarget;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean origHasSlave;
     protected int origSlaveFrameIndex = -1;
@@ -50,32 +47,16 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
             Record nullRecord,
             int masterTimestampIndex,
             int masterTimestampType,
-            SingleRecordSink masterSinkTarget,
             int slaveTimestampIndex,
             int slaveTimestampType,
-            SingleRecordSink slaveSinkTarget,
             int lookahead
     ) {
         super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
-        this.masterSinkTarget = masterSinkTarget;
-        this.slaveSinkTarget = slaveSinkTarget;
     }
 
     @Override
-    public void close() {
-        super.close();
-        masterSinkTarget.close();
-        slaveSinkTarget.close();
-    }
-
-    @Override
-    public final boolean hasNext() {
-        // Common master cursor iteration logic
-        if (isMasterHasNextPending) {
-            masterHasNext = masterCursor.hasNext();
-            isMasterHasNextPending = false;
-        }
-        if (!masterHasNext) {
+    public boolean hasNext() {
+        if (!masterCursor.hasNext()) {
             return false;
         }
 
@@ -91,10 +72,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         if (masterTimestamp >= lookaheadTimestamp) {
             nextSlave(masterTimestamp);
         }
-        // Set `isMasterHasNextPending` only now because `nextSlave()` may throw DataUnavailableException,
-        // and in such a case we don't want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
-        // If we are here, it's clear that nextSlave() did not throw DataUnavailableException.
-        isMasterHasNextPending = true;
 
         boolean hasSlave = record.hasSlave();
         origHasSlave = hasSlave;
@@ -123,10 +100,8 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         return true;
     }
 
-    public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+    public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
         super.of(masterCursor, slaveCursor);
-        masterSinkTarget.reopen();
-        slaveSinkTarget.reopen();
         this.circuitBreaker = circuitBreaker;
     }
 

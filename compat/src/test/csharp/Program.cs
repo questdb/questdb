@@ -55,6 +55,8 @@ public class TestRunner
                 await RunTest(test, globalVariables);
             }
         }
+        
+        await ExtraTests.RunAll();
     }
 
     private TestData LoadYaml(string filePath)
@@ -253,11 +255,13 @@ public class TestRunner
         "date" => NpgsqlDbType.Date,
         "char" => NpgsqlDbType.Char,
         "array_float8" => NpgsqlDbType.Double | NpgsqlDbType.Array,
+        "array_varchar" => NpgsqlDbType.Varchar | NpgsqlDbType.Array,
+        "numeric" => NpgsqlDbType.Numeric,
         _ => throw new ArgumentException($"Unsupported type: {type}")
     };
 
     private object ConvertParameterValue(object value, string type)
-    {   
+    {
         return type.ToLower() switch
         {
             "int4" or "int8" => Convert.ToInt64(value, CultureInfo.InvariantCulture),
@@ -267,11 +271,13 @@ public class TestRunner
             "date" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             "char" => Convert.ToChar(value),
             "timestamp" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
-            "array_float8" =>  ParseFloatArray(value.ToString()),
+            "array_float8" => ParseFloatArray(value.ToString()),
+            "array_varchar" => ParseVarcharArray(value.ToString()),
+            "numeric" => Convert.ToDecimal(value, CultureInfo.InvariantCulture),
             _ => value
         };
     }
-    
+
     private double?[] ParseFloatArray(string? arrayString)
     {
         if (string.IsNullOrEmpty(arrayString))
@@ -286,7 +292,8 @@ public class TestRunner
 
         // Split the string by commas and convert each element to nullable double
         return trimmed.Split(',')
-            .Select(s => {
+            .Select(s =>
+            {
                 string value = s.Trim();
                 if (string.Equals(value, "NULL", StringComparison.OrdinalIgnoreCase))
                     return (double?)null;  // Explicit cast to double?
@@ -294,6 +301,58 @@ public class TestRunner
                     return Convert.ToDouble(value, CultureInfo.InvariantCulture);
             })
             .ToArray();
+    }
+
+    private string?[] ParseVarcharArray(string? arrayString)
+    {
+        if (string.IsNullOrEmpty(arrayString))
+            return Array.Empty<string?>();
+
+        string trimmed = arrayString.Trim().TrimStart('{').TrimEnd('}');
+
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return Array.Empty<string?>();
+
+        var result = new List<string?>();
+        int i = 0;
+
+        while (i < trimmed.Length)
+        {
+            while (i < trimmed.Length && (trimmed[i] == ' ' || trimmed[i] == ','))
+                i++;
+
+            if (i >= trimmed.Length)
+                break;
+
+            if (trimmed[i] == '"')
+            {
+                i++;
+                var sb = new StringBuilder();
+                while (i < trimmed.Length && trimmed[i] != '"')
+                {
+                    sb.Append(trimmed[i]);
+                    i++;
+                }
+                i++;
+                result.Add(sb.ToString());
+            }
+            else
+            {
+                var sb = new StringBuilder();
+                while (i < trimmed.Length && trimmed[i] != ',')
+                {
+                    sb.Append(trimmed[i]);
+                    i++;
+                }
+                string value = sb.ToString().Trim();
+                if (string.Equals(value, "NULL", StringComparison.OrdinalIgnoreCase))
+                    result.Add(null);
+                else if (!string.IsNullOrEmpty(value))
+                    result.Add(value);
+            }
+        }
+
+        return result.ToArray();
     }
 
     private void AssertResult(ExpectDefinition expect, object actual)
@@ -352,7 +411,9 @@ public class TestRunner
                     double d => d.ToString("0.0########", CultureInfo.InvariantCulture),
                     int i => i.ToString(CultureInfo.InvariantCulture),
                     short s => s.ToString(CultureInfo.InvariantCulture),
-                    decimal dec => dec.ToString(CultureInfo.InvariantCulture),
+                    // Ugly hack to normalize the decimal before printing, so that 1.0 becomes 1.
+                    // Source: https://stackoverflow.com/questions/4525854/remove-trailing-zeros-from-system-decimal
+                    decimal dec => (dec / 1.000000000000000000000000000000000m).ToString(CultureInfo.InvariantCulture),
                     double[] doubleArray => ArrayToText(doubleArray),
                     double[,] array => ArrayToText(array),
                     _ => value.ToString() ?? ""
@@ -360,8 +421,8 @@ public class TestRunner
                 .ToList())
             .ToList();
     }
-   
-   
+
+
     // Process any array object into PostgreSQL text format
     private static string ArrayToText(object arrayValue)
     {
@@ -375,29 +436,29 @@ public class TestRunner
         ProcessDimension(arr, 0, new int[arr.Rank], sb);
         return sb.ToString();
     }
-    
+
     // Recursive method to process array dimensions - closely matches your Java implementation
     private static void ProcessDimension(Array array, int dim, int[] indices, StringBuilder sb)
     {
         int count = array.GetLength(dim);
         bool atDeepestDim = (dim == array.Rank - 1);
-        
+
         // Opening brace
         sb.Append('{');
-        
+
         for (int i = 0; i < count; i++)
         {
             // Add comma between elements
             if (i > 0)
                 sb.Append(',');
-                
+
             indices[dim] = i;
-            
+
             if (atDeepestDim)
             {
                 // At leaf level, append the actual value
                 object? value = array.GetValue(indices);
-                
+
                 if (value == null || value is DBNull)
                 {
                     sb.Append("NULL");
@@ -421,7 +482,7 @@ public class TestRunner
                 ProcessDimension(array, dim + 1, indices, sb);
             }
         }
-        
+
         // Closing brace
         sb.Append('}');
     }

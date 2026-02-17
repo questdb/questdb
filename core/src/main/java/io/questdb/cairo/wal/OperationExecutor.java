@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,6 +44,7 @@ class OperationExecutor implements Closeable {
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
     private final WalApplySqlExecutionContext executionContext;
+    private final int maxRecompilationAttempts;
     private final Rnd rnd;
 
     OperationExecutor(
@@ -64,6 +65,7 @@ class OperationExecutor implements Closeable {
                 null
         );
         this.engine = engine;
+        this.maxRecompilationAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
     }
 
     @Override
@@ -97,7 +99,7 @@ class OperationExecutor implements Closeable {
                         // of alter compilation but then renamed back.
                         // This is highly unlikely to stall in real life
                         // but keeping the DB in live lock is not a good idea, hence there is a limit
-                        if (stallCount++ > 10) {
+                        if (stallCount++ > maxRecompilationAttempts) {
                             throw ex;
                         }
                     }

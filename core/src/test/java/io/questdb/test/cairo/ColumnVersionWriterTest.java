@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -91,6 +91,42 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(partitionTimestamp, w.getColumnTopPartitionTimestamp(columnIndex));
                 Assert.assertEquals(123, w.getColumnNameTxn(partitionTimestamp, columnIndex));
                 Assert.assertEquals(0, w.getColumnTopQuick(partitionTimestamp, columnIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testClearResetsAllFields() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w = createColumnVersionWriter(path);
+                    ColumnVersionReader r = createColumnVersionReader(path)
+            ) {
+                // Write some data
+                w.upsert(0, 0, 1, 100);
+                w.upsert(0, 1, 2, 200);
+                w.upsertDefaultTxnName(0, 1, 0);
+                w.upsertDefaultTxnName(1, 2, 0);
+                w.commit();
+
+                // Read and verify data is populated
+                r.readUnsafe();
+                Assert.assertTrue("cachedColumnVersionList should not be empty", r.getCachedColumnVersionList().size() > 0);
+                Assert.assertEquals(100, r.getColumnTopQuick(0, 0));
+                Assert.assertEquals(200, r.getColumnTopQuick(0, 1));
+                Assert.assertEquals(1, r.getDefaultColumnNameTxn(0));
+                Assert.assertEquals(2, r.getDefaultColumnNameTxn(1));
+
+                // Now clear
+                r.clear();
+
+                // Verify all fields are reset
+                Assert.assertEquals("cachedColumnVersionList should be empty after clear", 0, r.getCachedColumnVersionList().size());
+                Assert.assertEquals("version should be -1 after clear", -1, r.getVersion());
+                // Lookups on cleared reader should return defaults
+                Assert.assertEquals(0, r.getColumnTopQuick(0, 0));
+                Assert.assertEquals(-1, r.getDefaultColumnNameTxn(0));
             }
         });
     }

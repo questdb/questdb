@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -227,6 +229,40 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     @Override
     public char getChar(int columnIndex) {
         return Unsafe.getUnsafe().getChar(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        long addr = addressOfColumn(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
+    }
+
+    @Override
+    public short getDecimal16(int columnIndex) {
+        return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        sink.ofRawAddress(addressOfColumn(col));
+    }
+
+    @Override
+    public int getDecimal32(int columnIndex) {
+        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public long getDecimal64(int columnIndex) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public byte getDecimal8(int columnIndex) {
+        return Unsafe.getUnsafe().getByte(addressOfColumn(columnIndex));
     }
 
     @Override

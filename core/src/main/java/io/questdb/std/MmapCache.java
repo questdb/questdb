@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,17 +25,58 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
 
 /**
  * Thread-safe cache for memory-mapped file regions with reference counting.
  * Reuses existing mappings for the same file when possible to reduce system calls.
  */
-public class MmapCache {
+public final class MmapCache {
+    public static final MmapCache INSTANCE = new MmapCache();
+
+    private static final Log LOG = LogFactory.getLog(MmapCache.class);
     private static final int MAX_RECORD_POOL_CAPACITY = 16 * 1024;
+    private static final int MUNMAP_QUEUE_CAPACITY = 8 * 1024;
     private final LongObjHashMap<MmapCacheRecord> mmapAddrCache = new LongObjHashMap<>();
     private final LongObjHashMap<MmapCacheRecord> mmapFileCache = new LongObjHashMap<>();
+    private final MCSequence munmapConsumerSequence;
+    private final MPSequence munmapProducesSequence;
+    private final RingQueue<MunmapTask> munmapTaskRingQueue;
     private final ObjStack<MmapCacheRecord> recordPool = new ObjStack<>();
     private long mmapReuseCount = 0;
+
+    private MmapCache() {
+        munmapTaskRingQueue = new RingQueue<>(MunmapTask::new, MUNMAP_QUEUE_CAPACITY);
+        munmapProducesSequence = new MPSequence(munmapTaskRingQueue.getCycle());
+        munmapConsumerSequence = new MCSequence(munmapTaskRingQueue.getCycle());
+        munmapProducesSequence.then(munmapConsumerSequence).then(munmapProducesSequence);
+    }
+
+    /**
+     * Process accumulated unmap requests.
+     * This method is not thread safe! It's meant to be called from a synchronized job - one per Server.
+     *
+     * @return true if at least one mapping was unmapped, false otherwise.
+     */
+    public boolean asyncMunmap() {
+        boolean useful = false;
+        long cursor;
+        do {
+            cursor = munmapConsumerSequence.next();
+            if (cursor > -1) {
+                useful = true;
+                munmapTaskConsumer(munmapTaskRingQueue.get(cursor));
+                munmapConsumerSequence.done(cursor);
+            } else if (cursor == -2) {
+                Os.pause();
+            }
+        } while (cursor != -1);
+        return useful;
+    }
 
     /**
      * Maps file region into memory, reusing existing mapping if available.
@@ -60,33 +101,10 @@ public class MmapCache {
             return mmap0(fd, len, offset, flags, memoryTag);
         }
 
-        synchronized (this) {
-
-            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
-            if (fdMapIndex < 0) {
-                MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
-                if (record.length >= len) {
-                    assert record.count > 0 : "found a record with zero reference count in mmap cache [fd=" + fd + "]";
-                    record.count++;
-                    mmapReuseCount++;
-                    return record.address;
-                }
-            }
-
-            // Cache RO maps only.
-            long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
-
-            if (address == FilesFacade.MAP_FAILED) {
-                return address;
-            }
-            // Cache the mmap record
-            MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
-            mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
-
-            // Point the returned address to the correct offset
-            mmapAddrCache.put(address, record);
-
-            return address;
+        if (Files.ASYNC_MUNMAP_ENABLED) {
+            return cacheMmapOptimistic(fd, mmapCacheKey, len, memoryTag);
+        } else {
+            return cacheMmapPessimistic(fd, mmapCacheKey, len, memoryTag);
         }
     }
 
@@ -102,7 +120,7 @@ public class MmapCache {
      */
     public synchronized boolean isSingleUse(long address) {
         var cacheRecord = mmapAddrCache.get(address);
-        return cacheRecord != null && cacheRecord.count == 1;
+        return cacheRecord == null || cacheRecord.count <= 1;
     }
 
     /**
@@ -302,16 +320,124 @@ public class MmapCache {
         return address;
     }
 
-    private static void unmap0(long address, long len, int memoryTag) {
-        int result = Files.munmap0(address, len);
+    private static void munmapTaskConsumer(MunmapTask task) {
+        int result = Files.munmap0(task.address, task.size);
         if (result != -1) {
-            Unsafe.recordMemAlloc(-len, memoryTag);
+            Unsafe.recordMemAlloc(-task.size, task.memoryTag);
         } else {
-            throw CairoException.critical(Os.errno())
-                    .put("munmap failed [address=").put(address)
-                    .put(", len=").put(len)
-                    .put(", memoryTag=").put(memoryTag).put(']');
+            int errno = Os.errno();
+            LOG.critical().$("munmap failed [address=").$(task.address)
+                    .$(", size=").$(task.size)
+                    .$(", tag=").$(MemoryTag.nameOf(task.memoryTag))
+                    .$(", errno=").$(errno)
+                    .I$();
         }
+    }
+
+    private long cacheMmapOptimistic(int fd, long mmapCacheKey, long len, int memoryTag) {
+        // Fast path: check cache under lock
+        synchronized (this) {
+            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
+            if (fdMapIndex < 0) {
+                MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
+                if (record.length >= len) {
+                    assert record.count > 0 : "found a record with zero reference count in mmap cache [fd=" + fd + "]";
+                    record.count++;
+                    mmapReuseCount++;
+                    return record.address;
+                }
+            }
+        }
+        // Cache miss, need to create new mapping. Perform actual mmap outside the lock.
+        long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
+        if (address == FilesFacade.MAP_FAILED) {
+            return address;
+        }
+
+        // We'll need these if we make a redundant mapping and need to unmap it:
+        long redundantAddress;
+        long redundantLen;
+        int redundantTag;
+        long returnAddress;
+
+        // Re-acquire lock and update cache
+        synchronized (this) {
+            // Re-check: someone else might have added a mapping while we were mapping
+            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
+            if (fdMapIndex >= 0) {
+                // We're alone -- use our mapping and return right away
+                MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
+                mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
+                mmapAddrCache.put(address, record);
+                return address;
+            }
+
+            // Race condition -- both we and another thread created a mapping. Decide which one
+            // to keep. We can't keep the existing one if it's too small.
+            MmapCacheRecord existingRecord = mmapFileCache.valueAt(fdMapIndex);
+            if (existingRecord.length < len) {
+                // Existing mapping is too small - replace it with ours.
+                // There are two caches: file cache and address cache. We'll put the entry
+                // with our larger mapping into the file cache, so it gets used from now on.
+                // However, some threads may already have grabbed the smaller mapping, and
+                // are using it. Once all its users are done with it and unmap it, that will
+                // remove it from the address cache. Therefore, we add our address to the
+                // address cache, and leave the other one there as well.
+                MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
+                mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
+                mmapAddrCache.put(address, record);
+                return address;
+            }
+
+            // Existing mapping is fine - use it, discard ours
+            existingRecord.count++;
+            mmapReuseCount++;
+            redundantAddress = address;
+            redundantLen = len;
+            redundantTag = memoryTag;
+            returnAddress = existingRecord.address;
+        }
+
+        // We lost the race, clean up redundant mapping outside the lock
+        try {
+            // This submits an async unmap operation, and only in an extreme (unmap queue full) case
+            // will do it sync with the potential to throw CairoException
+            unmap0(redundantAddress, redundantLen, redundantTag);
+        } catch (CairoException e) {
+            LOG.critical().$("failed to unmap redundant mapping after losing race [message=").$(e.getMessage()).I$();
+        }
+        return returnAddress;
+    }
+
+    private long cacheMmapPessimistic(int fd, long mmapCacheKey, long len, int memoryTag) {
+        synchronized (this) {
+            int fdMapIndex = mmapFileCache.keyIndex(mmapCacheKey);
+            if (fdMapIndex < 0) {
+                MmapCacheRecord record = mmapFileCache.valueAt(fdMapIndex);
+                if (record.length >= len) {
+                    assert record.count > 0 : "found a record with zero reference count in mmap cache [fd=" + fd + "]";
+                    record.count++;
+                    mmapReuseCount++;
+                    return record.address;
+                }
+            }
+
+            // Cache RO maps only.
+            long address = mmap0(fd, len, 0, Files.MAP_RO, memoryTag);
+
+            if (address == FilesFacade.MAP_FAILED) {
+                return address;
+            }
+            // Cache the mmap record
+            MmapCacheRecord record = createMmapCacheRecord(fd, mmapCacheKey, len, address, memoryTag);
+            mmapFileCache.putAt(fdMapIndex, mmapCacheKey, record);
+
+            // Point the returned address to the correct offset
+            mmapAddrCache.put(address, record);
+
+            return address;
+        }
+
     }
 
     private MmapCacheRecord createMmapCacheRecord(int fd, long fileCacheKey, long len, long address, int memoryTag) {
@@ -321,6 +447,37 @@ public class MmapCache {
             return rec;
         }
         return new MmapCacheRecord(fd, fileCacheKey, len, address, 1, memoryTag);
+    }
+
+    private void unmap0(long address, long len, int memoryTag) {
+        if (Files.ASYNC_MUNMAP_ENABLED) {
+            // sequence returning -2 -> we lost a CAS race. we do a cheap retry
+            // sequence returning -1 -> the queue is full. then it's cheaper to do the munmap ourserlves
+            long seq;
+            while ((seq = munmapProducesSequence.next()) == -2) {
+                Os.pause();
+            }
+
+            if (seq > -1) {
+                MunmapTask task = munmapTaskRingQueue.get(seq);
+                task.address = address;
+                task.size = len;
+                task.memoryTag = memoryTag;
+                munmapProducesSequence.done(seq);
+                return;
+            } else {
+                LOG.info().$("async munmap queue is full").$();
+            }
+        }
+        int result = Files.munmap0(address, len);
+        if (result != -1) {
+            Unsafe.recordMemAlloc(-len, memoryTag);
+        } else {
+            throw CairoException.critical(Os.errno())
+                    .put("munmap failed [address=").put(address)
+                    .put(", len=").put(len)
+                    .put(", memoryTag=").put(memoryTag).put(']');
+        }
     }
 
     /**
@@ -351,5 +508,11 @@ public class MmapCache {
             this.count = count;
             this.memoryTag = memoryTag;
         }
+    }
+
+    private static class MunmapTask {
+        private long address;
+        private int memoryTag;
+        private long size;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
+
 /**
  * Specialized flyweight utf8 sink used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
  * <p>
@@ -47,6 +49,7 @@ import org.jetbrains.annotations.Nullable;
 public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     private static final long HEADER_SIZE = 2 * Integer.BYTES + Byte.BYTES;
     private static final long IS_ASCII_OFFSET = 2 * Integer.BYTES;
+    // Must be at least 8 bytes, so that zeroPaddedSixPrefix can safely read long.
     private static final int MIN_CAPACITY = 8;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private GroupByAllocator allocator;
@@ -64,7 +67,6 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
 
     @Override
     public byte byteAt(int index) {
-        assert ptr != 0;
         return Unsafe.getUnsafe().getByte(ptr + HEADER_SIZE + index);
     }
 
@@ -76,12 +78,24 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         if (ptr != 0) {
             Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
             Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
+            // zero first 8 bytes for zeroPaddedSixPrefix
+            Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, 0);
         }
+    }
+
+    @Override
+    public int intAt(int offset) {
+        return Unsafe.getUnsafe().getInt(ptr + HEADER_SIZE + offset);
     }
 
     @Override
     public boolean isAscii() {
         return ptr == 0 || Unsafe.getUnsafe().getBoolean(null, ptr + IS_ASCII_OFFSET);
+    }
+
+    @Override
+    public long longAt(int offset) {
+        return Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE + offset);
     }
 
     public GroupByUtf8Sink of(long ptr) {
@@ -90,7 +104,6 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     }
 
     public long ptr() {
-        assert ptr != 0;
         return ptr;
     }
 
@@ -134,10 +147,15 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
 
     @Override
     public void writeTo(long addr, int lo, int hi) {
-        if (ptr == 0) {
-            return;
+        if (ptr != 0) {
+            Utf8Sequence.super.writeTo(addr, lo, hi);
         }
-        Utf8Sequence.super.writeTo(addr, lo, hi);
+    }
+
+    @Override
+    public long zeroPaddedSixPrefix() {
+        // MIN_CAPACITY is 8, so it's safe to read 8 bytes even for short varchars.
+        return ptr != 0 ? Unsafe.getUnsafe().getLong(ptr + HEADER_SIZE) & VARCHAR_INLINED_PREFIX_MASK : 0;
     }
 
     private void checkCapacity(int bytes) {
@@ -157,6 +175,8 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
             Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
             Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
+            // zero first 8 bytes for zeroPaddedSixPrefix
+            Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, 0);
         } else {
             ptr = allocator.realloc(ptr, capacity + HEADER_SIZE, newSize);
             Unsafe.getUnsafe().putInt(ptr, newCapacity);

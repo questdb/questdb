@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * This class represents a flat array of numbers with a hierarchical addressing
@@ -461,6 +462,20 @@ public abstract class ArrayView implements QuietCloseable {
         return intBytes + // type
                 getDimCount() * intBytes // shape
                 + getCardinality() * elemSize; // data
+    }
+
+    /**
+     * Returns the varchar element at the specified flat index.
+     * <p>
+     * <b>Important:</b> The returned {@link Utf8Sequence} is a flyweight object that may be
+     * reused internally. Callers must NOT cache the returned reference as it may be invalidated
+     * or point to different data on subsequent calls.
+     *
+     * @param flatIndex the flat (linear) index into the array
+     * @return the varchar at the specified index, or {@code null} if the element is NULL
+     */
+    public final Utf8Sequence getVarchar(int flatIndex) {
+        return flatView.getVarcharAt(flatViewOffset + flatIndex);
     }
 
     /**

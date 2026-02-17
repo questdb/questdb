@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
@@ -197,9 +198,11 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T12:30:00.000Z"));
         intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T14:35:00.000Z"));
 
-        final String expected = replaceTimestampSuffix1("1980-01-02T18:00:00.000000Z\n" +
-                "1980-01-02T20:00:00.000000Z\n" +
-                "1983-01-05T14:00:00.000000Z\n", timestampType.getTypeName());
+        final String expected = replaceTimestampSuffix1("""
+                1980-01-02T18:00:00.000000Z
+                1980-01-02T20:00:00.000000Z
+                1983-01-05T14:00:00.000000Z
+                """, timestampType.getTypeName());
 
         testIntervals(PartitionBy.NONE, increment, N, expected, 3);
     }
@@ -290,9 +293,11 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T12:30:00.000Z"));
         intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T14:35:00.000Z"));
 
-        final String expected = replaceTimestampSuffix1("1980-01-02T18:00:00.000000Z\n" +
-                "1980-01-02T20:00:00.000000Z\n" +
-                "1983-01-05T14:00:00.000000Z\n", timestampType.getTypeName());
+        final String expected = replaceTimestampSuffix1("""
+                1980-01-02T18:00:00.000000Z
+                1980-01-02T20:00:00.000000Z
+                1983-01-05T14:00:00.000000Z
+                """, timestampType.getTypeName());
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 3);
     }
@@ -320,14 +325,16 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-03T23:59:59.000Z"));
         intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-04T15:00:00.002Z"));
 
-        final String expected = replaceTimestampSuffix1("1983-01-04T00:00:00.000000Z\n" +
-                "1983-01-04T02:00:00.000000Z\n" +
-                "1983-01-04T04:00:00.000000Z\n" +
-                "1983-01-04T06:00:00.000000Z\n" +
-                "1983-01-04T08:00:00.000000Z\n" +
-                "1983-01-04T10:00:00.000000Z\n" +
-                "1983-01-04T12:00:00.000000Z\n" +
-                "1983-01-04T14:00:00.000000Z\n", timestampType.getTypeName());
+        final String expected = replaceTimestampSuffix1("""
+                1983-01-04T00:00:00.000000Z
+                1983-01-04T02:00:00.000000Z
+                1983-01-04T04:00:00.000000Z
+                1983-01-04T06:00:00.000000Z
+                1983-01-04T08:00:00.000000Z
+                1983-01-04T10:00:00.000000Z
+                1983-01-04T12:00:00.000000Z
+                1983-01-04T14:00:00.000000Z
+                """, timestampType.getTypeName());
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 8);
     }
@@ -350,19 +357,21 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-03T11:00:00.000Z"));
         intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-03T14:00:00.000Z"));
 
-        final String expected1 = replaceTimestampSuffix1("1980-01-02T02:00:00.000000Z\n" +
-                "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T06:00:00.000000Z\n" +
-                "1980-01-02T08:00:00.000000Z\n" +
-                "1980-01-02T10:00:00.000000Z\n" +
-                "1980-01-02T12:00:00.000000Z\n" +
-                "1980-01-02T14:00:00.000000Z\n" +
-                "1980-01-02T16:00:00.000000Z\n" +
-                "1980-01-02T22:00:00.000000Z\n" +
-                "1980-01-03T12:00:00.000000Z\n" +
-                "1980-01-03T14:00:00.000000Z\n", timestampType.getTypeName());
+        final String expected1 = replaceTimestampSuffix1("""
+                1980-01-02T02:00:00.000000Z
+                1980-01-02T04:00:00.000000Z
+                1980-01-02T06:00:00.000000Z
+                1980-01-02T08:00:00.000000Z
+                1980-01-02T10:00:00.000000Z
+                1980-01-02T12:00:00.000000Z
+                1980-01-02T14:00:00.000000Z
+                1980-01-02T16:00:00.000000Z
+                1980-01-02T22:00:00.000000Z
+                1980-01-03T12:00:00.000000Z
+                1980-01-03T14:00:00.000000Z
+                """, timestampType.getTypeName());
 
-        testReload(increment, intervals, N, expected1, null);
+        testReload(increment, intervals, N, expected1);
     }
 
     @Test
@@ -384,17 +393,19 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-03T11:00:00.000Z"));
         intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-03T14:00:00.000Z"));
 
-        final String expected = replaceTimestampSuffix1("1980-01-02T02:00:00.000000Z\n" +
-                "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T06:00:00.000000Z\n" +
-                "1980-01-02T08:00:00.000000Z\n" +
-                "1980-01-02T10:00:00.000000Z\n" +
-                "1980-01-02T12:00:00.000000Z\n" +
-                "1980-01-02T14:00:00.000000Z\n" +
-                "1980-01-02T16:00:00.000000Z\n" +
-                "1980-01-02T22:00:00.000000Z\n" +
-                "1980-01-03T12:00:00.000000Z\n" +
-                "1980-01-03T14:00:00.000000Z\n", timestampType.getTypeName());
+        final String expected = replaceTimestampSuffix1("""
+                1980-01-02T02:00:00.000000Z
+                1980-01-02T04:00:00.000000Z
+                1980-01-02T06:00:00.000000Z
+                1980-01-02T08:00:00.000000Z
+                1980-01-02T10:00:00.000000Z
+                1980-01-02T12:00:00.000000Z
+                1980-01-02T14:00:00.000000Z
+                1980-01-02T16:00:00.000000Z
+                1980-01-02T22:00:00.000000Z
+                1980-01-03T12:00:00.000000Z
+                1980-01-03T14:00:00.000000Z
+                """, timestampType.getTypeName());
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 11);
     }
@@ -417,19 +428,23 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T11:00:00.000Z"));
         intervals.add(timestampType.getDriver().parseFloorLiteral("1983-01-05T14:00:00.000Z"));
 
-        final String expected1 = replaceTimestampSuffix1("1980-01-02T02:00:00.000000Z\n" +
-                "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T06:00:00.000000Z\n" +
-                "1980-01-02T08:00:00.000000Z\n" +
-                "1980-01-02T10:00:00.000000Z\n" +
-                "1980-01-02T12:00:00.000000Z\n" +
-                "1980-01-02T14:00:00.000000Z\n" +
-                "1980-01-02T16:00:00.000000Z\n" +
-                "1980-01-02T22:00:00.000000Z\n", timestampType.getTypeName());
+        final String expected1 = replaceTimestampSuffix1("""
+                1980-01-02T02:00:00.000000Z
+                1980-01-02T04:00:00.000000Z
+                1980-01-02T06:00:00.000000Z
+                1980-01-02T08:00:00.000000Z
+                1980-01-02T10:00:00.000000Z
+                1980-01-02T12:00:00.000000Z
+                1980-01-02T14:00:00.000000Z
+                1980-01-02T16:00:00.000000Z
+                1980-01-02T22:00:00.000000Z
+                """, timestampType.getTypeName());
 
         final String expected2 = expected1 + replaceTimestampSuffix1(
-                "1983-01-05T12:00:00.000000Z\n" +
-                        "1983-01-05T14:00:00.000000Z\n", timestampType.getTypeName());
+                """
+                        1983-01-05T12:00:00.000000Z
+                        1983-01-05T14:00:00.000000Z
+                        """, timestampType.getTypeName());
 
         testReload(PartitionBy.DAY, increment, intervals, N, expected1, expected2);
     }
@@ -465,8 +480,12 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ),
                             timestampIndex,
                             metadata,
-                            ORDER_ASC);
-                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_ASC)
+                            ORDER_ASC,
+                            null,
+                            0,
+                            false
+                    );
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, new IntList(), ORDER_ASC)
             ) {
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -516,7 +535,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 try {
-                    factory.getCursor(executionContext, ORDER_ASC);
+                    factory.getCursor(executionContext, new IntList(), ORDER_ASC);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }
@@ -537,78 +556,80 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(timestampType.getDriver().parseFloorLiteral("1980-01-01T00:00:00.000Z"));
         intervals.add(timestampType.getDriver().parseFloorLiteral("1984-01-06T00:00:00.000Z"));
 
-        final String expected = replaceTimestampSuffix1("1980-01-01T00:00:00.000000Z\n" +
-                "1980-01-01T02:00:00.000000Z\n" +
-                "1980-01-01T04:00:00.000000Z\n" +
-                "1980-01-01T06:00:00.000000Z\n" +
-                "1980-01-01T08:00:00.000000Z\n" +
-                "1980-01-01T10:00:00.000000Z\n" +
-                "1980-01-01T12:00:00.000000Z\n" +
-                "1980-01-01T14:00:00.000000Z\n" +
-                "1980-01-01T16:00:00.000000Z\n" +
-                "1980-01-01T18:00:00.000000Z\n" +
-                "1980-01-01T20:00:00.000000Z\n" +
-                "1980-01-01T22:00:00.000000Z\n" +
-                "1980-01-02T00:00:00.000000Z\n" +
-                "1980-01-02T02:00:00.000000Z\n" +
-                "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T06:00:00.000000Z\n" +
-                "1980-01-02T08:00:00.000000Z\n" +
-                "1980-01-02T10:00:00.000000Z\n" +
-                "1980-01-02T12:00:00.000000Z\n" +
-                "1980-01-02T14:00:00.000000Z\n" +
-                "1980-01-02T16:00:00.000000Z\n" +
-                "1980-01-02T18:00:00.000000Z\n" +
-                "1980-01-02T20:00:00.000000Z\n" +
-                "1980-01-02T22:00:00.000000Z\n" +
-                "1980-01-03T00:00:00.000000Z\n" +
-                "1980-01-03T02:00:00.000000Z\n" +
-                "1980-01-03T04:00:00.000000Z\n" +
-                "1980-01-03T06:00:00.000000Z\n" +
-                "1980-01-03T08:00:00.000000Z\n" +
-                "1980-01-03T10:00:00.000000Z\n" +
-                "1980-01-03T12:00:00.000000Z\n" +
-                "1980-01-03T14:00:00.000000Z\n" +
-                "1980-01-03T16:00:00.000000Z\n" +
-                "1980-01-03T18:00:00.000000Z\n" +
-                "1980-01-03T20:00:00.000000Z\n" +
-                "1980-01-03T22:00:00.000000Z\n" +
-                "1983-01-04T00:00:00.000000Z\n" +
-                "1983-01-04T02:00:00.000000Z\n" +
-                "1983-01-04T04:00:00.000000Z\n" +
-                "1983-01-04T06:00:00.000000Z\n" +
-                "1983-01-04T08:00:00.000000Z\n" +
-                "1983-01-04T10:00:00.000000Z\n" +
-                "1983-01-04T12:00:00.000000Z\n" +
-                "1983-01-04T14:00:00.000000Z\n" +
-                "1983-01-04T16:00:00.000000Z\n" +
-                "1983-01-04T18:00:00.000000Z\n" +
-                "1983-01-04T20:00:00.000000Z\n" +
-                "1983-01-04T22:00:00.000000Z\n" +
-                "1983-01-05T00:00:00.000000Z\n" +
-                "1983-01-05T02:00:00.000000Z\n" +
-                "1983-01-05T04:00:00.000000Z\n" +
-                "1983-01-05T06:00:00.000000Z\n" +
-                "1983-01-05T08:00:00.000000Z\n" +
-                "1983-01-05T10:00:00.000000Z\n" +
-                "1983-01-05T12:00:00.000000Z\n" +
-                "1983-01-05T14:00:00.000000Z\n" +
-                "1983-01-05T16:00:00.000000Z\n" +
-                "1983-01-05T18:00:00.000000Z\n" +
-                "1983-01-05T20:00:00.000000Z\n" +
-                "1983-01-05T22:00:00.000000Z\n" +
-                "1983-01-06T00:00:00.000000Z\n" +
-                "1983-01-06T02:00:00.000000Z\n" +
-                "1983-01-06T04:00:00.000000Z\n" +
-                "1983-01-06T06:00:00.000000Z\n" +
-                "1983-01-06T08:00:00.000000Z\n" +
-                "1983-01-06T10:00:00.000000Z\n" +
-                "1983-01-06T12:00:00.000000Z\n" +
-                "1983-01-06T14:00:00.000000Z\n" +
-                "1983-01-06T16:00:00.000000Z\n" +
-                "1983-01-06T18:00:00.000000Z\n" +
-                "1983-01-06T20:00:00.000000Z\n" +
-                "1983-01-06T22:00:00.000000Z\n", timestampType.getTypeName());
+        final String expected = replaceTimestampSuffix1("""
+                1980-01-01T00:00:00.000000Z
+                1980-01-01T02:00:00.000000Z
+                1980-01-01T04:00:00.000000Z
+                1980-01-01T06:00:00.000000Z
+                1980-01-01T08:00:00.000000Z
+                1980-01-01T10:00:00.000000Z
+                1980-01-01T12:00:00.000000Z
+                1980-01-01T14:00:00.000000Z
+                1980-01-01T16:00:00.000000Z
+                1980-01-01T18:00:00.000000Z
+                1980-01-01T20:00:00.000000Z
+                1980-01-01T22:00:00.000000Z
+                1980-01-02T00:00:00.000000Z
+                1980-01-02T02:00:00.000000Z
+                1980-01-02T04:00:00.000000Z
+                1980-01-02T06:00:00.000000Z
+                1980-01-02T08:00:00.000000Z
+                1980-01-02T10:00:00.000000Z
+                1980-01-02T12:00:00.000000Z
+                1980-01-02T14:00:00.000000Z
+                1980-01-02T16:00:00.000000Z
+                1980-01-02T18:00:00.000000Z
+                1980-01-02T20:00:00.000000Z
+                1980-01-02T22:00:00.000000Z
+                1980-01-03T00:00:00.000000Z
+                1980-01-03T02:00:00.000000Z
+                1980-01-03T04:00:00.000000Z
+                1980-01-03T06:00:00.000000Z
+                1980-01-03T08:00:00.000000Z
+                1980-01-03T10:00:00.000000Z
+                1980-01-03T12:00:00.000000Z
+                1980-01-03T14:00:00.000000Z
+                1980-01-03T16:00:00.000000Z
+                1980-01-03T18:00:00.000000Z
+                1980-01-03T20:00:00.000000Z
+                1980-01-03T22:00:00.000000Z
+                1983-01-04T00:00:00.000000Z
+                1983-01-04T02:00:00.000000Z
+                1983-01-04T04:00:00.000000Z
+                1983-01-04T06:00:00.000000Z
+                1983-01-04T08:00:00.000000Z
+                1983-01-04T10:00:00.000000Z
+                1983-01-04T12:00:00.000000Z
+                1983-01-04T14:00:00.000000Z
+                1983-01-04T16:00:00.000000Z
+                1983-01-04T18:00:00.000000Z
+                1983-01-04T20:00:00.000000Z
+                1983-01-04T22:00:00.000000Z
+                1983-01-05T00:00:00.000000Z
+                1983-01-05T02:00:00.000000Z
+                1983-01-05T04:00:00.000000Z
+                1983-01-05T06:00:00.000000Z
+                1983-01-05T08:00:00.000000Z
+                1983-01-05T10:00:00.000000Z
+                1983-01-05T12:00:00.000000Z
+                1983-01-05T14:00:00.000000Z
+                1983-01-05T16:00:00.000000Z
+                1983-01-05T18:00:00.000000Z
+                1983-01-05T20:00:00.000000Z
+                1983-01-05T22:00:00.000000Z
+                1983-01-06T00:00:00.000000Z
+                1983-01-06T02:00:00.000000Z
+                1983-01-06T04:00:00.000000Z
+                1983-01-06T06:00:00.000000Z
+                1983-01-06T08:00:00.000000Z
+                1983-01-06T10:00:00.000000Z
+                1983-01-06T12:00:00.000000Z
+                1983-01-06T14:00:00.000000Z
+                1983-01-06T16:00:00.000000Z
+                1983-01-06T18:00:00.000000Z
+                1983-01-06T20:00:00.000000Z
+                1983-01-06T22:00:00.000000Z
+                """, timestampType.getTypeName());
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 72);
     }
@@ -753,7 +774,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
                 assertEqualTimestamps(expected, record, cursor);
 
-                if (expected.length() > 0) {
+                if (!expected.isEmpty()) {
                     cursor.toTop();
                     assertIndexRowsMatchSymbol(cursor, record, 0, expectedCount);
                     cursor.toTop();
@@ -766,7 +787,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    private void testReload(long increment, LongList intervals, int rowCount, CharSequence expected1, CharSequence expected2) throws Exception {
+    private void testReload(long increment, LongList intervals, int rowCount, CharSequence expected1) throws Exception {
         assertMemoryLeak(() -> {
             TableToken x;
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
@@ -798,9 +819,12 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                             ),
                             timestampIndex,
                             metadata,
-                            ORDER_ASC
+                            ORDER_ASC,
+                            null,
+                            0,
+                            false
                     );
-                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, ORDER_ASC)
+                    final PartitionFrameCursor cursor = factory.getCursor(executionContext, new IntList(), ORDER_ASC)
             ) {
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -832,11 +856,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     writer.commit();
 
                     Assert.assertTrue(cursor.reload());
-                    if (expected2 != null) {
-                        assertEqualTimestamps(expected2, record, cursor);
-                    } else {
-                        assertEqualTimestamps(expected1, record, cursor);
-                    }
+                    assertEqualTimestamps(expected1, record, cursor);
 
                     Assert.assertFalse(cursor.reload());
                 }
@@ -850,7 +870,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 try {
-                    factory.getCursor(executionContext, ORDER_ASC);
+                    factory.getCursor(executionContext, new IntList(), ORDER_ASC);
                     Assert.fail();
                 } catch (TableReferenceOutOfDateException ignored) {
                 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -125,8 +125,8 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getDefaultColumnTypeForTimestamp() {
-        return getDelegate().getDefaultColumnTypeForTimestamp();
+    public int getDefaultCreateTimestampColumnType() {
+        return getDelegate().getDefaultCreateTimestampColumnType();
     }
 
     @Override
@@ -180,11 +180,6 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
-        return getDelegate().getNetworkWorkerPoolConfiguration();
-    }
-
-    @Override
     public int getInitialBias() {
         return getDelegate().getInitialBias();
     }
@@ -235,7 +230,7 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public Clock getMicrosecondClock() {
+    public MicrosecondClock getMicrosecondClock() {
         return getDelegate().getMicrosecondClock();
     }
 
@@ -257,6 +252,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public NetworkFacade getNetworkFacade() {
         return getDelegate().getNetworkFacade();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return getDelegate().getNetworkWorkerPoolConfiguration();
     }
 
     @Override

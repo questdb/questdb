@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -175,6 +175,9 @@ public class Bootstrap {
             if (bootstrapConfiguration.useSite()) {
                 // site
                 extractSite();
+            } else {
+                // extract conf regardless
+                extractConfDir(buffer);
             }
 
             final ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
@@ -208,6 +211,7 @@ public class Bootstrap {
             }
 
             Files.FS_CACHE_ENABLED = config.getCairoConfiguration().getFileDescriptorCacheEnabled();
+            Files.RMDIR_MAX_DEPTH = config.getCairoConfiguration().getRmdirMaxDepth();
             LogLevel.init(config.getCairoConfiguration());
             if (LogLevel.TIMESTAMP_TIMEZONE != null) {
                 log.infoW().$("changing logger timezone [from=`UTC`, to=`").$(LogLevel.TIMESTAMP_TIMEZONE).$('`').I$();
@@ -565,7 +569,6 @@ public class Bootstrap {
             }
             try (Path path = new Path()) {
                 verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true, true);
-                verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", false, false);
                 verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true, false);
                 verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, false, false);
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false);

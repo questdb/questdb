@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,12 +26,12 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cutlass.line.AbstractLineTcpSender;
-import io.questdb.cutlass.line.LineChannel;
-import io.questdb.cutlass.line.LineTcpSenderV2;
-import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.client.cutlass.line.AbstractLineTcpSender;
+import io.questdb.client.cutlass.line.LineChannel;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
+import io.questdb.client.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.network.Net;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;

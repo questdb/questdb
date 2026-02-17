@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,8 +37,8 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     private int valueIndex;
 
     @Override
-    public int getSampleByFlags() {
-        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    public void computeBatch(MapValue mapValue, long p, int count) {
+        mapValue.putLong(valueIndex, count);
     }
 
     @Override
@@ -52,8 +52,18 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
+    public int getComputeBatchArgType() {
+        return ColumnType.UNDEFINED;
+    }
+
+    @Override
     public long getLong(Record rec) {
         return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
     }
 
     @Override
@@ -79,8 +89,15 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcCount = srcValue.getLong(valueIndex);
-        destValue.addLong(valueIndex, srcCount);
+        final long srcCount = srcValue.getLong(valueIndex);
+        if (srcCount > 0) {
+            final long destCount = destValue.getLong(valueIndex);
+            if (destCount > 0) {
+                destValue.putLong(valueIndex, destCount + srcCount);
+            } else {
+                destValue.putLong(valueIndex, srcCount);
+            }
+        }
     }
 
     @Override
@@ -96,6 +113,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

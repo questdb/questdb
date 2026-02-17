@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,19 +25,15 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public interface SecurityContextFactory {
     byte HTTP = 0;
     byte ILP = 2;
     byte PGWIRE = 1;
 
-    default SecurityContext getInstance(@Transient CharSequence principal, byte authType, byte interfaceId) {
-        return getInstance(principal, null, authType, interfaceId);
-    }
-
-    SecurityContext getInstance(@Transient CharSequence principal, @Transient ObjList<CharSequence> groups, byte authType, byte interfaceId);
+    SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId);
 
     default SecurityContext getRootContext() {
         return AllowAllSecurityContext.INSTANCE;

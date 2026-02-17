@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillPrevNotKeyedRecordCursor cursor;
+    private final SimpleMapValue value;
 
     public SampleByFillPrevNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -61,8 +62,8 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
     ) {
         super(base, groupByMetadata, recordFunctions);
         try {
-            final SimpleMapValue simpleMapValue = new SimpleMapValue(groupByValueCount);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            this.value = new SimpleMapValue(groupByValueCount);
             this.cursor = new SampleByFillPrevNotKeyedRecordCursor(
                     configuration,
                     groupByFunctions,
@@ -71,7 +72,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
                     timestampIndex,
                     timestampType,
                     timestampSampler,
-                    simpleMapValue,
+                    value,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
@@ -81,9 +82,9 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
                     sampleToFunc,
                     sampleToFuncPos
             );
-        } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
-            throw e;
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
@@ -93,6 +94,13 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
         sink.attr("fill").val("prev");
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(value);
+        Misc.free(cursor);
     }
 
     @Override

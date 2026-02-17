@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -146,8 +146,7 @@ public class QueryRegistry {
         }
 
         final Thread thread = Thread.currentThread();
-        if (thread instanceof Worker) {
-            Worker worker = (Worker) thread;
+        if (thread instanceof Worker worker) {
             e.workerId = worker.getWorkerId();
             e.poolName = worker.getPoolName();
         }
@@ -274,16 +273,12 @@ public class QueryRegistry {
             }
 
             public static String getText(byte state) {
-                switch (state) {
-                    case IDLE:
-                        return "idle";
-                    case ACTIVE:
-                        return "active";
-                    case CANCELLED:
-                        return "cancelled";
-                    default:
-                        return "unknown state";
-                }
+                return switch (state) {
+                    case IDLE -> "idle";
+                    case ACTIVE -> "active";
+                    case CANCELLED -> "cancelled";
+                    default -> "unknown state";
+                };
             }
         }
     }

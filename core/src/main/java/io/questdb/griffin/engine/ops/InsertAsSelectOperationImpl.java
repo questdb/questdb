@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
 import io.questdb.griffin.RecordToRowCopier;
@@ -91,12 +90,12 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext) {
         return createMethod(executionContext, engine);
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
 
@@ -144,25 +143,24 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
         @Override
         public long execute(SqlExecutionContext executionContext) throws SqlException {
             executionContext.setUseSimpleCircuitBreaker(true);
-            SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 try {
                     if (timestampIndex == -1) {
-                        rowCount = SqlCompilerImpl.copyUnordered(cursor, writer, copier, circuitBreaker);
+                        rowCount = SqlCompilerImpl.copyUnordered(executionContext, cursor, writer, copier);
                     } else {
-                        if (batchSize != -1) {
+                        if (batchSize > 0) {
                             rowCount = SqlCompilerImpl.copyOrderedBatched(
+                                    executionContext,
                                     writer,
                                     factory.getMetadata(),
                                     cursor,
                                     copier,
                                     timestampIndex,
                                     batchSize,
-                                    o3MaxLag,
-                                    circuitBreaker
+                                    o3MaxLag
                             );
                         } else {
-                            rowCount = SqlCompilerImpl.copyOrderedBatched(writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0, circuitBreaker);
+                            rowCount = SqlCompilerImpl.copyOrderedBatched(executionContext, writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0);
                         }
                     }
                 } catch (Throwable e) {

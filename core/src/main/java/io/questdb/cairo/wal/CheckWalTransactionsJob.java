@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
@@ -55,7 +56,6 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private long lastRunMs;
     private boolean notificationQueueIsFull = false;
     private Path threadLocalPath;
-
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
@@ -103,12 +103,16 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                     ) {
                         TableUtils.safeReadTxn(this.txReader, millisecondClock, spinLockTimeout);
                         if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader.getSeqTxn(), seqTxn)) {
+                            long floorSeqTxn = engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn();
+                            engine.getRecentWriteTracker().setFloorSeqTxn(tableToken, floorSeqTxn);
                             notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
                         }
                     } catch (CairoException e) {
                         if (!e.isFileCannotRead()) {
                             throw e;
                         } // race, table is dropped, ApplyWal2TableJob is already deleting the files
+                    } catch (TableReferenceOutOfDateException ignore) {
+                        // ignore, table was deleted if we got this exception on a table token
                     }
                 } // else table is dropped, ApplyWal2TableJob already is deleting the files
             }

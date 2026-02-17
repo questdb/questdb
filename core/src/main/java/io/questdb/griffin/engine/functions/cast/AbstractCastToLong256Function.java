@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,9 +29,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
+/**
+ * Abstract base class for functions that cast values to long256.
+ */
 public abstract class AbstractCastToLong256Function extends Long256Function implements UnaryFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to long256 function.
+     *
+     * @param arg the function argument to cast
+     */
     public AbstractCastToLong256Function(Function arg) {
         this.arg = arg;
     }

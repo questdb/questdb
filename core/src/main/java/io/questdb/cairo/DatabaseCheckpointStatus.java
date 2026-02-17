@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,16 +35,6 @@ public interface DatabaseCheckpointStatus {
      */
     default boolean isInProgress() {
         return startedAtTimestamp() != Numbers.LONG_NULL;
-    }
-
-    /**
-     * Returns true when database is in "checkpoint" mode and no partition cleanup
-     * is allowed. With new version of TxnScoreboard partition cleanup is still
-     * allowed with checkpoint is in progress hence this method is different from
-     * {@link #isInProgress()}.
-     */
-    default boolean partitionsLocked() {
-        return isInProgress();
     }
 
     /**

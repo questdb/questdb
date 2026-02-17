@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -76,6 +76,34 @@ public abstract class WorkerPoolManager implements Target {
         return sharedPoolQuery != null ? sharedPoolQuery.getWorkerCount() : 0;
     }
 
+    @NotNull
+    public WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester, WorkerPool sharedPool) {
+        if (running.get() || closed.get()) {
+            throw new IllegalStateException("can only get instance before start");
+        }
+
+        if (config.getWorkerCount() < 1) {
+            LOG.info().$("default thread pool [requester=").$(requester)
+                    .$(", workers=").$(sharedPool.getWorkerCount())
+                    .$(", pool=").$(sharedPool.getPoolName())
+                    .I$();
+            return sharedPool;
+        }
+
+        String poolName = config.getPoolName();
+        WorkerPool pool = dedicatedPools.get(poolName);
+        if (pool == null) {
+            pool = new WorkerPool(config);
+            dedicatedPools.put(poolName, pool);
+        }
+        LOG.info().$("custom thread pool [name=").$(poolName)
+                .$(", requester=").$(requester)
+                .$(", workers=").$(pool.getWorkerCount())
+                .$(", priority=").$(config.workerPoolPriority())
+                .I$();
+        return pool;
+    }
+
     public void halt() {
         // halt is idempotent, and start may have not been called, still
         // we want to free pool resources, so we do not check the closed
@@ -128,7 +156,7 @@ public abstract class WorkerPoolManager implements Target {
     private static void startWorkerPool(Log sharedPoolLog, WorkerPool p, String msg) {
         if (p != null) {
             p.start(sharedPoolLog);
-            LOG.info().$(msg).$(p.getPoolName())
+            LOG.debug().$(msg).$(p.getPoolName())
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
         }
@@ -136,39 +164,11 @@ public abstract class WorkerPoolManager implements Target {
 
     private void closePool(WorkerPool p, String message) {
         if (p != null) {
-            LOG.info().$(message).$(p.getPoolName())
+            LOG.debug().$(message).$(p.getPoolName())
                     .$(", workers=").$(p.getWorkerCount())
                     .I$();
             p.halt();
         }
-    }
-
-    @NotNull
-    private WorkerPool getWorkerPool(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester, WorkerPool sharedPool) {
-        if (running.get() || closed.get()) {
-            throw new IllegalStateException("can only get instance before start");
-        }
-
-        if (config.getWorkerCount() < 1) {
-            LOG.info().$("using SHARED pool [requester=").$(requester)
-                    .$(", workers=").$(sharedPool.getWorkerCount())
-                    .$(", pool=").$(sharedPool.getPoolName())
-                    .I$();
-            return sharedPool;
-        }
-
-        String poolName = config.getPoolName();
-        WorkerPool pool = dedicatedPools.get(poolName);
-        if (pool == null) {
-            pool = new WorkerPool(config);
-            dedicatedPools.put(poolName, pool);
-        }
-        LOG.info().$("new DEDICATED pool [name=").$(poolName)
-                .$(", requester=").$(requester)
-                .$(", workers=").$(pool.getWorkerCount())
-                .$(", priority=").$(config.workerPoolPriority())
-                .I$();
-        return pool;
     }
 
     /**
@@ -189,7 +189,9 @@ public abstract class WorkerPoolManager implements Target {
         LINE_TCP_WRITER("line-tcp-writer"),
         OTHER("other"),
         WAL_APPLY("wal-apply"),
-        MAT_VIEW_REFRESH("mat-view-refresh");
+        VIEW_COMPILER("view-compiler"),
+        MAT_VIEW_REFRESH("mat-view-refresh"),
+        EXPORT("export");
 
         private final String requester;
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,18 +70,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.test.tools.TestUtils.*;
 
 public class ServerMainForeignTableTest extends AbstractBootstrapTest {
-    private static final String TABLE_START_CONTENT = "min(ts)\tmax(ts)\tcount()\n" +
-            "2023-01-01T00:00:00.950399Z\t2023-01-01T23:59:59.822691Z\t90909\n" +
-            "2023-01-02T00:00:00.773090Z\t2023-01-02T23:59:59.645382Z\t90909\n" +
-            "2023-01-03T00:00:00.595781Z\t2023-01-03T23:59:59.468073Z\t90909\n" +
-            "2023-01-04T00:00:00.418472Z\t2023-01-04T23:59:59.290764Z\t90909\n" +
-            "2023-01-05T00:00:00.241163Z\t2023-01-05T23:59:59.113455Z\t90909\n" +
-            "2023-01-06T00:00:00.063854Z\t2023-01-06T23:59:59.886545Z\t90910\n" +
-            "2023-01-07T00:00:00.836944Z\t2023-01-07T23:59:59.709236Z\t90909\n" +
-            "2023-01-08T00:00:00.659635Z\t2023-01-08T23:59:59.531927Z\t90909\n" +
-            "2023-01-09T00:00:00.482326Z\t2023-01-09T23:59:59.354618Z\t90909\n" +
-            "2023-01-10T00:00:00.305017Z\t2023-01-10T23:59:59.177309Z\t90909\n" +
-            "2023-01-11T00:00:00.127708Z\t2023-01-11T23:59:59.000000Z\t90909\n";
+    private static final String TABLE_START_CONTENT = """
+            min(ts)\tmax(ts)\tcount()
+            2023-01-01T00:00:00.950399Z\t2023-01-01T23:59:59.822691Z\t90909
+            2023-01-02T00:00:00.773090Z\t2023-01-02T23:59:59.645382Z\t90909
+            2023-01-03T00:00:00.595781Z\t2023-01-03T23:59:59.468073Z\t90909
+            2023-01-04T00:00:00.418472Z\t2023-01-04T23:59:59.290764Z\t90909
+            2023-01-05T00:00:00.241163Z\t2023-01-05T23:59:59.113455Z\t90909
+            2023-01-06T00:00:00.063854Z\t2023-01-06T23:59:59.886545Z\t90910
+            2023-01-07T00:00:00.836944Z\t2023-01-07T23:59:59.709236Z\t90909
+            2023-01-08T00:00:00.659635Z\t2023-01-08T23:59:59.531927Z\t90909
+            2023-01-09T00:00:00.482326Z\t2023-01-09T23:59:59.354618Z\t90909
+            2023-01-10T00:00:00.305017Z\t2023-01-10T23:59:59.177309Z\t90909
+            2023-01-11T00:00:00.127708Z\t2023-01-11T23:59:59.000000Z\t90909
+            """;
     private static final String firstPartitionName = "2023-01-01";
     private static final String otherVolumeAlias = "SECONDARY VOLUME";
     private static final int partitionCount = 11;
@@ -506,7 +508,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         StringSink resultSink = new StringSink();
         try (
                 Connection conn = DriverManager.getConnection(getPgConnectionUri(pgPort), PG_CONNECTION_PROPERTIES);
-                PreparedStatement stmt = conn.prepareStatement("tables()");
+                PreparedStatement stmt = conn.prepareStatement("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()");
                 ResultSet result = stmt.executeQuery()
         ) {
             ResultSetMetaData meta = result.getMetaData();
@@ -525,6 +527,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                             resultSink.put(result.getLong(i));
                             break;
                         case Types.VARCHAR:
+                        case Types.CHAR:
                             resultSink.put(result.getString(i));
                             break;
                         default:
@@ -550,7 +553,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
             boolean inVolume
     ) throws Exception {
         StringSink resultSink = new StringSink();
-        CompiledQuery cc = compiler.compile("tables()", context);
+        CompiledQuery cc = compiler.compile("select id, table_name, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup, ttlValue, ttlUnit, matView from tables()", context);
         try (
                 RecordCursorFactory factory = cc.getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(context)

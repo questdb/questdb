@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -74,6 +76,36 @@ public abstract class IPv4Function implements Function {
     }
 
     @Override
+    public final void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final byte getDecimal8(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -105,7 +137,7 @@ public abstract class IPv4Function implements Function {
 
     @Override
     public int getInt(Record rec) {
-        throw new UnsupportedOperationException();
+        return getIPv4(rec);
     }
 
     @Override
@@ -115,7 +147,7 @@ public abstract class IPv4Function implements Function {
 
     @Override
     public long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return getIPv4(rec);
     }
 
     @Override

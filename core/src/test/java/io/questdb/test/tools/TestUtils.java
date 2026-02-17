@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DefaultDdlListener;
@@ -46,26 +47,31 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.cutlass.http.client.Response;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
+import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -76,6 +82,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
@@ -94,6 +101,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -103,8 +112,10 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.QuestDBTestNode;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.cutlass.http.HttpUtils;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
@@ -130,15 +141,20 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.test.AbstractTest.CLOSEABLE;
 import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
+    public static final boolean INVALID = true;
+    public static final boolean VALID = false;
+    private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -216,6 +232,15 @@ public final class TestUtils {
             return;
         }
         Assert.fail("'" + sequence + "' does not contain either: " + term1 + " or " + term2);
+    }
+
+    public static void assertContainsEither(CharSequence sequence, CharSequence... terms) {
+        for (CharSequence term : terms) {
+            if (Chars.contains(sequence, term)) {
+                return;
+            }
+        }
+        Assert.fail("'" + sequence + "' does not contain either: " + String.join(" or ", terms));
     }
 
     public static void assertCursor(
@@ -678,6 +703,33 @@ public final class TestUtils {
         assertEventually(assertion, 60);
     }
 
+    public static void assertEventually(EventualCode assertion, Set<Class<?>> exceptionTypesToCatch) throws Exception {
+        exceptionTypesToCatch.add(AssertionError.class);
+        assertEventually(assertion, 30, exceptionTypesToCatch);
+    }
+
+    public static void assertEventually(EventualCode assertion, int timeoutSeconds, Set<Class<?>> exceptionTypesToCatch) throws Exception {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (Exception error) {
+                if (!exceptionTypesToCatch.contains(error.getClass())) {
+                    throw error;
+                }
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
+
     public static void assertEventually(EventualCode assertion, int timeoutSeconds) throws Exception {
         long maxSleepingTimeMillis = 1000;
         long nextSleepingTimeMillis = 10;
@@ -695,6 +747,72 @@ public final class TestUtils {
             Os.sleep(nextSleepingTimeMillis);
             nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
         }
+    }
+
+    public static void assertException(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            CharSequence expectedMessage,
+            int expectedPosition,
+            MutableCharSink<?> sink
+    ) throws SqlException {
+        try {
+            assertException(
+                    engine,
+                    sqlExecutionContext,
+                    false,
+                    sql,
+                    sink
+            );
+            Assert.fail();
+        } catch (CairoException | SqlException e) {
+            assertContains(e.getMessage(), expectedMessage);
+            Assert.assertEquals(expectedPosition, e.getPosition());
+        }
+    }
+
+    public static void assertException(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            boolean fullFatJoins,
+            CharSequence sql,
+            MutableCharSink<?> sink
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoins);
+            CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+            if (cq.getRecordCursorFactory() != null) {
+                try (
+                        RecordCursorFactory factory = cq.getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    sink.clear();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // ignore the output, we're looking for an error
+                        println(record, factory.getMetadata(), sink);
+                        sink.clear();
+                    }
+                }
+            } else if (cq.getOperation() != null) {
+                try (
+                        Operation op = cq.getOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, null)
+                ) {
+                    fut.await();
+                }
+            } else {
+                // make sure to close update/insert operation
+                try (
+                        UpdateOperation ignore = cq.getUpdateOperation();
+                        InsertOperation ignored = cq.popInsertOperation()
+                ) {
+                    CairoEngine.execute(compiler, sql, sqlExecutionContext, null);
+                }
+            }
+        }
+        Assert.fail("SQL statement should have failed");
     }
 
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
@@ -798,19 +916,8 @@ public final class TestUtils {
     public static void assertResponse(HttpClient.Request request, int expectedStatusCode, String expectedHttpResponse) {
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
-
             assertEquals(String.valueOf(expectedStatusCode), responseHeaders.getStatusCode());
-
-            final Utf8StringSink sink = new Utf8StringSink();
-
-            Fragment fragment;
-            final Response response = responseHeaders.getResponse();
-            while ((fragment = response.recv()) != null) {
-                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-            }
-
-            assertEquals(expectedHttpResponse, sink);
-            sink.clear();
+            HttpUtils.assertChunkedBody(responseHeaders, expectedHttpResponse);
         }
     }
 
@@ -1038,6 +1145,16 @@ public final class TestUtils {
     ) throws SqlException {
         printSqlWithTypes(compiler, sqlExecutionContext, sql, sink);
         assertEquals(expected, sink);
+    }
+
+    public static void assertViewState(boolean expectedInvalid, ViewState viewState) {
+        assertNotNull(viewState);
+        try {
+            viewState.lockForRead();
+            Assert.assertEquals(expectedInvalid, viewState.isInvalid());
+        } finally {
+            viewState.unlockAfterRead();
+        }
     }
 
     public static void await(CyclicBarrier barrier) {
@@ -1323,7 +1440,7 @@ public final class TestUtils {
                 Path path = new Path();
                 MemoryMARW mem = Vm.getCMARWInstance()
         ) {
-            TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
+            TableUtils.createTable(configuration, mem, null, path, model, tableVersion, tableId, tableToken.getDirName());
         }
     }
 
@@ -1341,12 +1458,12 @@ public final class TestUtils {
             int tableId,
             CharSequence tableName
     ) {
-        TableToken token = engine.lockTableName(tableName, tableId, structure.isMatView(), structure.isWalEnabled());
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isView(), structure.isMatView(), structure.isWalEnabled());
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }
         path.of(engine.getConfiguration().getDbRoot()).concat(token);
-        TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
+        TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
         if (structure.isWalEnabled()) {
             engine.getTableSequencerAPI().registerTable(tableId, structure, token);
@@ -1371,6 +1488,12 @@ public final class TestUtils {
         return ts;
     }
 
+    public static void drainCopyImportJobQueue(CairoEngine engine) throws Exception {
+        try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
+            copyRequestJob.drain(0);
+        }
+    }
+
     @SuppressWarnings("StatementWithEmptyBody")
     public static void drainCursor(RecordCursor cursor) {
         while (cursor.hasNext()) {
@@ -1389,12 +1512,6 @@ public final class TestUtils {
         )) {
             engine.setWalPurgeJobRunLock(job.getRunLock());
             job.drain(0);
-        }
-    }
-
-    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
-            copyRequestJob.drain(0);
         }
     }
 
@@ -1467,6 +1584,7 @@ public final class TestUtils {
     }
 
     public static void execute(Connection conn, String sql, String... bindVars) throws SQLException {
+        //noinspection SqlSourceToSinkFlow
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             for (int i = 0; i < bindVars.length; i++) {
                 stmt.setString(i + 1, bindVars[i]);
@@ -1594,6 +1712,14 @@ public final class TestUtils {
         }
     }
 
+    public static TestTimestampType getTimestampType() {
+        return getTimestampType(generateRandom(LOG));
+    }
+
+    public static TestTimestampType getTimestampType(Rnd rnd) {
+        return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
         return getWriter(engine, engine.verifyTableName(tableName));
     }
@@ -1702,6 +1828,19 @@ public final class TestUtils {
         return sink.toString();
     }
 
+    /**
+     * Helper method to bias probability of "wal" tests to 80%
+     *
+     * @return true when tests should run in WAL-enabled mode, false otherwise.
+     */
+    public static boolean isWal() {
+        return isWal(generateRandom(LOG));
+    }
+
+    public static boolean isWal(Rnd rnd) {
+        return rnd.nextInt(100) < 80;
+    }
+
     public static int maxDayOfMonth(int month) {
         return switch (month) {
             case 1, 3, 5, 7, 8, 10, 12 -> 31;
@@ -1749,7 +1888,6 @@ public final class TestUtils {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> Numbers.LONG_NULL,
                 engine
         );
     }
@@ -1879,15 +2017,26 @@ public final class TestUtils {
         }
     }
 
+    public static boolean remove(LPSZ lpsz) {
+        if (Files.remove(lpsz)) {
+            return true;
+        }
+
+        // could not remove file, logging error
+        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        LOG.error().$("Could not remove file [path=").$safe(lpsz).$(", errno=").$(ff.errno()).I$();
+        return false;
+    }
+
     public static void removeTestPath(CharSequence root) {
         try (Path path = new Path()) {
             path.of(root);
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             path.slash();
-            if (ff.exists(path.$()) && !ff.rmdir(path, true)) {
+            if (ff.exists(path.$()) && !Files.rmdir(path, true)) {
                 StringSink dir = new StringSink();
                 dir.put(path.$());
-                Assert.fail("Test dir " + dir + " cleanup error: " + ff.errno());
+                Assert.fail("Test dir " + dir + " cleanup error: " + Os.errno());
             }
 
             path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
@@ -2157,8 +2306,8 @@ public final class TestUtils {
         if (dim == actual.getDimCount() - 1) {
             for (int i = 0; i < dimLen; i++) {
                 Assert.assertEquals(
-                        expected.getDouble(expected.getFlatViewOffset() + expectedFlatIndex + i),
-                        actual.getDouble(actual.getFlatViewOffset() + actualFlatIndex + i),
+                        expected.getDouble(expectedFlatIndex + i * expected.getStride(dim)),
+                        actual.getDouble(actualFlatIndex + i * actual.getStride(dim)),
                         Numbers.TOLERANCE
                 );
             }
@@ -2237,8 +2386,9 @@ public final class TestUtils {
         Object[][] res = new Object[currentLvlValues.length * lowerLvlValues.length][lowerLvlValues[0].length + 1];
         for (int i = 0; i < currentLvlValues.length; i++) {
             for (int j = 0; j < lowerLvlValues.length; j++) {
-                res[i * lowerLvlValues.length + j][0] = currentLvlValues[i];
-                System.arraycopy(lowerLvlValues[j], 0, res[i * lowerLvlValues.length + j], 1, lowerLvlValues[0].length);
+                int m = i * lowerLvlValues.length + j;
+                res[m][0] = currentLvlValues[i];
+                System.arraycopy(lowerLvlValues[j], 0, res[m], 1, lowerLvlValues[0].length);
             }
         }
         return res;
@@ -2429,7 +2579,9 @@ public final class TestUtils {
         private boolean skipChecksOnClose;
 
         public LeakCheck() {
+            Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
+            CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
@@ -2455,6 +2607,7 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
+            CLOSEABLE.forEach(Misc::free);
             if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
                 Assert.fail(
                         "expected: cached file descriptors: " + cachedFileCount +
@@ -2465,6 +2618,8 @@ public final class TestUtils {
                                 ", list: " + Files.getOpenFdDebugInfo()
                 );
             }
+
+            Files.getMmapCache().asyncMunmap();
 
             // Checks that the same tag used for allocation and freeing native memory
             long memAfter = Unsafe.getMemUsed();

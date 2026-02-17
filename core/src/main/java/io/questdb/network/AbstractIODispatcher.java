@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
+import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -55,10 +56,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public abstract class AbstractIODispatcher<C extends IOContext<C>> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
     protected static final int DISCONNECT_SRC_IDLE = 1;
-    protected static final int DISCONNECT_SRC_PEER_DISCONNECT = 3;
     protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
-    protected static final int DISCONNECT_SRC_TLS_ERROR = 4;
+    protected static final int DISCONNECT_SRC_TLS_ERROR = 3;
     protected static final int OPM_CREATE_TIMESTAMP = 0;
     protected static final int OPM_FD = 1;
     protected static final int OPM_HEARTBEAT_TIMESTAMP = 3;
@@ -90,11 +90,10 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     private final int testConnectionBufSize;
-    protected boolean closed = false;
+    protected volatile boolean closed = false;
     protected long heartbeatIntervalMs;
     protected long serverFd;
     private long closeListenFdEpochMs;
-    // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
     // id 0 is reserved for operations on the server fd
     private long idSeq = 1;
     private volatile boolean listening;
@@ -180,8 +179,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();
-        final long cursor = disconnectPubSeq.nextBully();
-        assert cursor > -1;
+        final long cursor = bullyUntilClosed(disconnectPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
         disconnectQueue.get(cursor).context = context;
         disconnectPubSeq.done(cursor);
     }
@@ -222,7 +224,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 LOG.error().$("could not initialize connection context [fd=").$(connectionContext.getFd())
                         .$(", e=").$safe(e.getFlyweightMessage())
                         .I$();
-                ioContextFactory.done(connectionContext);
                 disconnect(connectionContext, DISCONNECT_REASON_TLS_SESSION_INIT_FAILED);
             }
         }
@@ -232,7 +233,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void registerChannel(C context, int operation) {
-        long cursor = interestPubSeq.nextBully();
+        final long cursor = bullyUntilClosed(interestPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
         IOEvent<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
@@ -260,6 +265,16 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         pending.set(r, OPM_OPERATION, -1);
         pending.set(r, context);
         pendingAdded(r);
+    }
+
+    private long bullyUntilClosed(Sequence sequence) {
+        // inlined version of sequence.nextBully() - we need to check for the 'closed' flag while looping
+        // if the queue is full and all other workers are closed, then a naive bully would block forever
+        long cursor;
+        while ((cursor = sequence.next()) < 0 && !closed) {
+            sequence.getBarrier().getWaitStrategy().signal();
+        }
+        return cursor;
     }
 
     private void checkConnectionLimitAndRestartListener() {
@@ -339,9 +354,21 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         return (readyForWrite ? Socket.WRITE_FLAG : 0) | (readyForRead ? Socket.READ_FLAG : 0);
     }
 
-    protected void accept(long timestamp) {
-        final long acceptEndTime = timestamp + configuration.getAcceptLoopTimeout();
+    /**
+     * Accepts pending connections in a greedy loop until the queue is drained (EAGAIN), timeout expires,
+     * or connection limit is reached.
+     *
+     * @param timestamp current time in milliseconds
+     * @return true if fully drained to EAGAIN, false if exited early (timeout/limit). When false,
+     * caller must retry on next iteration to avoid stranding connections with edge-triggered epoll.
+     */
+    protected boolean accept(long timestamp) {
+        // note: acceptEndTime intentionally uses current wall-clock time and not the passed timestamp
+        // why? we want to run the accept loop for up to the configured timeout, regardless of any time
+        // spent on activities before entering this loop
+        final long acceptEndTime = clock.getTicks() + configuration.getAcceptLoopTimeout();
         int tlConCount = connectionCount.get();
+        boolean drainedFully = false;
         while (tlConCount < configuration.getLimit() && acceptEndTime > clock.getTicks()) {
             // This 'accept' is greedy.
             // Rather than to rely on epoll (or similar) to fire accept requests at us one at
@@ -351,7 +378,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             long fd = nf.accept(serverFd);
 
             if (fd < 0) {
-                if (nf.errno() != Net.EWOULDBLOCK) {
+                if (nf.errno() == Net.EWOULDBLOCK) {
+                    drainedFully = true;
+                } else {
                     LOG.error().$("could not accept [ret=").$(fd).$(", errno=").$(nf.errno()).I$();
                 }
                 break;
@@ -419,6 +448,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 checkConnectionLimitAndRestartListener();
             }
         }
+        return drainedFully;
     }
 
     protected void doDisconnect(C context, int src) {
@@ -443,38 +473,34 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         connectionCountGauge.dec();
     }
 
-    protected boolean isEventId(long id) {
-        return (id & 1) == 1;
-    }
-
-    // returns monotonically growing event identifier (odd number);
-    // may be used for suspend event identifiers
-    protected long nextEventId() {
-        return (idSeq++ << 1) + 1;
-    }
-
-    // returns monotonically growing operation identifier (even number)
+    // returns monotonically growing operation identifier
     protected long nextOpId() {
-        return idSeq++ << 1;
+        return idSeq++;
     }
 
     protected void pendingAdded(int index) {
         // no-op
     }
 
-    protected void processDisconnects(long epochMs) {
-        disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
+    protected boolean processDisconnects(long epochMs) {
+        boolean useful = disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
             LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs)
                     .$("ms, closing listener [serverFd=").$(serverFd)
                     .I$();
             nf.close(serverFd);
             serverFd = -1;
+            useful = true;
         }
+        return useful;
     }
 
     protected void publishOperation(int operation, C context) {
-        long cursor = ioEventPubSeq.nextBully();
+        final long cursor = bullyUntilClosed(ioEventPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
         IOEvent<C> evt = ioEventQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
@@ -487,13 +513,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     protected abstract void registerListenerFd();
 
-    protected boolean testConnection(long fd) {
-        return nf.testConnection(fd, testConnectionBuf, testConnectionBufSize);
-    }
-
     protected abstract void unregisterListenerFd();
 
     static {
-        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown", "peer", "tls_error"};
+        DISCONNECT_SOURCES = new String[]{"queue", "idle", "shutdown", "tls_error"};
     }
 }

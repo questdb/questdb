@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 
@@ -59,6 +59,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void expectLimitedIteration() {
+        baseCursor.expectLimitedIteration();
+    }
+
+    @Override
     public Record getRecord() {
         return recordA;
     }
@@ -82,8 +87,18 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+        baseCursor.longTopK(list, columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return baseCursor.preComputedStateSize();
     }
 
     @Override
@@ -97,18 +112,13 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) {
         baseCursor.skipRows(rowCount);
     }
 
     @Override
     public void toTop() {
         baseCursor.toTop();
-    }
-
-    @Override
-    public long preComputedStateSize() {
-        return baseCursor.preComputedStateSize();
     }
 
     void of(RecordCursor cursor) {

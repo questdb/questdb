@@ -5,7 +5,7 @@
 #     \__\_\\__,_|\___||___/\__|____/|____/
 #
 #   Copyright (c) 2014-2019 Appsicle
-#   Copyright (c) 2019-2024 QuestDB
+#   Copyright (c) 2019-2026 QuestDB
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 
 import datetime
 import yaml
+from decimal import Decimal
 from string import Template
 
 
@@ -83,6 +84,37 @@ def convert_and_append_parameters(value, type, resolved_parameters):
             resolved_parameters.append(float_array)
         else:
             raise ValueError(f"Invalid array_float8 value: {value}")
+    elif type == 'array_varchar':
+        if isinstance(value, str):
+            value = value.strip('{}')
+            str_array = []
+            i = 0
+            while i < len(value):
+                c = value[i]
+                if c == ' ' or c == ',':
+                    i += 1
+                    continue
+                if c == '"':
+                    end = value.find('"', i + 1)
+                    if end == -1:
+                        raise ValueError(f"Unclosed quote in array_varchar: {value}")
+                    str_array.append(value[i + 1:end])
+                    i = end + 1
+                else:
+                    end = value.find(',', i)
+                    if end == -1:
+                        end = len(value)
+                    item = value[i:end].strip()
+                    if item.lower() == 'null':
+                        str_array.append(None)
+                    else:
+                        str_array.append(item)
+                    i = end + 1
+            resolved_parameters.append(str_array)
+        elif isinstance(value, list):
+            resolved_parameters.append(value)
+        else:
+            raise ValueError(f"Invalid array_varchar value: {value}")
     elif type == 'boolean':
         value = value.lower().strip()
         if value == 'true':
@@ -102,6 +134,8 @@ def convert_and_append_parameters(value, type, resolved_parameters):
     elif type == 'char':
         str_val = str(value)
         resolved_parameters.append(str_val)
+    elif type == 'numeric':
+        resolved_parameters.append(Decimal(value))
     else:
         resolved_parameters.append(value)
 
@@ -166,6 +200,10 @@ def convert_value(value):
     # Handle dictionaries by recursively converting their values
     elif isinstance(value, dict):
         return {k: convert_value(v) for k, v in value.items()}
+    
+    # Handle decimal to print them as string
+    elif isinstance(value, Decimal):
+        return value.normalize().__str__()
 
     # Return other types unchanged
     else:

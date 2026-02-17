@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,7 +42,6 @@ import io.questdb.network.IORequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.MemoryTag;
@@ -63,8 +62,8 @@ public class PGServer implements Closeable {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
     private final PGCircuitBreakerRegistry registry;
-    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private final WorkerPool sharedPoolNetwork;
+    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
 
     public PGServer(
             PGConfiguration configuration,
@@ -106,9 +105,6 @@ public class PGServer implements Closeable {
                     } catch (PeerIsSlowToWriteException e) {
                         dispatcher.registerChannel(context, IOOperation.READ);
                     } catch (PeerIsSlowToReadException e) {
-                        dispatcher.registerChannel(context, IOOperation.WRITE);
-                    } catch (QueryPausedException e) {
-                        context.setSuspendEvent(e.getEvent());
                         dispatcher.registerChannel(context, IOOperation.WRITE);
                     } catch (PeerDisconnectedException e) {
                         dispatcher.disconnect(
@@ -184,6 +180,7 @@ public class PGServer implements Closeable {
             super(
                     () -> {
                         NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                                engine,
                                 configuration.getCircuitBreakerConfiguration(),
                                 MemoryTag.NATIVE_CB5
                         );

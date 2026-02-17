@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -429,11 +429,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
                 case ColumnType.GEOBYTE:
+                case ColumnType.DECIMAL8:
                     Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.SHORT:
                 case ColumnType.CHAR:
                 case ColumnType.GEOSHORT:
+                case ColumnType.DECIMAL16:
                     Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.INT:
@@ -441,6 +443,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 case ColumnType.FLOAT:
                 case ColumnType.SYMBOL:
                 case ColumnType.GEOINT:
+                case ColumnType.DECIMAL32:
                     Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.DOUBLE:
@@ -448,13 +451,16 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 case ColumnType.DATE:
                 case ColumnType.GEOLONG:
                 case ColumnType.TIMESTAMP:
+                case ColumnType.DECIMAL64:
                     Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.UUID:
                 case ColumnType.LONG128:
+                case ColumnType.DECIMAL128:
                     Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.LONG256:
+                case ColumnType.DECIMAL256:
                     Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 default:

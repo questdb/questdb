@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -115,7 +115,7 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 false,
                 "Async Filter workers: 1\n" +
-                        "  filter: pickup_geohash in [$0::geohash(3c),$1::geohash(3c)] [pre-touch]\n" +
+                        "  filter: pickup_geohash in [$0::geohash(3c),$1::geohash(3c)]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: trips\n"
@@ -156,7 +156,7 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 false,
                 "Async Filter workers: 1\n" +
-                        "  filter: \"011001011100101101110110101110011100011010000110100010101101\" in [pickup_geohash] [pre-touch]\n" +
+                        "  filter: \"011001011100101101110110101110011100011010000110100010101101\" in [pickup_geohash]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: trips\n"
@@ -230,7 +230,7 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 false,
                 "Async Filter workers: 1\n" +
-                        "  filter: pickup_geohash in [\"011001011100101\",\"011001011100111\"] [pre-touch]\n" +
+                        "  filter: pickup_geohash in [\"011001011100101\",\"011001011100111\"]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: trips\n"

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,12 +62,12 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         return valueAt(keyIndex(key));
     }
 
-    public void increment(@NotNull CharSequence key) {
+    public void inc(@NotNull CharSequence key) {
         int index = keyIndex(key);
         if (index < 0) {
-            values[-index - 1] = values[-index - 1] + 1;
+            values[-index - 1]++;
         } else {
-            putAt0(index, Chars.toString(key), 0);
+            putAt0(index, Chars.toString(key), 1);
         }
     }
 

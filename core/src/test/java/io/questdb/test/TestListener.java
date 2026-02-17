@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,6 +49,9 @@ public class TestListener extends RunListener {
 
         s.append("Thread dump: ");
         for (ThreadInfo threadInfo : threadInfos) {
+            if (threadInfo == null) {
+                continue;
+            }
             final Thread.State state = threadInfo.getThreadState();
             s.append('\n');
             s.append('\'').append(threadInfo.getThreadName()).append("': ").append(state);
@@ -117,7 +120,7 @@ public class TestListener extends RunListener {
                     Os.sleep(10 * 60 * 1000);
                 }
             } catch (Throwable t) {
-                System.out.println("Thread dumper failed!");
+                System.out.println("Thread dumper failed! [kind=java]");
                 t.printStackTrace(System.out);
             }
         });
@@ -128,9 +131,14 @@ public class TestListener extends RunListener {
 
     static {
         Thread monitor = new Thread(() -> {
-            while (true) {
-                DumpThreadStacksFunctionFactory.dumpThreadStacks();
-                Os.sleep(10 * 60 * 1000);
+            try {
+                while (true) {
+                    DumpThreadStacksFunctionFactory.dumpThreadStacks();
+                    Os.sleep(10 * 60 * 1000);
+                }
+            } catch (Throwable t) {
+                System.out.println("Thread dumper failed! [kind=native]");
+                t.printStackTrace(System.out);
             }
         });
 

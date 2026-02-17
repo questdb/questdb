@@ -16,7 +16,10 @@ pub use metadata::{deserialize_metadata, read_metadata, read_metadata_with_size}
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub use page::{get_page_stream, get_page_stream_from_column_start};
-pub use page::{IndexedPageReader, PageFilter, PageIterator, PageMetaData, PageReader};
+pub use page::{
+    IndexedPageReader, PageFilter, PageIterator, PageMetaData, PageReader, SlicePageReader,
+    SlicedDataPage, SlicedDictPage, SlicedPage,
+};
 
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]

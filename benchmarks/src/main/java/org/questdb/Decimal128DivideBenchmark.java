@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2025 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -108,7 +108,7 @@ public class Decimal128DivideBenchmark {
     public void setup() {
         decimal128Result = new Decimal128();
         largeDividend128 = new Decimal128();
-        largeDividend128.set(123456789L, 987654321098765432L, 6);
+        largeDividend128.of(123456789L, 987654321098765432L, 6);
         mathContext = new MathContext(16, RoundingMode.HALF_UP);
 
         // Setup test data based on scenario

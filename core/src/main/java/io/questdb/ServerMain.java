@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,30 +27,21 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
-import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
-import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
-import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
-import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
-import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGServer;
-import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
-import io.questdb.cutlass.text.CopyJob;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.text.CopyImportJob;
+import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -59,23 +50,21 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.Clock;
-import io.questdb.std.filewatch.FileWatcher;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.File;
-import java.security.PublicKey;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.questdb.PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT;
+import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
     private final Bootstrap bootstrap;
@@ -84,7 +73,7 @@ public class ServerMain implements Closeable {
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     protected PGServer pgServer;
-    private FileWatcher fileWatcher;
+    private Thread compileViewsThread;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
@@ -143,46 +132,6 @@ public class ServerMain implements Closeable {
         };
     }
 
-    public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
-        HttpFullFatServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
-        String username = httpConfig.getUsername();
-        if (Chars.empty(username)) {
-            return DefaultHttpAuthenticatorFactory.INSTANCE;
-        }
-        return new StaticHttpAuthenticatorFactory(username, httpConfig.getPassword());
-    }
-
-    public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
-        LineAuthenticatorFactory authenticatorFactory;
-        // create default authenticator for Line TCP protocol
-        if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
-            // we need "root/" here, not "root/db/"
-            final String rootDir = new File(configuration.getCairoConfiguration().getDbRoot()).getParent();
-            final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
-            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
-            authenticatorFactory = new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
-        } else {
-            authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
-        }
-        return authenticatorFactory;
-    }
-
-    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
-        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
-        if (readOnlyInstance) {
-            return ReadOnlySecurityContextFactory.INSTANCE;
-        } else {
-            PGConfiguration pgConfiguration = configuration.getPGWireConfiguration();
-            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
-            boolean settingsReadOnly = configuration.getHttpServerConfiguration().isSettingsReadOnly();
-            boolean pgWireReadOnlyContext = pgConfiguration.readOnlySecurityContext();
-            boolean pgWireReadOnlyUserEnabled = pgConfiguration.isReadOnlyUserEnabled();
-            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgConfiguration.getReadOnlyUsername() : null;
-            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly, settingsReadOnly);
-        }
-    }
-
     public static void main(String[] args) {
         try {
             new ServerMain(args).start(true);
@@ -207,6 +156,17 @@ public class ServerMain implements Closeable {
         return "QDB_" + propertyPath.replace('.', '_').toUpperCase();
     }
 
+    /**
+     * Waits for startup background tasks to complete, including metadata cache
+     * and recent write tracker hydration. This should be called after {@link #start()}
+     * if immediate DDL operations (like DROP TABLE) are planned, to avoid conflicts
+     * with background hydration threads that may hold table metadata locks.
+     */
+    public void awaitStartup() {
+        joinThread(hydrateMetadataThread, false);
+        joinThread(compileViewsThread, false);
+    }
+
     public void awaitTable(String tableName) {
         getEngine().awaitTable(tableName, 30, TimeUnit.SECONDS);
     }
@@ -219,24 +179,28 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
-            if (hydrateMetadataThread != null) {
-                try {
-                    hydrateMetadataThread.join();
-                } catch (InterruptedException ignored) {
-                }
-            }
+            joinThread(hydrateMetadataThread, true);
+            joinThread(compileViewsThread, true);
             System.err.println("QuestDB is shutting down...");
             System.out.println("QuestDB is shutting down...");
             if (bootstrap != null && bootstrap.getLog() != null) {
                 // Still useful in case of custom logger
                 bootstrap.getLog().info().$("QuestDB is shutting down...").$();
             }
+            // Signal long-running task to exit ASAP
+            engine.signalClose();
             if (initialized) {
                 workerPoolManager.halt();
-                fileWatcher = Misc.free(fileWatcher);
             }
             freeOnExit.close();
         }
+    }
+
+    public long getActiveConnectionCount(String processorName) {
+        if (httpServer == null) {
+            return 0;
+        }
+        return httpServer.getActiveConnectionTracker().get(processorName);
     }
 
     public ServerConfiguration getConfiguration() {
@@ -297,6 +261,11 @@ public class ServerMain implements Closeable {
             }
             workerPoolManager.start(bootstrap.getLog());
             bootstrap.logBannerAndEndpoints(webConsoleSchema());
+            final DataID dataID = engine.getDataID();
+            if (dataID.isInitialized()) {
+                final Uuid uuid = dataID.get();
+                bootstrap.getLog().advisoryW().$("data id: ").$(uuid).$();
+            }
             System.gc(); // final GC
             bootstrap.getLog().advisoryW().$("enjoy").$();
         }
@@ -340,11 +309,14 @@ public class ServerMain implements Closeable {
                     if (engineMaintenanceJob != null) {
                         sharedPoolWrite.assign(engineMaintenanceJob);
                     }
+                    WorkerPoolUtils.setupAsyncMunmapJob(sharedPoolQuery, engine);
                     WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 
-                    QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
-                    sharedPoolQuery.assign(queryTracingJob);
-                    freeOnExit(queryTracingJob);
+                    if (!config.getCairoConfiguration().isReadOnlyInstance()) {
+                        QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
+                        sharedPoolQuery.assign(queryTracingJob);
+                        freeOnExit(queryTracingJob);
+                    }
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
@@ -364,15 +336,38 @@ public class ServerMain implements Closeable {
                         }
 
                         // text import
-                        CopyJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
                         if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
-                            final CopyRequestJob copyRequestJob = new CopyRequestJob(
+                            CopyImportJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
+                            final CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
                                     Math.max(1, sharedPoolWrite.getWorkerCount() - 2)
                             );
-                            sharedPoolWrite.assign(copyRequestJob);
-                            sharedPoolWrite.freeOnExit(copyRequestJob);
+                            sharedPoolWrite.assign(copyImportRequestJob);
+                            sharedPoolWrite.freeOnExit(copyImportRequestJob);
+                        }
+                    }
+
+                    // export - current export implementation requires creating temporary table, can only enable on the primary instance
+                    if (!Chars.empty(cairoConfig.getSqlCopyExportRoot()) && !isReadOnly) {
+                        int workerCount = config.getExportPoolConfiguration().getWorkerCount();
+                        if (workerCount > 0) {
+                            WorkerPool exportWorkerPool = getWorkerPool(
+                                    config.getExportPoolConfiguration(),
+                                    Requester.EXPORT,
+                                    sharedPoolQuery
+                            );
+
+                            for (int i = 0; i < workerCount; i++) {
+                                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine);
+                                exportWorkerPool.assign(i, copyExportRequestJob);
+                                exportWorkerPool.freeOnExit(copyExportRequestJob);
+                            }
+                        } else {
+                            log.advisory().$("export is disabled; set ")
+                                    .$(EXPORT_WORKER_COUNT.getPropertyPath())
+                                    .$(" to a positive value or keep default to enable export.")
+                                    .$();
                         }
                     }
 
@@ -391,7 +386,9 @@ public class ServerMain implements Closeable {
             }
         };
 
-        engine.buildMatViewGraph();
+        // make sure view definitions are loaded before the view compiler job is started,
+        // all views have to be loaded with their dependencies before the compiler starts processing notifications
+        engine.buildViewGraphs();
 
         if (matViewEnabled && !isReadOnly) {
             if (config.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0) {
@@ -401,18 +398,28 @@ public class ServerMain implements Closeable {
                         config.getMatViewRefreshPoolConfiguration(),
                         WorkerPoolManager.Requester.MAT_VIEW_REFRESH
                 );
-
-                setupMatViewJobs(
-                        mvRefreshWorkerPool,
-                        engine,
-                        workerPoolManager.getSharedQueryWorkerCount()
-                );
+                setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
             } else {
                 log.advisory().$("mat view refresh is disabled; set ")
                         .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
                         .$(" to a positive value or keep default to enable mat view refresh.")
                         .$();
             }
+        }
+
+        if (config.getViewCompilerPoolConfiguration().getWorkerCount() > 0) {
+            // This starts view compiler jobs only when there is a dedicated pool configured
+            // this will not use shared pool write because getWorkerCount() > 0
+            WorkerPool viewCompilerWorkerPool = workerPoolManager.getSharedPoolWrite(
+                    config.getViewCompilerPoolConfiguration(),
+                    WorkerPoolManager.Requester.VIEW_COMPILER
+            );
+            setupViewJobs(viewCompilerWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+        } else {
+            log.advisory().$("view compiler job is disabled; set ")
+                    .$(VIEW_COMPILER_WORKER_COUNT.getPropertyPath())
+                    .$(" to a positive value or keep default to enable view compiler.")
+                    .$();
         }
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
@@ -465,12 +472,37 @@ public class ServerMain implements Closeable {
             ));
         }
 
-        // metadata hydration
-        hydrateMetadataThread = new Thread(engine.getMetadataCache()::onStartupAsyncHydrator);
+        // metadata and write tracker hydration
+        hydrateMetadataThread = new Thread(() -> {
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.hydrateRecentWriteTracker();
+        });
         hydrateMetadataThread.start();
+
+        // populate view state store and hydrate metadata cache with view metadata
+        compileViewsThread = new Thread(() -> {
+            // temporary list to re-use for listing dependent views
+            ObjList<TableToken> tempSink = new ObjList<>();
+            try (SqlExecutionContext executionContext = engine.createViewCompilerContext(0)) {
+                ViewCompilerJob.compileAllViews(engine, executionContext, tempSink);
+            }
+        });
+        compileViewsThread.start();
 
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();
+    }
+
+    private void joinThread(Thread thread, boolean ignoreInterrupt) {
+        if (thread != null) {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                if (!ignoreInterrupt) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
     }
 
     protected <T extends Closeable> T freeOnExit(T closeable) {
@@ -494,6 +526,15 @@ public class ServerMain implements Closeable {
         }
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
         mvWorkerPool.assign(matViewTimerJob);
+    }
+
+    protected void setupViewJobs(WorkerPool vWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = vWorkerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final ViewCompilerJob viewCompilerJob = new ViewCompilerJob(i, engine, sharedQueryWorkerCount);
+            vWorkerPool.assign(i, viewCompilerJob);
+            vWorkerPool.freeOnExit(viewCompilerJob);
+        }
     }
 
     protected void setupWalApplyJob(

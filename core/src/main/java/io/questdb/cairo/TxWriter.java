@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -236,6 +236,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public boolean inTransaction() {
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount || prevPartitionTableVersion != partitionTableVersion;
+    }
+
+    public boolean incrementPartitionSquashCounter(int partitionIndex) {
+        final int partitionRawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        int partitionSquashCounter = getPartitionSquashCountByRawIndex(partitionRawIndex);
+        if (partitionSquashCounter == PARTITION_SQUASH_COUNTER_MAX) {
+            // This means 16bit unsigned value is overflown.
+            // Return false so that the caller can fall back to an alternative way to track squashes.
+            return false;
+        }
+        setPartitionSquashCounterByRawIndex(partitionRawIndex, (short) (partitionSquashCounter + 1));
+        // Bump versions to make sure that incremental txn update will save the change
+        // and incremental txn read will read it
+        recordStructureVersion++;
+        partitionTableVersion++;
+        return true;
     }
 
     public void initLastPartition(long timestamp) {
@@ -701,6 +717,16 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
+        int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
+        long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
+        // Clear the existing squash counter bits
+        partitionSizeMasked &= ~PARTITION_SQUASH_COUNTER_MASK;
+        // Set the new squash counter value
+        partitionSizeMasked |= ((long) (partitionSquashCounter & PARTITION_SQUASH_COUNTER_MAX) << PARTITION_SQUASH_COUNTER_BIT_OFFSET);
+        attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
+    }
+
     private void storeSymbolCounts(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         for (int i = 0, n = symbolCountProviders.size(); i < n; i++) {
             long offset = getSymbolWriterIndexOffset(i);
@@ -781,6 +807,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
         recordStructureVersion++;
         updatePartitionSizeByRawIndex(index, partitionSize);
+        // New partition version is written, reset the squash counter.
+        setPartitionSquashCounterByRawIndex(index, (short) 0);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,15 +34,12 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpCookieHandler;
-import io.questdb.cutlass.http.HttpResponseHeader;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.BootstrapTest;
 import io.questdb.test.tools.TestUtils;
@@ -52,7 +49,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.net.HttpURLConnection;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class HttpErrorHandlingTest extends BootstrapTest {
 
@@ -65,7 +61,6 @@ public class HttpErrorHandlingTest extends BootstrapTest {
 
     @Test
     public void testUnexpectedErrorDuringSQLExecutionHandled() throws Exception {
-        final AtomicInteger counter = new AtomicInteger(0);
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override
@@ -79,7 +74,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 new FilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, int opts) {
-                                        if (counter.incrementAndGet() > 78) {
+                                        if (Utf8s.endsWithAscii(name, "x" + Files.SEPARATOR + "_meta")) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);
@@ -98,9 +93,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertExecRequest(httpClient, "create table x as (select 1L y)", HttpURLConnection.HTTP_INTERNAL_ERROR,
-                            "{\"query\":\"create table x as (select 1L y)\",\"error\":\"Test error\",\"position\":0}"
-                    );
+                    assertExecRequest(httpClient);
                 }
             }
         });
@@ -125,12 +118,8 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                     public @NotNull HttpCookieHandler getHttpCookieHandler() {
                                         return new HttpCookieHandler() {
                                             @Override
-                                            public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
+                                            public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
                                                 throw new RuntimeException("Test error");
-                                            }
-
-                                            @Override
-                                            public void setCookie(HttpResponseHeader header, SecurityContext securityContext) {
                                             }
                                         };
                                     }
@@ -159,29 +148,13 @@ public class HttpErrorHandlingTest extends BootstrapTest {
         });
     }
 
-    private void assertExecRequest(
-            HttpClient httpClient,
-            String sql,
-            int expectedHttpStatusCode,
-            String expectedHttpResponse
-    ) {
+    private void assertExecRequest(HttpClient httpClient) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url("/exec").query("query", sql);
+        request.GET().url("/exec").query("query", "create table x as (select 1L y)");
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
-
-            TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
-
-            final Utf8StringSink sink = new Utf8StringSink();
-
-            Fragment fragment;
-            final Response response = responseHeaders.getResponse();
-            while ((fragment = response.recv()) != null) {
-                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-            }
-
-            TestUtils.assertEquals(expectedHttpResponse, sink.toString());
-            sink.clear();
+            TestUtils.assertEquals(String.valueOf(HttpURLConnection.HTTP_INTERNAL_ERROR), responseHeaders.getStatusCode());
+            HttpUtils.assertChunkedBody(responseHeaders, "{\"query\":\"create table x as (select 1L y)\",\"error\":\"Test error\",\"position\":0}");
         }
     }
 }

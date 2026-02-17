@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -57,7 +57,13 @@ public class InsertNullTest extends AbstractCairoTest {
             {"geohash(5b)", ""},
             {"geohash(15b)", ""},
             {"geohash(31b)", ""},
-            {"geohash(60b)", ""}
+            {"geohash(60b)", ""},
+            {"decimal(2,0)", ""},
+            {"decimal(4,0)", ""},
+            {"decimal(8,0)", ""},
+            {"decimal(16,0)", ""},
+            {"decimal(32,0)", ""},
+            {"decimal(64,0)", ""}
     };
 
     @Test

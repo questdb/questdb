@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -950,7 +950,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     engine.clear();
                     TableToken tableToken = engine.verifyTableName(src.getName());
                     path.of(configuration.getDbRoot()).concat(tableToken).concat("2022-08-09").concat("s.k").$();
-                    Assert.assertTrue(Files.remove(path.$()));
+                    Assert.assertTrue(TestUtils.remove(path.$()));
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-09");
                         Assert.fail();

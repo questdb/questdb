@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,29 +24,59 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.std.Rnd;
-import io.questdb.std.Uuid;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
+import io.questdb.cairo.DataID;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
-public class CurrentDataIDFunctionFactoryTest extends AbstractCairoTest {
+public class CurrentDataIDFunctionFactoryTest extends AbstractBootstrapTest {
 
     @Test
-    public void testUninitializedDataID() throws Exception {
-        assertSql("current_data_id\n\n",
-                "select current_data_id();");
-    }
+    public void testCurrentDataID() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final StringSink sink = new StringSink();
 
-    @Test
-    public void testSetDataID() throws Exception {
-        final Uuid newID = new Uuid();
-        Rnd rnd = configuration.getRandom();
-        newID.of(rnd.nextLong(), rnd.nextLong());
-        sink.clear();
-        newID.toSink(sink);
-        engine.getDataID().set(newID.getLo(), newID.getHi());
-        final String id = sink.toString();
-        assertSql("current_data_id\n" + id + "\n",
-                "select current_data_id();");
+            // Test the `current_data_id()` SQL function with a `.data_id` generated at start-up.
+            try (
+                    ServerMain serverMain = startWithEnvVariables();
+                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(serverMain.getEngine())
+            ) {
+                Assert.assertTrue(serverMain.getEngine().getDataID().isInitialized());
+                sink.put(serverMain.getEngine().getDataID().get());
+                final String expected = sink.toString();
+                TestUtils.assertSql(
+                        serverMain.getEngine(),
+                        executionContext,
+                        "select current_data_id();",
+                        sink,
+                        "current_data_id\n" + expected + "\n"
+                );
+            }
+
+            // Now that we have a full DB, we can remove the data id and make restart it as read-only.
+            Assert.assertTrue(java.nio.file.Paths.get(root, "db", DataID.FILENAME).toFile().delete());
+            try (
+                    ServerMain serverMain = startWithEnvVariables(
+                            PropertyKey.READ_ONLY_INSTANCE.getEnvVarName(), "true"
+                    );
+                    SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(serverMain.getEngine())
+            ) {
+                sink.clear();
+
+                Assert.assertFalse(serverMain.getEngine().getDataID().isInitialized());
+                TestUtils.assertSql(
+                        serverMain.getEngine(),
+                        executionContext,
+                        "select current_data_id();",
+                        sink,
+                        "current_data_id\n\n"
+                );
+            }
+        });
     }
 }

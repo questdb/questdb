@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -64,7 +64,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TABLE_NAME_COLUMN = 1;
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int UPDATE_TXN_COLUMN = 7;
-    private final DatabaseCheckpointStatus checkpointStatus;
     private final Clock clock;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
@@ -126,7 +125,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     "completed",
                     ColumnPurgeOperator.ScoreboardUseMode.BAU_QUEUE_PROCESSING
             );
-            this.checkpointStatus = engine.getCheckpointStatus();
             processTableRecords(engine);
         } catch (Throwable th) {
             close();
@@ -250,7 +248,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     )
             ) {
                 Record rec = records.getRecord();
-                long lastTs = 0;
+                long lastTs = Long.MIN_VALUE;
                 ColumnPurgeRetryTask task = null;
 
                 CharSequenceObjHashMap<String> stringIntern = new CharSequenceObjHashMap<>();
@@ -281,6 +279,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
                         if (token == null || token.getTableId() != tableId) {
                             LOG.debug().$("table deleted, skipping [tableDir=").$safe(tableName).I$();
+                            lastTs = Long.MIN_VALUE; // reset timestamp to force task initialization on the next iteration
                             continue;
                         }
                         int timestampType;
@@ -398,11 +397,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
         try {
             boolean useful = processInQueue();
-            if (checkpointStatus.partitionsLocked()) {
-                // do not purge anything before the checkpoint is released
-                return false;
-            }
-
             boolean cleanupUseful = purge();
             if (cleanupUseful) {
                 LOG.debug().$("cleaned column version, outstanding tasks: ").$(retryQueue.size()).$();

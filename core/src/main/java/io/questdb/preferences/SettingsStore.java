@@ -8,6 +8,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -16,6 +17,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -23,7 +25,7 @@ import java.io.IOException;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
 public class SettingsStore implements Closeable {
-    private static final String PREFERENCES_FILE_NAME = "_preferences~store";
+    public static final String PREFERENCES_FILE_NAME = "_preferences~store";
     private final BlockFileReader blockFileReader;
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration configuration;
@@ -78,6 +80,28 @@ public class SettingsStore implements Closeable {
         final LPSZ preferencesPath = preferencesFilePath();
         if (configuration.getFilesFacade().exists(preferencesPath)) {
             load(preferencesPath, preferencesMap);
+        }
+    }
+
+    /**
+     * Calls the listener with the current preferences state without registering it.
+     * For testing purposes only.
+     */
+    @TestOnly
+    public void observe(@NotNull PreferencesUpdateListener listener) {
+        listener.update(preferencesMap);
+    }
+
+    /**
+     * Writes the current preferences to a specified destination path.
+     * Used for checkpoint creation to capture preferences in a consistent state.
+     */
+    public synchronized void persistTo(LPSZ destinationPath, FilesFacade ff, int commitMode) {
+        try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
+            writer.of(destinationPath);
+            final AppendableBlock block = writer.append();
+            preferencesMap.writeToBlock(block, version);
+            writer.commit();
         }
     }
 

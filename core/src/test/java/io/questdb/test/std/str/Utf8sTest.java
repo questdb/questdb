@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -209,6 +209,86 @@ public class Utf8sTest {
 
     @Test
     public void testCompare() {
+        // Null handling
+        Assert.assertEquals(0, Utf8s.compare(null, null));
+        Assert.assertTrue(Utf8s.compare(null, utf8("a")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("a"), null) > 0);
+
+        // Identity
+        Utf8Sequence s = utf8("test");
+        Assert.assertEquals(0, Utf8s.compare(s, s));
+
+        // Empty strings
+        Assert.assertEquals(0, Utf8s.compare(utf8(""), utf8("")));
+        Assert.assertTrue(Utf8s.compare(utf8(""), utf8("a")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("a"), utf8("")) > 0);
+
+        // Short strings (< 6 bytes) - fully handled by prefix comparison
+        Assert.assertEquals(0, Utf8s.compare(utf8("abc"), utf8("abc")));
+        Assert.assertTrue(Utf8s.compare(utf8("abc"), utf8("abd")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("abd"), utf8("abc")) > 0);
+        Assert.assertTrue(Utf8s.compare(utf8("ab"), utf8("abc")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("abc"), utf8("ab")) > 0);
+
+        // Strings exactly 6 bytes (VARCHAR_INLINED_PREFIX_BYTES)
+        Assert.assertEquals(0, Utf8s.compare(utf8("abcdef"), utf8("abcdef")));
+        Assert.assertTrue(Utf8s.compare(utf8("abcdef"), utf8("abcdeg")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("abcdeg"), utf8("abcdef")) > 0);
+
+        // Long strings (> 6 bytes) with different prefixes - no data vector access needed
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghij"), utf8("abcdegghij")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("abcdegghij"), utf8("abcdefghij")) > 0);
+
+        // Long strings (> 6 bytes) with same prefix but different suffixes - requires data vector access
+        Assert.assertEquals(0, Utf8s.compare(utf8("abcdefghij"), utf8("abcdefghij")));
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghij"), utf8("abcdefghik")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghik"), utf8("abcdefghij")) > 0);
+
+        // Different lengths with same prefix (> 6 bytes)
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefgh"), utf8("abcdefghi")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghi"), utf8("abcdefgh")) > 0);
+
+        // Difference at byte position 6 (first byte in data vector for long strings)
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefXhij"), utf8("abcdefYhij")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefYhij"), utf8("abcdefXhij")) > 0);
+
+        // Unicode characters (multi-byte UTF-8)
+        Assert.assertEquals(0, Utf8s.compare(utf8("привет"), utf8("привет")));
+        Assert.assertTrue(Utf8s.compare(utf8("привет"), utf8("приве|")) != 0);
+
+        // Mixed ASCII and Unicode
+        Assert.assertEquals(0, Utf8s.compare(utf8("hello мир"), utf8("hello мир")));
+        Assert.assertTrue(Utf8s.compare(utf8("hello мир"), utf8("hello мис")) != 0);
+
+        // Unsigned byte comparison (bytes > 127 should be treated as positive)
+        Assert.assertTrue(Utf8s.compare(utf8("a"), utf8("ÿ")) < 0); // 'a' (0x61) < 0xFF
+
+        // Long strings (14+ bytes) - exercises the longAt loop (bytes 6-13)
+        // "abcdef" (6) + "ghijklmn" (8) = 14 bytes
+        Assert.assertEquals(0, Utf8s.compare(utf8("abcdefghijklmn"), utf8("abcdefghijklmn")));
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghijklmn"), utf8("abcdefghijklmo")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghijklmo"), utf8("abcdefghijklmn")) > 0);
+        // Difference at byte 6 (first byte of first long)
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefXhijklmn"), utf8("abcdefYhijklmn")) < 0);
+        // Difference at byte 13 (last byte of first long)
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghijklmX"), utf8("abcdefghijklmY")) < 0);
+
+        // Very long strings (22+ bytes) - exercises multiple longAt iterations
+        // "abcdef" (6) + "ghijklmn" (8) + "opqrstuv" (8) = 22 bytes
+        Assert.assertEquals(0, Utf8s.compare(utf8("abcdefghijklmnopqrstuv"), utf8("abcdefghijklmnopqrstuv")));
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghijklmnopqrstuv"), utf8("abcdefghijklmnopqrstuw")) < 0);
+        // Difference in second long (byte 14)
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghijklmnXpqrstuv"), utf8("abcdefghijklmnYpqrstuv")) < 0);
+
+        // Strings where longs match but trailing bytes differ (exercises byte loop after long loop)
+        // 17 bytes = 6 prefix + 8 long + 3 trailing bytes
+        Assert.assertEquals(0, Utf8s.compare(utf8("abcdefghijklmnopq"), utf8("abcdefghijklmnopq")));
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghijklmnopq"), utf8("abcdefghijklmnopr")) < 0);
+        Assert.assertTrue(Utf8s.compare(utf8("abcdefghijklmnopr"), utf8("abcdefghijklmnopq")) > 0);
+    }
+
+    @Test
+    public void testCompareFuzz() {
         Rnd rnd = TestUtils.generateRandom(null);
         final int n = 1_000;
         final int maxLen = 25;
@@ -583,6 +663,10 @@ public class Utf8sTest {
     public void testIsAscii() {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
             sink.put("foobar");
+            Assert.assertTrue(Utf8s.isAscii(sink));
+            Assert.assertTrue(Utf8s.isAscii(sink.ptr(), sink.size()));
+            sink.clear();
+            sink.put("foobarfoobarfoobarfoobarfoobarfoobarfoobar");
             Assert.assertTrue(Utf8s.isAscii(sink));
             Assert.assertTrue(Utf8s.isAscii(sink.ptr(), sink.size()));
             sink.clear();

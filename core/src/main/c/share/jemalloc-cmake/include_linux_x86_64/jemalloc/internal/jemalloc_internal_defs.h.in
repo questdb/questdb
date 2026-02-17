@@ -154,6 +154,9 @@
 /* JEMALLOC_PROF enables allocation profiling. */
 /* #undef JEMALLOC_PROF */
 
+/* Use frame pointers for profile backtracing if defined. */
+/* #undef JEMALLOC_PROF_FRAME_POINTER */
+
 /* Use libunwind for profile backtracing if defined. */
 /* #undef JEMALLOC_PROF_LIBUNWIND */
 
@@ -407,7 +410,7 @@
 #define JEMALLOC_CONFIG_MALLOC_CONF "@JEMALLOC_CONFIG_MALLOC_CONF@"
 
 /* If defined, jemalloc takes the malloc/free/etc. symbol names. */
-/* #define JEMALLOC_IS_MALLOC */
+#define JEMALLOC_IS_MALLOC
 
 /*
  * Defined if strerror_r returns char * if _GNU_SOURCE is defined.

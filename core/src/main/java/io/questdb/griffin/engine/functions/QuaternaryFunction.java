@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -110,20 +109,12 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default void memoize(Record record) {
-        getFunc0().memoize(record);
-        getFunc1().memoize(record);
-        getFunc2().memoize(record);
-        getFunc3().memoize(record);
-    }
-
-    @Override
     default void offerStateTo(Function that) {
-        if (that instanceof QuaternaryFunction) {
-            getFunc0().offerStateTo(((QuaternaryFunction) that).getFunc0());
-            getFunc1().offerStateTo(((QuaternaryFunction) that).getFunc1());
-            getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
-            getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
+        if (that instanceof QuaternaryFunction other) {
+            getFunc0().offerStateTo(other.getFunc0());
+            getFunc1().offerStateTo(other.getFunc1());
+            getFunc2().offerStateTo(other.getFunc2());
+            getFunc3().offerStateTo(other.getFunc3());
         }
     }
 

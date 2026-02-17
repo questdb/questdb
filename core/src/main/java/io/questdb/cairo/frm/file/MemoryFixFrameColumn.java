@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,9 +27,9 @@ package io.questdb.cairo.frm.file;
 import io.questdb.cairo.frm.FrameColumn;
 import io.questdb.cairo.vm.api.MemoryCR;
 
-public class MemoryFixFrameColumn implements FrameColumn {
+public final class MemoryFixFrameColumn implements FrameColumn {
     // Introduce a flag to avoid double close, which will lead to very serious consequences.
-    protected boolean closed;
+    private boolean closed;
     private int columnIndex;
     private MemoryCR columnMemory;
     private int columnType;

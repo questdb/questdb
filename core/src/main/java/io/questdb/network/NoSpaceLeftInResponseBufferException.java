@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,15 +31,19 @@ public class NoSpaceLeftInResponseBufferException extends HttpException {
     private static final ThreadLocal<NoSpaceLeftInResponseBufferException> tlException = new ThreadLocal<>(NoSpaceLeftInResponseBufferException::new);
 
     private long bytesRequired;
+    private long bytesAvailable;
+    private long capacity;
 
     public NoSpaceLeftInResponseBufferException() {
         super();
-        put("no space left in response buffer");
+        put("no space left in response buffer [bytesRequired=").put(bytesRequired).put(']');
     }
 
-    public static NoSpaceLeftInResponseBufferException instance(long bytesRequired) {
+    public static NoSpaceLeftInResponseBufferException instance(long bytesRequired, long bytesAvailable, long capacity) {
         NoSpaceLeftInResponseBufferException ex = tlException.get();
         ex.bytesRequired = bytesRequired;
+        ex.bytesAvailable = bytesAvailable;
+        ex.capacity = capacity;
         return ex;
     }
 

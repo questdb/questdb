@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,8 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -97,6 +99,36 @@ public class VirtualRecord implements ColumnTypes, Record, QuietCloseable {
     @Override
     public long getDate(int col) {
         return getFunction(col).getDate(base);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        getFunction(col).getDecimal128(base, sink);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return getFunction(col).getDecimal16(base);
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        getFunction(col).getDecimal256(base, sink);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return getFunction(col).getDecimal32(base);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return getFunction(col).getDecimal64(base);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return getFunction(col).getDecimal8(base);
     }
 
     @Override

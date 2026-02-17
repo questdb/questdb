@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,8 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
@@ -112,6 +114,26 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     @Override
     default void putChar(long offset, char value) {
         Unsafe.getUnsafe().putChar(appendAddressFor(offset, Character.BYTES), value);
+    }
+
+    @Override
+    default void putDecimal128(long high, long low) {
+        Decimal128.put(high, low, appendAddressFor(16));
+    }
+
+    @Override
+    default void putDecimal256(long hh, long hl, long lh, long ll) {
+        Decimal256.put(hh, hl, lh, ll, appendAddressFor(32));
+    }
+
+    @Override
+    default void putDecimal128(long offset, long high, long low) {
+        Decimal128.put(high, low, appendAddressFor(offset, 16));
+    }
+
+    @Override
+    default void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
+        Decimal256.put(hh, hl, lh, ll, appendAddressFor(offset, 32));
     }
 
     @Override

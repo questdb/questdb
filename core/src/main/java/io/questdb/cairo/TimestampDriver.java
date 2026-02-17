@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -167,27 +167,17 @@ public interface TimestampDriver {
      * @return the timestamp in the driver's native value, or 0 if unit is not recognized
      */
     default long from(long value, char unit) {
-        switch (unit) {
-            case 'n':
-                return fromNanos(value);
-            case 'u':
-            case 'U':
-                return fromMicros(value);
-            case 'T':
-                return fromMillis(value);
-            case 's':
-                return fromSeconds(value);
-            case 'm':
-                return fromMinutes((int) value);
-            case 'H':
-            case 'h':
-                return fromHours((int) value);
-            case 'd':
-                return fromDays((int) value);
-            case 'w':
-                return fromWeeks((int) value);
-        }
-        return 0;
+        return switch (unit) {
+            case 'n' -> fromNanos(value);
+            case 'u', 'U' -> fromMicros(value);
+            case 'T' -> fromMillis(value);
+            case 's' -> fromSeconds(value);
+            case 'm' -> fromMinutes((int) value);
+            case 'H', 'h' -> fromHours((int) value);
+            case 'd' -> fromDays((int) value);
+            case 'w' -> fromWeeks((int) value);
+            default -> 0;
+        };
     }
 
     /**
@@ -195,25 +185,20 @@ public interface TimestampDriver {
      *
      * @param ts   the timestamp value to convert
      * @param unit the time unit byte constant from CommonUtils.TIMESTAMP_UNIT_*
+     *             supported units: nanos, micros, millis, seconds, minutes, hours
      * @return the timestamp value
+     * @throws UnsupportedOperationException if the unit is not supported
      */
     default long from(long ts, byte unit) {
-        switch (unit) {
-            case CommonUtils.TIMESTAMP_UNIT_NANOS:
-                return fromNanos(ts);
-            case CommonUtils.TIMESTAMP_UNIT_MICROS:
-                return fromMicros(ts);
-            case CommonUtils.TIMESTAMP_UNIT_MILLIS:
-                return fromMillis(ts);
-            case CommonUtils.TIMESTAMP_UNIT_SECONDS:
-                return fromSeconds(ts);
-            case CommonUtils.TIMESTAMP_UNIT_MINUTES:
-                return fromMinutes((int) ts);
-            case CommonUtils.TIMESTAMP_UNIT_HOURS:
-                return fromHours((int) ts);
-            default:
-                throw new UnsupportedOperationException();
-        }
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS -> fromNanos(ts);
+            case CommonUtils.TIMESTAMP_UNIT_MICROS -> fromMicros(ts);
+            case CommonUtils.TIMESTAMP_UNIT_MILLIS -> fromMillis(ts);
+            case CommonUtils.TIMESTAMP_UNIT_SECONDS -> fromSeconds(ts);
+            case CommonUtils.TIMESTAMP_UNIT_MINUTES -> fromMinutes((int) ts);
+            case CommonUtils.TIMESTAMP_UNIT_HOURS -> fromHours((int) ts);
+            default -> throw new UnsupportedOperationException();
+        };
     }
 
     long fromDate(long timestamp);
@@ -388,6 +373,14 @@ public interface TimestampDriver {
      */
     int getNanosOfMicros(long timestamp);
 
+    /**
+     * Gets the nanoseconds within the second from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the nanoseconds within the second, or Numbers.INT_NULL if timestamp is null
+     */
+    int getNanosOfSecond(long timestamp);
+
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 
     TimestampCeilMethod getPartitionCeilMethod(int partitionBy);
@@ -441,7 +434,7 @@ public interface TimestampDriver {
 
     TimestampCeilMethod getTimestampCeilMethod(char unit);
 
-    TimestampConstant getTimestampConstantNull();
+    ConstantFunction getTimestampConstantNull();
 
     TimestampDateFormatFactory getTimestampDateFormatFactory();
 

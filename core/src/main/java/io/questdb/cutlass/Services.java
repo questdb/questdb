@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,9 +29,7 @@ import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.http.HttpHeaderParserFactory;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
@@ -40,6 +38,7 @@ import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
+import io.questdb.cutlass.http.processors.SqlValidationProcessor;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -53,7 +52,7 @@ import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.ObjList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
@@ -97,16 +96,18 @@ public class Services {
             return null;
         }
 
-        final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
-        final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
                 networkSharedPool,
-                serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
-                cookieHandler,
-                headerParserFactory
+                httpServerConfiguration.getFactoryProvider().getHttpSocketFactory()
         );
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
+                cairoEngine,
+                sharedQueryWorkerCount
+        );
+
+        HttpServer.HttpRequestHandlerBuilder sqlValidationProcessorBuilder = () -> new SqlValidationProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 sharedQueryWorkerCount
@@ -123,7 +124,8 @@ public class Services {
                 cairoEngine,
                 sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
-                ilpV2WriteProcessorBuilder
+                ilpV2WriteProcessorBuilder,
+                sqlValidationProcessorBuilder
         );
         return server;
     }
@@ -202,12 +204,16 @@ public class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
+        final HttpServer server = new HttpServer(
+                configuration,
+                workerPool,
+                configuration.getFactoryProvider().getHttpMinSocketFactory()
+        );
         Metrics metrics = configuration.getHttpContextConfiguration().getMetrics();
         server.bind(
                 new HttpRequestHandlerFactory() {
                     @Override
-                    public ObjList<String> getUrls() {
+                    public ObjHashSet<String> getUrls() {
                         return configuration.getContextPathStatus();
                     }
 
@@ -227,7 +233,7 @@ public class Services {
             server.bind(
                     new HttpRequestHandlerFactory() {
                         @Override
-                        public ObjList<String> getUrls() {
+                        public ObjHashSet<String> getUrls() {
                             return configuration.getContextPathMetrics();
                         }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ public final class Unsafe {
         try {
             implAddExports.invoke(from, packageName, to);
         } catch (ReflectiveOperationException e) {
-            e.printStackTrace();
+            e.printStackTrace(System.out);
         }
     }
 
@@ -428,7 +428,7 @@ public final class Unsafe {
                         (MethodHandles.Lookup) defineMethod.invoke(trustedLookup.in(hostClass), data, false, hiddenClassOptions);
                 return definedLookup.lookupClass();
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 return null;
             }
         }
@@ -470,7 +470,7 @@ public final class Unsafe {
             try {
                 return (Class<?>) defineMethod.invoke(UNSAFE, hostClass, data, null);
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 return null;
             }
         }

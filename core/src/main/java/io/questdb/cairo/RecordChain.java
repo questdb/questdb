@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,6 +35,8 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -51,7 +53,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, WindowSPI, Reopenable {
+public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, WindowSPI {
     protected final int columnCount;
     protected final long fixOffset;
     protected final MemoryCARW mem;
@@ -123,7 +125,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             result++;
             nextRecordOffset = mem.getLong(nextRecordOffset);
         }
-
         counter.add(result);
     }
 
@@ -183,6 +184,12 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     public void of(long nextRecordOffset) {
         assert nextRecordOffset == -1 || (nextRecordOffset > -1 && nextRecordOffset + Long.BYTES <= mem.size());
         this.nextRecordOffset = nextRecordOffset;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        // chain just streams rows from the cache
+        return 0;
     }
 
     public long put(Record record, long prevRecordOffset) {
@@ -250,6 +257,16 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public void putDate(long date) {
         putLong(date);
+    }
+
+    @Override
+    public void putDecimal128(Decimal128 decimal128) {
+        mem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
+    }
+
+    @Override
+    public void putDecimal256(Decimal256 decimal256) {
+        mem.putDecimal256(decimal256.getHh(), decimal256.getHl(), decimal256.getLh(), decimal256.getLl());
     }
 
     @Override
@@ -353,11 +370,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         ((RecordChainRecord) record).of(rowToDataOffset(row));
     }
 
-    @Override
-    public void reopen() {
-        // nothing to do here
-    }
-
     public void setSymbolTableResolver(SymbolTableSource resolver) {
         this.symbolTableResolver = resolver;
     }
@@ -370,12 +382,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public void skip(int bytes) {
         mem.skip(bytes);
-    }
-
-    @Override
-    public long preComputedStateSize() {
-        // chain just streams rows from the cache
-        return 0;
     }
 
     @Override
@@ -457,6 +463,36 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         @Override
         public char getChar(int col) {
             return mem.getChar(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public void getDecimal128(int col, Decimal128 sink) {
+            mem.getDecimal128(fixedWithColumnOffset(col), sink);
+        }
+
+        @Override
+        public short getDecimal16(int col) {
+            return mem.getDecimal16(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public void getDecimal256(int col, Decimal256 sink) {
+            mem.getDecimal256(fixedWithColumnOffset(col), sink);
+        }
+
+        @Override
+        public int getDecimal32(int col) {
+            return mem.getDecimal32(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public long getDecimal64(int col) {
+            return mem.getDecimal64(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public byte getDecimal8(int col) {
+            return mem.getDecimal8(fixedWithColumnOffset(col));
         }
 
         @Override

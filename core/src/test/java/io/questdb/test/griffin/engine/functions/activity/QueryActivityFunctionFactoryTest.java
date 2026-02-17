@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,13 +56,13 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
         regularUserContext1 = new SqlExecutionContextImpl(engine, 1).with(new UserContext());
-        regularUserContext1.with(new AtomicBooleanCircuitBreaker());
+        regularUserContext1.with(new AtomicBooleanCircuitBreaker(engine));
 
         adminUserContext1 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext());
-        adminUserContext1.with(new AtomicBooleanCircuitBreaker());
+        adminUserContext1.with(new AtomicBooleanCircuitBreaker(engine));
 
         adminUserContext2 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext());
-        adminUserContext2.with(new AtomicBooleanCircuitBreaker());
+        adminUserContext2.with(new AtomicBooleanCircuitBreaker(engine));
     }
 
     @Test

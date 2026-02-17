@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,6 +60,7 @@ public class CommonUtils {
     public static final byte TIMESTAMP_UNIT_SECONDS = TIMESTAMP_UNIT_MILLIS + 1;
     public static final byte TIMESTAMP_UNIT_MINUTES = TIMESTAMP_UNIT_SECONDS + 1;
     public static final byte TIMESTAMP_UNIT_HOURS = TIMESTAMP_UNIT_MINUTES + 1;
+    public static final byte TIMESTAMP_UNIT_UNSET = 0;
     public static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final String WEEK_PATTERN = "YYYY-Www";

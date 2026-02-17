@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     private int valueOffset;
 
     @SuppressWarnings("unused")
-    public AvgShortVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public AvgShortVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;

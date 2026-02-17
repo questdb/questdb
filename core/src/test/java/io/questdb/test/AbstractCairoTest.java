@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,9 +46,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -61,9 +59,9 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
@@ -74,8 +72,6 @@ import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.engine.ops.Operation;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -115,7 +111,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
-import io.questdb.test.griffin.AsOfJoinTest;
+import io.questdb.test.griffin.engine.join.AsOfJoinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVariableTestSetter;
 import io.questdb.test.tools.BindVariableTestTuple;
@@ -133,7 +129,6 @@ import org.junit.rules.Timeout;
 import org.junit.runner.Description;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -150,6 +145,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static final double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
+    public static String exportRoot = null;
     public static StaticOverrides staticOverrides = new StaticOverrides();
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
@@ -255,6 +251,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
             count++;
         }
 
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        int skip = count > 0 && rnd.nextBoolean() ? rnd.nextInt((int) count) : 0;
+        int k = 0;
+        while (k < skip && cursor.hasNext()) {
+            k++;
+        }
+        sink.clear();
+        cursor.toTop();
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+
         if (!sizeCanBeVariable) {
             if (sizeExpected) {
                 Assert.assertTrue("Concrete cursor size expected but was -1", cursorSize != -1);
@@ -263,10 +269,60 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
         }
         if (cursorSize != -1) {
-            Assert.assertEquals("Actual cursor records vs cursor.size()", count, cursorSize);
+            Assert.assertEquals("Expected: counted with hasNext(), actual: cursor.size()", count, cursorSize);
             if (cursorSizeBeforeFetch != -1) {
-                Assert.assertEquals("Cursor size before fetch and after", cursorSizeBeforeFetch, cursorSize);
+                Assert.assertEquals("Expected: cursor size before fetch, actual: cursor size after fetch",
+                        cursorSizeBeforeFetch, cursorSize);
             }
+        }
+        if (count > 0) {
+            int countReducedToInt = (int) Math.min(Integer.MAX_VALUE, count);
+            RecordCursor.Counter counter = new RecordCursor.Counter();
+            cursor.toTop();
+            skip = rnd.nextBoolean() ? rnd.nextInt(countReducedToInt) : 0;
+            while (counter.get() < skip && cursor.hasNext()) {
+                counter.inc();
+            }
+            SqlExecutionCircuitBreaker breaker =
+                    sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null;
+            cursor.calculateSize(breaker, counter);
+            Assert.assertEquals(
+                    String.format("Skip %,d then calculateSize(). Expect: as counted with hasNext(), actual: cursor.calculateSize()", skip),
+                    count, counter.get());
+
+            cursor.toTop();
+            counter.set(count + 1);
+            cursor.skipRows(counter);
+            Assert.assertEquals("skipRows(rowCountPlusOne) didn't leave the counter at 1", 1, counter.get());
+            Assert.assertFalse("hasNext() returned true after skipRows exhausted the cursor", cursor.hasNext());
+
+            if (count > 1) {
+                skip = rnd.nextInt(countReducedToInt / 2);
+                counter.set(skip);
+                cursor.toTop();
+                cursor.skipRows(counter);
+                Assert.assertEquals("skipRows(lessThanRowCount) didn't bring the counter to 0", 0, counter.get());
+                long remaining = 0;
+                String countMethod;
+                if (rnd.nextBoolean()) {
+                    countMethod = "calculateSize()";
+                    counter.clear();
+                    cursor.calculateSize(breaker, counter);
+                    remaining = counter.get();
+                } else {
+                    countMethod = "hasNext()";
+                    while (cursor.hasNext()) {
+                        remaining++;
+                    }
+                }
+                Assert.assertEquals(
+                        "skipRows(lessThanRowCount) didn't leave the correct number of remaining rows." +
+                                " Remaining rows counted using " + countMethod,
+                        count, skip + remaining);
+            }
+        } else {
+            cursor.toTop();
+            Assert.assertFalse(cursor.hasNext());
         }
 
         TestUtils.assertEquals(expected, sink);
@@ -332,7 +388,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 boolean cursorExhausted = false;
                 for (int i = 0, n = target; i < n; i++) {
                     cursor.recordAt(factRec, rows.getQuick(i));
-                    // intentionally calling hasNext() twice: we want to adcanced the cursor position,
+                    // intentionally calling hasNext() twice: we want to advance the cursor position,
                     // but we do *NOT* want to call it in step-lock with recordAt()
                     if (!cursorExhausted) {
                         cursorExhausted = !cursor.hasNext();
@@ -637,14 +693,17 @@ public abstract class AbstractCairoTest extends AbstractTest {
         TestFilesFacadeImpl.resetTracking();
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
-        sqlExecutionContext.resetFlags();
+        sqlExecutionContext.reset();
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
+        sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());
+        sqlExecutionContext.setParallelWindowJoinEnabled(configuration.isSqlParallelWindowJoinEnabled());
         sqlExecutionContext.setParallelReadParquetEnabled(configuration.isSqlParallelReadParquetEnabled());
         // 30% chance to enable paranoia checking FD mode
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
+        engine.getViewStateStore().clear();
     }
 
     public void tearDown(boolean removeDir) {
@@ -679,12 +738,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             cursor.calculateSize(circuitBreaker, counter);
+            Assert.assertFalse("hasNext() returned true after calculateSize exhausted the cursor", cursor.hasNext());
             size = counter.get();
             long preComputeStateSize = cursor.preComputedStateSize();
             cursor.toTop();
             Assert.assertEquals(preComputeStateSize, cursor.preComputedStateSize());
             counter.clear();
             cursor.calculateSize(circuitBreaker, counter);
+            Assert.assertFalse("hasNext() returned true after calculateSize exhausted the cursor", cursor.hasNext());
             long sizeAfterToTop = counter.get();
 
             Assert.assertEquals(size, sizeAfterToTop);
@@ -697,43 +758,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
             Assert.assertEquals(size, sizeAfterReopen);
         }
-    }
-
-    private static void assertException0(CharSequence sql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoins);
-            CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
-            if (cq.getRecordCursorFactory() != null) {
-                try (
-                        RecordCursorFactory factory = cq.getRecordCursorFactory();
-                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-                ) {
-                    sink.clear();
-                    Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        // ignore the output, we're looking for an error
-                        TestUtils.println(record, factory.getMetadata(), sink);
-                        sink.clear();
-                    }
-                }
-            } else if (cq.getOperation() != null) {
-                try (
-                        Operation op = cq.getOperation();
-                        OperationFuture fut = op.execute(sqlExecutionContext, null)
-                ) {
-                    fut.await();
-                }
-            } else {
-                // make sure to close update/insert operation
-                try (
-                        UpdateOperation ignore = cq.getUpdateOperation();
-                        InsertOperation ignored = cq.popInsertOperation()
-                ) {
-                    execute(compiler, sql, sqlExecutionContext);
-                }
-            }
-        }
-        Assert.fail("SQL statement should have failed");
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
@@ -1164,7 +1188,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql) throws Exception {
-        assertException0(sql, sqlExecutionContext, false);
+        TestUtils.assertException(engine, sqlExecutionContext, false, sql, sink);
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, SqlExecutionContext executionContext) throws Exception {
@@ -1189,7 +1213,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws Exception {
-        assertException0(sql, executionContext, fullFatJoins);
+        TestUtils.assertException(engine, executionContext, fullFatJoins, sql, sink);
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
@@ -1198,11 +1222,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins, SqlExecutionContext sqlExecutionContext) throws Exception {
         Assert.assertNotNull(contains);
-        Assert.assertFalse("provide matching text", contains.isEmpty());
         try {
             assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
+                if (contains.isEmpty()) {
+                    Assert.fail("position: " + ((FlyweightMessageContainer) e).getPosition() + ", message: " + e.getMessage());
+                }
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
                 Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
             } else {
@@ -1527,15 +1553,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         overrides.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, 1);
     }
 
-    protected static boolean couldObtainLock(Path path) {
-        final long lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
-        if (lockFd != -1L) {
-            TestFilesFacadeImpl.INSTANCE.close(lockFd);
-            return true;  // Could lock/unlock.
-        }
-        return false;  // Could not obtain lock.
-    }
-
     protected static MatViewRefreshJob createMatViewRefreshJob() {
         return createMatViewRefreshJob(engine);
     }
@@ -1556,8 +1573,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         TestUtils.drainPurgeJob(engine);
     }
 
+    protected static void drainViewQueue() {
+        drainViewQueue(engine);
+    }
+
     protected static void drainWalAndMatViewQueues() {
         drainWalAndMatViewQueues(engine);
+    }
+
+    protected static void drainWalAndViewQueues() {
+        drainWalAndViewQueues(engine);
     }
 
     protected static void drainWalQueue(QuestDBTestNode node) {
@@ -1855,7 +1880,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertFactoryCursor(
-            String expected,
+            CharSequence expected,
             String expectedTimestamp,
             RecordCursorFactory factory,
             boolean supportsRandomAccess,
@@ -1907,7 +1932,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQuery(expected, query, null, null, true, expectSize);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+    protected void assertQuery(CharSequence expected, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false));
     }
 
@@ -1946,7 +1971,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertQueryAndPlan(String expected, String expectedPlan, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+    protected void assertQueryAndPlan(CharSequence expected, CharSequence expectedPlan, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck(query, expectedPlan);
             assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
@@ -1971,7 +1996,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         });
     }
 
-    protected void assertQueryFullFatNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {
+    protected void assertQueryFullFatNoLeakCheck(CharSequence expected, CharSequence query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean fullFatJoin) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoin);
             assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
@@ -1980,8 +2005,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertQueryNoLeakCheck(
             SqlCompiler compiler,
-            String expected,
-            String query,
+            CharSequence expected,
+            CharSequence query,
             String expectedTimestamp,
             SqlExecutionContext sqlExecutionContext,
             boolean supportsRandomAccess,
@@ -2037,6 +2062,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertQueryNoLeakCheck(String expected, String query) throws SqlException {
+        assertQueryNoLeakCheck(expected, query, true);
+    }
+
+    protected void assertQueryNoLeakCheck(String expected, String query, boolean expectSize) throws SqlException {
         snapshotMemoryUsage();
         try (RecordCursorFactory factory = select(query)) {
             assertFactoryCursor(
@@ -2045,7 +2074,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     factory,
                     true,
                     sqlExecutionContext,
-                    true,
+                    expectSize,
                     false
             );
         }
@@ -2072,26 +2101,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertSegmentLockEngagement(boolean expectLocked, String tableName, int walId, int segmentId) {
+    protected void assertSegmentLocked(TableToken tableToken, int walId, int segmentId) {
+        final WalLocker locker = engine.getWalLocker();
+        Assert.assertTrue(locker.isSegmentLocked(tableToken, walId, segmentId));
+    }
+
+    protected void assertSegmentLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        assertSegmentLockEngagement(expectLocked, tableToken, walId, segmentId);
-    }
-
-    protected void assertSegmentLockEngagement(boolean expectLocked, TableToken tableToken, int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getDbRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
-            final boolean could = couldObtainLock(path);
-            Assert.assertEquals(Utf8s.toString(path), expectLocked, !could);
-        }
-    }
-
-    protected void assertSegmentLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getDbRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock");
-            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
-        }
+        assertSegmentLocked(tableToken, walId, segmentId);
     }
 
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
@@ -2176,33 +2193,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertWalLockEngagement(boolean expectLocked, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
+    protected void assertWalLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        assertWalLockEngagement(expectLocked, tableToken, walId);
+        assertWalLocked(tableToken, walId);
     }
 
-    protected void assertWalLockEngagement(boolean expectLocked, TableToken tableToken, int walId) {
-        final CharSequence root = engine.getConfiguration().getDbRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
-            final boolean could = couldObtainLock(path);
-            Assert.assertEquals(Utf8s.toString(path), expectLocked, !could);
-        }
+    protected void assertWalLocked(TableToken tableToken, int walId) {
+        final WalLocker locker = engine.getWalLocker();
+        Assert.assertTrue(locker.isWalLocked(tableToken, walId));
     }
 
-    protected void assertWalLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
-        final CharSequence root = engine.getConfiguration().getDbRoot();
-        try (Path path = new Path()) {
-            TableToken tableToken = engine.verifyTableName(tableName);
-            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock");
-            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
-        }
+    protected void assertWalNotLocked(String tableName, @SuppressWarnings("SameParameterValue") int walId) {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        assertWalNotLocked(tableToken, walId);
     }
 
-    protected void configureForBackups() throws IOException {
-        String backupDir = temp.newFolder().getAbsolutePath();
-        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_ROOT, backupDir);
-        node1.setProperty(PropertyKey.CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT, "ddMMMyyyy");
+    protected void assertWalNotLocked(TableToken tableToken, int walId) {
+        final WalLocker locker = engine.getWalLocker();
+        Assert.assertFalse(locker.isWalLocked(tableToken, walId));
     }
 
     protected void createPopulateTable(TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {

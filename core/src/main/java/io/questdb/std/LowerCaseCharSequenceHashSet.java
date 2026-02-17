@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,30 +63,6 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
         }
     }
 
-    public boolean contains(CharSequence key) {
-        return keyIndex(key) < 0;
-    }
-
-    public boolean contains(CharSequence key, int lo, int hi) {
-        return keyIndex(key, lo, hi) < 0;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        LowerCaseCharSequenceHashSet that = (LowerCaseCharSequenceHashSet) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (CharSequence key : keys) {
-            if (key != null && that.excludes(key)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     // returns the first non-null key, in arbitrary order
     public CharSequence getAny() {
         for (int i = 0, n = keys.length; i < n; i++) {
@@ -95,17 +71,6 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
             }
         }
         return null;
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
-                hashCode += Chars.hashCode(keys[i]);
-            }
-        }
-        return hashCode;
     }
 
     public CharSequence keyAt(int index) {

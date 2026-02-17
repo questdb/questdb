@@ -6,8 +6,8 @@ use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;
 use crate::parquet_read::decode::ParquetColumnIndex;
 use crate::parquet_read::{
-    ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, ParquetDecoder, RowGroupBuffers,
-    RowGroupStatBuffers,
+    ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, DecodeContext, ParquetDecoder,
+    RowGroupBuffers, RowGroupStatBuffers,
 };
 use jni::objects::JClass;
 use jni::JNIEnv;
@@ -21,11 +21,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     allocator: *const QdbAllocator,
     file_ptr: *const u8, // mmapped file's address
     file_size: u64,      // mmapped file's size
-) -> *mut ParquetDecoder<Cursor<&'static [u8]>> {
+) -> *mut ParquetDecoder {
     let buf = unsafe { slice::from_raw_parts(file_ptr, file_size as usize) };
-    let reader: Cursor<&'static [u8]> = Cursor::new(buf);
+    let mut reader: Cursor<&[u8]> = Cursor::new(buf);
     let allocator = unsafe { &*allocator }.clone();
-    match ParquetDecoder::read(allocator, reader, file_size) {
+    match ParquetDecoder::read(allocator, &mut reader, file_size) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
         Err(mut err) => {
             err.add_context(format!(
@@ -41,13 +41,34 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroy(
     _env: JNIEnv,
     _class: JClass,
-    decoder: *mut ParquetDecoder<Cursor<&'static [u8]>>,
+    decoder: *mut ParquetDecoder,
 ) {
     if decoder.is_null() {
         panic!("decoder pointer is null");
     }
 
     drop(unsafe { Box::from_raw(decoder) });
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_createDecodeContext(
+    _env: JNIEnv,
+    _class: JClass,
+    file_ptr: *const u8,
+    file_size: u64,
+) -> *mut DecodeContext {
+    Box::into_raw(Box::new(DecodeContext::new(file_ptr, file_size)))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroyDecodeContext(
+    _env: JNIEnv,
+    _class: JClass,
+    ctx: *mut DecodeContext,
+) {
+    if !ctx.is_null() {
+        drop(unsafe { Box::from_raw(ctx) });
+    }
 }
 
 fn validate_jni_column_types(columns: &[(ParquetFieldId, ColumnType)]) -> ParquetResult<()> {
@@ -60,11 +81,119 @@ fn validate_jni_column_types(columns: &[(ParquetFieldId, ColumnType)]) -> Parque
     Ok(())
 }
 
+#[repr(u8)]
+enum DecodeMode {
+    NoFilter = 0,
+    FilterSkip = 1,
+    FilterFillNulls = 2,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_row_group_impl<const MODE: u8>(
+    env: &mut JNIEnv,
+    decoder: *const ParquetDecoder,
+    ctx: *mut DecodeContext,
+    row_group_bufs: *mut RowGroupBuffers,
+    column_offset: usize,
+    columns: *const (ParquetColumnIndex, ColumnType),
+    column_count: u32,
+    row_group_index: u32,
+    row_group_lo: u32,
+    row_group_hi: u32,
+    filtered_rows_ptr: *const i64,
+    filtered_rows_count: usize,
+) -> u32 {
+    assert!(!decoder.is_null(), "decoder pointer is null");
+    assert!(!ctx.is_null(), "decode context pointer is null");
+    assert!(
+        !row_group_bufs.is_null(),
+        "row group buffers pointer is null"
+    );
+    assert!(!columns.is_null(), "columns pointer is null");
+
+    match MODE {
+        x if x == DecodeMode::NoFilter as u8 => {}
+        _ => {
+            assert!(
+                !filtered_rows_ptr.is_null(),
+                "filtered rows pointer is null"
+            );
+        }
+    }
+
+    let decoder = unsafe { &*decoder };
+    let ctx = unsafe { &mut *ctx };
+    let row_group_bufs = unsafe { &mut *row_group_bufs };
+    let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
+    let filtered_rows = if filtered_rows_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(filtered_rows_ptr, filtered_rows_count) }
+    };
+
+    let res = validate_jni_column_types(columns).and_then(|()| match MODE {
+        x if x == DecodeMode::NoFilter as u8 => decoder.decode_row_group(
+            ctx,
+            row_group_bufs,
+            columns,
+            row_group_index,
+            row_group_lo,
+            row_group_hi,
+        ),
+        x if x == DecodeMode::FilterSkip as u8 => decoder.decode_row_group_filtered::<false>(
+            ctx,
+            row_group_bufs,
+            column_offset,
+            columns,
+            row_group_index,
+            row_group_lo,
+            row_group_hi,
+            filtered_rows,
+        ),
+        _ => decoder.decode_row_group_filtered::<true>(
+            ctx,
+            row_group_bufs,
+            column_offset,
+            columns,
+            row_group_index,
+            row_group_lo,
+            row_group_hi,
+            filtered_rows,
+        ),
+    });
+
+    match res {
+        Ok(row_count) => row_count as u32,
+        Err(mut err) => {
+            let (context_msg, method_name) = match MODE {
+                x if x == DecodeMode::NoFilter as u8 => (
+                    format!("could not decode row group {row_group_index}"),
+                    "error in PartitionDecoder.decodeRowGroup",
+                ),
+                x if x == DecodeMode::FilterSkip as u8 => (
+                    format!("could not decode row group {row_group_index} with row filter"),
+                    "error in PartitionDecoder.decodeRowGroupWithRowFilter",
+                ),
+                _ => (
+                    format!(
+                        "could not decode row group {row_group_index} with row filter (fill nulls)"
+                    ),
+                    "error in PartitionDecoder.decodeRowGroupWithRowFilterFillNulls",
+                ),
+            };
+            err.add_context(context_msg);
+            err.add_context(method_name);
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroup(
     mut env: JNIEnv,
     _class: JClass,
-    decoder: *mut ParquetDecoder<Cursor<&'static [u8]>>,
+    decoder: *const ParquetDecoder,
+    ctx: *mut DecodeContext,
     row_group_bufs: *mut RowGroupBuffers,
     columns: *const (ParquetColumnIndex, ColumnType),
     column_count: u32,
@@ -72,43 +201,91 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     row_group_lo: u32,
     row_group_hi: u32,
 ) -> u32 {
-    assert!(!decoder.is_null(), "decoder pointer is null");
-    assert!(
-        !row_group_bufs.is_null(),
-        "row group buffers pointer is null"
+    decode_row_group_impl::<{ DecodeMode::NoFilter as u8 }>(
+        &mut env,
+        decoder,
+        ctx,
+        row_group_bufs,
+        0,
+        columns,
+        column_count,
+        row_group_index,
+        row_group_lo,
+        row_group_hi,
+        std::ptr::null(),
+        0,
+    )
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroupWithRowFilter(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    ctx: *mut DecodeContext,
+    row_group_bufs: *mut RowGroupBuffers,
+    column_offset: u32,
+    columns: *const (ParquetColumnIndex, ColumnType),
+    column_count: u32,
+    row_group_index: u32,
+    row_group_lo: u32,
+    row_group_hi: u32,
+    filtered_rows_ptr: *const i64,
+    filtered_rows_size: i64,
+) {
+    decode_row_group_impl::<{ DecodeMode::FilterSkip as u8 }>(
+        &mut env,
+        decoder,
+        ctx,
+        row_group_bufs,
+        column_offset as usize,
+        columns,
+        column_count,
+        row_group_index,
+        row_group_lo,
+        row_group_hi,
+        filtered_rows_ptr,
+        filtered_rows_size as usize,
     );
-    assert!(!columns.is_null(), "columns pointer is null");
+}
 
-    let decoder = unsafe { &mut *decoder };
-    let row_group_bufs = unsafe { &mut *row_group_bufs };
-    let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
-
-    // We've unsafely accepted a `ColumnType` from Java, so we need to validate it.
-    let res = validate_jni_column_types(columns).and_then(|()| {
-        decoder.decode_row_group(
-            row_group_bufs,
-            columns,
-            row_group_index,
-            row_group_lo,
-            row_group_hi,
-        )
-    });
-
-    match res {
-        Ok(row_count) => row_count as u32,
-        Err(mut err) => {
-            err.add_context(format!("could not decode row group {row_group_index}"));
-            err.add_context("error in PartitionDecoder.decodeRowGroup");
-            err.into_cairo_exception().throw(&mut env)
-        }
-    }
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroupWithRowFilterFillNulls(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    ctx: *mut DecodeContext,
+    row_group_bufs: *mut RowGroupBuffers,
+    column_offset: u32,
+    columns: *const (ParquetColumnIndex, ColumnType),
+    column_count: u32,
+    row_group_index: u32,
+    row_group_lo: u32,
+    row_group_hi: u32,
+    filtered_rows_ptr: *const i64,
+    filtered_rows_size: i64,
+) {
+    decode_row_group_impl::<{ DecodeMode::FilterFillNulls as u8 }>(
+        &mut env,
+        decoder,
+        ctx,
+        row_group_bufs,
+        column_offset as usize,
+        columns,
+        column_count,
+        row_group_index,
+        row_group_lo,
+        row_group_hi,
+        filtered_rows_ptr,
+        filtered_rows_size as usize,
+    );
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readRowGroupStats(
     mut env: JNIEnv,
     _class: JClass,
-    decoder: *const ParquetDecoder<Cursor<&'static [u8]>>,
+    decoder: *const ParquetDecoder,
     row_group_stat_bufs: *mut RowGroupStatBuffers,
     columns: *const (ParquetColumnIndex, ColumnType),
     column_count: u32,
@@ -146,7 +323,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_findRowGroupByTimestamp(
     mut env: JNIEnv,
     _class: JClass,
-    decoder: *const ParquetDecoder<Cursor<&'static [u8]>>,
+    decoder: *const ParquetDecoder,
     timestamp: i64,
     row_lo: usize,
     row_hi: usize,
@@ -171,7 +348,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder<Cursor<&'static [u8]>>, col_count)
+    offset_of!(ParquetDecoder, col_count)
 }
 
 #[no_mangle]
@@ -179,7 +356,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder<Cursor<&'static [u8]>>, row_count)
+    offset_of!(ParquetDecoder, row_count)
 }
 
 #[no_mangle]
@@ -187,7 +364,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder<Cursor<&'static [u8]>>, row_group_count)
+    offset_of!(ParquetDecoder, row_group_count)
 }
 
 #[no_mangle]
@@ -195,7 +372,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder<Cursor<&'static [u8]>>, row_group_sizes_ptr)
+    offset_of!(ParquetDecoder, row_group_sizes_ptr)
 }
 
 #[no_mangle]
@@ -203,7 +380,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder<Cursor<&'static [u8]>>, timestamp_index)
+    offset_of!(ParquetDecoder, timestamp_index)
 }
 
 #[no_mangle]
@@ -211,7 +388,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder<Cursor<&'static [u8]>>, columns_ptr)
+    offset_of!(ParquetDecoder, columns_ptr)
 }
 
 #[no_mangle]

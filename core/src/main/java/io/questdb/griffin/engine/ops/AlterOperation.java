@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,6 @@ import io.questdb.std.str.DirectString;
 import io.questdb.tasks.TableWriterTask;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
-    public final static String CMD_NAME = "ALTER TABLE";
     public final static short DO_NOTHING = 0;
     public final static short ADD_COLUMN = DO_NOTHING + 1; // 1
     public final static short DROP_PARTITION = ADD_COLUMN + 1; // 2
@@ -333,18 +332,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     @Override
     public boolean isStructural() {
-        switch (command) {
-            case ADD_COLUMN:
-            case RENAME_COLUMN:
-            case DROP_COLUMN:
-            case RENAME_TABLE:
-            case SET_DEDUP_DISABLE:
-            case SET_DEDUP_ENABLE:
-            case CHANGE_COLUMN_TYPE:
-                return true;
-            default:
-                return false;
-        }
+        return switch (command) {
+            case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, SET_DEDUP_DISABLE, SET_DEDUP_ENABLE,
+                 CHANGE_COLUMN_TYPE -> true;
+            default -> false;
+        };
     }
 
     @Override
@@ -355,31 +347,25 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
         // Table rename is not in the list since it's handled by the engine directly. That's because the invalidation
         // looks up dependent views by table name which has already changed at this point, not directory name.
-        switch (command) {
-            case DROP_COLUMN:
-                return "drop column operation";
-            case RENAME_COLUMN:
-                return "rename column operation";
-            case CHANGE_COLUMN_TYPE:
-                return "change column type operation";
-            case DROP_PARTITION:
-                return "drop partition operation";
-            case DETACH_PARTITION:
-                return "detach partition operation";
-            case ATTACH_PARTITION:
-                return "attach partition operation";
-            default:
-                return null;
-        }
+        return switch (command) {
+            case DROP_COLUMN -> "drop column operation";
+            case RENAME_COLUMN -> "rename column operation";
+            case CHANGE_COLUMN_TYPE -> "change column type operation";
+            case DROP_PARTITION -> "drop partition operation";
+            case DETACH_PARTITION -> "detach partition operation";
+            case ATTACH_PARTITION -> "attach partition operation";
+            default -> null;
+        };
     }
 
     public AlterOperation of(
+            int cmdType,
             short command,
             TableToken tableToken,
             int tableId,
             int tableNamePosition
     ) {
-        init(TableWriterTask.CMD_ALTER_TABLE, CMD_NAME, tableToken, tableId, -1, tableNamePosition);
+        init(cmdType, TableWriterTask.getCommandName(cmdType), tableToken, tableId, -1, tableNamePosition);
         this.command = command;
         this.activeExtraStrInfo = this.extraStrInfo;
         return this;
@@ -398,8 +384,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
-        of(AlterOperation.ADD_COLUMN, tableToken, tableId, tableNamePosition);
-        assert columnName != null && columnName.length() > 0;
+        of(TableWriterTask.CMD_ALTER_TABLE, AlterOperation.ADD_COLUMN, tableToken, tableId, tableNamePosition);
+        assert columnName != null && !columnName.isEmpty();
         extraStrInfo.strings.add(Chars.toString(columnName));
         extraInfo.add(columnType);
         extraInfo.add(symbolCapacity);
@@ -410,8 +396,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     public void ofRenameTable(TableToken fromTableToken, CharSequence toTableName) {
-        of(AlterOperation.RENAME_TABLE, fromTableToken, fromTableToken.getTableId(), 0);
-        assert toTableName != null && toTableName.length() > 0;
+        of(TableWriterTask.CMD_ALTER_TABLE, AlterOperation.RENAME_TABLE, fromTableToken, fromTableToken.getTableId(), 0);
+        assert toTableName != null && !toTableName.isEmpty();
         extraStrInfo.strings.add(fromTableToken.getTableName());
         extraStrInfo.strings.add(toTableName);
     }
@@ -444,6 +430,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = 0, n = extraStrInfo.size(); i < n; i++) {
             sink.putStr(extraStrInfo.getStrA(i));
         }
+    }
+
+    @Override
+    public boolean shouldCompileDependentViews() {
+        return switch (command) {
+            case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, CHANGE_COLUMN_TYPE -> true;
+            default -> false;
+        };
     }
 
     @Override
@@ -681,7 +675,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void changeSymbolCapacity(MetadataService svc) {
         if (activeExtraStrInfo.size() != 1) {
-            throw CairoException.nonCritical().put("invalid change column type alter statement");
+            throw CairoException.nonCritical().put("invalid change symbol capacity alter statement");
         }
         CharSequence columnName = activeExtraStrInfo.getStrA(0);
         int newCapacity = (int) extraInfo.get(1);
@@ -803,12 +797,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private static class ObjCharSequenceList implements CharSequenceList {
-        private final ObjList<CharSequence> strings;
-
-        public ObjCharSequenceList(ObjList<CharSequence> strings) {
-            this.strings = strings;
-        }
+    private record ObjCharSequenceList(ObjList<CharSequence> strings) implements CharSequenceList {
 
         @Override
         public void clear() {

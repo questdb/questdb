@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import io.questdb.ParanoiaState;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -65,15 +66,21 @@ public class FilesCacheFuzzTest extends AbstractTest {
     private Rnd rndRoot;
     private Path[] testFilePaths;
 
-    public FilesCacheFuzzTest(boolean fdCacheEnabled) {
+    public FilesCacheFuzzTest(boolean fdCacheEnabled, boolean asyncMunmapEnabled) {
         Files.FS_CACHE_ENABLED = fdCacheEnabled;
+        Files.ASYNC_MUNMAP_ENABLED = asyncMunmapEnabled;
     }
 
-    @Parameterized.Parameters(name = "fd_cache_enabled_{0}")
+    @Parameterized.Parameters(name = "fd_cache_enabled_{0}, async_munmap_{1}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {true},
-                {false},
+        return Os.isPosix() ? Arrays.asList(new Object[][]{
+                {true, true},
+                {true, false},
+                {false, true},
+                {false, false}
+        }) : Arrays.asList(new Object[][]{
+                {true, false},
+                {false, false}
         });
     }
 
@@ -88,6 +95,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
     public static void tearDownStatic() {
         AbstractTest.tearDownStatic();
         ParanoiaState.FD_PARANOIA_MODE = savedFdParanoia;
+        Files.ASYNC_MUNMAP_ENABLED = false;
     }
 
     @Before
@@ -570,7 +578,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                                 Files.close(fd2);
                             }
 
-                            if (Files.remove(singleFile.$())) {
+                            if (TestUtils.remove(singleFile.$())) {
                                 markRemovedOperations.incrementAndGet();
                             }
                         }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -370,6 +370,17 @@ public class CharsTest {
         Assert.assertFalse(Chars.endsWith("ab", "abc"));
         Assert.assertFalse(Chars.endsWith("abc", "x"));
         Assert.assertTrue(Chars.endsWith("abcd", "cd"));
+    }
+
+    @Test
+    public void testEqualsLowerCaseAscii() {
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "foo bar baz", 0, 11));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "FoO bAr BaZ", 0, 11));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar", "foo bar baz", 0, 7));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar", "bar foo bar baz", 4, 11));
+        Assert.assertFalse(Chars.equalsLowerCaseAscii("foo bar baz", "foo bar", 0, 7));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo_bar_baz", "foo_BAR_baz", 0, 11));
+        Assert.assertFalse(Chars.equalsLowerCaseAscii("foo_bar_baz", "foo_foo_baz", 0, 11));
     }
 
     @Test

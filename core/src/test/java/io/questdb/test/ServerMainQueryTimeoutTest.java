@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -66,6 +66,8 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
                 // we want more reduce tasks, hence smaller page frames
                 PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS + "=1000",
                 PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS + "=10000",
+                PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS + "=100",
+                PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS + "=1000",
                 // with 10ms timeout queries have a small chance to execute successfully
                 PropertyKey.QUERY_TIMEOUT + "=10ms",
                 // the scoreboard has to be small to simplify detecting table reader leak
@@ -109,9 +111,8 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
                     final StringSink sink = new StringSink();
                     try {
                         startBarrier.await();
-
                         try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
-                            for (int i = 0; i < nIterations; i++) {
+                            for (int i = 0, localLeaks = 0; i < nIterations && localLeaks < 5; i++) {
                                 final String query = "SELECT * FROM tab WHERE key = 'k0' or key = 'k3' LIMIT 1_999_990, 2_000_000";
                                 final StringBuilder sb = new StringBuilder(query);
                                 if (!useQueryCache) {
@@ -126,23 +127,26 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
                                 ) {
                                     sink.clear();
                                     assertResultSet(
-                                            "ts[TIMESTAMP],key[VARCHAR],price[DOUBLE],quantity[BIGINT]\n" +
-                                                    "2106-11-23 18:43:12.0,k3,4999978.0,4999978\n" +
-                                                    "2106-11-23 19:12:00.0,k0,4999980.0,4999980\n" +
-                                                    "2106-11-23 19:55:12.0,k3,4999983.0,4999983\n" +
-                                                    "2106-11-23 20:24:00.0,k0,4999985.0,4999985\n" +
-                                                    "2106-11-23 21:07:12.0,k3,4999988.0,4999988\n" +
-                                                    "2106-11-23 21:36:00.0,k0,4999990.0,4999990\n" +
-                                                    "2106-11-23 22:19:12.0,k3,4999993.0,4999993\n" +
-                                                    "2106-11-23 22:48:00.0,k0,4999995.0,4999995\n" +
-                                                    "2106-11-23 23:31:12.0,k3,4999998.0,4999998\n" +
-                                                    "2106-11-24 00:00:00.0,k0,5000000.0,5000000\n",
+                                            """
+                                                    ts[TIMESTAMP],key[VARCHAR],price[DOUBLE],quantity[BIGINT]
+                                                    2106-11-23 18:43:12.0,k3,4999978.0,4999978
+                                                    2106-11-23 19:12:00.0,k0,4999980.0,4999980
+                                                    2106-11-23 19:55:12.0,k3,4999983.0,4999983
+                                                    2106-11-23 20:24:00.0,k0,4999985.0,4999985
+                                                    2106-11-23 21:07:12.0,k3,4999988.0,4999988
+                                                    2106-11-23 21:36:00.0,k0,4999990.0,4999990
+                                                    2106-11-23 22:19:12.0,k3,4999993.0,4999993
+                                                    2106-11-23 22:48:00.0,k0,4999995.0,4999995
+                                                    2106-11-23 23:31:12.0,k3,4999998.0,4999998
+                                                    2106-11-24 00:00:00.0,k0,5000000.0,5000000
+                                                    """,
                                             sink,
                                             rs
                                     );
                                 } catch (PSQLException e) {
                                     // timeouts are fine
                                     TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+                                    localLeaks++;
                                     timeouts.incrementAndGet();
                                 }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -76,7 +76,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
-@SuppressWarnings("SameParameterValue")
+@SuppressWarnings({"SameParameterValue", "resource"})
 public class WalTableSqlTest extends AbstractCairoTest {
 
     @BeforeClass
@@ -122,10 +122,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\n" +
-                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
-                            "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\n" +
-                            "102\tbbb\t2022-02-24T02:00:00.000000Z\tccc\n",
+                    """
+                            x\tsym\tts\tsym2
+                            101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2
+                            103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd
+                            102\tbbb\t2022-02-24T02:00:00.000000Z\tccc
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -169,11 +171,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "x\tsym\tstr\tts\tsym2\tnew_column\n" +
-                            "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
-                            "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
-                            "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
-                            "103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234\n",
+                    """
+                            x\tsym\tstr\tts\tsym2\tnew_column
+                            101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull
+                            101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull
+                            101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull
+                            103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -211,9 +215,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\tjjj\n" +
-                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
-                            "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n",
+                    """
+                            x\tsym\tts\tsym2\tjjj
+                            101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull
+                            103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -253,9 +259,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\tjjj\tcol_str\tcol_var\n" +
-                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\t\t\n" +
-                            "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\tsss-value\tvar-val\n",
+                    """
+                            x\tsym\tts\tsym2\tjjj\tcol_str\tcol_var
+                            101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\t\t
+                            103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\tsss-value\tvar-val
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -292,9 +300,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\tjjj\n" +
-                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
-                            "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n",
+                    """
+                            x\tsym\tts\tsym2\tjjj
+                            101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull
+                            103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -418,10 +428,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\n" +
-                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
-                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
-                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\n",
+                    """
+                            x\tsym\tts\tsym2
+                            101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2
+                            101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2
+                            101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -508,9 +520,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "ts\tcol1\tcol2\n" +
-                            "2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
-                            "2022-02-24T01:00:00.000000Z\t1\t2\n",
+                    """
+                            ts\tcol1\tcol2
+                            2022-02-24T00:00:00.000000Z\tnull\tnull
+                            2022-02-24T01:00:00.000000Z\t1\t2
+                            """,
                     "select ts, col1, col2 from " + tableName,
                     "ts",
                     true,
@@ -526,10 +540,12 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("insert into " + tableName + "(ts, col1, col3) values('2022-02-24T01', 3, 4)");
 
             assertQueryNoLeakCheck(
-                    "ts\tcol1\tcol3\n" +
-                            "2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
-                            "2022-02-24T01:00:00.000000Z\t1\tnull\n" +
-                            "2022-02-24T01:00:00.000000Z\t3\t4\n",
+                    """
+                            ts\tcol1\tcol3
+                            2022-02-24T00:00:00.000000Z\tnull\tnull
+                            2022-02-24T01:00:00.000000Z\t1\tnull
+                            2022-02-24T01:00:00.000000Z\t3\t4
+                            """,
                     "select ts, col1, col3 from " + tableName,
                     "ts",
                     true,
@@ -571,8 +587,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             checkWalFilesRemoved(sysTableName1);
 
             assertQueryNoLeakCheck(
-                    "x\tts\n" +
-                            "1\t2022-02-24T00:00:00.000000Z\n",
+                    """
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -599,8 +617,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             SharedRandom.RANDOM.get().reset();
             execute(createSql);
             assertQueryNoLeakCheck(
-                    "x\tsym\tsym2\tts\n" +
-                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    """
+                            x\tsym\tsym2\tts
+                            1\tAB\tEF\t2022-02-24T00:00:00.000000Z
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -612,8 +632,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute(createSql + " WAL");
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "x\tsym\tsym2\tts\n" +
-                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    """
+                            x\tsym\tsym2\tts
+                            1\tAB\tEF\t2022-02-24T00:00:00.000000Z
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -624,8 +646,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             SharedRandom.RANDOM.get().reset();
             execute(createSql);
             assertQueryNoLeakCheck(
-                    "x\tsym\tsym2\tts\n" +
-                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    """
+                            x\tsym\tsym2\tts
+                            1\tAB\tEF\t2022-02-24T00:00:00.000000Z
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -637,8 +661,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute(createSql + " WAL");
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "x\tsym\tsym2\tts\n" +
-                            "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n",
+                    """
+                            x\tsym\tsym2\tts
+                            1\tAB\tEF\t2022-02-24T00:00:00.000000Z
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -738,8 +764,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             checkWalFilesRemoved(tableToken);
 
             assertQueryNoLeakCheck(
-                    "x\tts\n" +
-                            "1\t2022-02-24T00:00:00.000000Z\n",
+                    """
+                            x\tts
+                            1\t2022-02-24T00:00:00.000000Z
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -770,13 +798,15 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\n" +
-                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
-                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
-                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
-                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n",
+                    """
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            2\tBC\t2022-02-24T00:00:01.000000Z\tFG
+                            3\tCD\t2022-02-24T00:00:02.000000Z\tFG
+                            4\tCD\t2022-02-24T00:00:03.000000Z\tFG
+                            5\tAB\t2022-02-24T00:00:04.000000Z\tDE
+                            101\tdfd\t2022-02-24T01:00:00.000000Z\tasd
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -803,9 +833,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "x\tsym2\tts\n" +
-                            "1\tEF\t2022-02-24T00:00:00.000000Z\n" +
-                            "2\t\t2022-02-24T23:00:01.000000Z\n",
+                    """
+                            x\tsym2\tts
+                            1\tEF\t2022-02-24T00:00:00.000000Z
+                            2\t\t2022-02-24T23:00:01.000000Z
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -829,12 +861,14 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\n" +
-                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
-                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
-                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n",
+                    """
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            2\tBC\t2022-02-24T00:00:01.000000Z\tFG
+                            3\tCD\t2022-02-24T00:00:02.000000Z\tFG
+                            4\tCD\t2022-02-24T00:00:03.000000Z\tFG
+                            5\tAB\t2022-02-24T00:00:04.000000Z\tDE
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -864,15 +898,17 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\n" +
-                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                            "101\tBC2\t2022-02-24T00:00:00.000000Z\tDE2\n" +
-                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                            "102\tBC2\t2022-02-24T00:00:01.000000Z\tFG2\n" +
-                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
-                            "103\tBC2\t2022-02-24T00:00:02.000000Z\tDE2\n" +
-                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
-                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n",
+                    """
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            101\tBC2\t2022-02-24T00:00:00.000000Z\tDE2
+                            2\tBC\t2022-02-24T00:00:01.000000Z\tFG
+                            102\tBC2\t2022-02-24T00:00:01.000000Z\tFG2
+                            3\tCD\t2022-02-24T00:00:02.000000Z\tFG
+                            103\tBC2\t2022-02-24T00:00:02.000000Z\tDE2
+                            4\tCD\t2022-02-24T00:00:03.000000Z\tFG
+                            5\tAB\t2022-02-24T00:00:04.000000Z\tDE
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -914,8 +950,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "x\tsym2\tts\n" +
-                            "2\tEF\t2022-02-25T00:00:00.000000Z\n",
+                    """
+                            x\tsym2\tts
+                            2\tEF\t2022-02-25T00:00:00.000000Z
+                            """,
                     newTableName,
                     "ts",
                     true,
@@ -964,6 +1002,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -989,6 +1028,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1013,6 +1053,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1037,6 +1078,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             tableNameNonWal + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1050,7 +1092,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("drop table " + tableNameNonWal);
 
             assertQueryNoLeakCheck("table_name\n", "all_tables() order by table_name", null, true);
-            assertQueryNoLeakCheck("table_name\n", "select table_name from tables() order by table_name", null, true);
+            assertQueryNoLeakCheck("table_name\n", "select table_name from tables() order by table_name", null, true, true);
             assertQueryNoLeakCheck("relname\npg_class\n", "select relname from pg_class() order by relname", null, true);
         });
     }
@@ -1076,11 +1118,6 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 drainWalQueue();
                 checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
             }
-
-            if (Os.type == Os.WINDOWS) {
-                // Release WAL writers
-                engine.releaseInactive();
-            }
             drainWalQueue();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
@@ -1092,21 +1129,24 @@ public class WalTableSqlTest extends AbstractCairoTest {
     public void testDropSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "CREATE TABLE 'weather' (\n" +
-                            "  city SYMBOL capacity 256,\n" +
-                            "  temperature DOUBLE,\n" +
-                            "  humidity DOUBLE,\n" +
-                            "  timestamp TIMESTAMP,\n" +
-                            "  country SYMBOL capacity 256 CACHE\n" +
-                            ") timestamp (timestamp) PARTITION BY DAY WAL"
+                    """
+                            CREATE TABLE 'weather' (
+                              city SYMBOL capacity 256,
+                              temperature DOUBLE,
+                              humidity DOUBLE,
+                              timestamp TIMESTAMP,
+                              country SYMBOL capacity 256 CACHE
+                            ) timestamp (timestamp) PARTITION BY DAY WAL"""
             );
 
             execute("insert into weather values('city', 1, 1, '1982-01-01', 'abc')");
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "city\ttemperature\thumidity\ttimestamp\tcountry\n" +
-                            "city\t1.0\t1.0\t1982-01-01T00:00:00.000000Z\tabc\n",
+                    """
+                            city\ttemperature\thumidity\ttimestamp\tcountry
+                            city\t1.0\t1.0\t1982-01-01T00:00:00.000000Z\tabc
+                            """,
                     "select * from weather",
                     "timestamp",
                     true,
@@ -1390,8 +1430,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            "testEmptyTruncate\tfalse\t1\t0\t1\t\t\t0\n",
+                    """
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
+                            testEmptyTruncate\tfalse\t1\t0\t1\t\t\t0
+                            """,
                     "wal_tables()",
                     null
             );
@@ -1524,20 +1566,24 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            String allRows = "sym\tx\tts\n" +
-                    "abc\t1\t2022-02-24T00:00:00.000000Z\n" +
-                    "\t2\t2022-02-24T00:00:01.000000Z\n" +
-                    "abc\t3\t2022-02-24T00:00:02.000000Z\n" +
-                    "\t4\t2022-02-24T00:00:03.000000Z\n" +
-                    "abc\t5\t2022-02-24T00:00:04.000000Z\n";
+            String allRows = """
+                    sym\tx\tts
+                    abc\t1\t2022-02-24T00:00:00.000000Z
+                    \t2\t2022-02-24T00:00:01.000000Z
+                    abc\t3\t2022-02-24T00:00:02.000000Z
+                    \t4\t2022-02-24T00:00:03.000000Z
+                    abc\t5\t2022-02-24T00:00:04.000000Z
+                    """;
 
             assertQueryNoLeakCheck(allRows, "temp", null, true, true);
             assertQueryNoLeakCheck(allRows, tableName, "ts", true, true);
 
             assertQueryNoLeakCheck(
-                    "sym\tx\tts\n" +
-                            "\t2\t2022-02-24T00:00:01.000000Z\n" +
-                            "\t4\t2022-02-24T00:00:03.000000Z\n",
+                    """
+                            sym\tx\tts
+                            \t2\t2022-02-24T00:00:01.000000Z
+                            \t4\t2022-02-24T00:00:03.000000Z
+                            """,
                     "select * from " + tableName + " where sym != 'abc'",
                     "ts",
                     true
@@ -1578,11 +1624,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "x\tstr\tts\tsym2\n" +
-                            "101\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
-                            "101\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
-                            "101\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
-                            "103\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\n",
+                    """
+                            x\tstr\tts\tsym2
+                            101\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2
+                            101\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2
+                            101\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2
+                            103\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -1629,8 +1677,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             try {
                 assertSql(
-                        "x\tsym2\tts\n" +
-                                "2\tEF\t2022-02-25T00:00:00.000000Z\n",
+                        """
+                                x\tsym2\tts
+                                2\tEF\t2022-02-25T00:00:00.000000Z
+                                """,
                         newTableName
                 );
                 Assert.fail();
@@ -1669,9 +1719,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
             }
 
             assertQueryNoLeakCheck(
-                    "x\tsym2\tts\n" +
-                            "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
-                            "100\t\t2022-02-25T00:00:00.000000Z\n",
+                    """
+                            x\tsym2\tts
+                            1\tDE\t2022-02-24T00:00:00.000000Z
+                            100\t\t2022-02-25T00:00:00.000000Z
+                            """,
                     newTableName,
                     "ts",
                     true,
@@ -1683,6 +1735,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
 
@@ -1693,9 +1746,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 TableToken newTableDirectoryName2 = engine.verifyTableName(newTableName);
                 Assert.assertEquals(newTabledirectoryName, newTableDirectoryName2);
                 assertQueryNoLeakCheck(
-                        "x\tsym2\tts\n" +
-                                "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
-                                "100\t\t2022-02-25T00:00:00.000000Z\n",
+                        """
+                                x\tsym2\tts
+                                1\tDE\t2022-02-24T00:00:00.000000Z
+                                100\t\t2022-02-25T00:00:00.000000Z
+                                """,
                         newTableName,
                         "ts",
                         true,
@@ -1708,6 +1763,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\t" + newTabledirectoryName.getDirName() + "\n",
                     "select table_name, directoryName from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1755,9 +1811,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
             }
 
             assertQueryNoLeakCheck(
-                    "x\tsym2\tts\n" +
-                            "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
-                            "100\t\t2022-02-25T00:00:00.000000Z\n",
+                    """
+                            x\tsym2\tts
+                            1\tDE\t2022-02-24T00:00:00.000000Z
+                            100\t\t2022-02-25T00:00:00.000000Z
+                            """,
                     newTableName,
                     "ts",
                     true,
@@ -1769,6 +1827,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\n",
                     "select table_name from tables() order by table_name",
                     null,
+                    true,
                     true
             );
 
@@ -1779,9 +1838,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 TableToken newTableDirectoryName2 = engine.verifyTableName(newTableName);
                 Assert.assertEquals(newTableDirectoryName, newTableDirectoryName2);
                 assertQueryNoLeakCheck(
-                        "x\tsym2\tts\n" +
-                                "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
-                                "100\t\t2022-02-25T00:00:00.000000Z\n",
+                        """
+                                x\tsym2\tts
+                                1\tDE\t2022-02-24T00:00:00.000000Z
+                                100\t\t2022-02-25T00:00:00.000000Z
+                                """,
                         newTableName,
                         "ts",
                         true,
@@ -1794,6 +1855,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             newTableName + "\t" + newTableDirectoryName.getDirName() + "\n",
                     "select table_name, directoryName from tables() order by table_name",
                     null,
+                    true,
                     true
             );
             assertQueryNoLeakCheck(
@@ -1838,11 +1900,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "x\tsym2\tts\n" +
-                            "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
-                            "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
-                            "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
-                            "1\tabc\t2022-02-25T00:00:00.000000Z\n",
+                    """
+                            x\tsym2\tts
+                            1\tDE\t2022-02-24T00:00:00.000000Z
+                            2\tEF\t2022-02-25T00:00:00.000000Z
+                            1\tabc\t2022-02-25T00:00:00.000000Z
+                            1\tabc\t2022-02-25T00:00:00.000000Z
+                            """,
                     "select * from " + upperCaseName,
                     "ts",
                     true,
@@ -1852,11 +1916,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("rename table " + upperCaseName + " to " + newTableName);
 
             assertQueryNoLeakCheck(
-                    "x\tsym2\tts\n" +
-                            "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
-                            "2\tEF\t2022-02-25T00:00:00.000000Z\n" +
-                            "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
-                            "1\tabc\t2022-02-25T00:00:00.000000Z\n",
+                    """
+                            x\tsym2\tts
+                            1\tDE\t2022-02-24T00:00:00.000000Z
+                            2\tEF\t2022-02-25T00:00:00.000000Z
+                            1\tabc\t2022-02-25T00:00:00.000000Z
+                            1\tabc\t2022-02-25T00:00:00.000000Z
+                            """,
                     "select * from " + newTableName,
                     "ts",
                     true,
@@ -1890,13 +1956,15 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     " values (102, 'dfd', '2022-02-24T01', 'asd')");
 
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\n" +
-                            "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                            "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                            "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
-                            "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
-                            "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
-                            "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n",
+                    """
+                            x\tsym\tts\tsym2
+                            1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                            2\tBC\t2022-02-24T00:00:01.000000Z\tFG
+                            3\tCD\t2022-02-24T00:00:02.000000Z\tFG
+                            4\tCD\t2022-02-24T00:00:03.000000Z\tFG
+                            5\tAB\t2022-02-24T00:00:04.000000Z\tDE
+                            101\tdfd\t2022-02-24T01:00:00.000000Z\tasd
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -2047,9 +2115,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "x\tsym\tts\tsym2\tsss\n" +
-                            "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\t\n" +
-                            "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n",
+                    """
+                            x\tsym\tts\tsym2\tsss
+                            101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\t
+                            103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234
+                            """,
                     tableName,
                     "ts",
                     true,
@@ -2108,11 +2178,13 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 engine.releaseInactive();
 
                 assertQueryNoLeakCheck(
-                        "x\tsym\tts\tsym2\n" +
-                                "101\tdfd\t2022-02-24T01:01:00.000000Z\tasd\n" +
-                                "102\tdfd\t2022-02-24T01:02:00.000000Z\tasd\n" +
-                                "103\tdfd\t2022-02-24T01:03:00.000000Z\tasd\n" +
-                                "1\tAB\t2022-02-24T02:00:00.000000Z\tEF\n",
+                        """
+                                x\tsym\tts\tsym2
+                                101\tdfd\t2022-02-24T01:01:00.000000Z\tasd
+                                102\tdfd\t2022-02-24T01:02:00.000000Z\tasd
+                                103\tdfd\t2022-02-24T01:03:00.000000Z\tasd
+                                1\tAB\t2022-02-24T02:00:00.000000Z\tEF
+                                """,
                         tableName,
                         "ts",
                         true,
@@ -2278,38 +2350,43 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "  timestamp TIMESTAMP\n" +
                     ") " + destTableCreateAttr + ";");
 
-            execute("CREATE TABLE 'nhs2' (\n" +
-                    "  nuuid SYMBOL capacity 256 CACHE,\n" +
-                    "  lns LONG,\n" +
-                    "  hst STRING,\n" +
-                    "  slt LONG,\n" +
-                    "  vvv STRING,\n" +
-                    "  timestamp TIMESTAMP,\n" +
-                    "  ise BOOLEAN\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY BYPASS WAL;");
+            execute("""
+                    CREATE TABLE 'nhs2' (
+                      nuuid SYMBOL capacity 256 CACHE,
+                      lns LONG,
+                      hst STRING,
+                      slt LONG,
+                      vvv STRING,
+                      timestamp TIMESTAMP,
+                      ise BOOLEAN
+                    ) timestamp (timestamp) PARTITION BY DAY BYPASS WAL;""");
 
-            execute("insert batch 100000 into nhs(nuuid, lns, hst, slt, ise, vvv,  \n" +
-                    "timestamp)\n" +
-                    "select nuuid, lns, hst, slt, ise, vvv, \n" +
-                    "timestamp\n" +
-                    "from nhs2");
+            execute("""
+                    insert batch 100000 into nhs(nuuid, lns, hst, slt, ise, vvv, \s
+                    timestamp)
+                    select nuuid, lns, hst, slt, ise, vvv,\s
+                    timestamp
+                    from nhs2""");
 
             drainWalQueue();
 
             execute("insert into nhs2(nuuid, lns, hst, slt, ise, vvv, timestamp)\n" +
                     "values('asdf', 123, 'asdff', 222, true, '1.2.3', 12321312321L)");
 
-            execute("insert batch 100000 into nhs(nuuid, lns, hst, slt, ise, vvv,  \n" +
-                    "timestamp)\n" +
-                    "select nuuid, lns, hst, slt, ise, vvv, \n" +
-                    "timestamp\n" +
-                    "from nhs2");
+            execute("""
+                    insert batch 100000 into nhs(nuuid, lns, hst, slt, ise, vvv, \s
+                    timestamp)
+                    select nuuid, lns, hst, slt, ise, vvv,\s
+                    timestamp
+                    from nhs2""");
 
             drainWalQueue();
 
             assertSql(
-                    "nuuid\tlns\thst\tslt\tise\tvvv\tcut\tmup\tmub\tnrb\tntb\tdup\ttimestamp\n" +
-                            "asdf\t123\tasdff\t222\ttrue\t1.2.3\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-01T03:25:21.312321Z\n",
+                    """
+                            nuuid\tlns\thst\tslt\tise\tvvv\tcut\tmup\tmub\tnrb\tntb\tdup\ttimestamp
+                            asdf\t123\tasdff\t222\ttrue\t1.2.3\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-01T03:25:21.312321Z
+                            """,
                     "nhs"
             );
         });

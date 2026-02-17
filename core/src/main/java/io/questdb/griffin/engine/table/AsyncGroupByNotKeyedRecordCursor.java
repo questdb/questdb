@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -74,19 +74,21 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            isOpen = false;
-            Misc.clearObjList(groupByFunctions);
+            try {
+                if (frameSequence != null) {
+                    LOG.debug()
+                            .$("closing [shard=").$(frameSequence.getShard())
+                            .$(", frameCount=").$(frameLimit)
+                            .I$();
 
-            if (frameSequence != null) {
-                LOG.debug()
-                        .$("closing [shard=").$(frameSequence.getShard())
-                        .$(", frameCount=").$(frameLimit)
-                        .I$();
-
-                if (frameLimit > -1) {
-                    frameSequence.await();
+                    if (frameLimit > -1) {
+                        frameSequence.await();
+                    }
+                    frameSequence.reset();
                 }
-                frameSequence.clear();
+            } finally {
+                Misc.clearObjList(groupByFunctions);
+                isOpen = false;
             }
         }
     }
@@ -219,11 +221,12 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     void of(PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+        final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;
+            atom.reopen();
         }
         this.frameSequence = frameSequence;
-        final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         recordA.of(atom.getOwnerMapValue());
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isValueBuilt = false;

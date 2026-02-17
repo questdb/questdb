@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -254,6 +254,7 @@ public class VacuumColumnVersions implements Closeable {
                                 && !Utf8s.endsWithAscii(fileNameSink, ".k")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".v")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".c")
+                                && !Utf8s.endsWithAscii(fileNameSink, ".lock")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".o")) {
                             LOG.critical().$("file does not belong to the table, will be left on disk [name=").$(fileNameSink).$(", path=").$(path2).I$();
                             return;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -119,6 +119,24 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                 "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
                 22,
                 "unsupported type: CURSOR"
+        );
+    }
+
+    @Test
+    public void testDecimals() throws Exception {
+        CreateTableTestUtils.createDecimalsTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
+
+        execute(
+                "insert into decimals values" +
+                        "(null, null, null, null, null, null, now())," +
+                        "(1.2m, 34.56m, 789.012m, 3456.7891m, 23456.78901m, 234567.890123m, now())"
+        );
+
+        assertSql(
+                "concat\n" +
+                        "nullnullnullnullnullnull\n" +
+                        "1.234.56789.0123456.789123456.78901234567.890123\n",
+                "select concat(dec8, dec16, dec32, dec64, dec128, dec256) from decimals"
         );
     }
 

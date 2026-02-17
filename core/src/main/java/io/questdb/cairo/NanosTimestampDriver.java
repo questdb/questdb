@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.groupby.MonthTimestampNanosSampler;
@@ -223,20 +224,14 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long approxPartitionDuration(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.HOUR:
-                return Nanos.HOUR_NANOS;
-            case PartitionBy.DAY:
-                return Nanos.DAY_NANOS;
-            case PartitionBy.WEEK:
-                return Nanos.WEEK_NANOS;
-            case PartitionBy.MONTH:
-                return Nanos.MONTH_NANOS_APPROX;
-            case PartitionBy.YEAR:
-                return Nanos.YEAR_NANOS_NONLEAP;
-            default:
-                throw new UnsupportedOperationException("unexpected partition by: " + partitionBy);
-        }
+        return switch (partitionBy) {
+            case PartitionBy.HOUR -> Nanos.HOUR_NANOS;
+            case PartitionBy.DAY -> Nanos.DAY_NANOS;
+            case PartitionBy.WEEK -> Nanos.WEEK_NANOS;
+            case PartitionBy.MONTH -> Nanos.MONTH_NANOS_APPROX;
+            case PartitionBy.YEAR -> Nanos.YEAR_NANOS_NONLEAP;
+            default -> throw new UnsupportedOperationException("unexpected partition by: " + partitionBy);
+        };
     }
 
     @Override
@@ -252,8 +247,10 @@ public class NanosTimestampDriver implements TimestampDriver {
     @Override
     public Interval fixInterval(Interval interval, int intervalType) {
         if (intervalType == ColumnType.INTERVAL_TIMESTAMP_MICRO) {
-            long lo = interval.getLo() * Nanos.MICRO_NANOS;
-            long hi = interval.getHi() * Nanos.MICRO_NANOS;
+            long lo = interval.getLo();
+            long hi = interval.getHi();
+            lo = (lo == Numbers.LONG_NULL ? lo : lo * Nanos.MICRO_NANOS);
+            hi = (hi == Numbers.LONG_NULL ? hi : hi * Nanos.MICRO_NANOS);
             interval.of(lo, hi);
         }
         return interval;
@@ -297,6 +294,23 @@ public class NanosTimestampDriver implements TimestampDriver {
             return CommonUtils.microsToNanos(timestamp);
         }
         return timestamp;
+    }
+
+    @Override
+    public long from(long ts, byte unit) {
+        if (ts == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS -> ts;
+            case CommonUtils.TIMESTAMP_UNIT_MICROS -> Math.multiplyExact(ts, Nanos.MICRO_NANOS);
+            case CommonUtils.TIMESTAMP_UNIT_MILLIS -> Math.multiplyExact(ts, Nanos.MILLI_NANOS);
+            case CommonUtils.TIMESTAMP_UNIT_SECONDS -> Math.multiplyExact(ts, Nanos.SECOND_NANOS);
+            case CommonUtils.TIMESTAMP_UNIT_MINUTES -> Math.multiplyExact(ts, Nanos.MINUTE_NANOS);
+            case CommonUtils.TIMESTAMP_UNIT_HOURS -> Math.multiplyExact(ts, Nanos.HOUR_NANOS);
+            default -> throw new UnsupportedOperationException();
+        };
     }
 
     @Override
@@ -346,32 +360,20 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public TimestampAddMethod getAddMethod(char c) {
-        switch (c) {
-            case 'n':
-                return Nanos::addNanos;
-            case 'u':
-            case 'U':
-                return Nanos::addMicros;
-            case 'T':
-                return Nanos::addMillis;
-            case 's':
-                return Nanos::addSeconds;
-            case 'm':
-                return Nanos::addMinutes;
-            case 'H':
-            case 'h': // compatibility with sample by syntax
-                return Nanos::addHours;
-            case 'd':
-                return Nanos::addDays;
-            case 'w':
-                return Nanos::addWeeks;
-            case 'M':
-                return Nanos::addMonths;
-            case 'y':
-                return Nanos::addYears;
-            default:
-                return null;
-        }
+        return switch (c) {
+            case 'n' -> Nanos::addNanos;
+            case 'u', 'U' -> Nanos::addMicros;
+            case 'T' -> Nanos::addMillis;
+            case 's' -> Nanos::addSeconds;
+            case 'm' -> Nanos::addMinutes;
+            case 'H', 'h' -> // compatibility with sample by syntax
+                    Nanos::addHours;
+            case 'd' -> Nanos::addDays;
+            case 'w' -> Nanos::addWeeks;
+            case 'M' -> Nanos::addMonths;
+            case 'y' -> Nanos::addYears;
+            default -> null;
+        };
     }
 
     @Override
@@ -547,77 +549,61 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
-        switch (partitionBy) {
-            case DAY:
-                return Nanos::addDays;
-            case MONTH:
-                return Nanos::addMonths;
-            case YEAR:
-                return Nanos::addYears;
-            case HOUR:
-                return Nanos::addHours;
-            case WEEK:
-                return Nanos::addWeeks;
-            default:
-                return null;
+    public int getNanosOfSecond(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
         }
+        return Nanos.getNanosOfSecond(timestamp);
+    }
+
+    @Override
+    public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
+        return switch (partitionBy) {
+            case DAY -> Nanos::addDays;
+            case MONTH -> Nanos::addMonths;
+            case YEAR -> Nanos::addYears;
+            case HOUR -> Nanos::addHours;
+            case WEEK -> Nanos::addWeeks;
+            default -> null;
+        };
     }
 
     @Override
     public TimestampCeilMethod getPartitionCeilMethod(int partitionBy) {
-        switch (partitionBy) {
-            case DAY:
-                return NanosTimestampDriver::partitionCeilDD;
-            case MONTH:
-                return NanosTimestampDriver::partitionCeilMM;
-            case YEAR:
-                return NanosTimestampDriver::partitionCeilYYYY;
-            case HOUR:
-                return NanosTimestampDriver::partitionCeilHH;
-            case WEEK:
-                return NanosTimestampDriver::partitionCeilWW;
-            default:
-                return null;
-        }
+        return switch (partitionBy) {
+            case DAY -> NanosTimestampDriver::partitionCeilDD;
+            case MONTH -> NanosTimestampDriver::partitionCeilMM;
+            case YEAR -> NanosTimestampDriver::partitionCeilYYYY;
+            case HOUR -> NanosTimestampDriver::partitionCeilHH;
+            case WEEK -> NanosTimestampDriver::partitionCeilWW;
+            default -> null;
+        };
     }
 
     @Override
     public DateFormat getPartitionDirFormatMethod(int partitionBy) {
-        switch (partitionBy) {
-            case DAY:
-                return PARTITION_DAY_FORMAT;
-            case MONTH:
-                return PARTITION_MONTH_FORMAT;
-            case YEAR:
-                return PARTITION_YEAR_FORMAT;
-            case HOUR:
-                return PARTITION_HOUR_FORMAT;
-            case WEEK:
-                return PARTITION_WEEK_FORMAT;
-            case NONE:
-                return DEFAULT_FORMAT;
-            default:
-                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
-        }
+        return switch (partitionBy) {
+            case DAY -> PARTITION_DAY_FORMAT;
+            case MONTH -> PARTITION_MONTH_FORMAT;
+            case YEAR -> PARTITION_YEAR_FORMAT;
+            case HOUR -> PARTITION_HOUR_FORMAT;
+            case WEEK -> PARTITION_WEEK_FORMAT;
+            case NONE, NOT_APPLICABLE -> DEFAULT_FORMAT;
+            default ->
+                    throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+        };
     }
 
     @Override
     public TimestampFloorMethod getPartitionFloorMethod(int partitionBy) {
-        switch (partitionBy) {
-            case DAY:
-                return NanosTimestampDriver::partitionFloorDD;
-            case WEEK:
-                return NanosTimestampDriver::partitionFloorWW;
-            case MONTH:
-                return NanosTimestampDriver::partitionFloorMM;
-            case YEAR:
-                return NanosTimestampDriver::partitionFloorYYYY;
-            case HOUR:
-                return NanosTimestampDriver::partitionFloorHH;
-            default:
-                return null;
-        }
+        return switch (partitionBy) {
+            case DAY -> NanosTimestampDriver::partitionFloorDD;
+            case WEEK -> NanosTimestampDriver::partitionFloorWW;
+            case MONTH -> NanosTimestampDriver::partitionFloorMM;
+            case YEAR -> NanosTimestampDriver::partitionFloorYYYY;
+            case HOUR -> NanosTimestampDriver::partitionFloorHH;
+            default -> null;
+        };
     }
 
     @Override
@@ -662,34 +648,23 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public TimestampCeilMethod getTimestampCeilMethod(char unit) {
-        switch (unit) {
-            case 'd':
-                return Nanos::ceilDD;
-            case 'M':
-                return Nanos::ceilMM;
-            case 'y':
-                return Nanos::ceilYYYY;
-            case 'w':
-                return Nanos::ceilWW;
-            case 'h':
-                return Nanos::ceilHH;
-            case 'm':
-                return Nanos::ceilMI;
-            case 's':
-                return Nanos::ceilSS;
-            case 'T':
-                return Nanos::ceilMS;
-            case 'U':
-                return Nanos::ceilMC;
-            case 'n':
-                return Nanos::ceilNS;
-            default:
-                return null;
-        }
+        return switch (unit) {
+            case 'd' -> Nanos::ceilDD;
+            case 'M' -> Nanos::ceilMM;
+            case 'y' -> Nanos::ceilYYYY;
+            case 'w' -> Nanos::ceilWW;
+            case 'h' -> Nanos::ceilHH;
+            case 'm' -> Nanos::ceilMI;
+            case 's' -> Nanos::ceilSS;
+            case 'T' -> Nanos::ceilMS;
+            case 'U' -> Nanos::ceilMC;
+            case 'n' -> Nanos::ceilNS;
+            default -> null;
+        };
     }
 
     @Override
-    public TimestampConstant getTimestampConstantNull() {
+    public ConstantFunction getTimestampConstantNull() {
         return TimestampConstant.TIMESTAMP_NANO_NULL;
     }
 
@@ -700,160 +675,111 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public TimestampDiffMethod getTimestampDiffMethod(char type) {
-        switch (type) {
-            case 'n':
-                return Nanos::getNanosBetween;
-            case 'u':
-                return Nanos::getMicrosBetween;
-            case 'T':
-                return Nanos::getMillisBetween;
-            case 's':
-                return Nanos::getSecondsBetween;
-            case 'm':
-                return Nanos::getMinutesBetween;
-            case 'h':
-                return Nanos::getHoursBetween;
-            case 'd':
-                return Nanos::getDaysBetween;
-            case 'w':
-                return Nanos::getWeeksBetween;
-            case 'M':
-                return Nanos::getMonthsBetween;
-            case 'y':
-                return Nanos::getYearsBetween;
-            default:
-                return null;
-        }
+        return switch (type) {
+            case 'n' -> Nanos::getNanosBetween;
+            case 'u' -> Nanos::getMicrosBetween;
+            case 'T' -> Nanos::getMillisBetween;
+            case 's' -> Nanos::getSecondsBetween;
+            case 'm' -> Nanos::getMinutesBetween;
+            case 'h' -> Nanos::getHoursBetween;
+            case 'd' -> Nanos::getDaysBetween;
+            case 'w' -> Nanos::getWeeksBetween;
+            case 'M' -> Nanos::getMonthsBetween;
+            case 'y' -> Nanos::getYearsBetween;
+            default -> null;
+        };
     }
 
     @Override
     public TimestampFloorMethod getTimestampFloorMethod(String unit) {
-        switch (unit) {
-            case "century":
-                return Nanos::floorCentury;
-            case "day":
-                return Nanos::floorDD;
-            case "week":
-                return Nanos::floorDOW;
-            case "decade":
-                return Nanos::floorDecade;
-            case "hour":
-                return Nanos::floorHH;
-            case "microsecond":
-                return Nanos::floorMC;
-            case "minute":
-                return Nanos::floorMI;
-            case "month":
-                return Nanos::floorMM;
-            case "millisecond":
-                return Nanos::floorMS;
-            case "nanosecond":
-                return Nanos::floorNS;
-            case "millennium":
-                return Nanos::floorMillennium;
-            case "quarter":
-                return Nanos::floorQuarter;
-            case "second":
-                return Nanos::floorSS;
-            case "year":
-                return Nanos::floorYYYY;
-            default:
-                return null;
-        }
+        return switch (unit) {
+            case "century" -> Nanos::floorCentury;
+            case "day" -> Nanos::floorDD;
+            case "week" -> Nanos::floorDOW;
+            case "decade" -> Nanos::floorDecade;
+            case "hour" -> Nanos::floorHH;
+            case "microsecond" -> Nanos::floorMC;
+            case "minute" -> Nanos::floorMI;
+            case "month" -> Nanos::floorMM;
+            case "millisecond" -> Nanos::floorMS;
+            case "nanosecond" -> Nanos::floorNS;
+            case "millennium" -> Nanos::floorMillennium;
+            case "quarter" -> Nanos::floorQuarter;
+            case "second" -> Nanos::floorSS;
+            case "year" -> Nanos::floorYYYY;
+            default -> null;
+        };
     }
 
     @Override
     public TimestampFloorWithOffsetMethod getTimestampFloorWithOffsetMethod(char unit) {
-        switch (unit) {
-            case 'M':
-                return Nanos::floorMM;
-            case 'y':
-                return Nanos::floorYYYY;
-            case 'w':
-                return Nanos::floorWW;
-            case 'd':
-                return Nanos::floorDD;
-            case 'h':
-                return Nanos::floorHH;
-            case 'm':
-                return Nanos::floorMI;
-            case 's':
-                return Nanos::floorSS;
-            case 'T':
-                return Nanos::floorMS;
-            case 'U':
-                return Nanos::floorMC;
-            case 'n':
-                return Nanos::floorNS;
-            default:
-                return null;
-        }
+        return switch (unit) {
+            case 'M' -> Nanos::floorMM;
+            case 'y' -> Nanos::floorYYYY;
+            case 'w' -> Nanos::floorWW;
+            case 'd' -> Nanos::floorDD;
+            case 'h' -> Nanos::floorHH;
+            case 'm' -> Nanos::floorMI;
+            case 's' -> Nanos::floorSS;
+            case 'T' -> Nanos::floorMS;
+            case 'U' -> Nanos::floorMC;
+            case 'n' -> Nanos::floorNS;
+            default -> null;
+        };
     }
 
     @Override
     public TimestampFloorWithStrideMethod getTimestampFloorWithStrideMethod(String unit) {
-        switch (unit) {
-            case "day":
-                return Nanos::floorDD;
-            case "hour":
-                return Nanos::floorHH;
-            case "microsecond":
-                return Nanos::floorMC;
-            case "minute":
-                return Nanos::floorMI;
-            case "month":
-                return Nanos::floorMM;
-            case "millisecond":
-                return Nanos::floorMS;
-            case "nanosecond":
-                return Nanos::floorNS;
-            case "second":
-                return Nanos::floorSS;
-            case "week":
-                return Nanos::floorWW;
-            case "year":
-                return Nanos::floorYYYY;
-            default:
-                return null;
-        }
+        return switch (unit) {
+            case "day" -> Nanos::floorDD;
+            case "hour" -> Nanos::floorHH;
+            case "microsecond" -> Nanos::floorMC;
+            case "minute" -> Nanos::floorMI;
+            case "month" -> Nanos::floorMM;
+            case "millisecond" -> Nanos::floorMS;
+            case "nanosecond" -> Nanos::floorNS;
+            case "second" -> Nanos::floorSS;
+            case "week" -> Nanos::floorWW;
+            case "year" -> Nanos::floorYYYY;
+            default -> null;
+        };
     }
 
     @Override
     public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
-        switch (timeUnit) {
-            case 'n':
+        return switch (timeUnit) {
+            case 'n' ->
                 // nanos
-                return new SimpleTimestampSampler(interval, ColumnType.TIMESTAMP_NANO);
-            case 'U':
+                    new SimpleTimestampSampler(interval, ColumnType.TIMESTAMP_NANO);
+            case 'U' ->
                 // micros
-                return new SimpleTimestampSampler(interval * Nanos.MICRO_NANOS, ColumnType.TIMESTAMP_NANO);
-            case 'T':
+                    new SimpleTimestampSampler(interval * Nanos.MICRO_NANOS, ColumnType.TIMESTAMP_NANO);
+            case 'T' ->
                 // millis
-                return new SimpleTimestampSampler(Nanos.MILLI_NANOS * interval, ColumnType.TIMESTAMP_NANO);
-            case 's':
+                    new SimpleTimestampSampler(Nanos.MILLI_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+            case 's' ->
                 // seconds
-                return new SimpleTimestampSampler(Nanos.SECOND_NANOS * interval, ColumnType.TIMESTAMP_NANO);
-            case 'm':
+                    new SimpleTimestampSampler(Nanos.SECOND_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+            case 'm' ->
                 // minutes
-                return new SimpleTimestampSampler(Nanos.MINUTE_NANOS * interval, ColumnType.TIMESTAMP_NANO);
-            case 'h':
+                    new SimpleTimestampSampler(Nanos.MINUTE_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+            case 'h' ->
                 // hours
-                return new SimpleTimestampSampler(Nanos.HOUR_NANOS * interval, ColumnType.TIMESTAMP_NANO);
-            case 'd':
+                    new SimpleTimestampSampler(Nanos.HOUR_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+            case 'd' ->
                 // days
-                return new SimpleTimestampSampler(Nanos.DAY_NANOS * interval, ColumnType.TIMESTAMP_NANO);
-            case 'w':
+                    new SimpleTimestampSampler(Nanos.DAY_NANOS * interval, ColumnType.TIMESTAMP_NANO);
+            case 'w' ->
                 // weeks
-                return new WeekTimestampNanosSampler((int) interval);
-            case 'M':
+                    new WeekTimestampNanosSampler((int) interval);
+            case 'M' ->
                 // months
-                return new MonthTimestampNanosSampler((int) interval);
-            case 'y':
+                    new MonthTimestampNanosSampler((int) interval);
+            case 'y' ->
                 // years
-                return new YearTimestampNanosSampler((int) interval);
-            default:
-                throw SqlException.$(position, "unsupported interval qualifier");
-        }
+                    new YearTimestampNanosSampler((int) interval);
+            default -> throw SqlException.$(position, "unsupported interval qualifier");
+        };
     }
 
     @Override
@@ -927,6 +853,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
+            // Check for ISO week format: YYYY-Www[-D]
+            if (p < hi && str.byteAt(p) == 'W') {
+                return parseIsoWeekFloor(str, p, hi, year);
+            }
             int month = Numbers.parseInt(str, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
             if (CommonUtils.checkLen3(p, hi)) {
@@ -1025,6 +955,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, hi)) {
             CommonUtils.checkChar(str, p++, hi, '-');
+            // Check for ISO week format: YYYY-Www[-D]
+            if (p < hi && str.charAt(p) == 'W') {
+                return parseIsoWeekFloor(str, p, hi, year);
+            }
             int month = Numbers.parseInt(str, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
             if (CommonUtils.checkLen3(p, hi)) {
@@ -1122,6 +1056,11 @@ public class NanosTimestampDriver implements TimestampDriver {
         boolean l = CommonUtils.isLeapYear(year);
         if (CommonUtils.checkLen3(p, lim)) {
             CommonUtils.checkChar(input, p++, lim, '-');
+            // Check for ISO week format: YYYY-Www[-D]
+            if (p < lim && input.charAt(p) == 'W') {
+                parseIsoWeekInterval(input, p, lim, year, operation, out);
+                return;
+            }
             int month = Numbers.parseInt(input, p, p += 2);
             CommonUtils.checkRange(month, 1, 12);
             if (CommonUtils.checkLen3(p, lim)) {
@@ -1276,39 +1215,320 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
     }
 
+    /**
+     * Parses ISO week date format: YYYY-Www[-D][THH:MM:SS...]
+     *
+     * @param str  input string
+     * @param p    position at 'W'
+     * @param hi   end of string
+     * @param year the year already parsed
+     * @return timestamp in nanoseconds for the start of the week/day/time
+     */
+    private static long parseIsoWeekFloor(CharSequence str, int p, int hi, int year) throws NumericException {
+        // Skip 'W'
+        p++;
+        if (hi - p < 2) {
+            throw NumericException.instance();
+        }
+        int week = Numbers.parseInt(str, p, p + 2);
+        p += 2;
+        CommonUtils.checkRange(week, 1, CommonUtils.getWeeks(year));
+
+        // Calculate Monday of the week
+        boolean leap = CommonUtils.isLeapYear(year);
+        long ts = Nanos.yearNanos(year, leap)
+                + CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
+                + (week - 1) * Nanos.WEEK_NANOS;
+
+        // Check for day-of-week (-D)
+        if (p < hi && str.charAt(p) == '-') {
+            p++;
+            if (p >= hi) {
+                throw NumericException.instance();
+            }
+            int dow = Numbers.parseInt(str, p, p + 1);
+            p++;
+            CommonUtils.checkRange(dow, 1, 7);
+            ts += (dow - 1) * Nanos.DAY_NANOS;
+
+            // Check for time part (T... or space)
+            if (p < hi && (str.charAt(p) == 'T' || str.charAt(p) == ' ')) {
+                p++;
+                // Parse time: HH[:MM[:SS[.nnnnnnnnn]]]
+                if (hi - p < 2) {
+                    throw NumericException.instance();
+                }
+                int hour = Numbers.parseInt(str, p, p + 2);
+                p += 2;
+                CommonUtils.checkRange(hour, 0, 23);
+                ts += hour * Nanos.HOUR_NANOS;
+
+                if (CommonUtils.checkLen3(p, hi)) {
+                    CommonUtils.checkChar(str, p++, hi, ':');
+                    int min = Numbers.parseInt(str, p, p + 2);
+                    p += 2;
+                    CommonUtils.checkRange(min, 0, 59);
+                    ts += min * Nanos.MINUTE_NANOS;
+
+                    if (CommonUtils.checkLen3(p, hi)) {
+                        CommonUtils.checkChar(str, p++, hi, ':');
+                        int sec = Numbers.parseInt(str, p, p + 2);
+                        p += 2;
+                        CommonUtils.checkRange(sec, 0, 59);
+                        ts += sec * Nanos.SECOND_NANOS;
+
+                        if (p < hi && str.charAt(p) == '.') {
+                            p++;
+                            // varlen milli, micros, and nanos
+                            int nanoLim = p + 9;
+                            int nlim = Math.min(hi, nanoLim);
+                            int nano = 0;
+                            for (; p < nlim; p++) {
+                                char c = str.charAt(p);
+                                if (Numbers.notDigit(c)) {
+                                    break;
+                                }
+                                nano *= 10;
+                                nano += c - '0';
+                            }
+                            nano *= CommonUtils.tenPow(nanoLim - p);
+                            ts += nano;
+                        }
+                    }
+                }
+            }
+        }
+        return ts;
+    }
+
+    /**
+     * Parses ISO week date format for Utf8Sequence: YYYY-Www[-D][THH:MM:SS...]
+     */
+    private static long parseIsoWeekFloor(Utf8Sequence str, int p, int hi, int year) throws NumericException {
+        // Skip 'W'
+        p++;
+        if (hi - p < 2) {
+            throw NumericException.instance();
+        }
+        int week = Numbers.parseInt(str, p, p + 2);
+        p += 2;
+        CommonUtils.checkRange(week, 1, CommonUtils.getWeeks(year));
+
+        // Calculate Monday of the week
+        boolean leap = CommonUtils.isLeapYear(year);
+        long ts = Nanos.yearNanos(year, leap)
+                + CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
+                + (week - 1) * Nanos.WEEK_NANOS;
+
+        // Check for day-of-week (-D)
+        if (p < hi && str.byteAt(p) == '-') {
+            p++;
+            if (p >= hi) {
+                throw NumericException.instance();
+            }
+            int dow = Numbers.parseInt(str, p, p + 1);
+            p++;
+            CommonUtils.checkRange(dow, 1, 7);
+            ts += (dow - 1) * Nanos.DAY_NANOS;
+
+            // Check for time part (T... or space)
+            if (p < hi && (str.byteAt(p) == 'T' || str.byteAt(p) == ' ')) {
+                p++;
+                // Parse time: HH[:MM[:SS[.nnnnnnnnn]]]
+                if (hi - p < 2) {
+                    throw NumericException.instance();
+                }
+                int hour = Numbers.parseInt(str, p, p + 2);
+                p += 2;
+                CommonUtils.checkRange(hour, 0, 23);
+                ts += hour * Nanos.HOUR_NANOS;
+
+                if (CommonUtils.checkLen3(p, hi)) {
+                    CommonUtils.checkChar(str, p++, hi, ':');
+                    int min = Numbers.parseInt(str, p, p + 2);
+                    p += 2;
+                    CommonUtils.checkRange(min, 0, 59);
+                    ts += min * Nanos.MINUTE_NANOS;
+
+                    if (CommonUtils.checkLen3(p, hi)) {
+                        CommonUtils.checkChar(str, p++, hi, ':');
+                        int sec = Numbers.parseInt(str, p, p + 2);
+                        p += 2;
+                        CommonUtils.checkRange(sec, 0, 59);
+                        ts += sec * Nanos.SECOND_NANOS;
+
+                        if (p < hi && str.byteAt(p) == '.') {
+                            p++;
+                            // varlen milli, micros, and nanos
+                            int nanoLim = p + 9;
+                            int nlim = Math.min(hi, nanoLim);
+                            int nano = 0;
+                            for (; p < nlim; p++) {
+                                char c = (char) str.byteAt(p);
+                                if (Numbers.notDigit(c)) {
+                                    break;
+                                }
+                                nano *= 10;
+                                nano += c - '0';
+                            }
+                            nano *= CommonUtils.tenPow(nanoLim - p);
+                            ts += nano;
+                        }
+                    }
+                }
+            }
+        }
+        return ts;
+    }
+
+    /**
+     * Parses ISO week interval format: YYYY-Www[-D][THH:MM:SS...]
+     * Produces interval from start to end of the specified week/day/time.
+     */
+    private static void parseIsoWeekInterval(CharSequence input, int p, int lim, int year, short operation, LongList out) throws NumericException {
+        // Skip 'W'
+        p++;
+        if (lim - p < 2) {
+            throw NumericException.instance();
+        }
+        int week = Numbers.parseInt(input, p, p + 2);
+        p += 2;
+        CommonUtils.checkRange(week, 1, CommonUtils.getWeeks(year));
+
+        // Calculate Monday of the week
+        boolean leap = CommonUtils.isLeapYear(year);
+        long mondayTs = Nanos.yearNanos(year, leap)
+                + CommonUtils.getIsoYearDayOffset(year) * Nanos.DAY_NANOS
+                + (week - 1) * Nanos.WEEK_NANOS;
+
+        if (p < lim && input.charAt(p) == '-') {
+            p++;
+            if (p >= lim) {
+                throw NumericException.instance();
+            }
+            int dow = Numbers.parseInt(input, p, p + 1);
+            p++;
+            CommonUtils.checkRange(dow, 1, 7);
+            long dayStart = mondayTs + (dow - 1) * Nanos.DAY_NANOS;
+
+            if (p < lim && (input.charAt(p) == 'T' || input.charAt(p) == ' ')) {
+                p++;
+                // Parse time part with interval range
+                if (lim - p < 2) {
+                    throw NumericException.instance();
+                }
+                int hour = Numbers.parseInt(input, p, p + 2);
+                p += 2;
+                CommonUtils.checkRange(hour, 0, 23);
+
+                if (CommonUtils.checkLen3(p, lim)) {
+                    CommonUtils.checkChar(input, p++, lim, ':');
+                    int min = Numbers.parseInt(input, p, p + 2);
+                    p += 2;
+                    CommonUtils.checkRange(min, 0, 59);
+
+                    if (CommonUtils.checkLen3(p, lim)) {
+                        CommonUtils.checkChar(input, p++, lim, ':');
+                        int sec = Numbers.parseInt(input, p, p + 2);
+                        p += 2;
+                        CommonUtils.checkRange(sec, 0, 59);
+
+                        if (p < lim && input.charAt(p) == '.') {
+                            p++;
+                            // varlen milli, micros, and nanos
+                            int nanoLim = p + 9;
+                            if (nanoLim < lim) {
+                                throw NumericException.instance();
+                            }
+
+                            int nanos = 0;
+                            for (; p < lim; p++) {
+                                char c = input.charAt(p);
+                                if (c < '0' || c > '9') {
+                                    throw NumericException.instance();
+                                }
+                                nanos *= 10;
+                                nanos += c - '0';
+                            }
+                            int remainingDigits = nanoLim - p;
+                            nanos *= CommonUtils.tenPow(remainingDigits);
+
+                            long baseTime = dayStart
+                                    + hour * Nanos.HOUR_NANOS
+                                    + min * Nanos.MINUTE_NANOS
+                                    + sec * Nanos.SECOND_NANOS;
+                            int rangeNanos = CommonUtils.tenPow(remainingDigits) - 1;
+                            IntervalUtils.encodeInterval(baseTime + nanos, baseTime + nanos + rangeNanos, operation, out);
+                        } else if (p == lim) {
+                            // seconds
+                            IntervalUtils.encodeInterval(
+                                    dayStart + hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS + sec * Nanos.SECOND_NANOS,
+                                    dayStart + hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS + sec * Nanos.SECOND_NANOS + 999999999,
+                                    operation, out);
+                        } else {
+                            throw NumericException.instance();
+                        }
+                    } else {
+                        // minute
+                        IntervalUtils.encodeInterval(
+                                dayStart + hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS,
+                                dayStart + hour * Nanos.HOUR_NANOS + min * Nanos.MINUTE_NANOS + 59 * Nanos.SECOND_NANOS + 999999999,
+                                operation, out);
+                    }
+                } else {
+                    // hour only
+                    IntervalUtils.encodeInterval(
+                            dayStart + hour * Nanos.HOUR_NANOS,
+                            dayStart + hour * Nanos.HOUR_NANOS + 59 * Nanos.MINUTE_NANOS + 59 * Nanos.SECOND_NANOS + 999999999,
+                            operation, out);
+                }
+            } else if (p == lim) {
+                // Entire day
+                IntervalUtils.encodeInterval(dayStart, dayStart + Nanos.DAY_NANOS - 1, operation, out);
+            } else {
+                throw NumericException.instance();
+            }
+        } else if (p == lim) {
+            // No day specified - entire week (Mon 00:00:00 to Sun 23:59:59.999999999)
+            IntervalUtils.encodeInterval(mondayTs, mondayTs + 7 * Nanos.DAY_NANOS - 1, operation, out);
+        } else {
+            throw NumericException.instance();
+        }
+    }
+
     @Override
     public long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi) {
         CharSequence fmtStr;
         try {
             DateFormat fmtMethod;
-            switch (partitionBy) {
-                case DAY:
+            fmtStr = switch (partitionBy) {
+                case DAY -> {
                     fmtMethod = PARTITION_DAY_FORMAT;
-                    fmtStr = CommonUtils.DAY_PATTERN;
-                    break;
-                case MONTH:
+                    yield CommonUtils.DAY_PATTERN;
+                }
+                case MONTH -> {
                     fmtMethod = PARTITION_MONTH_FORMAT;
-                    fmtStr = CommonUtils.MONTH_PATTERN;
-                    break;
-                case YEAR:
+                    yield CommonUtils.MONTH_PATTERN;
+                }
+                case YEAR -> {
                     fmtMethod = PARTITION_YEAR_FORMAT;
-                    fmtStr = CommonUtils.YEAR_PATTERN;
-                    break;
-                case HOUR:
+                    yield CommonUtils.YEAR_PATTERN;
+                }
+                case HOUR -> {
                     fmtMethod = PARTITION_HOUR_FORMAT;
-                    fmtStr = CommonUtils.HOUR_PATTERN;
-                    break;
-                case WEEK:
+                    yield CommonUtils.HOUR_PATTERN;
+                }
+                case WEEK -> {
                     fmtMethod = PARTITION_WEEK_FORMAT;
-                    fmtStr = CommonUtils.WEEK_PATTERN;
-                    break;
-                case NONE:
+                    yield CommonUtils.WEEK_PATTERN;
+                }
+                case NONE, NOT_APPLICABLE -> {
                     fmtMethod = DEFAULT_FORMAT;
-                    fmtStr = partitionName;
-                    break;
-                default:
-                    throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
-            }
+                    yield partitionName;
+                }
+                default ->
+                        throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+            };
             int limit = fmtStr.length();
             if (hi < 0) {
                 // Automatic partition name trimming.

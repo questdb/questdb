@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,16 +67,11 @@ public class Utf8SequenceLongHashMap extends AbstractUtf8SequenceHashSet {
 
     public void inc(@NotNull Utf8Sequence key) {
         int index = keyIndex(key);
-        long value = valueAt(index);
-        if (value != noEntryValue) {
+        if (index < 0) {
             values[-index - 1]++;
         } else {
             putAt(index, key, 1);
         }
-    }
-
-    public void inc(int index) {
-        values[-index - 1]++;
     }
 
     public ObjList<Utf8String> keys() {

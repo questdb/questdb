@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,19 +73,17 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     };
 
     public DirectByteSink(long initialCapacity, int memoryTag) {
-        this(initialCapacity, true, memoryTag);
+        this(initialCapacity, memoryTag, false);
     }
 
-    public DirectByteSink(long initialCapacity, boolean alloc, int memoryTag) {
+    public DirectByteSink(long initialCapacity, int memoryTag, boolean keepClosed) {
         assert initialCapacity >= 0;
         assert initialCapacity <= Integer.MAX_VALUE;
         // this will allocate a minimum of 32 bytes of "allocated capacity"
         this.initialCapacity = initialCapacity;
         this.memoryTag = memoryTag;
-        if (alloc) {
+        if (!keepClosed) {
             inflate();
-        } else {
-            impl = 0;
         }
     }
 
@@ -116,8 +114,10 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     @Override
     public void clear() {
-        setImplPtr(getImplLo());
-        setAscii(true);
+        if (impl != 0) {
+            setImplPtr(getImplLo());
+            setAscii(true);
+        }
     }
 
     @Override
@@ -250,6 +250,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     public void reopen() {
         if (impl == 0) {
             inflate();
+        } else {
+            clear();
         }
     }
 

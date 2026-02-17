@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -149,7 +149,7 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path().of(temp.getAbsolutePath())) {
                 Assert.assertTrue(Files.exists(path.$()));
                 Assert.assertEquals(5, Files.length(path.$()));
@@ -165,7 +165,7 @@ public class FilesTest {
                             barrier.await();
                             ff.remove(path.$());
                         } catch (Throwable e) {
-                            e.printStackTrace();
+                            e.printStackTrace(System.out);
                             LOG.error().$(e).$();
                             errorCounter.incrementAndGet();
                         }
@@ -323,7 +323,7 @@ public class FilesTest {
                 File f = temporaryFolder.newFile();
                 long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
                 Assert.assertTrue(Files.exists(fd));
-                Assert.assertTrue(Files.remove(path.$()));
+                Assert.assertTrue(TestUtils.remove(path.$()));
                 Assert.assertFalse(Files.exists(fd));
                 Files.close(fd);
             }
@@ -687,7 +687,7 @@ public class FilesTest {
 
     @Test
     public void testMixedIOConcurrent() throws Exception {
-        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         // This test aims to follow write pattern possible when handling O3 tasks.
         // Concurrent mmap-based writes and pwrite() may break read-your-write
@@ -961,7 +961,7 @@ public class FilesTest {
                                 }
                             }
                         } catch (Exception e) {
-                            e.printStackTrace();
+                            e.printStackTrace(System.out);
                             errors.incrementAndGet();
                         } finally {
                             halt.countDown();
@@ -1017,7 +1017,7 @@ public class FilesTest {
                     Unsafe.free(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path.$());
+                    TestUtils.remove(path.$());
                 }
             }
         });
@@ -1073,10 +1073,25 @@ public class FilesTest {
                     Unsafe.free(mem, size2Gb, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path.$());
+                    TestUtils.remove(path.$());
                 }
             }
         });
+    }
+
+    @Test
+    public void testRecursiveRmdirLimit() throws IOException {
+        var ff = new FilesFacadeImpl();
+        temporaryFolder.newFolder("a", "b");
+
+        try (Path path = new Path().of(temporaryFolder.getRoot().getAbsolutePath()).concat("a")) {
+            temporaryFolder.newFolder("a", ".download", "table", "wal", "segment");
+
+            Assert.assertTrue(ff.rmdir(path));
+
+            temporaryFolder.newFolder("a", ".download", "table", "wal", "segment", "extra");
+            Assert.assertFalse(ff.rmdir(path));
+        }
     }
 
     @Test
@@ -1085,7 +1100,7 @@ public class FilesTest {
             try (Path path = new Path().of(temporaryFolder.newFile().getAbsolutePath())) {
                 Assert.assertTrue(Files.touch(path.$()));
                 Assert.assertTrue(Files.exists(path.$()));
-                Assert.assertTrue(Files.remove(path.$()));
+                Assert.assertTrue(TestUtils.remove(path.$()));
                 Assert.assertFalse(Files.exists(path.$()));
             }
         });
@@ -1139,8 +1154,8 @@ public class FilesTest {
                     Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path1.$());
-                    Files.remove(path2.$());
+                    TestUtils.remove(path1.$());
+                    TestUtils.remove(path2.$());
                 }
             }
         });
@@ -1182,7 +1197,7 @@ public class FilesTest {
 
                     // Copy with set length
                     Files.close(fd2);
-                    Files.remove(path2.$());
+                    TestUtils.remove(path2.$());
                     fd2 = Files.openRW(path2.$());
 
                     // Check copy call works
@@ -1195,7 +1210,7 @@ public class FilesTest {
 
                     // Copy with destination offset
                     Files.close(fd2);
-                    Files.remove(path2.$());
+                    TestUtils.remove(path2.$());
                     fd2 = Files.openRW(path2.$());
 
                     // Check copy with offset call works
@@ -1223,8 +1238,8 @@ public class FilesTest {
                     Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path1.$());
-                    Files.remove(path2.$());
+                    TestUtils.remove(path1.$());
+                    TestUtils.remove(path2.$());
                 }
             }
         });
@@ -1260,7 +1275,7 @@ public class FilesTest {
                 Assert.assertFalse(link.exists());
                 Assert.assertFalse(link.canRead());
                 Assert.assertEquals(-1, Files.openRO(softLinkFilePath.$()));
-                Assert.assertTrue(Files.remove(softLinkFilePath.$()));
+                Assert.assertTrue(TestUtils.remove(softLinkFilePath.$()));
             } finally {
                 temporaryFolder.delete();
             }
@@ -1439,7 +1454,7 @@ public class FilesTest {
                     Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path.$());
+                    TestUtils.remove(path.$());
                 }
             }
         });
@@ -1485,8 +1500,8 @@ public class FilesTest {
                     Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
 
                     // Delete files
-                    Files.remove(path.$());
-                    Files.remove(path.of(temp.getAbsolutePath()).$());
+                    TestUtils.remove(path.$());
+                    TestUtils.remove(path.of(temp.getAbsolutePath()).$());
                 }
             }
         });
@@ -1593,7 +1608,7 @@ public class FilesTest {
                 ff.remove(path.$());
             }
         } catch (Throwable e) {
-            e.printStackTrace();
+            e.printStackTrace(System.out);
             errors.incrementAndGet();
         }
     }
@@ -1636,13 +1651,13 @@ public class FilesTest {
                 assertEqualsFileContent(hardLinkFilePath, fileContent);
 
                 // delete source file
-                Assert.assertTrue(Files.remove(srcFilePath.$()));
+                Assert.assertTrue(TestUtils.remove(srcFilePath.$()));
 
                 // check linked file still exists and content are the same
                 assertEqualsFileContent(hardLinkFilePath, fileContent);
 
-                Files.remove(srcFilePath.$());
-                Assert.assertTrue(Files.remove(hardLinkFilePath.$()));
+                TestUtils.remove(srcFilePath.$());
+                Assert.assertTrue(TestUtils.remove(hardLinkFilePath.$()));
             }
         });
     }
@@ -1681,7 +1696,7 @@ public class FilesTest {
                 assertEqualsFileContent(softLinkFilePath, fileContent);
 
                 // delete soft link
-                Assert.assertTrue(Files.remove(softLinkFilePath.$()));
+                Assert.assertTrue(TestUtils.remove(softLinkFilePath.$()));
 
                 // check original file still exists and contents are the same
                 assertEqualsFileContent(srcFilePath, fileContent);
@@ -1696,7 +1711,7 @@ public class FilesTest {
                 assertEqualsFileContent(softLinkRenamedFilePath, fileContent);
 
                 // delete original file
-                Assert.assertTrue(Files.remove(srcFilePath.$()));
+                Assert.assertTrue(TestUtils.remove(srcFilePath.$()));
 
                 // check that when listing the folder where the link is, we can actually find it
                 File link = new File(softLinkRenamedFilePath.toString());
@@ -1709,7 +1724,7 @@ public class FilesTest {
                 Assert.assertFalse(link.exists());
                 Assert.assertFalse(link.canRead());
                 Assert.assertEquals(-1, Files.openRO(softLinkFilePath.$()));
-                Assert.assertTrue(Files.remove(softLinkRenamedFilePath.$()));
+                Assert.assertTrue(TestUtils.remove(softLinkRenamedFilePath.$()));
             }
         });
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,12 +31,11 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.http.HttpHeaderParserFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
+import io.questdb.cutlass.http.processors.SqlValidationProcessor;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
@@ -189,8 +188,7 @@ public class Table2IlpTest {
                     }
                 },
                 engine,
-                workerPool,
-                1
+                workerPool
         );
 
         workerPool.start(LOG);
@@ -481,27 +479,22 @@ public class Table2IlpTest {
     private static HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            int sharedQueryWorkerCount
+            WorkerPool workerPool
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
             return null;
         }
 
-        final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
-        final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
                 workerPool,
-                serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
-                cookieHandler,
-                headerParserFactory
+                serverConfiguration.getFactoryProvider().getHttpSocketFactory()
         );
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
-                sharedQueryWorkerCount
+                1
         );
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
@@ -509,13 +502,20 @@ public class Table2IlpTest {
                 httpServerConfiguration
         );
 
+        HttpServer.HttpRequestHandlerBuilder sqlValidationProcessorBuilder = () -> new SqlValidationProcessor(
+                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
+                cairoEngine,
+                1
+        );
+
         HttpServer.addDefaultEndpoints(
                 server,
                 serverConfiguration,
                 cairoEngine,
-                sharedQueryWorkerCount,
+                1,
                 jsonQueryProcessorBuilder,
-                ilpV2WriteProcessorBuilder
+                ilpV2WriteProcessorBuilder,
+                sqlValidationProcessorBuilder
         );
         return server;
     }

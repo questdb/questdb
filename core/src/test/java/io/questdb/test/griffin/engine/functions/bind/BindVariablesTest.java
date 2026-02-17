@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
@@ -58,6 +59,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
@@ -527,6 +529,26 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testLeadWindowFunction() throws SqlException {
+        bindVariableService.setTimestamp("ts", 123456);
+
+        try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)) {
+            executionContext.with(bindVariableService);
+            TestUtils.assertSql(engine,
+                    executionContext,
+                    "SELECT LEAD(generate_series, 1, :ts) OVER (ORDER BY generate_series) FROM generate_series('1970-01-01T00:00:00Z', '1970-01-01T00:00:05Z', '1s');",
+                    sink,
+                    "LEAD\n" +
+                            "1970-01-01T00:00:01.000000Z\n" +
+                            "1970-01-01T00:00:02.000000Z\n" +
+                            "1970-01-01T00:00:03.000000Z\n" +
+                            "1970-01-01T00:00:04.000000Z\n" +
+                            "1970-01-01T00:00:05.000000Z\n" +
+                            "1970-01-01T00:00:00.123456Z\n");
+        }
+    }
+
+    @Test
     public void testLong() throws SqlException {
         bindVariableService.setLong("xyz", 9);
         Function func = expr("a + :xyz")
@@ -867,6 +889,24 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStrA(builder.getRecord()));
+    }
+
+    @Test
+    public void testUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a uuid)");
+
+            Uuid uuid = new Uuid();
+            uuid.of("75b30bf9-e4cc-48b9-9658-97d4a2307622");
+
+            sqlExecutionContext.getBindVariableService().getFunction(0);
+            sqlExecutionContext.getBindVariableService().setUuid(0, uuid.getLo(), uuid.getHi());
+            execute("insert into x(a) values($1)");
+            TestUtils.assertSql(engine, sqlExecutionContext, "x", sink, """
+                    a
+                    75b30bf9-e4cc-48b9-9658-97d4a2307622
+                    """);
+        });
     }
 
     private FunctionBuilder expr(String expression) {

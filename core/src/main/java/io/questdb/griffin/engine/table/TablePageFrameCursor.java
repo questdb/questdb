@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,5 +40,20 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         return false;
     }
 
-    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
+    TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows);
+
+    /**
+     * Enables or disables streaming mode for the underlying TableReader.
+     * When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
+     * to release page cache after reading. This is useful for large sequential scans
+     * like Parquet export to avoid page cache exhaustion under memory pressure.
+     *
+     * @param enabled true to enable streaming mode, false to disable
+     */
+    default void setStreamingMode(boolean enabled) {
+        TableReader reader = getTableReader();
+        if (reader != null) {
+            reader.setStreamingMode(enabled);
+        }
+    }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -213,8 +213,10 @@ public class PGSecurityTest extends BasePGTest {
             // if this asserts fails then it means UPDATE are already implemented
             // please change this test to check the update throws an exception in the read-only mode
             // this is in place, so we won't forget to test UPDATE honours read-only security context
-            assertSql("ts\tname\n" +
-                    "2022-04-12T17:30:45.145921Z\tfoo\n", "select * from src");
+            assertSql("""
+                    ts\tname
+                    2022-04-12T17:30:45.145921Z\tfoo
+                    """, "select * from src");
         });
     }
 
@@ -223,26 +225,6 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
             assertQueryDisallowed("vacuum partitions src");
-        });
-    }
-
-    @Test
-    public void testDisallowsBackupDatabase() throws Exception {
-        assertMemoryLeak(() -> {
-            configureForBackups();
-            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            execute("insert into src values (now(), 'foo')");
-            assertQueryDisallowed("backup database");
-        });
-    }
-
-    @Test
-    public void testDisallowsBackupTable() throws Exception {
-        assertMemoryLeak(() -> {
-            configureForBackups();
-            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            execute("insert into src values (now(), 'foo')");
-            assertQueryDisallowed("backup table src");
         });
     }
 

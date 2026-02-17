@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -213,8 +213,8 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testTxnFileMissingConstructor() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public boolean exists(LPSZ path) {
-                return !Utf8s.endsWithAscii(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
+            public long length(LPSZ name) {
+                return Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) ? 0 : super.length(name);
             }
         };
         assertConstructorFail(ff);

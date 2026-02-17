@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,6 +54,7 @@ import org.junit.Test;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_NO_RESPONSE;
 import static io.questdb.griffin.engine.ops.AlterOperation.ADD_COLUMN;
+import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 
 public class TableWriterAsyncCmdTest extends AbstractCairoTest {
 
@@ -70,7 +71,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                 try (TableWriter writer = getWriter("product")) {
                     CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                     AlterOperation creepyAlterOp = new AlterOperation();
-                    creepyAlterOp.of((short) 1000, writer.getTableToken(), writer.getMetadata().getTableId(), 1000);
+                    creepyAlterOp.of(CMD_ALTER_TABLE, (short) 1000, writer.getTableToken(), writer.getMetadata().getTableId(), 1000);
                     cc.ofAlter(creepyAlterOp);
                     fut = cc.execute(commandReplySequence);
                 }
@@ -284,7 +285,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                 AlterOperation creepyAlterOp = new AlterOperation() {
                     @Override
                     public void serialize(TableWriterTask event) {
-                        event.of(TableWriterTask.CMD_ALTER_TABLE, tableId, writer.getTableToken());
+                        event.of(CMD_ALTER_TABLE, tableId, writer.getTableToken());
                         event.setInstance(1);
                         event.putShort(command);
                         event.putInt(-1);
@@ -292,7 +293,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                         event.setInstance(this.getCorrelationId());
                     }
                 };
-                creepyAlterOp.of(command, writer.getTableToken(), tableId, 100);
+                creepyAlterOp.of(CMD_ALTER_TABLE, command, writer.getTableToken(), tableId, 100);
                 CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                 cc.ofAlter(creepyAlterOp);
                 fut = cc.execute(commandReplySequence);

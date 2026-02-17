@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -345,7 +345,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleToFunc,
                     sampleToFuncPos
             );
-            frameAddressCache = new PageFrameAddressCache(configuration);
+            frameAddressCache = new PageFrameAddressCache();
             // We're using page frame memory only and do single scan
             // with no random access, hence cache size of 1.
             frameMemoryPool = new PageFrameMemoryPool(1);
@@ -354,7 +354,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         @Override
         public void close() {
             Misc.free(frameMemoryPool);
-            frameAddressCache.clear();
+            Misc.free(frameAddressCache);
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
         }

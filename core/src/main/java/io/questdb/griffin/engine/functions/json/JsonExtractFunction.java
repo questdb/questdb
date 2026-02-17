@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -35,12 +37,13 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.json.SimdJsonNumberType;
 import io.questdb.std.json.SimdJsonType;
 import io.questdb.std.str.CharSink;
@@ -155,8 +158,8 @@ public class JsonExtractFunction implements Function {
             case SimdJsonType.STRING:
                 assert stateA.destUtf8Sink != null;
                 try {
-                    return DateFormatUtils.parseDate(stateA.destUtf8Sink.asAsciiCharSequence());
-                } catch (NumericException e) {
+                    return MillsTimestampDriver.INSTANCE.implicitCastVarchar(stateA.destUtf8Sink);
+                } catch (ImplicitCastException e) {
                     return Numbers.LONG_NULL;
                 }
             case SimdJsonType.NUMBER: {
@@ -165,6 +168,36 @@ public class JsonExtractFunction implements Function {
             default:
                 return Numbers.LONG_NULL;
         }
+    }
+
+    @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -216,22 +249,22 @@ public class JsonExtractFunction implements Function {
             return Numbers.IPv4_NULL;
         }
         final long res = queryPointerValue(jsonInput);
-        switch (stateA.simdJsonResult.getType()) {
-            case SimdJsonType.STRING:
+        return switch (stateA.simdJsonResult.getType()) {
+            case SimdJsonType.STRING -> {
                 assert stateA.destUtf8Sink != null;
-                return Numbers.parseIPv4Quiet(stateA.destUtf8Sink.asAsciiCharSequence());
-            case SimdJsonType.NUMBER: {
+                yield Numbers.parseIPv4Quiet(stateA.destUtf8Sink.asAsciiCharSequence());
+            }
+            case SimdJsonType.NUMBER -> {
                 if (stateA.simdJsonResult.getNumberType() == SimdJsonNumberType.SIGNED_INTEGER) {
                     final int asInt = (int) res;
                     if (asInt == res) {  // precision is intact
-                        return asInt;
+                        yield asInt;
                     }
                 }
-                return Numbers.IPv4_NULL;
+                yield Numbers.IPv4_NULL;
             }
-            default:
-                return Numbers.IPv4_NULL;
-        }
+            default -> Numbers.IPv4_NULL;
+        };
     }
 
     @Override

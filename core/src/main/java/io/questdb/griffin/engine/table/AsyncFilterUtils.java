@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,16 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.ObjList;
@@ -76,8 +81,7 @@ public class AsyncFilterUtils {
                 bindVarMemory.getAddress(),
                 bindVarFunctions.size(),
                 rows.getAddress(),
-                task.getFrameRowCount(),
-                0
+                task.getFrameRowCount()
         );
         rows.setPos(hi);
     }
@@ -93,6 +97,93 @@ public class AsyncFilterUtils {
             if (filter.getBool(record)) {
                 rows.add(r);
             }
+        }
+    }
+
+    public static void prepareBindVarMemory(
+            SqlExecutionContext executionContext,
+            SymbolTableSource symbolTableSource,
+            ObjList<Function> bindVarFunctions,
+            MemoryCARW bindVarMemory
+    ) throws SqlException {
+        // don't trigger memory allocation if there are no variables
+        if (bindVarFunctions.size() > 0) {
+            bindVarMemory.truncate();
+            for (int i = 0, n = bindVarFunctions.size(); i < n; i++) {
+                Function function = bindVarFunctions.getQuick(i);
+                writeBindVarFunction(bindVarMemory, function, symbolTableSource, executionContext);
+            }
+        }
+    }
+
+    private static void writeBindVarFunction(
+            MemoryCARW bindVarMemory,
+            Function function,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final int columnType = function.getType();
+        final int columnTypeTag = ColumnType.tagOf(columnType);
+        switch (columnTypeTag) {
+            case ColumnType.BOOLEAN:
+                bindVarMemory.putLong(function.getBool(null) ? 1 : 0);
+                return;
+            case ColumnType.BYTE:
+                bindVarMemory.putLong(function.getByte(null));
+                return;
+            case ColumnType.GEOBYTE:
+                bindVarMemory.putLong(function.getGeoByte(null));
+                return;
+            case ColumnType.SHORT:
+                bindVarMemory.putLong(function.getShort(null));
+                return;
+            case ColumnType.GEOSHORT:
+                bindVarMemory.putLong(function.getGeoShort(null));
+                return;
+            case ColumnType.CHAR:
+                bindVarMemory.putLong(function.getChar(null));
+                return;
+            case ColumnType.INT:
+                bindVarMemory.putLong(function.getInt(null));
+                return;
+            case ColumnType.IPv4:
+                bindVarMemory.putLong(function.getIPv4(null));
+                return;
+            case ColumnType.GEOINT:
+                bindVarMemory.putLong(function.getGeoInt(null));
+                return;
+            case ColumnType.SYMBOL:
+                assert function instanceof CompiledFilterSymbolBindVariable;
+                function.init(symbolTableSource, executionContext);
+                bindVarMemory.putLong(function.getInt(null));
+                return;
+            case ColumnType.FLOAT:
+                // compiled filter function will read only the first word
+                bindVarMemory.putFloat(function.getFloat(null));
+                bindVarMemory.putFloat(Float.NaN);
+                return;
+            case ColumnType.LONG:
+                bindVarMemory.putLong(function.getLong(null));
+                return;
+            case ColumnType.GEOLONG:
+                bindVarMemory.putLong(function.getGeoLong(null));
+                return;
+            case ColumnType.DATE:
+                bindVarMemory.putLong(function.getDate(null));
+                return;
+            case ColumnType.TIMESTAMP:
+                bindVarMemory.putLong(function.getTimestamp(null));
+                return;
+            case ColumnType.DOUBLE:
+                bindVarMemory.putDouble(function.getDouble(null));
+                return;
+            case ColumnType.UUID:
+                long lo = function.getLong128Lo(null);
+                long hi = function.getLong128Hi(null);
+                bindVarMemory.putLong128(lo, hi);
+                return;
+            default:
+                throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
         }
     }
 }

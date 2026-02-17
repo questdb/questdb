@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test;
 
+import io.questdb.ConfigPropertyKey;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
-import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -114,15 +114,15 @@ public class QuestDBTestNode {
         griffin = new Griffin(cairo, circuitBreaker);
     }
 
-    public void setProperty(PropertyKey propertyKey, long value) {
+    public void setProperty(ConfigPropertyKey propertyKey, long value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
-    public void setProperty(PropertyKey propertyKey, String value) {
+    public void setProperty(ConfigPropertyKey propertyKey, String value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
-    public void setProperty(PropertyKey propertyKey, boolean value) {
+    public void setProperty(ConfigPropertyKey propertyKey, boolean value) {
         getConfigurationOverrides().setProperty(propertyKey, value);
     }
 
@@ -184,6 +184,7 @@ public class QuestDBTestNode {
             engine.getTableIdGenerator().open();
             engine.getTableIdGenerator().reset();
             engine.resetNameRegistryMemory();
+            engine.getWalLocker().clear();
             engine.setUp();
         }
 

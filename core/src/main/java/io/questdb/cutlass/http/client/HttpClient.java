@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ package io.questdb.cutlass.http.client;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.cutlass.http.HttpKeywords;
-import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
@@ -230,6 +229,7 @@ public abstract class HttpClient implements QuietCloseable {
 
     protected abstract void setupIoWait();
 
+    @SuppressWarnings("unused")
     private static class BinarySequenceAdapter implements BinarySequence, Mutable {
         private final Utf8StringSink baseSink = new Utf8StringSink();
 
@@ -306,6 +306,7 @@ public abstract class HttpClient implements QuietCloseable {
             return putAscii("PUT ");
         }
 
+        @SuppressWarnings("unused")
         public Request authBasic(CharSequence username, CharSequence password) {
             beforeHeader();
             putAsciiInternal("Authorization: Basic ");
@@ -322,6 +323,7 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @SuppressWarnings("unused")
         public Request authToken(CharSequence username, CharSequence token) {
             beforeHeader();
             putAsciiInternal("Authorization: Bearer ");
@@ -333,6 +335,7 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @SuppressWarnings("unused")
         public int getContentLength() {
             if (contentStart > -1) {
                 return (int) (ptr - contentStart);
@@ -341,6 +344,7 @@ public abstract class HttpClient implements QuietCloseable {
             }
         }
 
+        @SuppressWarnings("unused")
         public long getContentStart() {
             return contentStart;
         }
@@ -473,6 +477,23 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public Request query(CharSequence name, Utf8Sequence value) {
+            assert state == STATE_URL_DONE || state == STATE_QUERY;
+            if (state == STATE_URL_DONE) {
+                putAsciiInternal('?');
+            } else {
+                putAsciiInternal('&');
+            }
+            state = STATE_QUERY;
+            urlEncode = true;
+            try {
+                put(name).putAsciiInternal('=').put(value);
+            } finally {
+                urlEncode = false;
+            }
+            return this;
+        }
+
         public ResponseHeaders send() {
             return send(defaultTimeout);
         }
@@ -495,7 +516,7 @@ public abstract class HttpClient implements QuietCloseable {
          *   <li>Failover scenarios - retry the same request on a different server</li>
          *   <li>Multi-publishing - send the same data to multiple endpoints</li>
          * </ul>
-         * Important: If the request buffer already contains a HTTP request header with a host
+         * Important: If the request buffer already contains an HTTP request header with a host
          * then the host will not change! This means reverse proxies routing requests to different
          * host based on the Host header will not work! Routing on TLS SNI will not be affected.
          *
@@ -551,6 +572,7 @@ public abstract class HttpClient implements QuietCloseable {
             sendHeaderAndContent(maxContentLen, timeout);
         }
 
+        @SuppressWarnings("unused")
         public Request setCookie(CharSequence name, CharSequence value) {
             beforeHeader();
             put(HEADER_COOKIE).putAscii(": ").put(name);
@@ -570,6 +592,7 @@ public abstract class HttpClient implements QuietCloseable {
             return ss.toString();
         }
 
+        @SuppressWarnings("unused")
         public void trimContentToLen(int contentLen) {
             ptr = contentStart + contentLen;
         }

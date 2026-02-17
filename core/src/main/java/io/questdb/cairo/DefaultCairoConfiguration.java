@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -132,28 +132,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getAsyncMunmapEnabled() {
+        return false;
+    }
+
+    @Override
     public @NotNull String getAttachPartitionSuffix() {
         return TableUtils.ATTACHABLE_DIR_MARKER;
-    }
-
-    @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return null;
-    }
-
-    @Override
-    public int getBackupMkDirMode() {
-        return 509;
-    }
-
-    @Override
-    public CharSequence getBackupRoot() {
-        return null;
-    }
-
-    @Override
-    public @NotNull CharSequence getBackupTempDirName() {
-        return "tmp";
     }
 
     @Override
@@ -174,6 +159,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getCairoSqlLegacyOperatorPrecedence() {
         return false;
+    }
+
+    @Override
+    public boolean getCheckpointRecoveryRebuildColumnIndexes() {
+        return false;
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMax() {
+        return 12;
+    }
+
+    @Override
+    public int getCheckpointRecoveryThreadpoolMin() {
+        return 4;
     }
 
     @Override
@@ -232,6 +232,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCompileViewModelPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public @NotNull CharSequence getConfRoot() {
         return confRoot;
     }
@@ -253,7 +258,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.75;
+        return 0.5;
     }
 
     @Override
@@ -387,6 +392,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByParallelTopKThreshold() {
+        return 5_000_000;
+    }
+
+    @Override
     public int getGroupByPoolCapacity() {
         return 1024;
     }
@@ -407,6 +417,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByTopKQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public int getIdGenerateBatchStep() {
         return 512;
     }
@@ -424,6 +439,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getInactiveReaderTTL() {
         return -10000;
+    }
+
+    @Override
+    public long getInactiveViewWalWriterTTL() {
+        return 30_000;
     }
 
     @Override
@@ -530,8 +550,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewRowsPerQueryEstimate() {
-        return 10_000_000;
+    public long getMatViewRowsPerQueryEstimate() {
+        return 10_000_000L;
     }
 
     @Override
@@ -546,7 +566,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getMaxSqlRecompileAttempts() {
-        return 10;
+        return 50;
     }
 
     @Override
@@ -666,8 +686,51 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getParquetExportBatchSize() {
+        return 100_000;
+    }
+
+    @Override
+    public int getParquetExportCompressionCodec() {
+        return ParquetCompression.COMPRESSION_LZ4_RAW;
+    }
+
+    // Compression level for GZIP (0-9), BROTLI (0-11), or ZSTD (1-22) codecs when exporting data to parquet.
+    // By default, getParquetExportCompressionCodec() returns ParquetCompression.COMPRESSION_LZ4_RAW,
+    // for which compression level has no effect, so we return 0.
+    @Override
+    public int getParquetExportCompressionLevel() {
+        return 0;
+    }
+
+    @Override
+    public int getParquetExportCopyReportFrequencyLines() {
+        return 500_000;
+    }
+
+    @Override
+    public int getParquetExportDataPageSize() {
+        return 0; // use default (1024*1024) bytes
+    }
+
+    @Override
+    public int getParquetExportRowGroupSize() {
+        return 100_000;
+    }
+
+    @Override
+    public CharSequence getParquetExportTableNamePrefix() {
+        return "zzz.copy.";
+    }
+
+    @Override
+    public int getParquetExportVersion() {
+        return ParquetVersion.PARQUET_VERSION_V1;
+    }
+
+    @Override
     public int getPartitionEncoderParquetCompressionCodec() {
-        return ParquetCompression.COMPRESSION_UNCOMPRESSED;
+        return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
 
     @Override
@@ -701,6 +764,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPivotColumnPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getPoolSegmentSize() {
+        return 32;
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return 64;
     }
@@ -721,6 +794,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getRecentWriteTrackerCapacity() {
+        return 1000;
+    }
+
+    @Override
     public int getRenameTableModelPoolCapacity() {
         return 8;
     }
@@ -728,6 +806,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getRepeatMigrationsFromVersion() {
         return -1;
+    }
+
+    @Override
+    public int getRmdirMaxDepth() {
+        return 5;
     }
 
     @Override
@@ -748,11 +831,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
-    }
-
-    @Override
-    public int getScoreboardFormat() {
-        return 2;
     }
 
     @Override
@@ -810,6 +888,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlCopyBufferSize() {
         return 1024 * 1024;
+    }
+
+    @Override
+    public int getSqlCopyExportQueueCapacity() {
+        return 32;
+    }
+
+    @Override
+    public CharSequence getSqlCopyExportRoot() {
+        return null;
     }
 
     @Override
@@ -878,6 +966,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlIntervalIncrementalMergeThreshold() {
+        return 256;
+    }
+
+    @Override
+    public int getSqlIntervalMaxBracketDepth() {
+        return 8;
+    }
+
+    @Override
+    public int getSqlIntervalMaxIntervalsAfterMerge() {
+        return 1024;
+    }
+
+    @Override
     public int getSqlJitBindVarsMemoryMaxPages() {
         return 8;
     }
@@ -905,11 +1008,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlJitMode() {
         return SqlJitMode.JIT_MODE_ENABLED;
-    }
-
-    @Override
-    public int getSqlJitPageAddressCacheThreshold() {
-        return Numbers.SIZE_1MB;
     }
 
     @Override
@@ -973,8 +1071,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParallelFilterDispatchLimit() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
     public double getSqlParallelFilterPreTouchThreshold() {
         return 0.05;
+    }
+
+    @Override
+    public long getSqlParallelWorkStealingSpinTimeout() {
+        return 50_000; // 50us
     }
 
     @Override
@@ -984,7 +1092,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlParquetFrameCacheCapacity() {
-        return 3;
+        return 8;
+    }
+
+    @Override
+    public int getSqlPivotMaxProducedColumns() {
+        return 5_000;
     }
 
     @Override
@@ -995,6 +1108,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getSqlSmallMapPageSize() {
         return 4 * 1024;
+    }
+
+    @Override
+    public int getSqlSmallPageFrameMaxRows() {
+        return 1_000;
+    }
+
+    @Override
+    public int getSqlSmallPageFrameMinRows() {
+        return 5;
     }
 
     @Override
@@ -1148,6 +1271,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getViewLexerPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getViewWalWriterPoolMaxSegments() {
+        return 3;
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
     }
@@ -1292,6 +1425,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCopierChunkedEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return false;
     }
@@ -1317,6 +1455,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRefreshMissingWalFilesFatal() {
+        return false;
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return false;
     }
@@ -1332,8 +1475,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isPartitionEncoderParquetRawArrayEncoding() {
+    public boolean isParquetExportRawArrayEncoding() {
         return false;
+    }
+
+    @Override
+    public boolean isParquetExportStatisticsEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetRawArrayEncoding() {
+        return true;
     }
 
     @Override
@@ -1372,11 +1525,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSqlParallelFilterPreTouchEnabled() {
-        return true;
-    }
-
-    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return true;
     }
@@ -1388,6 +1536,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelTopKEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowJoinEnabled() {
         return true;
     }
 

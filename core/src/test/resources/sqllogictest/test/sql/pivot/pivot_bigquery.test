@@ -1,0 +1,82 @@
+statement ok
+CREATE TABLE Produce AS (
+  SELECT 'Kale' as product, 51 as sales, 'Q1' as quarter, 2020 as year UNION ALL
+  SELECT 'Kale', 23, 'Q2', 2020 UNION ALL
+  SELECT 'Kale', 45, 'Q3', 2020 UNION ALL
+  SELECT 'Kale', 3, 'Q4', 2020 UNION ALL
+  SELECT 'Kale', 70, 'Q1', 2021 UNION ALL
+  SELECT 'Kale', 85, 'Q2', 2021 UNION ALL
+  SELECT 'Apple', 77, 'Q1', 2020 UNION ALL
+  SELECT 'Apple', 0, 'Q2', 2020 UNION ALL
+  SELECT 'Apple', 1, 'Q1', 2021
+  );
+
+#SELECT * FROM Produce
+#PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
+#ORDER BY ALL
+query IIIIII
+Produce
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4')
+GROUP BY product, year
+) ORDER BY product, year, Q1, Q2, Q3, Q4;
+----
+Apple	2020	77	0	NULL	NULL
+Apple	2021	1	NULL	NULL	NULL
+Kale	2020	51	23	45	3
+Kale	2021	70	85	NULL	NULL
+
+
+#SELECT * FROM
+#  (SELECT product, sales, quarter FROM Produce)
+#  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
+#ORDER BY ALL
+query IIIII
+SELECT * FROM (
+(SELECT product, sales, quarter FROM Produce)
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4')
+GROUP BY product
+) ORDER BY product, Q1, Q2, Q3, Q4
+);
+----
+Apple	78	0	NULL	NULL
+Kale	121	108	45	3
+
+#SELECT * FROM
+#  (SELECT product, sales, quarter FROM Produce)
+#  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
+#  ORDER BY ALL
+query IIII
+SELECT * FROM (
+(SELECT product, sales, quarter FROM Produce)
+    PIVOT(
+        SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3')
+        GROUP BY product
+    ) ORDER BY product, Q1, Q2, Q3
+);
+----
+Apple	78	0	NULL
+Kale	121	108	45
+
+#SELECT * FROM
+#  (SELECT sales, quarter FROM Produce)
+#  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
+#  ORDER BY ALL
+query III
+Produce PIVOT (SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'));
+----
+199	108	45
+
+#SELECT * FROM
+#  (SELECT product, sales, quarter FROM Produce)
+#  PIVOT(SUM(sales) total_sales, COUNT(*) num_records FOR quarter IN ('Q1', 'Q2'))
+#ORDER BY ALL
+query IIIII
+Produce PIVOT (
+  sum(sales) total_sales,
+  count(*) num_records
+  FOR quarter IN ('Q1', 'Q2')
+  GROUP BY product
+) ORDER BY product;
+----
+Apple	78	2	0	1
+Kale	121	2	108	2

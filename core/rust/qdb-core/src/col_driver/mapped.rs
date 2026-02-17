@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,12 @@
 use crate::col_type::ColumnType;
 use crate::error::{CoreErrorExt, CoreResult, fmt_err};
 use memmap2::Mmap;
+#[cfg(windows)]
+use memmap2::MmapMut;
+use std::borrow::Cow;
 use std::fs::File;
+#[cfg(windows)]
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -37,51 +42,92 @@ pub struct MappedColumn {
 }
 
 impl MappedColumn {
-    pub fn open(
+    #[cfg(windows)]
+    fn map_file_with_fallback(file: &File) -> std::io::Result<Mmap> {
+        match unsafe { Mmap::map(file) } {
+            Ok(map) => Ok(map),
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                // Windows can deny file-backed mappings even when the handle is valid
+                // (e.g., due to transient locks). Fall back to an anonymous map
+                // populated via a direct read.
+                let len = usize::try_from(file.metadata()?.len()).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "file too large to map")
+                })?;
+                let mut anon = MmapMut::map_anon(len)?;
+                if len != 0 {
+                    let mut cloned = file.try_clone()?;
+                    cloned.seek(SeekFrom::Start(0))?;
+                    cloned.read_exact(&mut anon[..])?;
+                }
+                anon.make_read_only()
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn map_file_with_fallback(file: &File) -> std::io::Result<Mmap> {
+        unsafe { Mmap::map(file) }
+    }
+
+    // nightly has add_extension
+    pub fn build_file_extension(base_extension: &str, col_version: Option<u64>) -> Cow<'_, str> {
+        match col_version {
+            Some(version) => Cow::Owned(format!("{}.{}", base_extension, version)),
+            _ => Cow::Borrowed(base_extension),
+        }
+    }
+
+    pub fn open_versioned(
         parent_path: impl Into<PathBuf>,
         col_name: impl Into<String>,
         col_type: ColumnType,
+        col_version: Option<u64>,
     ) -> CoreResult<Self> {
         let col_name = col_name.into();
-        let mut path = parent_path.into();
-        path.push(&col_name);
+        let mut column_path = parent_path.into();
+        column_path.push(&col_name);
 
         // Open and map the "data" file which is always present for columns.
-        path.set_extension("d");
-        let data_file = File::open(&path).with_context(|_| {
+        let data_extension = Self::build_file_extension("d", col_version);
+        let mut column_path_data = column_path.clone();
+        column_path_data.set_extension(data_extension.as_ref());
+        let data_file = File::open(&column_path_data).with_context(|_| {
             format!(
                 "Could not open data file for column: {}, col_type: {}, path: {}",
                 col_name,
                 col_type,
-                path.display()
+                column_path_data.display()
             )
         })?;
-        let data = unsafe { Mmap::map(&data_file) }.with_context(|_| {
+        let data = Self::map_file_with_fallback(&data_file).with_context(|_| {
             format!(
                 "Could not map data file for column: {}, col_type: {}, path: {}",
                 col_name,
                 col_type,
-                path.display()
+                column_path_data.display()
             )
         })?;
 
         // Open and map the "aux" file which is present for var-sized types.
         let aux = if col_type.tag().is_var_size() {
-            path.set_extension("i");
-            let aux_file = File::open(&path).with_context(|_| {
+            let mut column_path_aux = column_path;
+            let aux_extension = Self::build_file_extension("i", col_version);
+            column_path_aux.set_extension(aux_extension.as_ref());
+            let aux_file = File::open(&column_path_aux).with_context(|_| {
                 format!(
                     "Could not open aux file for column: {}, col_type: {}, path: {}",
                     col_name,
                     col_type,
-                    path.display()
+                    column_path_aux.display()
                 )
             })?;
-            let aux = unsafe { Mmap::map(&aux_file) }.with_context(|_| {
+            let aux = Self::map_file_with_fallback(&aux_file).with_context(|_| {
                 format!(
                     "Could not map aux file for column: {}, col_type: {}, path: {}",
                     col_name,
                     col_type,
-                    path.display()
+                    column_path_aux.display()
                 )
             })?;
             Some(aux)
@@ -94,22 +140,29 @@ impl MappedColumn {
                     data.len(),
                     col_name,
                     col_type,
-                    path.display(),
+                    column_path_data.display(),
                     fixed_size
                 ));
             }
             None
         };
 
-        // Restore the parent path.
-        path.pop();
+        column_path_data.pop();
         Ok(Self {
             col_type,
             col_name,
-            parent_path: path,
+            parent_path: column_path_data,
             data,
             aux,
         })
+    }
+
+    pub fn open(
+        parent_path: impl Into<PathBuf>,
+        col_name: impl Into<String>,
+        col_type: ColumnType,
+    ) -> CoreResult<Self> {
+        Self::open_versioned(parent_path, col_name, col_type, None)
     }
 }
 

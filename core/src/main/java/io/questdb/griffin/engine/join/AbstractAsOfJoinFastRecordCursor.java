@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,40 +25,104 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
+/**
+ * Abstract base class for ASOF join record cursors with fast path optimization.
+ */
 public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccessRecordCursor {
+    /**
+     * The column index where slave columns start.
+     */
     protected final int columnSplit;
+    /**
+     * Number of rows to look ahead in linear scan.
+     */
     protected final int lookahead;
+    /**
+     * Index of the timestamp column in the master cursor.
+     */
     protected final int masterTimestampIndex;
+    /**
+     * Scale factor for master timestamps to normalize to nanoseconds.
+     */
     protected final long masterTimestampScale;
+    /**
+     * The combined record containing master and slave columns.
+     */
     protected final OuterJoinRecord record;
+    /**
+     * Index of the timestamp column in the slave cursor.
+     */
     protected final int slaveTimestampIndex;
+    /**
+     * Scale factor for slave timestamps to normalize to nanoseconds.
+     */
     protected final long slaveTimestampScale;
-    protected boolean isMasterHasNextPending;
-    // stands for forward/backward scan through slave's time frames
+    /**
+     * Flag for forward/backward scan through slave's time frames.
+     */
     protected boolean isSlaveForwardScan;
+    /**
+     * Flag indicating if slave open is pending.
+     */
     protected boolean isSlaveOpenPending;
+    /**
+     * The lookahead timestamp value.
+     */
     protected long lookaheadTimestamp = Long.MIN_VALUE;
+    /**
+     * The master record cursor.
+     */
     protected RecordCursor masterCursor;
-    protected boolean masterHasNext;
+    /**
+     * The current master record.
+     */
     protected Record masterRecord;
+    /**
+     * Current slave frame index.
+     */
     protected int slaveFrameIndex = -1;
+    /**
+     * Current row within the slave frame.
+     */
     protected long slaveFrameRow = Long.MIN_VALUE;
-    protected Record slaveRecA; // used for internal navigation
-    protected Record slaveRecB; // used inside the user-facing OuterJoinRecord
+    /**
+     * Slave record A, used for internal navigation.
+     */
+    protected Record slaveRecA;
+    /**
+     * Slave record B, used inside the user-facing OuterJoinRecord.
+     */
+    protected Record slaveRecB;
+    /**
+     * Current slave time frame.
+     */
     protected TimeFrame slaveTimeFrame;
-    protected TimeFrameRecordCursor slaveTimeFrameCursor;
+    /**
+     * The slave time frame cursor.
+     */
+    protected TimeFrameCursor slaveTimeFrameCursor;
 
+    /**
+     * Constructs a new ASOF join cursor.
+     *
+     * @param columnSplit          the column index where slave columns start
+     * @param nullRecord           the null record to use when no slave match is found
+     * @param masterTimestampIndex the timestamp column index in master
+     * @param masterTimestampType  the timestamp column type in master
+     * @param slaveTimestampIndex  the timestamp column index in slave
+     * @param slaveTimestampType   the timestamp column type in slave
+     * @param lookahead            number of rows to look ahead in linear scan
+     */
     public AbstractAsOfJoinFastRecordCursor(
             int columnSplit,
             Record nullRecord,
@@ -81,6 +145,13 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         }
     }
 
+    /**
+     * Scales a timestamp by the given scale factor.
+     *
+     * @param timestamp the timestamp to scale
+     * @param scale     the scale factor
+     * @return the scaled timestamp, or Long.MAX_VALUE on overflow
+     */
     public static long scaleTimestamp(long timestamp, long scale) {
         if (scale == 1 || timestamp == Long.MIN_VALUE) {
             return timestamp;
@@ -125,7 +196,13 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         return slaveTimeFrameCursor.newSymbolTable(columnIndex - columnSplit);
     }
 
-    public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor) {
+    /**
+     * Initializes this cursor with the master and slave cursors.
+     *
+     * @param masterCursor the master record cursor
+     * @param slaveCursor  the slave time frame cursor
+     */
+    public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor) {
         this.masterCursor = masterCursor;
         this.slaveTimeFrameCursor = slaveCursor;
         this.slaveTimeFrame = slaveCursor.getTimeFrame();
@@ -144,10 +221,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         return masterCursor.size();
     }
 
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
-        // isMasterHasNextPending is false is only possible when slave cursor navigation inside hasNext() threw DataUnavailableException
-        // and in such case we expect hasNext() to be called again, rather than skipRows()
-        assert isMasterHasNextPending;
+    public void skipRows(Counter rowCount) {
         masterCursor.skipRows(rowCount);
     }
 
@@ -159,7 +233,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         record.hasSlave(false);
         masterCursor.toTop();
         slaveTimeFrameCursor.toTop();
-        isMasterHasNextPending = true;
         isSlaveOpenPending = false;
         isSlaveForwardScan = true;
     }
@@ -273,10 +346,17 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         }
     }
 
-    // Finds the last value less or equal to the master timestamp.
-    // Both rowLo and rowHi are inclusive.
-    // When multiple rows have the same matching timestamp, the last one is returned.
-    // When all rows have timestamps greater than the master timestamp, rowLo - 1 is returned.
+    /**
+     * Finds the last value less or equal to the master timestamp.
+     * Both rowLo and rowHi are inclusive.
+     * When multiple rows have the same matching timestamp, the last one is returned.
+     * When all rows have timestamps greater than the master timestamp, rowLo - 1 is returned.
+     *
+     * @param masterTimestamp the master timestamp to search for
+     * @param rowLo           the low row index (inclusive)
+     * @param rowHi           the high row index (inclusive)
+     * @return the row index of the last matching value
+     */
     protected long binarySearch(long masterTimestamp, long rowLo, long rowHi) {
         // this is the same algorithm as implemented in C (util.h)
         // template<class T, class V>
@@ -312,6 +392,11 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         return binarySearchScanDown(masterTimestamp, low, high + 1, rowLo);
     }
 
+    /**
+     * Advances the slave cursor to find the matching record for the given master timestamp.
+     *
+     * @param masterTimestamp the master timestamp to match
+     */
     protected void nextSlave(long masterTimestamp) {
         while (true) {
             if (slaveTimeFrame.isOpen() && slaveTimeFrame.getFrameIndex() == slaveFrameIndex) {

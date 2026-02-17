@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,24 +25,16 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.sql.TimeFrameCursor;
 
 public interface SymbolShortCircuit {
-    @Transient
-    CharSequence getMasterValue(Record masterRecord);
-
-    @NotNull
-    StaticSymbolTable getSlaveSymbolTable();
 
     /**
-     * When joining on a single symbol column, detects when the slave column doesn't have
-     * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
-     * in that case.
+     * When joining on one or more symbol columns, detects when any slave column
+     * doesn't have the symbol at all (by inspecting its int-to-symbol mapping). This
+     * allows the record cursor to avoid searching for the matching slave row.
      */
     boolean isShortCircuit(Record masterRecord);
 
-    void of(TimeFrameRecordCursor slaveCursor);
+    void of(TimeFrameCursor slaveCursor);
 }

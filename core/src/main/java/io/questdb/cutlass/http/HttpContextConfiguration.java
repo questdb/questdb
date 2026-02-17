@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@ package io.questdb.cutlass.http;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.Clock;
 
 public interface HttpContextConfiguration {
 
@@ -41,6 +41,8 @@ public interface HttpContextConfiguration {
     int getConnectionStringPoolCapacity();
 
     boolean getDumpNetworkTraffic();
+
+    int getExportConnectionLimit();
 
     FactoryProvider getFactoryProvider();
 
@@ -62,13 +64,15 @@ public interface HttpContextConfiguration {
 
     long getMultipartIdleSpinCount();
 
-    Clock getNanosecondClock();
+    NanosecondClock getNanosecondClock();
 
     NetworkFacade getNetworkFacade();
 
     int getRequestHeaderBufferSize();
 
     boolean getServerKeepAlive();
+
+    long getSessionTimeout();
 
     boolean readOnlySecurityContext();
 }

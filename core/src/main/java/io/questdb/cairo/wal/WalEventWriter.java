@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,16 +36,20 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BoolList;
-import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -55,6 +59,8 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalEventWriter implements Closeable {
     private final CairoConfiguration configuration;
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private final MemoryMARW eventIndexMem = Vm.getCMARWInstance();
     private final MemoryMARW eventMem = Vm.getCMARWInstance();
     private final FilesFacade ff;
@@ -64,8 +70,9 @@ class WalEventWriter implements Closeable {
     private boolean legacyMatViewFormat;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
+    private BoolList symbolMapNullFlagsChanged;
     private int txn = 0;
-    private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
+    private ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps;
 
     WalEventWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -183,6 +190,33 @@ class WalEventWriter implements Closeable {
             case ColumnType.ARRAY:
                 eventMem.putArray(function.getArray(null));
                 break;
+            case ColumnType.DECIMAL8:
+                eventMem.putByte(function.getDecimal8(null));
+                break;
+            case ColumnType.DECIMAL16:
+                eventMem.putShort(function.getDecimal16(null));
+                break;
+            case ColumnType.DECIMAL32:
+                eventMem.putInt(function.getDecimal32(null));
+                break;
+            case ColumnType.DECIMAL64:
+                eventMem.putLong(function.getDecimal64(null));
+                break;
+            case ColumnType.DECIMAL128: {
+                function.getDecimal128(null, decimal128);
+                eventMem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
+                break;
+            }
+            case ColumnType.DECIMAL256: {
+                function.getDecimal256(null, decimal256);
+                eventMem.putDecimal256(
+                        decimal256.getHh(),
+                        decimal256.getHl(),
+                        decimal256.getLh(),
+                        decimal256.getLl()
+                );
+                break;
+            }
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }
@@ -204,10 +238,10 @@ class WalEventWriter implements Closeable {
     private void writeSymbolMapDiffs() {
         final int columns = txnSymbolMaps.size();
         for (int columnIndex = 0; columnIndex < columns; columnIndex++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(columnIndex);
+            final var symbolMap = txnSymbolMaps.getQuick(columnIndex);
             if (symbolMap != null) {
                 final int initialCount = initialSymbolCounts.get(columnIndex);
-                if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
+                if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0) || symbolMapNullFlagsChanged.get(columnIndex)) {
                     eventMem.putInt(columnIndex);
                     eventMem.putBool(symbolMapNullFlags.get(columnIndex));
                     eventMem.putInt(initialCount);
@@ -216,18 +250,7 @@ class WalEventWriter implements Closeable {
                     long appendAddress = eventMem.getAppendOffset();
                     eventMem.putInt(size);
 
-                    int symbolCount = 0;
-                    for (int j = 0; j < size; j++) {
-                        final CharSequence symbol = symbolMap.keys().getQuick(j);
-                        assert symbol != null;
-                        final int value = symbolMap.get(symbol);
-                        // Ignore symbols cached from symbolMapReader
-                        if (value >= initialCount) {
-                            eventMem.putInt(value);
-                            eventMem.putStr(symbol);
-                            symbolCount++;
-                        }
-                    }
+                    int symbolCount = symbolMap.copyTo(eventMem, initialCount);
                     // Update the size with the exact symbolCount
                     // An empty SymbolMapDiff can be created because symbolCount can be 0
                     // in case all cached symbols come from symbolMapReader.
@@ -382,10 +405,47 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
+    int appendViewDefinition(
+            @NotNull String viewSql,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.VIEW_DEFINITION);
+
+        // add view sql
+        eventMem.putStr(viewSql);
+
+        //add view dependencies
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        final int numOfDependencies = tableNames.size();
+        eventMem.putInt(numOfDependencies);
+        for (int i = 0; i < numOfDependencies; i++) {
+            final CharSequence tableName = tableNames.getQuick(i);
+            eventMem.putStr(tableName);
+            final LowerCaseCharSequenceHashSet columns = dependencies.get(tableName);
+            eventMem.putInt(columns.size());
+            for (int j = 0; j < columns.getKeyCount(); j++) {
+                final CharSequence key = columns.getKey(j);
+                if (key != null) {
+                    eventMem.putStr(key);
+                }
+            }
+        }
+
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        return txn++;
+    }
+
+    void of(ObjList<DirectCharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags, BoolList symbolMapNullFlagsChanged) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
         this.symbolMapNullFlags = symbolMapNullFlags;
+        this.symbolMapNullFlagsChanged = symbolMapNullFlagsChanged;
     }
 
     void openEventFile(Path path, int pathLen, boolean truncate, boolean systemTable) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ package io.questdb.test;
 
 import io.questdb.Bootstrap;
 import io.questdb.BootstrapConfiguration;
+import io.questdb.ConfigPropertyKey;
+import io.questdb.ConfigReloader;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.DynamicPropServerConfiguration;
@@ -47,6 +49,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -67,6 +70,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
@@ -127,6 +131,82 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity();
                 Assert.assertEquals(1000, capacity);
+            }
+        });
+    }
+
+    @Test
+    public void testConfigChangeListener() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicLong configChangedCalledCounter = new AtomicLong(0);
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                final var listener = new ConfigReloader.Listener() {
+                    private final ConfigPropertyKey[] WATCHED_PROPERTIES = new ConfigPropertyKey[]{
+                            PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD
+                    };
+
+                    @Override
+                    public void configChanged() {
+                        configChangedCalledCounter.incrementAndGet();
+                    }
+
+                    @Override
+                    public @NotNull ConfigPropertyKey[] getWatchedConfigKeys() {
+                        return WATCHED_PROPERTIES;
+                    }
+                };
+                final long watchId = serverMain.getEngine().getConfigReloader().watch(listener);
+
+                Assert.assertTrue("watchId should be non-negative", watchId >= 0);
+                Assert.assertEquals(0, configChangedCalledCounter.get());
+
+                // [1] First, reload config after changing a watched setting.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=1000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                Assert.assertEquals(1, configChangedCalledCounter.get());
+
+                final int threshold = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold();
+                Assert.assertEquals(1000, threshold);
+
+                // [2] Now again, reload config after changing a setting which is reloadable but not watched.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=1000\n");
+                    w.write("cairo.sql.asof.join.short.circuit.cache.capacity=4000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                final int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity();
+                Assert.assertEquals(4000, capacity);
+
+                // Note! The listener was _not_ notified. The `cairo.sql.asof.join.short.circuit.cache.capacity` is of no interest.
+                Assert.assertEquals(1, configChangedCalledCounter.get());
+
+                // [3] Now we test _removing_ keys. Should get notified.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    // Not going to `w.write("cairo.sql.asof.join.evacuation.threshold=1000\n");`, i.e. removed.
+                    w.write("cairo.sql.asof.join.short.circuit.cache.capacity=4000\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(2, configChangedCalledCounter.get());
+
+                // [4] Finally, we test unregistering from config changes.
+                // We should not get notified, despite adding back the key of interest.
+                serverMain.getEngine().getConfigReloader().unwatch(watchId);
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=2000\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(2, configChangedCalledCounter.get());
+
+                // [5] Should we re-register, we'll get a different ID.
+                final long watchId2 = serverMain.getEngine().getConfigReloader().watch(listener);
+                Assert.assertNotEquals("re-register should return a new watchId", watchId, watchId2);
             }
         });
     }
@@ -209,6 +289,38 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                         }
                     }
                 });
+            }
+        });
+    }
+
+    @Test
+    public void testHttpPasswordFromFile() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a secret file for HTTP password
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "http_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "http_secret_password");
+
+            // Configure http.password.file and http.user
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("http.user=httpuser\n");
+                w.write("http.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Verify HTTP password was read from file
+                Assert.assertEquals(
+                        "http_secret_password",
+                        serverMain.getConfiguration().getHttpServerConfiguration().getPassword()
+                );
+
+                // Verify HTTP username is set
+                Assert.assertEquals(
+                        "httpuser",
+                        serverMain.getConfiguration().getHttpServerConfiguration().getUsername()
+                );
             }
         });
     }
@@ -318,6 +430,67 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                         "{\"query\":\"select rpad('QuestDB', 150, '0');\",\"columns\":[{\"name\":\"rpad('QuestDB', 150, '0')\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"QuestDB00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"]],\"count\":1}",
                         query
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testMultiplePasswordsFromFilesSimultaneously() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create secret files for multiple passwords
+            Path pgPasswordFile = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Path pgRoPasswordFile = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_ro_password.txt");
+            Path httpPasswordFile = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "http_password.txt");
+            Files.createDirectories(pgPasswordFile.getParent());
+
+            Files.writeString(pgPasswordFile, "pg_secret");
+            Files.writeString(pgRoPasswordFile, "pg_ro_secret");
+            Files.writeString(httpPasswordFile, "http_secret");
+
+            // Configure all passwords from files
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + pgPasswordFile.toString().replace("\\", "\\\\") + "\n");
+                w.write("pg.readonly.user.enabled=true\n");
+                w.write("pg.readonly.user=rouser\n");
+                w.write("pg.readonly.password.file=" + pgRoPasswordFile.toString().replace("\\", "\\\\") + "\n");
+                w.write("http.user=httpuser\n");
+                w.write("http.password.file=" + httpPasswordFile.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Verify all passwords were read from files
+                Assert.assertEquals("pg_secret",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword());
+                Assert.assertEquals("pg_ro_secret",
+                        serverMain.getConfiguration().getPGWireConfiguration().getReadOnlyPassword());
+                Assert.assertEquals("http_secret",
+                        serverMain.getConfiguration().getHttpServerConfiguration().getPassword());
+
+                // Verify PG connections work
+                try (Connection conn = getConnection("admin", "pg_secret")) {
+                    assertFalse(conn.isClosed());
+                }
+                try (Connection conn = getConnection("rouser", "pg_ro_secret")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Update all password files
+                Files.writeString(pgPasswordFile, "pg_secret_updated");
+                Files.writeString(pgRoPasswordFile, "pg_ro_secret_updated");
+                Files.writeString(httpPasswordFile, "http_secret_updated");
+
+                // Reload
+                serverMain.getEngine().getConfigReloader().reload();
+
+                // Verify all passwords were updated
+                Assert.assertEquals("pg_secret_updated",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword());
+                Assert.assertEquals("pg_ro_secret_updated",
+                        serverMain.getConfiguration().getPGWireConfiguration().getReadOnlyPassword());
+                Assert.assertEquals("http_secret_updated",
+                        serverMain.getConfiguration().getHttpServerConfiguration().getPassword());
             }
         });
     }
@@ -507,6 +680,212 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
 
                 Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
+            }
+        });
+    }
+
+    @Test
+    public void testPgWirePasswordFromFileReload() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a secret file with initial password
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "initial_secret_password");
+
+            // Configure pg.password.file to point to the secret file
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Verify initial password was read from file
+                Assert.assertEquals(
+                        "initial_secret_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the initial password
+                try (Connection conn = getConnection("admin", "initial_secret_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Update the secret file with a new password
+                Files.writeString(secretFilePath, "updated_secret_password");
+
+                // Call the reload method directly instead of using the reload_config() SQL function
+                // to avoid needing to know the current password
+                serverMain.getEngine().getConfigReloader().reload();
+
+                // Verify password was updated from the file
+                Assert.assertEquals(
+                        "updated_secret_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the new password
+                try (Connection conn = getConnection("admin", "updated_secret_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Old password should no longer work
+                Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "initial_secret_password"));
+            }
+        });
+    }
+
+    @Test
+    public void testPgWirePasswordSwitchFromConfToFile() throws Exception {
+        assertMemoryLeak(() -> {
+            // Start with password in server.conf (not from file)
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password=direct_password\n");
+            }
+
+            // Create a secret file (but don't use it yet)
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "file_based_password");
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Verify initial password from conf
+                Assert.assertEquals(
+                        "direct_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the direct password
+                try (Connection conn = getConnection("admin", "direct_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Switch to file-based password by adding pg.password.file
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+                }
+
+                // Reload config
+                serverMain.getEngine().getConfigReloader().reload();
+
+                // Verify password was switched to file-based
+                Assert.assertEquals(
+                        "file_based_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the new file-based password
+                try (Connection conn = getConnection("admin", "file_based_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Old direct password should no longer work
+                Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "direct_password"));
+            }
+        });
+    }
+
+    @Test
+    public void testPgWirePasswordSwitchFromFileToConf() throws Exception {
+        assertMemoryLeak(() -> {
+            // Start with password from file
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "file_based_password");
+
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Verify initial password from file
+                Assert.assertEquals(
+                        "file_based_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the file-based password
+                try (Connection conn = getConnection("admin", "file_based_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Switch to direct password by removing pg.password.file and adding pg.password
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.password=direct_password\n");
+                }
+
+                // Reload config
+                serverMain.getEngine().getConfigReloader().reload();
+
+                // Verify password was switched to direct
+                Assert.assertEquals(
+                        "direct_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Verify we can connect with the new direct password
+                try (Connection conn = getConnection("admin", "direct_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Old file-based password should no longer work
+                Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "file_based_password"));
+            }
+        });
+    }
+
+    @Test
+    public void testPgWireReadOnlyPasswordFromFile() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a secret file for readonly password
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_ro_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "readonly_secret_password");
+
+            // Configure pg.readonly.password.file and enable readonly user
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.readonly.user.enabled=true\n");
+                w.write("pg.readonly.user=rouser\n");
+                w.write("pg.readonly.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Verify readonly password was read from file
+                Assert.assertEquals(
+                        "readonly_secret_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getReadOnlyPassword()
+                );
+
+                // Verify we can connect with the readonly user
+                try (Connection conn = getConnection("rouser", "readonly_secret_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Update the secret file with a new password
+                Files.writeString(secretFilePath, "updated_ro_password");
+
+                // Reload config
+                serverMain.getEngine().getConfigReloader().reload();
+
+                // Verify password was updated
+                Assert.assertEquals(
+                        "updated_ro_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getReadOnlyPassword()
+                );
+
+                // Verify we can connect with the new password
+                try (Connection conn = getConnection("rouser", "updated_ro_password")) {
+                    assertFalse(conn.isClosed());
+                }
+
+                // Old password should no longer work
+                Assert.assertThrows(PSQLException.class, () -> getConnection("rouser", "readonly_secret_password"));
             }
         });
     }
@@ -729,6 +1108,296 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testSecretFileDeletedDuringReload() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a secret file with initial password
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "deletable_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "initial_password");
+
+            // Configure pg.password.file
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Verify initial password
+                Assert.assertEquals(
+                        "initial_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Delete the secret file
+                Files.delete(secretFilePath);
+
+                // Reload should fail because file is missing
+                boolean reloadResult = serverMain.getEngine().getConfigReloader().reload();
+                Assert.assertFalse("Reload should fail when secret file is missing", reloadResult);
+
+                // Password should remain unchanged (old value kept)
+                Assert.assertEquals(
+                        "initial_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Should still be able to connect with old password
+                try (Connection conn = getConnection("admin", "initial_password")) {
+                    assertFalse(conn.isClosed());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create an empty secret file
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "empty_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "");
+
+            // Configure pg.password.file to point to the empty file
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Empty file should result in empty password
+                Assert.assertEquals(
+                        "",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileInvalidUtf8() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a file with invalid UTF-8 bytes
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "invalid_utf8.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            // Write invalid UTF-8: 0xFF 0xFE are not valid UTF-8 start bytes
+            Files.write(secretFilePath, new byte[]{(byte) 0xFF, (byte) 0xFE, 'a', 'b', 'c'});
+
+            // Configure pg.password.file to point to the invalid UTF-8 file
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            // Server should fail to start with invalid UTF-8 in secret file
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for invalid UTF-8 in secret file");
+            } catch (Exception e) {
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "cannot convert invalid UTF-8");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileIsDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a directory instead of a file
+            Path secretDirPath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "password_dir");
+            Files.createDirectories(secretDirPath);
+
+            // Configure pg.password.file to point to the directory
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretDirPath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for directory as secret file");
+            } catch (Exception e) {
+                // The CairoException is wrapped in BootstrapException
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file path is a directory");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFilePathTraversalRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Configure pg.password.file with path traversal
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=/etc/../etc/passwd\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for path traversal in secret file");
+            } catch (Exception e) {
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file path not allowed");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileDevPathRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Configure pg.password.file to /dev/ path
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=/dev/null\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for /dev/ path in secret file");
+            } catch (Exception e) {
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file path not allowed");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileProcPathRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Configure pg.password.file to /proc/ path
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=/proc/self/environ\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for /proc/ path in secret file");
+            } catch (Exception e) {
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file path not allowed");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileSysPathRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            // Configure pg.password.file to /sys/ path
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=/sys/kernel/hostname\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for /sys/ path in secret file");
+            } catch (Exception e) {
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file path not allowed");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileNotFound() throws Exception {
+        assertMemoryLeak(() -> {
+            // Configure pg.password.file to point to a non-existent file
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=/nonexistent/path/to/secret.txt\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for missing secret file");
+            } catch (Exception e) {
+                // The CairoException is wrapped in BootstrapException
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "cannot open secret file");
+                TestUtils.assertContains(message, "/nonexistent/path/to/secret.txt");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileTooLarge() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a file larger than 64KB
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "large_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+
+            // Write more than 64KB (65537 bytes)
+            Files.writeString(secretFilePath, "x".repeat(65537));
+
+            // Configure pg.password.file to point to the large file
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try {
+                new ServerMain(getBootstrap()).close();
+                Assert.fail("Expected exception for too large secret file");
+            } catch (Exception e) {
+                // The CairoException is wrapped in BootstrapException
+                String message = e.getMessage();
+                TestUtils.assertContains(message, "secret file is too large");
+                TestUtils.assertContains(message, "maxSize=65536");
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileWhitespaceOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a file with only whitespace
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "whitespace_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "   \n\t  \n  ");
+
+            // Configure pg.password.file to point to the whitespace file
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Whitespace-only file should result in empty password after trimming
+                Assert.assertEquals(
+                        "",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileWithTrailingNewline() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a file with password followed by newlines (common with Kubernetes secrets)
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "newline_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "my_secret_password\n\n");
+
+            // Configure pg.password.file
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Trailing newlines should be trimmed
+                Assert.assertEquals(
+                        "my_secret_password",
+                        serverMain.getConfiguration().getPGWireConfiguration().getDefaultPassword()
+                );
+
+                // Should be able to connect with the trimmed password
+                try (Connection conn = getConnection("admin", "my_secret_password")) {
+                    assertFalse(conn.isClosed());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSqlJitMaxInListSizeThreshold() throws Exception {
         assertMemoryLeak(() -> {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
@@ -767,6 +1436,65 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 assertReloadConfig(true, "admin", "quest");
 
                 Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().isQueryTracingEnabled());
+            }
+        });
+    }
+
+    @Test
+    public void testSecretFileRotationDoesNotNotifyStaleWatchers() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a secret file for pg.password
+            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Files.createDirectories(secretFilePath.getParent());
+            Files.writeString(secretFilePath, "initial_password");
+
+            // Initial config: a dynamic property + a secret file reference
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("cairo.sql.asof.join.evacuation.threshold=100\n");
+                w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Register a listener that watches ONLY the evacuation threshold
+                final AtomicLong listenerCounter = new AtomicLong(0);
+                final var listener = new ConfigReloader.Listener() {
+                    private final ConfigPropertyKey[] WATCHED_PROPERTIES = new ConfigPropertyKey[]{
+                            PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD
+                    };
+
+                    @Override
+                    public void configChanged() {
+                        listenerCounter.incrementAndGet();
+                    }
+
+                    @Override
+                    public @NotNull ConfigPropertyKey[] getWatchedConfigKeys() {
+                        return WATCHED_PROPERTIES;
+                    }
+                };
+                serverMain.getEngine().getConfigReloader().watch(listener);
+
+                // [1] Change the evacuation threshold in server.conf → listener should fire
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.sql.asof.join.evacuation.threshold=200\n");
+                    w.write("pg.password.file=" + secretFilePath.toString().replace("\\", "\\\\") + "\n");
+                }
+                serverMain.getEngine().getConfigReloader().reload();
+                Assert.assertEquals(1, listenerCounter.get());
+
+                // [2] Now rotate ONLY the secret file. Do NOT touch server.conf.
+                // The listener watches evacuation.threshold which hasn't changed,
+                // so it should NOT fire again.
+                Files.writeString(secretFilePath, "rotated_password");
+                serverMain.getEngine().getConfigReloader().reload();
+
+                Assert.assertEquals(
+                        "listener for evacuation.threshold should not fire on secret file rotation",
+                        1,
+                        listenerCounter.get()
+                );
             }
         });
     }

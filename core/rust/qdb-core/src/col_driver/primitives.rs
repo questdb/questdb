@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -78,6 +78,12 @@ impl_primitive_type_driver!(GeoLong);
 impl_primitive_type_driver!(Uuid);
 impl_primitive_type_driver!(Long128);
 impl_primitive_type_driver!(IPv4);
+impl_primitive_type_driver!(Decimal8);
+impl_primitive_type_driver!(Decimal16);
+impl_primitive_type_driver!(Decimal32);
+impl_primitive_type_driver!(Decimal64);
+impl_primitive_type_driver!(Decimal128);
+impl_primitive_type_driver!(Decimal256);
 
 #[cfg(test)]
 mod tests {

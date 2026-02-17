@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,8 +26,9 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cutlass.text.CopyRequestTask;
-import io.questdb.cutlass.text.CopyTask;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.text.CopyImportRequestTask;
+import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.FanOut;
@@ -39,6 +40,7 @@ import io.questdb.mp.SPSequence;
 import io.questdb.tasks.ColumnIndexerTask;
 import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
 import io.questdb.tasks.LatestByTask;
 import io.questdb.tasks.O3CopyTask;
@@ -67,7 +69,31 @@ public interface MessageBus extends Closeable {
 
     CairoConfiguration getConfiguration();
 
-    MPSequence getCopyRequestPubSeq();
+    MPSequence getCopyExportRequestPubSeq();
+
+    RingQueue<CopyExportRequestTask> getCopyExportRequestQueue();
+
+    MCSequence getCopyExportRequestSubSeq();
+
+    SCSequence getCopyImportColSeq();
+
+    SPSequence getCopyImportPubSeq();
+
+    RingQueue<CopyImportTask> getCopyImportQueue();
+
+    SPSequence getCopyImportRequestPubSeq();
+
+    RingQueue<CopyImportRequestTask> getCopyImportRequestQueue();
+
+    SCSequence getCopyImportRequestSubSeq();
+
+    MCSequence getCopyImportSubSeq();
+
+    MPSequence getGroupByLongTopKPubSeq();
+
+    RingQueue<GroupByLongTopKTask> getGroupByLongTopKQueue();
+
+    MCSequence getGroupByLongTopKSubSeq();
 
     MPSequence getGroupByMergeShardPubSeq();
 
@@ -132,18 +158,6 @@ public interface MessageBus extends Closeable {
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
-
-    SCSequence getTextImportColSeq();
-
-    SPSequence getTextImportPubSeq();
-
-    RingQueue<CopyTask> getTextImportQueue();
-
-    RingQueue<CopyRequestTask> getTextImportRequestQueue();
-
-    SCSequence getTextImportRequestSubSeq();
-
-    MCSequence getTextImportSubSeq();
 
     MPSequence getVectorAggregatePubSeq();
 

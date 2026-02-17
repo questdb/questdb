@@ -3,7 +3,6 @@ use crate::parquet::qdb_metadata::QdbMeta;
 use nonmax::NonMaxU32;
 use parquet2::metadata::FileMetaData;
 use qdb_core::col_type::ColumnType;
-use std::io::{Read, Seek};
 
 mod column_sink;
 mod decode;
@@ -12,11 +11,10 @@ mod meta;
 mod slicer;
 
 // The metadata fields are accessed from Java.
+// This struct contains only immutable metadata.
+// The reader is passed as a parameter to decode methods.
 #[repr(C)]
-pub struct ParquetDecoder<R>
-where
-    R: Read + Seek,
-{
+pub struct ParquetDecoder {
     pub allocator: QdbAllocator,
     pub col_count: u32,
     pub row_count: usize,
@@ -27,11 +25,22 @@ where
     pub timestamp_index: Option<NonMaxU32>,
     pub columns_ptr: *const ColumnMeta,
     pub columns: AcVec<ColumnMeta>,
-    reader: R,
-    metadata: FileMetaData,
-    qdb_meta: Option<QdbMeta>,
-    decompress_buffer: Vec<u8>,
-    row_group_sizes_acc: AcVec<usize>,
+    pub(crate) metadata: FileMetaData,
+    pub(crate) qdb_meta: Option<QdbMeta>,
+    pub(crate) row_group_sizes_acc: AcVec<usize>,
+}
+
+#[repr(C)]
+pub struct DecodeContext {
+    pub(crate) file_ptr: *const u8,
+    pub(crate) file_size: u64,
+    pub(crate) decompress_buffer: Vec<u8>,
+}
+
+impl DecodeContext {
+    pub fn new(file_ptr: *const u8, file_size: u64) -> Self {
+        Self { file_ptr, file_size, decompress_buffer: Vec::new() }
+    }
 }
 
 #[repr(C)]
@@ -50,6 +59,12 @@ pub struct ColumnMeta {
 pub struct RowGroupBuffers {
     column_bufs_ptr: *const ColumnChunkBuffers,
     column_bufs: AcVec<ColumnChunkBuffers>,
+}
+
+impl RowGroupBuffers {
+    pub fn column_buffers(&self) -> &AcVec<ColumnChunkBuffers> {
+        &self.column_bufs
+    }
 }
 
 #[repr(C)]
@@ -91,7 +106,7 @@ mod tests {
     use crate::parquet::error::ParquetResult;
     use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
     use crate::parquet::tests::ColumnTypeTagExt;
-    use crate::parquet_read::{ParquetDecoder, RowGroupBuffers};
+    use crate::parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers};
     use parquet::basic::{ConvertedType, LogicalType, Type as PhysicalType};
     use parquet::data_type::{ByteArray, ByteArrayType};
     use parquet::file::properties::{WriterProperties, WriterVersion};
@@ -120,10 +135,12 @@ mod tests {
         let (buf, row_count) = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
         let buf_len = buf.len() as u64;
 
-        let reader = Cursor::new(buf);
-        let mut parquet_decoder = ParquetDecoder::read(allocator.clone(), reader, buf_len)?;
+        let mut reader = Cursor::new(&buf);
+        let parquet_decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)?;
         let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
         let res = parquet_decoder.decode_row_group(
+            &mut ctx,
             &mut rgb,
             &[(0, ColumnTypeTag::Symbol.into_type())],
             0,

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -47,6 +48,11 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
 
     @Override
     public void authorizePGWire() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeSelect(ViewDefinition viewDefinition) {
         throw CairoException.nonCritical().put("permission denied");
     }
 

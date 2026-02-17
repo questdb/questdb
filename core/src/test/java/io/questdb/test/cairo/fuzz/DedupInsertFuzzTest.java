@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -66,30 +66,18 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
-@RunWith(Parameterized.class)
 public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private final boolean convertToParquet;
 
-    public DedupInsertFuzzTest(boolean convertToParquet) {
-        this.convertToParquet = convertToParquet;
-    }
-
-    @Parameterized.Parameters(name = "parquet={0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {true},
-                {false},
-        });
+    public DedupInsertFuzzTest() {
+        this.convertToParquet = TestUtils.generateRandom(LOG).nextBoolean();
     }
 
     @Test
@@ -164,8 +152,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKeyAndColumnTops() throws Exception {
-        // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
-        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             Rnd rnd = generateRandomAndProps();
 
@@ -788,7 +774,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
 
         for (int i = 0; i < inserts; i++) {
-            long fromTs = minTs + rnd.nextLong(maxTs - minTs);
+            // maxTs > minTs condition prevents arithmetic exception thrown from rnd.nextLong() when maxTs = minTs
+            long fromTs = minTs + (maxTs > minTs ? rnd.nextLong(maxTs - minTs) : 0);
             long toTs = (long) (fromTs + Micros.DAY_MICROS * Math.pow(1.2, rnd.nextDouble()));
 
             String insertSql = "insert into " + tableNameDedup +

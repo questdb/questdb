@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,8 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -210,7 +212,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         size = 0;
         nResizes = 0;
         Vect.memset(memStart, memLimit - memStart, 0);
-        Misc.free(allocator); // free all memory, but allocator remains usable for further allocations
+        Misc.clear(allocator);
     }
 
     @Override
@@ -321,13 +323,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
             restoreInitialCapacity();
         }
+        allocator.reopen();
     }
 
+    @Override
     public void reopen() {
         if (memStart == 0) {
             // handles both mem and offsets
             restoreInitialCapacity();
         }
+        allocator.reopen();
     }
 
     @Override
@@ -666,6 +671,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public void putDate(long value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal128(Decimal128 decimal128) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 decimal256) {
             throw new UnsupportedOperationException();
         }
 

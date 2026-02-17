@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,12 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         }
     }
 
+    public static void copyColumns(RecordMetadata from, GenericRecordMetadata to, int columnCount) {
+        for (int i = 0, n = Math.min(from.getColumnCount(), columnCount); i < n; i++) {
+            to.add(from.getColumnMetadata(i));
+        }
+    }
+
     public static GenericRecordMetadata copyDense(TableRecordMetadata tableMetadata) {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         int columnCount = tableMetadata.getColumnCount();
@@ -67,29 +73,58 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return null;
     }
 
+    public static GenericRecordMetadata copyOf(RecordMetadata that, int columnCount) {
+        if (that != null) {
+            if (that instanceof GenericRecordMetadata) {
+                return (GenericRecordMetadata) that;
+            }
+            GenericRecordMetadata metadata = copyOfSansTimestamp(that, columnCount);
+            int timestampIndex = that.getTimestampIndex();
+            if (timestampIndex < columnCount) {
+                metadata.setTimestampIndex(timestampIndex);
+            }
+            return metadata;
+        }
+        return null;
+    }
+
+    public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that, int columnCount) {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        copyColumns(that, metadata, columnCount);
+        return metadata;
+    }
+
     public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         copyColumns(that, metadata);
         return metadata;
     }
 
-    public static GenericRecordMetadata deepCopyOf(RecordMetadata that) {
+    /**
+     * Creates a new GenericRecordMetadata instance, copying column references (shallow copy).
+     * Unlike {@link #copyOf}, this method always creates a new instance even if the input
+     * is already a GenericRecordMetadata.
+     */
+    public static GenericRecordMetadata copyOfNew(RecordMetadata that, int columnCount) {
         if (that != null) {
-            GenericRecordMetadata metadata = new GenericRecordMetadata();
-            for (int i = 0, n = that.getColumnCount(); i < n; i++) {
-                metadata.add(
-                        new TableColumnMetadata(
-                                that.getColumnName(i),
-                                that.getColumnType(i),
-                                that.isColumnIndexed(i),
-                                that.getIndexValueBlockCapacity(i),
-                                that.isSymbolTableStatic(i),
-                                that.getMetadata(i),
-                                that.getWriterIndex(i),
-                                that.isDedupKey(i)
-                        )
-                );
+            GenericRecordMetadata metadata = copyOfSansTimestamp(that, columnCount);
+            int timestampIndex = that.getTimestampIndex();
+            if (timestampIndex < columnCount) {
+                metadata.setTimestampIndex(timestampIndex);
             }
+            return metadata;
+        }
+        return null;
+    }
+
+    /**
+     * Creates a new GenericRecordMetadata instance, copying column references (shallow copy).
+     * Unlike {@link #copyOf}, this method always creates a new instance even if the input
+     * is already a GenericRecordMetadata.
+     */
+    public static GenericRecordMetadata copyOfNew(RecordMetadata that) {
+        if (that != null) {
+            GenericRecordMetadata metadata = copyOfSansTimestamp(that);
             metadata.setTimestampIndex(that.getTimestampIndex());
             return metadata;
         }

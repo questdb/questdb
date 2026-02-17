@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
@@ -56,6 +57,7 @@ public final class Files {
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
+    public static final int POSIX_MADV_DONTNEED;
     // Apart from obvious random read use case, MADV_RANDOM/FADV_RANDOM should be used for write-only
     // append-only files. Otherwise, OS starts reading adjacent pages under memory pressure generating
     // wasted disk read ops.
@@ -67,9 +69,21 @@ public final class Files {
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
-    private final static FdCache fdCache = new FdCache();
-    private static final MmapCache mmapCache = new MmapCache();
+    private static final FdCache fdCache = new FdCache();
+    private static final MmapCache mmapCache = MmapCache.INSTANCE;
+    public static boolean ASYNC_MUNMAP_ENABLED = false;
     public static boolean FS_CACHE_ENABLED = true;
+
+    // Maximum recursion depth when deleting the database directory.
+    // Recursion starts at depth 0 for the root directory (e.g., "db").
+    // A value of 5 allows recursing through 5 subdirectory levels beneath the root
+    // (i.e., depths 0-4 are allowed, depth 5 triggers the limit).
+    // Example structures within the allowed depth:
+    //   db/tableDir/partitionDir
+    //   db/tableDir/wal/segmentDir
+    //   db/.download/tableDir/wal/segmentDir
+    public static int RMDIR_MAX_DEPTH = 5;
+
     // To be set in tests to check every call for using OPEN file descriptor
     public static boolean VIRTIO_FS_DETECTED = false;
 
@@ -125,11 +139,6 @@ public final class Files {
             return osFd;
         }
         return -1;
-    }
-
-    public static int errnoInvalidParameter() {
-        return Os.type != Os.WINDOWS ? CairoException.ERRNO_INVALID_PARAMETER
-                : CairoException.ERRNO_INVALID_PARAMETER_WIN;
     }
 
     public static boolean exists(long fd) {
@@ -233,6 +242,10 @@ public final class Files {
      * Returns vm.max_map_count kernel limit on Linux or 0 on other OSes.
      */
     public native static long getMapCountLimit();
+
+    public static MmapCache getMmapCache() {
+        return mmapCache;
+    }
 
     public static long getMmapReuseCount() {
         return mmapCache.getReuseCount();
@@ -359,10 +372,29 @@ public final class Files {
         return mmapCache.cacheMmap(osFd, mmapCacheKey, len, offset, flags, memoryTag);
     }
 
+    /**
+     * Memory map without using the MmapCache. Useful for streaming reads where
+     * we want each mapping to be independent and release page cache via madvise.
+     */
+    public static long mmapNoCache(long fd, long len, long offset, int flags, int memoryTag) {
+        int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
+        // Pass mmapCacheKey=0 to bypass the mmap cache
+        return mmapCache.cacheMmap(osFd, 0, len, offset, flags, memoryTag);
+    }
+
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
         long mmapCacheKey = fdCache.toMmapCacheKey(fd);
         return mmapCache.mremap(osFd, mmapCacheKey, address, previousSize, newSize, offset, flags, memoryTag);
+    }
+
+    /**
+     * Remap memory without using the MmapCache. Useful for streaming reads.
+     */
+    public static long mremapNoCache(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+        int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
+        // Pass mmapCacheKey=0 to bypass the mmap cache
+        return mmapCache.mremap(osFd, 0, address, previousSize, newSize, offset, flags, memoryTag);
     }
 
     public static native int msync(long addr, long len, boolean async);
@@ -482,56 +514,9 @@ public final class Files {
         return fdCache.rename(oldName, newName);
     }
 
-    /**
-     * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.
-     * The function can operate in two modes, eager and haltOnFail. In haltOnFail mode function fails fast, providing precise
-     * error number. In eager mode function will free most of the disk space but likely to fail on deleting non-empty
-     * directory, should some files remain. Thus, not providing correct diagnostics.
-     * <p>
-     * rmdir() will fail if directory does not exist
-     *
-     * @param path       path to the directory, must include trailing slash (/)
-     * @param haltOnFail when true removing directory will halt on first failed attempt to remove directory contents. When
-     *                   false, the function will remove as many files and subdirectories as possible. That might be useful
-     *                   when the intent is too free up as much disk space as possible.
-     * @return true on success
-     */
+    @TestOnly
     public static boolean rmdir(Path path, boolean haltOnFail) {
-        path.$();
-        long pFind = findFirst(path.ptr());
-        if (pFind > 0L) {
-            int len = path.size();
-            boolean res;
-            int type;
-            long nameUtf8Ptr;
-            try {
-                do {
-                    nameUtf8Ptr = findName(pFind);
-                    path.trimTo(len).concat(nameUtf8Ptr).$();
-                    type = findType(pFind);
-                    if (type == Files.DT_FILE) {
-                        if (!remove(path.ptr()) && haltOnFail) {
-                            return false;
-                        }
-                    } else if (notDots(nameUtf8Ptr)) {
-                        res = type == Files.DT_LNK ? unlink(path.ptr()) == 0 : rmdir(path, haltOnFail);
-                        if (!res && haltOnFail) {
-                            return false;
-                        }
-                    }
-                }
-                while (findNext(pFind) > 0);
-            } finally {
-                findClose(pFind);
-                path.trimTo(len).$();
-            }
-
-            if (isSoftLink(path.ptr())) {
-                return unlink(path.ptr()) == 0;
-            }
-            return rmdir(path.ptr());
-        }
-        return false;
+        return rmdir(path, haltOnFail, 0, 10, null) > -1;
     }
 
     @TestOnly
@@ -662,6 +647,8 @@ public final class Files {
 
     private native static int getPosixFadvSequential();
 
+    private native static int getPosixMadvDontneed();
+
     private native static int getPosixMadvRandom();
 
     private native static int getPosixMadvSequential();
@@ -700,13 +687,94 @@ public final class Files {
 
     private native static boolean rmdir(long lpsz);
 
+    private static int rmdir(Path path, boolean haltOnFail, int recursiveDepth, int maxRecursiveDepth, Log log) {
+        if (recursiveDepth >= maxRecursiveDepth) {
+            if (log != null) {
+                log.critical().$("maximum recursive depth of ").$(maxRecursiveDepth).$(" exceeded when deleting ").$(path).$();
+            }
+            return -recursiveDepth - 1;
+        }
+        int maxDepth = recursiveDepth;
+        path.$();
+        long pFind = findFirst(path.ptr());
+        if (pFind > 0L) {
+            int len = path.size();
+            int res;
+            int type;
+            long nameUtf8Ptr;
+            try {
+                do {
+                    nameUtf8Ptr = findName(pFind);
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
+                    type = findType(pFind);
+                    if (type == Files.DT_FILE) {
+                        if (!remove(path.ptr())) {
+                            if (haltOnFail || Files.isSecurityError(Os.errno())) {
+                                return -maxDepth - 1;
+                            }
+                        }
+                    } else if (notDots(nameUtf8Ptr)) {
+                        res = type == Files.DT_LNK ? unlink0(path, recursiveDepth) : rmdir(path, haltOnFail, recursiveDepth + 1, maxRecursiveDepth, log);
+                        if (res < 0) {
+                            if (haltOnFail || Files.isSecurityError(Os.errno())) {
+                                return Math.min(-maxDepth - 1, res);
+                            }
+                            maxDepth = Math.max(maxDepth, -res - 1);
+                        } else {
+                            maxDepth = Math.max(maxDepth, res);
+                        }
+                    }
+                }
+                while (findNext(pFind) > 0);
+            } finally {
+                findClose(pFind);
+                path.trimTo(len).$();
+            }
+
+            if (isSoftLink(path.ptr())) {
+                res = unlink0(path, recursiveDepth);
+                if (res < 0) {
+                    if (haltOnFail || Files.isSecurityError(Os.errno())) {
+                        return Math.min(-maxDepth - 1, res);
+                    }
+                    maxDepth = Math.max(maxDepth, -res - 1);
+                } else {
+                    return Math.max(maxDepth, res);
+                }
+            } else {
+                return rmdir(path.ptr()) ? maxDepth : -maxDepth - 1;
+            }
+        }
+        return -maxDepth - 1;
+    }
+
     private native static boolean setLastModified(long lpszName, long millis);
 
     private native static boolean truncate(int fd, long size);
 
+    private static int unlink0(Path path, int recursiveDepth) {
+        int unlinkRes = unlink(path.ptr());
+        if (unlinkRes != 0) {
+            return -recursiveDepth - 1;
+        } else {
+            return recursiveDepth;
+        }
+    }
+
     private native static long write(int fd, long address, long len, long offset);
 
     native static int close0(int fd);
+
+    static boolean isSecurityError(int errno) {
+        if (Os.isLinux()) {
+            return errno == CairoException.ERRNO_EACCES_LINUX || errno == CairoException.ERRNO_EPERM_LINUX;
+        } else if (Os.isWindows()) {
+            return errno == CairoException.ERRNO_ACCESS_DENIED_WIN;
+        } else if (Os.isOSX()) {
+            return errno == CairoException.ERRNO_EACCES_MACOS || errno == CairoException.ERRNO_EPERM_MACOS;
+        }
+        return false;
+    }
 
     static native long mmap0(int fd, long len, long offset, int flags, long baseAddress);
 
@@ -720,6 +788,25 @@ public final class Files {
 
     static native int rename(long lpszOld, long lpszNew);
 
+    /**
+     * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.
+     * The function can operate in two modes, eager and haltOnFail. In haltOnFail mode function fails fast, providing precise
+     * error number. In eager mode function will free most of the disk space but likely to fail on deleting non-empty
+     * directory, should some files remain. Thus, not providing correct diagnostics.
+     * <p>
+     * rmdir() will fail if directory does not exist
+     *
+     * @param path       path to the directory, must include trailing slash (/)
+     * @param haltOnFail when true removing directory will halt on first failed attempt to remove directory contents. When
+     *                   false, the function will remove as many files and subdirectories as possible. That might be useful
+     *                   when the intent is to free up as much disk space as possible.
+     * @param log        log instance to report critical errors to, can be null
+     * @return >=0 depth of the removed directory on success, negative number indicates failure
+     */
+    static int rmdir(Path path, boolean haltOnFail, Log log) {
+        return rmdir(path, haltOnFail, 0, RMDIR_MAX_DEPTH, log);
+    }
+
     static {
         Os.init();
         UTF_8 = StandardCharsets.UTF_8;
@@ -730,11 +817,13 @@ public final class Files {
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
             POSIX_MADV_RANDOM = getPosixMadvRandom();
             POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
+            POSIX_MADV_DONTNEED = getPosixMadvDontneed();
         } else {
             POSIX_FADV_SEQUENTIAL = -1;
             POSIX_FADV_RANDOM = -1;
             POSIX_MADV_SEQUENTIAL = -1;
             POSIX_MADV_RANDOM = -1;
+            POSIX_MADV_DONTNEED = -1;
         }
     }
 }

@@ -3,6 +3,7 @@ name = "sqllogictest-engines"
 version = "0.21.0"
 edition = "2021"
 description = "Sqllogictest built-in engines."
+license = "Apache-2.0 OR MIT"
 
 [dependencies]
 async-trait = "0.1"

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,27 +42,30 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Test
     public void testOrderByColumnInJoinedSubquery() throws Exception {
         assertQuery(
-                "x\toth\n" +
-                        "1\t100\n" +
-                        "1\t81\n" +
-                        "1\t64\n",
-                "select * from \n" +
-                        "(\n" +
-                        "  selecT x from long_sequence(10) \n" +
-                        ")\n" +
-                        "cross join \n" +
-                        "(\n" +
-                        "  select * from \n" +
-                        "  (\n" +
-                        "    selecT x*x as oth from long_sequence(10) order by x desc limit 5 \n" +
-                        "  )\n" +
-                        ")\n" +
-                        "order by x*2 asc\n" +
-                        "limit 3",
+                """
+                        x\toth
+                        1\t100
+                        1\t81
+                        1\t64
+                        """,
+                """
+                        select * from\s
+                        (
+                          selecT x from long_sequence(10)\s
+                        )
+                        cross join\s
+                        (
+                          select * from\s
+                          (
+                            selecT x*x as oth from long_sequence(10) order by x desc limit 5\s
+                          )
+                        )
+                        order by x*2 asc
+                        limit 3""",
                 null,
                 null,
                 true,
-                true
+                false
         );
     }
 
@@ -72,20 +75,23 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     @Ignore
     public void testOrderByExpressionInJoinedSubquery() throws Exception {
         assertQuery(
-                "x\tcolumn\tcolumn1\n" +
-                        "1\t100\t50\n" +
-                        "1\t81\t45\n" +
-                        "1\t64\t40\n",
-                "select * from \n" +
-                        "(\n" +
-                        "  select x from long_sequence(10) \n" +
-                        ")\n" +
-                        "cross join \n" +
-                        "(\n" +
-                        "    select x*x,5*x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
-                        ")\n" +
-                        "order by x*2  asc\n" +
-                        "limit 3",
+                """
+                        x\tcolumn\tcolumn1
+                        1\t100\t50
+                        1\t81\t45
+                        1\t64\t40
+                        """,
+                """
+                        select * from\s
+                        (
+                          select x from long_sequence(10)\s
+                        )
+                        cross join\s
+                        (
+                            select x*x,5*x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5\s
+                        )
+                        order by x*2  asc
+                        limit 3""",
                 null,
                 null,
                 true,
@@ -97,12 +103,13 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     public void testOrderByExpressionInNestedQuery() throws Exception {
         assertQuery(
                 "x\n6\n7\n8\n",
-                "select * from \n" +
-                        "(\n" +
-                        "  select x from long_sequence(10) order by x/2 desc limit 5 \n" +
-                        ")\n" +
-                        "order by x*2 asc\n" +
-                        "limit 3",
+                """
+                        select * from\s
+                        (
+                          select x from long_sequence(10) order by x/2 desc limit 5\s
+                        )
+                        order by x*2 asc
+                        limit 3""",
                 null,
                 null,
                 true,
@@ -114,16 +121,17 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     public void testOrderByExpressionWhenColumnHasAliasInJoinedSubquery() throws Exception {
         assertQuery(
                 "x\text\n1\t100\n1\t81\n1\t64\n",
-                "select * from \n" +
-                        "(\n" +
-                        "  select x from long_sequence(10) \n" +
-                        ")\n" +
-                        "cross join \n" +
-                        "(\n" +
-                        "    select x*x as ext from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
-                        ")\n" +
-                        "order by x*2 asc, ext desc\n" +
-                        "limit 3",
+                """
+                        select * from\s
+                        (
+                          select x from long_sequence(10)\s
+                        )
+                        cross join\s
+                        (
+                            select x*x as ext from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5\s
+                        )
+                        order by x*2 asc, ext desc
+                        limit 3""",
                 null,
                 null,
                 true,
@@ -137,17 +145,19 @@ public class OrderByExpressionTest extends AbstractCairoTest {
             execute("create table tab as (select x x, x%2 y from long_sequence(10))");
 
             assertQuery(
-                    "x\ty\n" +
-                            "1\t1\n" +
-                            "2\t0\n" +
-                            "3\t1\n" +
-                            "4\t0\n" +
-                            "5\t1\n" +
-                            "6\t0\n" +
-                            "7\t1\n" +
-                            "8\t0\n" +
-                            "9\t1\n" +
-                            "10\t0\n",
+                    """
+                            x\ty
+                            1\t1
+                            2\t0
+                            3\t1
+                            4\t0
+                            5\t1
+                            6\t0
+                            7\t1
+                            8\t0
+                            9\t1
+                            10\t0
+                            """,
                     "select * from tab order by x/x",
                     null,
                     true,
@@ -155,17 +165,19 @@ public class OrderByExpressionTest extends AbstractCairoTest {
             );
 
             assertQuery(
-                    "x\ty\n" +
-                            "2\t0\n" +
-                            "4\t0\n" +
-                            "6\t0\n" +
-                            "8\t0\n" +
-                            "10\t0\n" +
-                            "1\t1\n" +
-                            "3\t1\n" +
-                            "5\t1\n" +
-                            "7\t1\n" +
-                            "9\t1\n",
+                    """
+                            x\ty
+                            2\t0
+                            4\t0
+                            6\t0
+                            8\t0
+                            10\t0
+                            1\t1
+                            3\t1
+                            5\t1
+                            7\t1
+                            9\t1
+                            """,
                     "select * from tab order by y, x",
                     null,
                     true,
@@ -173,17 +185,19 @@ public class OrderByExpressionTest extends AbstractCairoTest {
             );
 
             assertQuery(
-                    "x\ty\n" +
-                            "2\t0\n" +
-                            "4\t0\n" +
-                            "6\t0\n" +
-                            "8\t0\n" +
-                            "10\t0\n" +
-                            "1\t1\n" +
-                            "3\t1\n" +
-                            "5\t1\n" +
-                            "7\t1\n" +
-                            "9\t1\n",
+                    """
+                            x\ty
+                            2\t0
+                            4\t0
+                            6\t0
+                            8\t0
+                            10\t0
+                            1\t1
+                            3\t1
+                            5\t1
+                            7\t1
+                            9\t1
+                            """,
                     "select * from (select t2.* from tab t1 cross join tab t2 limit 10) order by y",
                     null,
                     true,
@@ -191,17 +205,19 @@ public class OrderByExpressionTest extends AbstractCairoTest {
             );
 
             assertQuery(
-                    "x\ty\n" +
-                            "1\t1\n" +
-                            "2\t0\n" +
-                            "3\t1\n" +
-                            "4\t0\n" +
-                            "5\t1\n" +
-                            "6\t0\n" +
-                            "7\t1\n" +
-                            "8\t0\n" +
-                            "9\t1\n" +
-                            "10\t0\n",
+                    """
+                            x\ty
+                            1\t1
+                            2\t0
+                            3\t1
+                            4\t0
+                            5\t1
+                            6\t0
+                            7\t1
+                            8\t0
+                            9\t1
+                            10\t0
+                            """,
                     "select * from (select t2.* from tab t1 cross join tab t2 limit 10) order by x/x",
                     null,
                     true,
@@ -214,12 +230,13 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     public void testOrderByExpressionWithFunctionCallInNestedQuery() throws Exception {
         assertQuery(
                 "x\n6\n7\n8\n",
-                "select * from \n" +
-                        "(\n" +
-                        "    select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
-                        ")\n" +
-                        "order by x*2 asc\n" +
-                        "limit 3",
+                """
+                        select * from\s
+                        (
+                            select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5\s
+                        )
+                        order by x*2 asc
+                        limit 3""",
                 null,
                 null,
                 true,
@@ -231,10 +248,11 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     public void testOrderByExpressionWithFunctionCallInWithClause() throws Exception {
         assertQuery(
                 "x\n6\n7\n8\n",
-                "with q as (select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 ) \n" +
-                        "select * from q\n" +
-                        "order by x*2 asc\n" +
-                        "limit 3",
+                """
+                        with q as (select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 )\s
+                        select * from q
+                        order by x*2 asc
+                        limit 3""",
                 null,
                 null,
                 true,
@@ -260,35 +278,41 @@ public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByNumericColumnThatDoesExist() throws Exception {
-        assertQuery("5\n" +
-                        "123\n" +
-                        "456\n" +
-                        "789\n",
-                "SELECT * FROM (\n" +
-                        "  SELECT 456 AS \"5\"\n" +
-                        "  UNION ALL \n" +
-                        "  SELECT 789 AS \"5\"\n" +
-                        "  UNION ALL \n" +
-                        "  SELECT 123 AS \"5\"\n" +
-                        ")\n" +
-                        "ORDER BY 5",
+        assertQuery("""
+                        5
+                        123
+                        456
+                        789
+                        """,
+                """
+                        SELECT * FROM (
+                          SELECT 456 AS "5"
+                          UNION ALL\s
+                          SELECT 789 AS "5"
+                          UNION ALL\s
+                          SELECT 123 AS "5"
+                        )
+                        ORDER BY 5""",
                 null,
                 true,
                 true
         );
 
-        assertQuery("5\n" +
-                        "123\n" +
-                        "456\n" +
-                        "789\n",
-                "SELECT * FROM (\n" +
-                        "  SELECT 456 AS \"5\"\n" +
-                        "  UNION ALL \n" +
-                        "  SELECT 789 AS \"5\"\n" +
-                        "  UNION ALL \n" +
-                        "  SELECT 123 AS \"5\"\n" +
-                        ")\n" +
-                        "ORDER BY 1",
+        assertQuery("""
+                        5
+                        123
+                        456
+                        789
+                        """,
+                """
+                        SELECT * FROM (
+                          SELECT 456 AS "5"
+                          UNION ALL\s
+                          SELECT 789 AS "5"
+                          UNION ALL\s
+                          SELECT 123 AS "5"
+                        )
+                        ORDER BY 1""",
                 null,
                 true,
                 true
@@ -297,30 +321,33 @@ public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByNumericColumnThatDoesNotExist() throws Exception {
-        assertException("SELECT * FROM (\n" +
-                "  SELECT 456 AS \"5\"\n" +
-                "  UNION ALL \n" +
-                "  SELECT 789 AS \"5\"\n" +
-                "  UNION ALL \n" +
-                "  SELECT 123 AS \"5\"\n" +
-                ")\n" +
-                "ORDER BY 6", 113, "order column position is out of range [max=1]");
+        assertException("""
+                SELECT * FROM (
+                  SELECT 456 AS "5"
+                  UNION ALL\s
+                  SELECT 789 AS "5"
+                  UNION ALL\s
+                  SELECT 123 AS "5"
+                )
+                ORDER BY 6""", 113, "order column position is out of range [max=1]");
     }
 
     @Test
     public void testOrderByTwoColumnsInJoin() throws Exception {
         assertQuery(
-                "id\ts1\ts2\n" +
-                        "42\tfoo1\tbar1\n" +
-                        "42\tfoo1\tbar2\n" +
-                        "42\tfoo1\tbar2\n" +
-                        "42\tfoo1\tbar2\n" +
-                        "42\tfoo2\tbar1\n" +
-                        "42\tfoo2\tbar2\n" +
-                        "42\tfoo2\tbar3\n" +
-                        "42\tfoo2\tbar3\n" +
-                        "42\tfoo3\tbar2\n" +
-                        "42\tfoo3\tbar3\n",
+                """
+                        id\ts1\ts2
+                        42\tfoo1\tbar1
+                        42\tfoo1\tbar2
+                        42\tfoo1\tbar2
+                        42\tfoo1\tbar2
+                        42\tfoo2\tbar1
+                        42\tfoo2\tbar2
+                        42\tfoo2\tbar3
+                        42\tfoo2\tbar3
+                        42\tfoo3\tbar2
+                        42\tfoo3\tbar3
+                        """,
                 "select * " +
                         "from (" +
                         "  select b.*" +
@@ -351,12 +378,13 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     public void testOrderByTwoExpressionsInNestedQuery() throws Exception {
         assertQuery(
                 "x\n6\n7\n8\n",
-                "select * from \n" +
-                        "(\n" +
-                        "  select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5 \n" +
-                        ")\n" +
-                        "order by x*2 asc\n" +
-                        "limit 3",
+                """
+                        select * from\s
+                        (
+                          select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5\s
+                        )
+                        order by x*2 asc
+                        limit 3""",
                 null,
                 null,
                 true,
@@ -366,33 +394,39 @@ public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByWithAlphanumericNamedColumn() throws Exception {
-        assertMemoryLeak(() -> assertSql("5_sum\n" +
-                "123\n" +
-                "456\n" +
-                "789\n", "SELECT * FROM (\n" +
-                "  SELECT 456 AS \"5_sum\"\n" +
-                "  UNION ALL \n" +
-                "  SELECT 789 AS \"5_sum\"\n" +
-                "  UNION ALL \n" +
-                "  SELECT 123 AS \"5_sum\"\n" +
-                ")\n" +
-                "ORDER BY \"5_sum\""));
+        assertMemoryLeak(() -> assertSql("""
+                5_sum
+                123
+                456
+                789
+                """, """
+                SELECT * FROM (
+                  SELECT 456 AS "5_sum"
+                  UNION ALL\s
+                  SELECT 789 AS "5_sum"
+                  UNION ALL\s
+                  SELECT 123 AS "5_sum"
+                )
+                ORDER BY "5_sum\""""));
     }
 
     @Test
     public void testOrderByWithAmbiguousColumnOrdering() throws Exception {
-        assertQuery("5\t1\n" +
-                        "123\t999\n" +
-                        "456\t123\n" +
-                        "789\t456\n",
-                "SELECT * FROM (\n" +
-                        "  SELECT 456 AS \"5\", 123 AS \"1\"\n" +
-                        "  UNION ALL \n" +
-                        "  SELECT 789 AS \"5\",  456 AS \"1\"\n" +
-                        "  UNION ALL \n" +
-                        "  SELECT 123 AS \"5\",  999 AS \"1\"\n" +
-                        ")\n" +
-                        "ORDER BY 1",
+        assertQuery("""
+                        5\t1
+                        123\t999
+                        456\t123
+                        789\t456
+                        """,
+                """
+                        SELECT * FROM (
+                          SELECT 456 AS "5", 123 AS "1"
+                          UNION ALL\s
+                          SELECT 789 AS "5",  456 AS "1"
+                          UNION ALL\s
+                          SELECT 123 AS "5",  999 AS "1"
+                        )
+                        ORDER BY 1""",
                 null,
                 true,
                 true);

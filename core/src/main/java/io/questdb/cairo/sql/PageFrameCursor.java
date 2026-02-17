@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,11 +48,11 @@ import org.jetbrains.annotations.Nullable;
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
     /**
-     * Calculates the total size (number of rows) across all page frames and updates the provided counter.
+     * Calculates the number of rows left in the cursor across all page frames, and updates the provided counter.
      * <p>
-     * This method provides an efficient way to determine the total row count without having to
-     * iterate through all page frames. The implementation should update the counter with the
-     * calculated size information.
+     * This method provides an efficient way to determine the number of remaining rows without having to
+     * iterate through all page frames. The implementation should update the counter with the calculated
+     * size information.
      * <p>
      * Note: This method is only guaranteed to work correctly if {@link #supportsSizeCalculation()}
      * returns {@code true}.
@@ -69,6 +69,25 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * Such mapping requires knowing the corresponding table reader indexes.
      */
     IntList getColumnIndexes();
+
+    /**
+     * Returns the number of rows remaining in the current interval that have not yet been
+     * processed by this cursor.
+     * <p>
+     * This method provides an efficient count of unprocessed rows in the interval currently
+     * being scanned, without requiring iteration through the data. It is primarily used for
+     * size calculation operations in conjunction with {@link #calculateSize(RecordCursor.Counter)},
+     * allowing quick determination of the total number of rows available in the cursor.
+     * <p>
+     * The returned value represents rows in the current interval only. For cursors spanning
+     * multiple intervals and/or partitions, this count does not include rows from intervals/partitions
+     * that have not yet been visited.
+     *
+     * @return the number of unprocessed rows remaining in the current partition
+     * @see #calculateSize(RecordCursor.Counter)
+     * @see #size()
+     */
+    long getRemainingRowsInInterval();
 
     /**
      * Returns the symbol table for the specified column index.
@@ -122,7 +141,27 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * @param skipTarget the number of rows user wants to skip over in a limit SQL query
      * @return either a fully populated or lightweight frame, or {@code null} if no more frames are available
      */
-    @Nullable PageFrame next(long skipTarget);
+    @Nullable
+    PageFrame next(long skipTarget);
+
+    default void releaseOpenPartitions() {
+        // no-op by default
+    }
+
+    /**
+     * Enables or disables streaming mode for the cursor.
+     * When streaming mode is enabled, underlying resources (e.g., partitions) are opened
+     * with hints to release page cache after reading. This is useful for large sequential
+     * scans like Parquet export to avoid page cache exhaustion under memory pressure.
+     * <p>
+     * Default implementation is a no-op. Subclasses backed by TableReader should override
+     * this method to delegate to the TableReader's streaming mode setting.
+     *
+     * @param enabled true to enable streaming mode, false to disable
+     */
+    default void setStreamingMode(boolean enabled) {
+        // no-op by default
+    }
 
     /**
      * @return number of rows in all page frames

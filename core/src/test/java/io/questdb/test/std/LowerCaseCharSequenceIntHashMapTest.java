@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,51 +38,20 @@ import java.util.Map;
 public class LowerCaseCharSequenceIntHashMapTest {
 
     @Test
-    public void testEqualsAndHashCode() {
-        final int items = 100;
-
-        final LowerCaseCharSequenceIntHashMap mapA = new LowerCaseCharSequenceIntHashMap();
-        final LowerCaseCharSequenceIntHashMap mapB = new LowerCaseCharSequenceIntHashMap();
-
-        Assert.assertEquals(mapA, mapB);
-        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
-
-        for (int i = 0; i < items; i++) {
-            mapA.put(Integer.toString(i), i);
-        }
-
-        Assert.assertNotEquals(mapA, mapB);
-
-        // Reverse the addition order, so that the elements of the underlying arrays aren't 1-to-1 between the maps.
-        for (int i = items - 1; i > -1; i--) {
-            mapB.put(Integer.toString(i), i);
-        }
-
-        Assert.assertEquals(mapA, mapB);
-        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
-
-        mapA.clear();
-        mapB.clear();
-
-        Assert.assertEquals(mapA, mapB);
-        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
-    }
-
-    @Test
-    public void testIncrement() {
+    public void testInc() {
         final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
 
         lowerCaseMap.put("a", 0);
-        lowerCaseMap.increment("A");
-        lowerCaseMap.increment("A");
-        lowerCaseMap.increment("A");
+        lowerCaseMap.inc("A");
+        lowerCaseMap.inc("A");
+        lowerCaseMap.inc("A");
         lowerCaseMap.put("B", 42);
-        lowerCaseMap.increment("b");
-        lowerCaseMap.increment("C");
+        lowerCaseMap.inc("b");
+        lowerCaseMap.inc("C");
 
         Assert.assertEquals(3, lowerCaseMap.get("a"));
         Assert.assertEquals(43, lowerCaseMap.get("b"));
-        Assert.assertEquals(0, lowerCaseMap.get("c"));
+        Assert.assertEquals(1, lowerCaseMap.get("c"));
         Assert.assertEquals(3, lowerCaseMap.size());
     }
 

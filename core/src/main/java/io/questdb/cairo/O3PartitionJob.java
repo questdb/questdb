@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -407,7 +407,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             partitionTimestamp,
                             txn - 1
                     );
-                    createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
+                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").$(tableWriter.getTableToken())
                             .$(", e=").$(e)
@@ -910,7 +910,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                         }
                     } else {
-                        // Replacing data with no O3 data, e.g. effectively deleting a part of the partition
+                        // Replacing data with no O3 data, e.g. effectively deleting a part of the partition.
 
                         // O3 data is supposed to be merged into the middle of an existing partition
                         // but there is no O3 data, it's a replacing commit with no new rows, just the range.
@@ -1095,7 +1095,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             partitionTimestamp,
                             txn
                     );
-                    createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
+                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     } else {
@@ -1668,6 +1668,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
             duplicateCount = mergeRowCount - dedupRows;
+            if (duplicateCount > 0) {
+                tableWriter.addDedupRowsRemoved(duplicateCount);
+            }
             mergeRowCount = dedupRows;
         }
 
@@ -1768,9 +1771,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final long valuesMemSize = offsetsMem.getLong(offset);
                         assert valuesMemSize <= valuesMem.size();
 
+                        int encodeColumnType = columnType;
+                        if (!symbolMapWriter.getNullFlag()) {
+                            encodeColumnType |= Integer.MIN_VALUE;
+                        }
                         partitionDescriptor.addColumn(
                                 columnName,
-                                columnType,
+                                encodeColumnType,
                                 columnId,
                                 0,
                                 dstFixMemAddr,
@@ -2147,6 +2154,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long duplicateCount = mergeRowCount - dedupRows;
                     boolean appendOnly = false;
                     if (duplicateCount > 0) {
+                        tableWriter.addDedupRowsRemoved(duplicateCount);
                         if (duplicateCount == mergeOOOHi - mergeOOOLo + 1 && prefixType != O3_BLOCK_O3) {
 
                             // All the rows are duplicates, the commit does not add any new lines.
@@ -2168,6 +2176,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                                             .I$();
 
+                                    timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+
+                                    removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
+
                                     // nothing to do, skip the partition
                                     updatePartition(
                                             tableWriter.getFilesFacade(),
@@ -2182,12 +2194,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             srcDataOldPartitionSize,
                                             0
                                     );
-                                    timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-
-                                    // Remove empty partition dir
-                                    Path path = Path.getThreadLocal(pathToTable);
-                                    setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
-                                    tableWriter.getConfiguration().getFilesFacade().rmdir(path, false);
 
                                     return;
                                 } else {
@@ -2238,6 +2244,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // No merge anymore, free the merge index
                         timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
 
+                        removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
+
                         prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
                         prefixHi = srcDataMax - 1;
@@ -2280,7 +2288,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             } catch (Throwable e) {
                 tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-                LOG.error().$("open column error [table=").$(tableWriter.getTableToken())
+                LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                         .$(", e=").$(e)
                         .I$();
 
@@ -2461,6 +2470,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } catch (Throwable e) {
                     tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
                     LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                             .$(", e=").$(e)
                             .I$();
                     columnsInFlight = i + 1;
@@ -2480,6 +2490,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriter
                 );
             }
+        }
+    }
+
+    private static void removePhantomPartitionDir(
+            Path pathToTable,
+            TableWriter tableWriter,
+            long partitionTimestamp,
+            long txn
+    ) {
+        // Remove empty partition dir to not create a partition that is not used but can be counted
+        // by partition purging logic as a valid version
+        Path path = Path.getThreadLocal(pathToTable);
+        setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
+        FilesFacade ff = tableWriter.getConfiguration().getFilesFacade();
+        if (!ff.rmdir(path)) {
+            // This is not critical, the read error will be transient
+            LOG.error().$("could not remove phantom partition dir, it may cause transient missing file read errors [errno=").$(ff.errno()).$(", path=").$(path).I$();
         }
     }
 

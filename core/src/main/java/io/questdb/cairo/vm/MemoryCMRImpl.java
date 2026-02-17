@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ import io.questdb.std.str.LPSZ;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 
-//contiguous mapped readable 
+//contiguous mapped readable
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
     private final boolean bypassFdCache;
@@ -153,11 +153,22 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     private void setSize0(long newSize) {
+        // When madvise options are set (e.g., MADV_DONTNEED for streaming), bypass the
+        // MmapCache so each mapping is independent and can release page cache
+        final boolean bypassMmapCache = madviseOpts != -1;
         if (size > 0) {
-            pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
+            if (bypassMmapCache) {
+                pageAddress = TableUtils.mremapNoCache(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
+            } else {
+                pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
+            }
         } else {
             assert pageAddress == 0;
-            pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
+            if (bypassMmapCache) {
+                pageAddress = TableUtils.mapRONoCache(ff, fd, newSize, memoryTag);
+            } else {
+                pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
+            }
         }
         size = newSize;
         ff.madvise(pageAddress, size, madviseOpts);
@@ -167,7 +178,13 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         this.size = size;
         if (size > 0) {
             try {
-                this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
+                // When madvise options are set (e.g., MADV_DONTNEED for streaming), bypass the
+                // MmapCache so each mapping is independent and can release page cache
+                if (madviseOpts != -1) {
+                    this.pageAddress = TableUtils.mapRONoCache(ff, fd, size, memoryTag);
+                } else {
+                    this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
+                }
                 ff.madvise(pageAddress, size, madviseOpts);
             } catch (Throwable e) {
                 close();

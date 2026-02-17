@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -134,6 +134,15 @@ public class FunctionFactoryCache {
 
     public boolean isGroupBy(CharSequence name) {
         return name != null && groupByFunctionNames.contains(name);
+    }
+
+    /**
+     * Returns true if the function is a pure window function (like row_number, rank)
+     * that cannot be used as an aggregate. Functions like sum, count, avg that can
+     * be both aggregate and window functions return false.
+     */
+    public boolean isPureWindowFunction(CharSequence name) {
+        return isWindow(name) && !isGroupBy(name);
     }
 
     public boolean isRuntimeConstant(CharSequence name) {

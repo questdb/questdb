@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -216,8 +216,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof BindLikeStaticSymbolTableFunction) {
-                BindLikeStaticSymbolTableFunction thatP = (BindLikeStaticSymbolTableFunction) that;
+            if (that instanceof BindLikeStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
                 thatP.stateInherited = this.stateShared = true;
@@ -287,8 +286,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof ConstContainsStaticSymbolTableFunction) {
-                ConstContainsStaticSymbolTableFunction thatP = (ConstContainsStaticSymbolTableFunction) that;
+            if (that instanceof ConstContainsStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
                 thatP.stateInherited = this.stateShared = true;
@@ -355,8 +353,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof ConstEndsWithStaticSymbolTableFunction) {
-                ConstEndsWithStaticSymbolTableFunction thatP = (ConstEndsWithStaticSymbolTableFunction) that;
+            if (that instanceof ConstEndsWithStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
                 thatP.stateInherited = this.stateShared = true;
@@ -422,8 +419,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof ConstIContainsStaticSymbolTableFunction) {
-                ConstIContainsStaticSymbolTableFunction thatP = (ConstIContainsStaticSymbolTableFunction) that;
+            if (that instanceof ConstIContainsStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
                 thatP.stateInherited = this.stateShared = true;
@@ -490,8 +486,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof ConstIEndsWithStaticSymbolTableFunction) {
-                ConstIEndsWithStaticSymbolTableFunction thatP = (ConstIEndsWithStaticSymbolTableFunction) that;
+            if (that instanceof ConstIEndsWithStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
                 thatP.stateInherited = this.stateShared = true;
@@ -557,8 +552,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof ConstIStartsWithStaticSymbolTableFunction) {
-                ConstIStartsWithStaticSymbolTableFunction thatP = (ConstIStartsWithStaticSymbolTableFunction) that;
+            if (that instanceof ConstIStartsWithStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
                 thatP.stateInherited = this.stateShared = true;
@@ -617,8 +611,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof ConstLikeStaticSymbolTableFunction) {
-                ConstLikeStaticSymbolTableFunction thatP = (ConstLikeStaticSymbolTableFunction) that;
+            if (that instanceof ConstLikeStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
                 thatP.stateInherited = this.stateShared = true;
@@ -688,8 +681,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof ConstStartsWithStaticSymbolTableFunction) {
-                ConstStartsWithStaticSymbolTableFunction thatP = (ConstStartsWithStaticSymbolTableFunction) that;
+            if (that instanceof ConstStartsWithStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
                 thatP.stateInherited = this.stateShared = true;

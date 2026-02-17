@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,8 +60,10 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFirstBoolean() throws Exception {
         assertQuery(
-                "a\n" +
-                        "false\n",
+                """
+                        a
+                        false
+                        """,
                 "select first(a)a from tab",
                 "create table tab as (select false a union select true a union select true a)",
                 null,
@@ -73,8 +75,10 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFirstBoolean2() throws Exception {
         assertQuery(
-                "a\n" +
-                        "true\n",
+                """
+                        a
+                        true
+                        """,
                 "select first(a)a from tab",
                 "create table tab as (select true a union select false a union select false a)",
                 null,

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -50,30 +51,45 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
     private final Function filter;
-    private final boolean forceDisablePreTouch;
+    private final IntHashSet filterUsedColumnIndexes;
+    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
+    private final ObjList<SelectivityStats> perWorkerSelectivityStats;
+    private final boolean preTouchEnabled;
     private final double preTouchThreshold;
-    private boolean preTouchEnabled;
-    // used to disable column pre-touch without affecting the explain plan
-    private boolean preTouchEnabledOverride;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
             @NotNull Function filter,
+            @NotNull IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
-            @NotNull IntList columnTypes
+            @NotNull IntList columnTypes,
+            boolean preTouchEnabled
     ) {
         this.filter = filter;
+        this.filterUsedColumnIndexes = filterUsedColumnIndexes;
         this.perWorkerFilters = perWorkerFilters;
         if (perWorkerFilters != null) {
-            perWorkerLocks = new PerWorkerLocks(configuration, perWorkerFilters.size());
+            final int slotCount = perWorkerFilters.size();
+            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            perWorkerSelectivityStats = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
+            }
         } else {
             perWorkerLocks = null;
+            perWorkerSelectivityStats = null;
         }
         this.columnTypes = columnTypes;
-        this.forceDisablePreTouch = !configuration.isSqlParallelFilterPreTouchEnabled();
+        this.preTouchEnabled = preTouchEnabled;
         this.preTouchThreshold = configuration.getSqlParallelFilterPreTouchThreshold();
+    }
+
+    @Override
+    public void clear() {
+        ownerSelectivityStats.clear();
+        Misc.clearObjList(perWorkerSelectivityStats);
     }
 
     @Override
@@ -88,6 +104,17 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         return perWorkerFilters.getQuick(filterId);
     }
 
+    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
+        return filterUsedColumnIndexes;
+    }
+
+    public SelectivityStats getSelectivityStats(int slotId) {
+        if (slotId == -1 || perWorkerSelectivityStats == null) {
+            return ownerSelectivityStats;
+        }
+        return perWorkerSelectivityStats.getQuick(slotId);
+    }
+
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         filter.init(symbolTableSource, executionContext);
@@ -100,8 +127,6 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
                 executionContext.setCloneSymbolTables(current);
             }
         }
-        preTouchEnabled = executionContext.isColumnPreTouchEnabled();
-        preTouchEnabledOverride = executionContext.isColumnPreTouchEnabledOverride();
     }
 
     /**
@@ -136,7 +161,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
      */
     public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows, long frameRowCount) {
         // Only pre-touch if the filter selectivity is high, i.e. when reading the column values may involve random I/O.
-        if (!isPreTouchEnabled() || !preTouchEnabledOverride || rows.size() > frameRowCount * preTouchThreshold) {
+        if (!preTouchEnabled || rows.size() > frameRowCount * preTouchThreshold) {
             return;
         }
         // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.
@@ -221,15 +246,24 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         }
     }
 
+    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
+        if (!isParquetFrame) {
+            return false;
+        }
+        if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
+            return false;
+        }
+        if (isCountOnly) {
+            return true;
+        }
+        return getSelectivityStats(slotId).shouldUseLateMaterialization();
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(filter);
-        if (isPreTouchEnabled()) {
+        if (preTouchEnabled) {
             sink.val(" [pre-touch]");
         }
-    }
-
-    private boolean isPreTouchEnabled() {
-        return preTouchEnabled && !forceDisablePreTouch;
     }
 }

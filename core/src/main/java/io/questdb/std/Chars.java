@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -210,7 +210,7 @@ public final class Chars {
     }
 
     public static boolean empty(@Nullable CharSequence value) {
-        return value == null || value.length() < 1;
+        return value == null || value.isEmpty();
     }
 
     public static boolean endsWith(CharSequence cs, CharSequence ends) {
@@ -384,6 +384,25 @@ public final class Chars {
 
         for (int i = 0; i < ll; i++) {
             if (Character.toLowerCase(l.charAt(i + lLo)) != Character.toLowerCase(r.charAt(i + rLo))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Left side has to be lower-case.
+    public static boolean equalsLowerCaseAscii(@NotNull CharSequence lLC, @NotNull CharSequence r, int rLo, int rHi) {
+        if (lLC == r) {
+            return true;
+        }
+
+        int ll = lLC.length();
+        if (ll != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (lLC.charAt(i) != toLowerCaseAscii(r.charAt(i + rLo))) {
                 return false;
             }
         }
@@ -970,6 +989,18 @@ public final class Chars {
         return true;
     }
 
+    public static boolean isAsciiDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    public static boolean isAsciiLetter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    public static boolean isAsciiWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+    }
+
     public static boolean isBlank(CharSequence s) {
         if (s == null) {
             return true;
@@ -1009,14 +1040,10 @@ public final class Chars {
     }
 
     public static boolean isQuote(char c) {
-        switch (c) {
-            case '\'':
-            case '"':
-            case '`':
-                return true;
-            default:
-                return false;
-        }
+        return switch (c) {
+            case '\'', '"', '`' -> true;
+            default -> false;
+        };
     }
 
     public static boolean isQuoted(CharSequence s) {
@@ -1246,7 +1273,7 @@ public final class Chars {
     }
 
     public static boolean startsWith(CharSequence _this, char c) {
-        return _this.length() > 0 && _this.charAt(0) == c;
+        return !_this.isEmpty() && _this.charAt(0) == c;
     }
 
     public static boolean startsWithIgnoreCase(CharSequence cs, CharSequence startsWith) {

@@ -1,4 +1,4 @@
-if (OS_WINDOWS)
+if (OS_WINDOWS OR OS_DARWIN)
     return()
 endif ()
 
@@ -16,7 +16,7 @@ if (OS_LINUX)
     # avoid spurious latencies and additional work associated with
     # MADV_DONTNEED. See
     # https://github.com/ClickHouse/ClickHouse/issues/11121 for motivation.
-    set(JEMALLOC_CONFIG_MALLOC_CONF "percpu_arena:percpu,oversize_threshold:0,muzzy_decay_ms:0,dirty_decay_ms:5000")
+    set(JEMALLOC_CONFIG_MALLOC_CONF "percpu_arena:percpu,oversize_threshold:0,muzzy_decay_ms:0,dirty_decay_ms:5000,background_thread:true")
 else ()
     set(JEMALLOC_CONFIG_MALLOC_CONF "oversize_threshold:0,muzzy_decay_ms:0,dirty_decay_ms:5000")
 endif ()
@@ -36,6 +36,7 @@ set(SRCS
         "${LIBRARY_DIR}/src/arena.c"
         "${LIBRARY_DIR}/src/background_thread.c"
         "${LIBRARY_DIR}/src/base.c"
+        "${LIBRARY_DIR}/src/batcher.c"
         "${LIBRARY_DIR}/src/bin.c"
         "${LIBRARY_DIR}/src/bin_info.c"
         "${LIBRARY_DIR}/src/bitmap.c"
@@ -80,6 +81,7 @@ set(SRCS
         "${LIBRARY_DIR}/src/prof_recent.c"
         "${LIBRARY_DIR}/src/prof_stats.c"
         "${LIBRARY_DIR}/src/prof_sys.c"
+        "${LIBRARY_DIR}/src/prof_threshold.c"
         "${LIBRARY_DIR}/src/psset.c"
         "${LIBRARY_DIR}/src/rtree.c"
         "${LIBRARY_DIR}/src/safety_check.c"

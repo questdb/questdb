@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ inline void set_var_refs(int64_t *addr, const int64_t offset, const int64_t coun
     }
 }
 
-// 19-23
+// 19-23, 33-34
 template<typename T>
 inline void set_memory_vanilla(T *addr, const T value, const int64_t count) {
     for (int64_t i = 0; i < count; i++) {
@@ -346,3 +346,12 @@ void shift_copy_array_aux(int64_t shift, const int64_t *src, int64_t src_lo, int
     }
 }
 
+// 33
+void set_memory_vanilla_int128(long_128bit *data, const long_128bit value, const int64_t count) {
+    set_memory_vanilla<long_128bit>(data, value, count);
+}
+
+// 34
+void set_memory_vanilla_int256(long_256bit *data, const long_256bit value, const int64_t count) {
+    set_memory_vanilla<long_256bit>(data, value, count);
+}

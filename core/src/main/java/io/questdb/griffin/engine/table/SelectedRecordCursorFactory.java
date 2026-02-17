@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,12 +26,10 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -39,11 +37,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -51,7 +50,6 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
     private final boolean crossedIndex;
@@ -74,11 +72,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             }
         }
         return false;
-    }
-
-    @Override
-    public boolean followedLimitAdvice() {
-        return base.followedLimitAdvice();
     }
 
     @Override
@@ -151,8 +144,8 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        TimeFrameRecordCursor baseCursor = base.getTimeFrameCursor(executionContext);
+    public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
         if (baseCursor == null || !crossedIndex) {
             return baseCursor;
         }
@@ -175,6 +168,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean isProjection() {
         return true;
+    }
+
+    @Override
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        return base.recordCursorSupportsLongTopK(columnCrossIndex.getQuick(columnIndex));
     }
 
     @Override
@@ -262,15 +260,8 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public long getParquetAddr() {
-            return baseFrame.getParquetAddr();
-        }
-
-        @Override
-        public long getParquetFileSize() {
-            final long fileSize = baseFrame.getParquetFileSize();
-            assert fileSize > 0 || baseFrame.getFormat() != PartitionFormat.PARQUET;
-            return fileSize;
+        public PartitionDecoder getParquetPartitionDecoder() {
+            return baseFrame.getParquetPartitionDecoder();
         }
 
         @Override
@@ -335,6 +326,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getRemainingRowsInInterval() {
+            return baseCursor.getRemainingRowsInInterval();
+        }
+
+        @Override
         public StaticSymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
         }
@@ -353,6 +349,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         public @Nullable PageFrame next(long skipTarget) {
             PageFrame baseFrame = baseCursor.next(skipTarget);
             return baseFrame != null ? pageFrame.of(baseFrame) : null;
+        }
+
+        @Override
+        public void setStreamingMode(boolean enabled) {
+            baseCursor.setStreamingMode(enabled);
         }
 
         @Override
@@ -376,11 +377,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
-    public static final class SelectedTimeFrameCursor implements TimeFrameRecordCursor {
+    public static final class SelectedTimeFrameCursor implements TimeFrameCursor {
         private final IntList columnCrossIndex;
         private final SelectedRecord recordA;
         private final SelectedRecord recordB;
-        private TimeFrameRecordCursor baseCursor;
+        private TimeFrameCursor baseCursor;
 
         public SelectedTimeFrameCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
             this.columnCrossIndex = columnCrossIndex;
@@ -426,6 +427,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public int getTimestampIndex() {
+            return 0;
+        }
+
+        @Override
         public void jumpTo(int frameIndex) {
             baseCursor.jumpTo(frameIndex);
         }
@@ -440,7 +446,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             return baseCursor.next();
         }
 
-        public SelectedTimeFrameCursor of(TimeFrameRecordCursor baseCursor) {
+        public SelectedTimeFrameCursor of(TimeFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
             recordA.of(baseCursor.getRecord());
             if (recordB != null) {
@@ -450,7 +456,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public long open() throws DataUnavailableException {
+        public long open() {
             return baseCursor.open();
         }
 

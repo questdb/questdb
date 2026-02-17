@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -139,7 +139,6 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
 
     @Override
     public void reopen() {
-        recordChain.reopen();
         mem.reopen();
     }
 
@@ -365,6 +364,12 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         }
 
         @Override
+        public long preComputedStateSize() {
+            // no state to preserve
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             recordChain.recordAt(record, atRowId);
         }
@@ -372,12 +377,6 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         @Override
         public long size() {
             return baseCursor.size();
-        }
-
-        @Override
-        public long preComputedStateSize() {
-            // no state to preserve
-            return 0;
         }
 
         @Override

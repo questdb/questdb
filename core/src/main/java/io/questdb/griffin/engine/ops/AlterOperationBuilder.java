@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
+import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 
 public class AlterOperationBuilder implements Mutable {
     private final LongList extraInfo = new LongList();
@@ -57,7 +58,7 @@ public class AlterOperationBuilder implements Mutable {
             int indexValueBlockCapacity,
             boolean dedupKey
     ) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
@@ -75,7 +76,11 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public AlterOperation build() {
-        return op.of(command, tableToken, tableId, tableNamePosition);
+        return build(CMD_ALTER_TABLE);
+    }
+
+    public AlterOperation build(int cmdType) {
+        return op.of(cmdType, command, tableToken, tableId, tableNamePosition);
     }
 
     @Override
@@ -102,7 +107,7 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         extraStrInfo.add(columnName);
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
@@ -178,7 +183,7 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public AlterOperationBuilder ofDropColumn(CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         this.extraStrInfo.add(columnName);
         return this;
     }
@@ -217,7 +222,7 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     public void ofRemoveCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
+        assert columnName != null && !columnName.isEmpty();
         this.command = REMOVE_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;

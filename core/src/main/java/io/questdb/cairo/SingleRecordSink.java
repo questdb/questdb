@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,8 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
@@ -125,6 +127,20 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
         checkCapacity(8);
         Unsafe.getUnsafe().putLong(appendAddress, value);
         appendAddress += 8;
+    }
+
+    @Override
+    public void putDecimal128(Decimal128 decimal128) {
+        checkCapacity(16);
+        Decimal128.put(decimal128, appendAddress);
+        appendAddress += 16;
+    }
+
+    @Override
+    public void putDecimal256(Decimal256 decimal256) {
+        checkCapacity(32L);
+        Decimal256.put(decimal256, appendAddress);
+        appendAddress += 32L;
     }
 
     @Override

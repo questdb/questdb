@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -1112,5 +1112,32 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     private void update(String updateSql) throws SqlException {
         execute(updateSql);
+    }
+
+    @Test
+    public void testReloadingPurgeLogWithDeletedTableSameTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("tab");
+            drainWalQueue();
+
+            // hog table reader and update the table
+            try (TableReader ignore = getReader("tab")) {
+                update("UPDATE tab SET x = 100");
+                drainWalQueue();
+
+                // create purge job and run it - this will create a purge record
+                // but won't purge because the reader is open
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    runPurgeJob(purgeJob);
+                }
+            }
+
+            // drop the table while purge log records still exist
+            execute("drop table tab");
+
+            try (ColumnPurgeJob ignore = createPurgeJob()) {
+                // if we get here without NPE, the bug is fixed
+            }
+        });
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,10 +61,6 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     private int numOfUpdateThreads;
     private int numOfUpdates;
     private SOCountDownLatch updatesDone;
-
-    public LineTcpReceiverUpdateFuzzTest(WalMode walMode) {
-        super(walMode);
-    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {

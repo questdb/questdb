@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,7 +48,6 @@ open module io.questdb {
     exports io.questdb.cutlass.line;
     exports io.questdb.cutlass.line.udp;
     exports io.questdb.cutlass.line.tcp;
-    exports io.questdb.cutlass.line.http;
     exports io.questdb.cutlass.pgwire;
     exports io.questdb.cutlass.text;
     exports io.questdb.cutlass.text.types;
@@ -111,21 +110,20 @@ open module io.questdb {
     exports io.questdb.cairo.frm;
     exports io.questdb.cairo.frm.file;
     exports io.questdb.std.histogram.org.HdrHistogram;
-    exports io.questdb.client;
     exports io.questdb.std.bytes;
     exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
-    exports io.questdb.client.impl;
     exports io.questdb.griffin.engine.groupby.hyperloglog;
     exports io.questdb.griffin.engine.functions.finance;
     exports io.questdb.std.json;
     exports io.questdb.griffin.engine.functions.json;
-    exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
     exports io.questdb.cairo.mv;
     exports io.questdb.cairo.file;
     exports io.questdb.cairo.arr;
     exports io.questdb.griffin.engine.functions.array;
-    exports io.questdb.cutlass.line.array;
     exports io.questdb.preferences;
     exports io.questdb.griffin.engine.functions.memoization;
+    exports io.questdb.griffin.engine.functions.decimal;
+    exports io.questdb.cutlass.parquet;
+    exports io.questdb.cairo.view;
 }

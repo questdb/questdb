@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -112,7 +112,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     };
     int STATE_TIMEOUT = STATE_OK + 1; // 1
     int STATE_BROKEN_CONNECTION = STATE_TIMEOUT + 1; // 2
-    int STATE_CANCELLED = STATE_BROKEN_CONNECTION + 1;// 3
+    int STATE_CANCELLED = STATE_BROKEN_CONNECTION + 1; // 3
     // Triggers timeout on first timeout check regardless of how much time elapsed since timer was reset
     // (used mainly for testing)
     long TIMEOUT_FAIL_ON_FIRST_CHECK = Long.MIN_VALUE;

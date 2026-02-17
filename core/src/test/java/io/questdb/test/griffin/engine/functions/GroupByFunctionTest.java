@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -80,6 +82,34 @@ public class GroupByFunctionTest {
 
         @Override
         public long getDate(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
             return 0;
         }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ public interface IODispatcherConfiguration {
     EpollFacade getEpollFacade();
 
     default int getEventCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(Math.max(getLimit(), 64));
     }
 
     long getHeartbeatInterval();
@@ -62,7 +62,7 @@ public interface IODispatcherConfiguration {
     }
 
     default int getIOQueueCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(Math.max(getLimit(), 64));
     }
 
     default int getInitialBias() {
@@ -70,7 +70,7 @@ public interface IODispatcherConfiguration {
     }
 
     default int getInterestQueueCapacity() {
-        return Numbers.ceilPow2(getLimit());
+        return Numbers.ceilPow2(Math.max(getLimit(), 64));
     }
 
     KqueueFacade getKqueueFacade();

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -152,6 +152,33 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
                             "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t1\n" +
                             "4\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t2\t\t\tnull\t8\n",
                     "select * from wal_transactions('x')"
+            );
+        });
+    }
+
+    @Test
+    public void testWalTransactionsV2WithTimestampNs() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/6677
+        // Verifies that timestamp columns are correctly converted to microseconds
+        // when the table uses TIMESTAMP_NS as the designated timestamp type
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-22T19:00:53.950468Z"));
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("create table x (ts timestamp_ns, x int, y int) timestamp(ts) partition by DAY WAL");
+            execute("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
+            execute("insert into x values ('2020-02-01T00:00:00.000000Z', 2, 3)");
+
+            drainWalQueue();
+
+            // The commit timestamp should show 2026-01-22 (system time), not 1970
+            // The minTimestamp/maxTimestamp should show 2020-01-01 and 2020-02-01, not year 57000+
+            assertSql(
+                    """
+                            sequencerTxn\ttimestamp\tminTimestamp\tmaxTimestamp
+                            1\t2026-01-22T19:00:53.950468Z\t2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z
+                            2\t2026-01-22T19:00:53.950468Z\t2020-02-01T00:00:00.000000Z\t2020-02-01T00:00:00.000000Z
+                            """,
+                    "select sequencerTxn, timestamp, minTimestamp, maxTimestamp from wal_transactions('x')"
             );
         });
     }

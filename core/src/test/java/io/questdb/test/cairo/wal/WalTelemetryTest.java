@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,27 +67,33 @@ public class WalTelemetryTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 setCurrentMicros(4000);
-                assertSql("x\tsym\tts\tsym2\n" +
-                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                        "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                        "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
-                        "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
-                        "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
-                        "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n", tableName);
+                assertSql("""
+                        x\tsym\tts\tsym2
+                        1\tAB\t2022-02-24T00:00:00.000000Z\tEF
+                        2\tBC\t2022-02-24T00:00:01.000000Z\tFG
+                        3\tCD\t2022-02-24T00:00:02.000000Z\tFG
+                        4\tCD\t2022-02-24T00:00:03.000000Z\tFG
+                        5\tAB\t2022-02-24T00:00:04.000000Z\tDE
+                        101\tdfd\t2022-02-24T01:00:00.000000Z\tasd
+                        """, tableName);
 
                 telemetryJob.runSerially();
             }
 
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
-            assertSql("created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\n" +
-                    "1970-01-01T00:00:00.004000Z\t103\t5\t1\t1\t-1\t-1\t2.0\n" +
-                    "1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0\n" +
-                    "1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0\n" +
-                    "1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0\n", sysPrefix + TelemetryWalTask.TABLE_NAME);
+            assertSql("""
+                    created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency
+                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t1\t-1\t-1\t2.0
+                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0
+                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0
+                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0
+                    """, sysPrefix + TelemetryWalTask.TABLE_NAME);
 
-            assertSql("created\tevent\torigin\n" +
-                    "1970-01-01T00:00:00.001000Z\t100\t1\n" +
-                    "1970-01-01T00:00:00.004000Z\t101\t1\n", TelemetryTask.TABLE_NAME + " where event >= 0");
+            assertSql("""
+                    created\tevent\torigin
+                    1970-01-01T00:00:00.001000Z\t100\t1
+                    1970-01-01T00:00:00.004000Z\t101\t1
+                    """, TelemetryTask.TABLE_NAME + " where event >= 0");
         });
     }
 }

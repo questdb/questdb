@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -89,7 +89,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
-        TimeFrameRecordCursor slaveCursor = null;
+        TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
@@ -113,7 +113,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join Fast Scan");
+        sink.type("AsOf Join Fast");
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
@@ -128,6 +128,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
+        private final SingleRecordSink masterSinkTarget;
+        private final SingleRecordSink slaveSinkTarget;
+
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
                 Record nullRecord,
@@ -139,12 +142,23 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget, slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+            this.masterSinkTarget = masterSinkTarget;
+            this.slaveSinkTarget = slaveSinkTarget;
         }
 
         @Override
-        public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void close() {
+            super.close();
+            masterSinkTarget.close();
+            slaveSinkTarget.close();
+        }
+
+        @Override
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
+            masterSinkTarget.reopen();
+            slaveSinkTarget.reopen();
             symbolShortCircuit.of(slaveCursor);
         }
 

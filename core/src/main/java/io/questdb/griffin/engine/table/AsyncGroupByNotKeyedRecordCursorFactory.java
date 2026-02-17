@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,9 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
@@ -49,6 +51,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -70,6 +73,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private final int workerCount;
 
     public AsyncGroupByNotKeyedRecordCursorFactory(
+            @NotNull CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
@@ -82,6 +86,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
@@ -100,11 +105,13 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     bindVarMemory,
                     bindVarFunctions,
                     filter,
+                    filterUsedColumnIndexes,
                     perWorkerFilters,
                     workerCount
             );
             if (filter != null) {
                 this.frameSequence = new PageFrameSequence<>(
+                        engine,
                         configuration,
                         messageBus,
                         atom,
@@ -115,6 +122,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 );
             } else {
                 this.frameSequence = new PageFrameSequence<>(
+                        engine,
                         configuration,
                         messageBus,
                         atom,
@@ -197,27 +205,23 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         record.init(frameMemory);
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final SimpleMapValue value = atom.getMapValue(slotId);
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final SimpleMapValue value = atom.getMapValue(slotId);
-            try {
-                record.setRowIndex(0);
-                long rowId = record.getRowId();
-                for (long r = 0; r < frameRowCount; r++) {
-                    record.setRowIndex(r);
-                    if (value.isNew()) {
-                        functionUpdater.updateNew(value, record, rowId++);
-                        value.setNew(false);
-                    } else {
-                        functionUpdater.updateExisting(value, record, rowId++);
-                    }
+            record.setRowIndex(0);
+            long rowId = record.getRowId();
+            for (long r = 0; r < frameRowCount; r++) {
+                record.setRowIndex(r);
+                if (value.isNew()) {
+                    functionUpdater.updateNew(value, record, rowId++);
+                    value.setNew(false);
+                } else {
+                    functionUpdater.updateExisting(value, record, rowId++);
                 }
-            } finally {
-                atom.release(slotId);
             }
         } finally {
-            task.releaseFrameMemory();
+            atom.release(slotId);
         }
     }
 
@@ -247,41 +251,55 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getFilteredRows();
         final PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class);
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-
-        rows.clear();
 
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
-        try {
-            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final SimpleMapValue value = atom.getMapValue(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledFilter();
-            final Function filter = atom.getFilter(slotId);
-            try {
-                if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                    // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                    AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
-                } else {
-                    AsyncFilterUtils.applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-                }
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-                record.setRowIndex(0);
-                long baseRowId = record.getRowId();
-                aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
-            } finally {
-                atom.release(slotId);
+        final boolean isParquetFrame = task.isParquetFrame();
+        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+
+        final PageFrameMemory frameMemory;
+        if (useLateMaterialization) {
+            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = task.populateFrameMemory();
+        }
+        record.init(frameMemory);
+
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final SimpleMapValue value = atom.getMapValue(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledFilter();
+        final Function filter = atom.getFilter(slotId);
+        try {
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
+                AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
+            } else {
+                AsyncFilterUtils.applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
+
+            if (isParquetFrame) {
+                atom.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+            }
+
+            if (useLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, false)) {
+                PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = atom.getPageFrameFilteredMemoryRecord(slotId);
+                filteredMemoryRecord.of(frameMemory, record, atom.getFilterUsedColumnIndexes());
+                record = filteredMemoryRecord;
+            }
+            record.setRowIndex(0);
+            long baseRowId = record.getRowId();
+            aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
         } finally {
-            task.releaseFrameMemory();
+            atom.release(slotId);
         }
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -95,6 +96,17 @@ public class IntervalConstant extends IntervalFunction implements ConstantFuncti
     }
 
     @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof IntervalConstant that) {
+            return this.interval.equals(that.interval) && this.intervalType == that.intervalType;
+        }
+        return false;
+    }
+
+    @Override
     public boolean isNullConstant() {
         return interval.equals(Interval.NULL);
     }
@@ -110,15 +122,11 @@ public class IntervalConstant extends IntervalFunction implements ConstantFuncti
     }
 
     static IntervalConstant getIntervalNull(int intervalType) {
-        switch (intervalType) {
-            case ColumnType.INTERVAL_TIMESTAMP_MICRO:
-                return TIMESTAMP_MICRO_NULL;
-            case ColumnType.INTERVAL_TIMESTAMP_NANO:
-                return TIMESTAMP_NANO_NULL;
-            case ColumnType.INTERVAL_RAW:
-                return RAW_NULL;
-            default:
-                return null;
-        }
+        return switch (intervalType) {
+            case ColumnType.INTERVAL_TIMESTAMP_MICRO -> TIMESTAMP_MICRO_NULL;
+            case ColumnType.INTERVAL_TIMESTAMP_NANO -> TIMESTAMP_NANO_NULL;
+            case ColumnType.INTERVAL_RAW -> RAW_NULL;
+            default -> null;
+        };
     }
 }

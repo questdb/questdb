@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,6 +42,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     private final Function arg;
     private final GroupByLong256HashSet setA;
     private final GroupByLong256HashSet setB;
+    private long cardinality;
     private int valueIndex;
 
     public CountDistinctLong256GroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
@@ -61,12 +62,9 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
         final Long256 l256 = arg.getLong256A(record);
         if (isNotNull(l256)) {
             mapValue.putLong(valueIndex, 1);
-            long l0 = l256.getLong0();
-            long l1 = l256.getLong1();
-            long l2 = l256.getLong2();
-            long l3 = l256.getLong3();
-            setA.of(0).add(l0, l1, l2, l3);
+            setA.of(0).add(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3());
             mapValue.putLong(valueIndex + 1, setA.ptr());
+            cardinality++;
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
@@ -77,16 +75,17 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Long256 l256 = arg.getLong256A(record);
         if (isNotNull(l256)) {
-            long l0 = l256.getLong0();
-            long l1 = l256.getLong1();
-            long l2 = l256.getLong2();
-            long l3 = l256.getLong3();
-            long ptr = mapValue.getLong(valueIndex + 1);
+            final long l0 = l256.getLong0();
+            final long l1 = l256.getLong1();
+            final long l2 = l256.getLong2();
+            final long l3 = l256.getLong3();
+            final long ptr = mapValue.getLong(valueIndex + 1);
             final long index = setA.of(ptr).keyIndex(l0, l1, l2, l3);
             if (index >= 0) {
                 setA.addAt(index, l0, l1, l2, l3);
                 mapValue.addLong(valueIndex, 1);
                 mapValue.putLong(valueIndex + 1, setA.ptr());
+                cardinality++;
             }
         }
     }
@@ -94,6 +93,11 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public long getCardinalityStat() {
+        return cardinality;
     }
 
     @Override
@@ -123,8 +127,10 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
+        valueIndex = columnTypes.getColumnCount();
+        // count
         columnTypes.add(ColumnType.LONG);
+        // GroupByLong256HashSet pointer (count>1)
         columnTypes.add(ColumnType.LONG);
     }
 
@@ -140,19 +146,19 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcCount = srcValue.getLong(valueIndex);
+        final long srcCount = srcValue.getLong(valueIndex);
         if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
-        long srcPtr = srcValue.getLong(valueIndex + 1);
+        final long srcPtr = srcValue.getLong(valueIndex + 1);
 
-        long destCount = destValue.getLong(valueIndex);
+        final long destCount = destValue.getLong(valueIndex);
         if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcPtr);
             return;
         }
-        long destPtr = destValue.getLong(valueIndex + 1);
+        final long destPtr = destValue.getLong(valueIndex + 1);
 
         setA.of(destPtr);
         setB.of(srcPtr);
@@ -167,6 +173,11 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
             destValue.putLong(valueIndex, setB.size());
             destValue.putLong(valueIndex + 1, setB.ptr());
         }
+    }
+
+    @Override
+    public void resetStats() {
+        this.cardinality = 0;
     }
 
     @Override
@@ -196,11 +207,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
-    }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
     }
 
     private static boolean isNotNull(Long256 value) {
