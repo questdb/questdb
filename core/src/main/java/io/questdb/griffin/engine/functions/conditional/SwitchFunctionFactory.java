@@ -29,15 +29,22 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_BYTE = SwitchFunctionFactory::getByte;
@@ -160,9 +167,15 @@ public class SwitchFunctionFactory implements FunctionFactory {
                     getTimestampKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, keyType);
             case ColumnType.BOOLEAN ->
                     getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            case ColumnType.STRING, ColumnType.SYMBOL,
+            case ColumnType.STRING,
                  ColumnType.VARCHAR -> // varchar is treated as char sequence, this works, but it's suboptimal
                     getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            case ColumnType.SYMBOL -> {
+                if (keyFunction instanceof SymbolFunction symFunc && symFunc.isSymbolTableStatic()) {
+                    yield getSymbolKeyedFunction(args, argPositions, position, n, symFunc, returnType, elseBranch);
+                }
+                yield getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            }
             default -> throw SqlException.
                     $(argPositions.getQuick(0), "type ")
                     .put(ColumnType.nameOf(keyType))
@@ -483,6 +496,48 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
+    private Function getSymbolKeyedFunction(
+            ObjList<Function> args,
+            IntList argPositions,
+            int position,
+            int n,
+            SymbolFunction keyFunction,
+            int valueType,
+            Function elseBranch
+    ) throws SqlException {
+        final ObjList<String> strKeys = new ObjList<>();
+        final ObjList<Function> keyBranches = new ObjList<>();
+        final ObjList<Function> argsToPoke = new ObjList<>();
+        Function nullFunc = null;
+        for (int i = 1; i < n; i += 2) {
+            final Function fun = args.getQuick(i);
+            final CharSequence key = getString(fun, null);
+            if (key == null) {
+                nullFunc = args.getQuick(i + 1);
+            } else {
+                for (int j = 0, m = strKeys.size(); j < m; j++) {
+                    if (Chars.equals(strKeys.getQuick(j), key)) {
+                        throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                    }
+                }
+                strKeys.add(key.toString());
+                keyBranches.add(args.getQuick(i + 1));
+                argsToPoke.add(args.getQuick(i + 1));
+            }
+        }
+
+        final Function elseB = getElseFunction(valueType, elseBranch);
+        final SymbolSwitchPicker picker = new SymbolSwitchPicker(keyFunction, strKeys, keyBranches, nullFunc, elseB);
+        if (nullFunc != null) {
+            argsToPoke.add(nullFunc);
+        }
+        argsToPoke.add(elseB);
+        argsToPoke.add(keyFunction);
+        // picker must be last so its init() runs after keyFunction is initialized
+        argsToPoke.add(picker);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+    }
+
     private Function getTimestampKeyedFunction(
             ObjList<Function> args,
             IntList argPositions,
@@ -531,5 +586,68 @@ public class SwitchFunctionFactory implements FunctionFactory {
     @FunctionalInterface
     private interface LongMethod {
         long getKey(Function function, Record record);
+    }
+
+    /**
+     * Picker that resolves CASE WHEN string constants to symbol int keys at init time,
+     * then uses int-based lookup at runtime. This avoids per-row string comparisons
+     * for symbol columns with static symbol tables.
+     * <p>
+     * Extends IntFunction so it can participate in the MultiArgFunction.init() lifecycle
+     * when added to the CaseFunction's args list.
+     */
+    private static class SymbolSwitchPicker extends IntFunction implements CaseFunctionPicker {
+        private final Function elseFunc;
+        private final IntObjHashMap<Function> intMap = new IntObjHashMap<>();
+        private final ObjList<Function> keyBranches;
+        private final SymbolFunction keyFunction;
+        private final Function nullFunc;
+        private final ObjList<String> strKeys;
+
+        SymbolSwitchPicker(
+                SymbolFunction keyFunction,
+                ObjList<String> strKeys,
+                ObjList<Function> keyBranches,
+                Function nullFunc,
+                Function elseFunc
+        ) {
+            this.keyFunction = keyFunction;
+            this.strKeys = strKeys;
+            this.keyBranches = keyBranches;
+            this.nullFunc = nullFunc;
+            this.elseFunc = elseFunc;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            // don't call super - keyFunction is initialized separately via the args list
+            intMap.clear();
+            final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
+            assert symbolTable != null;
+            for (int i = 0, n = strKeys.size(); i < n; i++) {
+                final int symbolKey = symbolTable.keyOf(strKeys.getQuick(i));
+                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                    intMap.put(symbolKey, keyBranches.getQuick(i));
+                }
+            }
+        }
+
+        @Override
+        public @NotNull Function pick(Record record) {
+            final int symbolKey = keyFunction.getInt(record);
+            if (symbolKey == SymbolTable.VALUE_IS_NULL) {
+                return nullFunc != null ? nullFunc : elseFunc;
+            }
+            final int index = intMap.keyIndex(symbolKey);
+            if (index < 0) {
+                return intMap.valueAtQuick(index);
+            }
+            return elseFunc;
+        }
     }
 }
