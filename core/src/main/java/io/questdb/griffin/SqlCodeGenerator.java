@@ -808,8 +808,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 CharSequence tableAlias = fullName.subSequence(0, dotIndex);
                 CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
                 if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
+                    int colIdx = masterMetadata.getColumnIndexQuiet(columnName);
+                    if (colIdx < 0) {
+                        throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
+                    }
                     columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
-                    columnIndices[i] = masterMetadata.getColumnIndexQuiet(columnName);
+                    columnIndices[i] = colIdx;
                     continue;
                 }
                 if (Chars.equalsIgnoreCase(tableAlias, horizonAlias)) {
@@ -819,8 +823,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     continue;
                 }
                 if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
+                    int colIdx = slaveMetadata.getColumnIndexQuiet(columnName);
+                    if (colIdx < 0) {
+                        throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
+                    }
                     columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
-                    columnIndices[i] = slaveMetadata.getColumnIndexQuiet(columnName);
+                    columnIndices[i] = colIdx;
                     continue;
                 }
                 throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);

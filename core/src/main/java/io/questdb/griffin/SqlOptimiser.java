@@ -2141,6 +2141,14 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
                 }
+                // Check if SELECT has a table prefix that GROUP BY doesn't have
+                dotPos = Chars.indexOf(sNode.token, '.');
+                if (dotPos >= 0) {
+                    CharSequence suffix = sNode.token.subSequence(dotPos + 1, sNode.token.length());
+                    if (Chars.equalsIgnoreCase(suffix, gNode.token)) {
+                        continue;
+                    }
+                }
                 return false;
             }
 

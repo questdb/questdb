@@ -1594,6 +1594,49 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithExplicitGroupByColumnPrefixAsymmetry() throws Exception {
+        // Test that GROUP BY without table prefix matches SELECT with table prefix and vice versa
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10)
+                            """
+            );
+
+            // SELECT uses t.sym (prefixed) but GROUP BY uses sym (unprefixed)
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, t.sym, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "GROUP BY h.offset, sym " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tsym\tavg
+                            0\tAX\t20.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinWithExplicitGroupByUsingIndexes() throws Exception {
         // Test GROUP BY with column indexes (e.g., GROUP BY 1, 2)
         assertMemoryLeak(() -> {
