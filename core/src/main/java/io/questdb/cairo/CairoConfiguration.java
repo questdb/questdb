@@ -712,6 +712,8 @@ public interface CairoConfiguration {
 
     int getTxnScoreboardEntryCount();
 
+    int getUnorderedPageFrameReduceQueueCapacity();
+
     int getVectorAggregateQueueCapacity();
 
     int getViewLexerPoolCapacity();
