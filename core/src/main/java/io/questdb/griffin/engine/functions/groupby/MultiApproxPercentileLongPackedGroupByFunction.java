@@ -33,7 +33,10 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Misc;
@@ -149,8 +152,20 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        super.init(symbolTableSource, sqlExecutionContext);
+        exprFunc.init(symbolTableSource, sqlExecutionContext);
+        percentileFunc.init(symbolTableSource, sqlExecutionContext);
     }
 
     @Override

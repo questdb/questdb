@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -50,24 +49,17 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 
 public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
+    private static final ArrayColumnTypes COLUMN_TYPES = new ArrayColumnTypes();
     private static final String NAME = "percentile_disc";
     private static final String SIGNATURE = NAME + "(DD[])";
-
-    private static final ArrayColumnTypes COLUMN_TYPES = new ArrayColumnTypes();
-
-    static {
-        COLUMN_TYPES.add(ColumnType.LONG); // list pointer
-    }
 
     @Override
     public String getSignature() {
@@ -131,11 +123,11 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
     static class MultiPercentileDiscOverPartitionFunction extends BasePartitionedWindowFunction implements WindowArrayFunction {
         private final CairoConfiguration configuration;
         private final MemoryARW listMemory;
-        private final MemoryARW resultMemory;
         private final Function percentilesFunc;
         private final int percentilesPos;
-        private DirectArray result;
+        private final MemoryARW resultMemory;
         protected int type;
+        private DirectArray result;
 
         public MultiPercentileDiscOverPartitionFunction(
                 Map map,
@@ -192,7 +184,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                 result.applyShape();
 
                 for (int i = 0; i < resultCount; i++) {
-                    result.putDouble(i, resultMemory.getDouble(resultPtr + 8 + i * 8));
+                    result.putDouble(i, resultMemory.getDouble(resultPtr + 8 + i * 8L));
                 }
                 return result;
             }
@@ -291,7 +283,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                     quickSort(listPtr + 8, 0, size - 1);
 
                     // Allocate result array: count (8 bytes) + percentile values
-                    long resultPtr = resultMemory.appendAddressFor(8 + percentileCount * 8) - resultMemory.getPageAddress(0);
+                    long resultPtr = resultMemory.appendAddressFor(8 + percentileCount * 8L) - resultMemory.getPageAddress(0);
                     resultMemory.putLong(resultPtr, percentileCount);
 
                     // Calculate each percentile
@@ -300,8 +292,8 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                         double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
 
                         int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
-                        double resultValue = listMemory.getDouble(listPtr + 8 + N * 8);
-                        resultMemory.putDouble(resultPtr + 8 + i * 8, resultValue);
+                        double resultValue = listMemory.getDouble(listPtr + 8 + N * 8L);
+                        resultMemory.putDouble(resultPtr + 8 + i * 8L, resultValue);
                     }
 
                     // Update map value to point to result
@@ -341,14 +333,6 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             resultMemory.truncate();
         }
 
-        private void quickSort(long listPtr, long left, long right) {
-            if (left < right) {
-                long pi = partition(listPtr, left, right);
-                quickSort(listPtr, left, pi - 1);
-                quickSort(listPtr, pi + 1, right);
-            }
-        }
-
         private long partition(long listPtr, long left, long right) {
             double pivot = listMemory.getDouble(listPtr + right * 8);
             long i = left - 1;
@@ -361,6 +345,14 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             }
             swap(listPtr, i + 1, right);
             return i + 1;
+        }
+
+        private void quickSort(long listPtr, long left, long right) {
+            if (left < right) {
+                long pi = partition(listPtr, left, right);
+                quickSort(listPtr, left, pi - 1);
+                quickSort(listPtr, pi + 1, right);
+            }
         }
 
         private void swap(long listPtr, long i, long j) {
@@ -376,10 +368,10 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
         private final MemoryARW listMemory;
         private final Function percentilesFunc;
         private final int percentilesPos;
+        protected int type;
         private DirectArray result;
         private double[] results;
         private long size;
-        protected int type;
 
         public MultiPercentileDiscOverWholeResultSetFunction(Function arg, Function percentilesFunc, int percentilesPos, CairoConfiguration configuration) {
             super(arg);
@@ -479,7 +471,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                 double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
 
                 int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
-                results[i] = listMemory.getDouble(N * 8);
+                results[i] = listMemory.getDouble(N * 8L);
             }
         }
 
@@ -513,14 +505,6 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             results = null;
         }
 
-        private void quickSort(long left, long right) {
-            if (left < right) {
-                long pi = partition(left, right);
-                quickSort(left, pi - 1);
-                quickSort(pi + 1, right);
-            }
-        }
-
         private long partition(long left, long right) {
             double pivot = listMemory.getDouble(right * 8);
             long i = left - 1;
@@ -535,10 +519,22 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             return i + 1;
         }
 
+        private void quickSort(long left, long right) {
+            if (left < right) {
+                long pi = partition(left, right);
+                quickSort(left, pi - 1);
+                quickSort(pi + 1, right);
+            }
+        }
+
         private void swap(long i, long j) {
             double temp = listMemory.getDouble(i * 8);
             listMemory.putDouble(i * 8, listMemory.getDouble(j * 8));
             listMemory.putDouble(j * 8, temp);
         }
+    }
+
+    static {
+        COLUMN_TYPES.add(ColumnType.LONG); // list pointer
     }
 }
