@@ -205,7 +205,8 @@ public class HorizonJoinRecord implements Record {
 
     @Override
     public long getLong(int col) {
-        // Special handling for sequence offset - it's a direct value, not from a record
+        // Special handling for sequence offset - it's a direct value, not from a record.
+        // We assume the caller passes the correct column index (offset, not timestamp).
         if (columnSources[col] == SOURCE_SEQUENCE) {
             return offsetValue;
         }
@@ -294,9 +295,9 @@ public class HorizonJoinRecord implements Record {
 
     @Override
     public long getTimestamp(int col) {
-        // Special handling for horizon timestamp - it's stored directly, not from a record
+        // Special handling for horizon timestamp - it's stored directly, not from a record.
+        // We assume the caller passes the correct column index (timestamp, not offset).
         if (columnSources[col] == SOURCE_SEQUENCE) {
-            // columnIndices[col] == 1 for timestamp column (0 for offset)
             return horizonTimestamp;
         }
         Record src = getSourceRecord(col);
