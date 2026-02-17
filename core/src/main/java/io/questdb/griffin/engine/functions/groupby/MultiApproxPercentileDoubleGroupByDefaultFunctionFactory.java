@@ -31,11 +31,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class PercentileContDoubleGroupByFunctionFactory implements FunctionFactory {
+public class MultiApproxPercentileDoubleGroupByDefaultFunctionFactory implements FunctionFactory {
+    private static final int DEFAULT_PRECISION = 1;
 
     @Override
     public String getSignature() {
-        return "percentile_cont(DD)";
+        return "approx_percentile(DD[])";
     }
 
     @Override
@@ -51,6 +52,6 @@ public class PercentileContDoubleGroupByFunctionFactory implements FunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new PercentileContDoubleGroupByFunction(configuration, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
+        return new MultiApproxPercentileDoubleGroupByFunction(args.getQuick(0), args.getQuick(1), DEFAULT_PRECISION);
     }
 }

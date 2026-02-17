@@ -24,8 +24,8 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;

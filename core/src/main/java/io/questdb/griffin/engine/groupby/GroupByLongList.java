@@ -116,14 +116,14 @@ public class GroupByLongList {
         }
     }
 
-    public long get(int index) {
+    public long get(long index) {
         if (index < size()) {
             return valueAt(index);
         }
-        throw new ArrayIndexOutOfBoundsException(index);
+        throw new ArrayIndexOutOfBoundsException((int) index);
     }
 
-    public long getQuick(int index) {
+    public long getQuick(long index) {
         return valueAt(index);
     }
 
@@ -141,6 +141,10 @@ public class GroupByLongList {
 
     public long ptr() {
         return ptr;
+    }
+
+    public void set(long index, long value) {
+        setValueAt(index, value);
     }
 
     public void resetPtr() {

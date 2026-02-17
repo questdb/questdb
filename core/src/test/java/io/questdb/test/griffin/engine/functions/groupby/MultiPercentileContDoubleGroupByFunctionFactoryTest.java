@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -114,7 +114,7 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testInvalidPercentileInArray2() throws Exception {
         assertException(
-                "select percentile_cont(x::double, ARRAY[0.98, -1]) from long_sequence(1)",
+                "select percentile_cont(x::double, ARRAY[0.98, -1.1]) from long_sequence(1)",
                 39,
                 "invalid percentile"
         );

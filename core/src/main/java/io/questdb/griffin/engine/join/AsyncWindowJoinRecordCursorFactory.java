@@ -358,9 +358,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                 if (slaveTimestamps.size() > 0) {
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                     if (rowLo < rowHi) {
@@ -486,9 +486,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                 if (slaveTimestamps.size() > 0) {
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
                     IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
 
@@ -610,9 +610,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 if (slaveTimestamps.size() > 0) {
                     IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                     if (rowLo < rowHi) {
@@ -720,9 +720,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                 if (slaveTimestamps.size() > 0) {
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                     if (rowLo < rowHi) {
@@ -835,9 +835,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 boolean needToFindPrevailing = true;
                 if (slaveTimestamps.size() > 0) {
-                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                     rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                     if (rowLo < rowHi) {
@@ -1068,9 +1068,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                     if (slaveTimestamps.size() > 0) {
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         if (rowLo < rowHi) {
@@ -1228,9 +1228,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                     if (slaveTimestamps.size() > 0) {
                         // Use binary search to find the range of slave rows for this master row
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), slaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
@@ -1383,9 +1383,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                     if (slaveTimestamps.size() > 0) {
                         IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         if (rowLo < rowHi) {
@@ -1528,9 +1528,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     final long masterSlaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
 
                     if (slaveTimestamps.size() > 0) {
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? Math.max(-rowLo - 2, 0) : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         if (rowLo < rowHi) {
@@ -1677,9 +1677,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                     boolean needToFindPrevailing = true;
                     if (slaveTimestamps.size() > 0) {
-                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
+                        rowLo = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampLo, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_UP);
                         rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
-                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                        long rowHi = Vect.binarySearch64Bit(slaveTimestamps.addressOf(0), masterSlaveTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                         rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
                         if (rowLo < rowHi) {

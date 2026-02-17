@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
@@ -48,6 +47,8 @@ import io.questdb.griffin.engine.groupby.GroupByDoubleList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
+
+import java.util.Arrays;
 
 import static io.questdb.std.Numbers.LONG_NULL;
 
@@ -134,17 +135,17 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
 
         ArrayView percentiles = percentileFunc.getArray(record);
         FlatArrayView view = percentiles.flatView();
-        int view_length = view.length();
+        int viewLength = view.length();
 
         if (out == null) {
             out = new DirectArray();
             out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-            out.setDimLen(0, view_length);
+            out.setDimLen(0, viewLength);
             out.applyShape();
         }
 
         // Calculate all required indices and validate percentiles
-        int[] indices = new int[view_length];
+        int[] indices = new int[viewLength];
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
             double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
@@ -156,7 +157,7 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
         }
 
         // Sort indices to optimize quickSelectMultiple
-        java.util.Arrays.sort(indices);
+        Arrays.sort(indices);
 
         // Use optimized multi-select instead of full sorting - much faster for sparse percentiles
         listA.quickSelectMultiple(0, size - 1, indices, 0, indices.length);
