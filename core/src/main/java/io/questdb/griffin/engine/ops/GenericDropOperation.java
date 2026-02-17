@@ -1,5 +1,8 @@
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DdlListener;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -36,8 +39,13 @@ public class GenericDropOperation implements Operation {
 
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
+        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+        final TableToken tt = engine.getTableTokenIfExists(entityName);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.execute(this, sqlExecutionContext);
+        }
+        if (!ifExists || tt != null) {
+            onTableDropped(engine.getDdlListener(entityName), entityName);
         }
         return future;
     }
@@ -66,5 +74,9 @@ public class GenericDropOperation implements Operation {
 
     public boolean ifExists() {
         return ifExists;
+    }
+
+    protected void onTableDropped(DdlListener ddlListener, String tableName) {
+        ddlListener.onTableDropped(tableName, false);
     }
 }

@@ -4328,7 +4328,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
         try {
             engine.dropTableOrViewOrMatView(path, tableToken);
-            onTableDropped(op);
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, table dropped already
@@ -4941,10 +4940,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 functionParser,
                 path
         );
-    }
-
-    protected void onTableDropped(GenericDropOperation op) {
-        engine.getDdlListener(op.getEntityName()).onTableDropped(op.getEntityName(), false);
     }
 
     protected void registerKeywordBasedExecutors() {
