@@ -10067,7 +10067,7 @@ public class SqlOptimiser implements Mutable {
             }
 
             boolean found = false;
-            int dotPos = Chars.indexOf(groupByCol.token, '.');
+            int dotPos = Chars.indexOfLastUnquoted(groupByCol.token, '.');
             boolean groupByHasTablePrefix = dotPos >= 0;
 
             // If GROUP BY column has a prefix that matches the horizon alias (e.g., h.offset),
@@ -10173,7 +10173,7 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 // Handle horizon alias prefix (e.g., h.offset -> offset)
-                int dotPos = Chars.indexOf(groupByCol.token, '.');
+                int dotPos = Chars.indexOfLastUnquoted(groupByCol.token, '.');
                 if (dotPos >= 0 && horizonAlias != null) {
                     CharSequence prefix = groupByCol.token.subSequence(0, dotPos);
                     if (Chars.equalsIgnoreCase(prefix, horizonAlias)) {

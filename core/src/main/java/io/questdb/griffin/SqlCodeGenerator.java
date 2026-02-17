@@ -803,7 +803,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final CharSequence fullName = innerMetadata.getColumnName(i);
 
             // Parse "tableAlias.columnName" format
-            int dotIndex = Chars.indexOf(fullName, '.');
+            int dotIndex = Chars.indexOfLastUnquoted(fullName, '.');
             if (dotIndex > 0) {
                 CharSequence tableAlias = fullName.subSequence(0, dotIndex);
                 CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
