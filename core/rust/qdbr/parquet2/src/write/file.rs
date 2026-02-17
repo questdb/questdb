@@ -10,6 +10,7 @@ use crate::{
     FOOTER_SIZE, PARQUET_MAGIC,
 };
 
+use super::footer_cache::FooterCache;
 use super::indexes::{write_column_index, write_offset_index};
 use super::page::PageWriteSpec;
 use super::{row_group::write_row_group, RowGroupIter, WriteOptions};
@@ -20,6 +21,181 @@ use crate::write::State;
 pub fn start_file<W: Write>(writer: &mut W) -> Result<u64> {
     writer.write_all(&PARQUET_MAGIC)?;
     Ok(PARQUET_MAGIC.len() as u64)
+}
+
+/// Describes where a row group in the final list came from.
+enum RowGroupSource {
+    /// Unchanged original row group — use cached raw bytes if available.
+    Cached(usize),
+    /// Modified original row group — must be freshly serialized.
+    Fresh,
+    /// Newly inserted row group — must be freshly serialized.
+    Inserted,
+}
+
+/// A streaming writer wrapper that supports both protocol-driven writes (via
+/// the `Write` trait) and direct raw byte injection. Uses `RefCell` for
+/// interior mutability so a `TCompactOutputProtocol` can hold a shared
+/// reference while we also inject cached row group bytes. Streams directly
+/// to the underlying writer, avoiding an intermediate buffer.
+struct SharedWriter<'a, W: Write>(std::cell::RefCell<(&'a mut W, u64)>);
+
+impl<'a, W: Write> SharedWriter<'a, W> {
+    fn new(writer: &'a mut W) -> Self {
+        SharedWriter(std::cell::RefCell::new((writer, 0)))
+    }
+
+    fn write_raw(&self, data: &[u8]) -> Result<()> {
+        let mut guard = self.0.borrow_mut();
+        guard.0.write_all(data)?;
+        guard.1 += data.len() as u64;
+        Ok(())
+    }
+
+    fn bytes_written(&self) -> u64 {
+        self.0.borrow().1
+    }
+}
+
+impl<W: Write> std::io::Write for &SharedWriter<'_, W> {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        let mut guard = self.0.borrow_mut();
+        guard.0.write_all(data)?;
+        guard.1 += data.len() as u64;
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.borrow_mut().0.flush()
+    }
+}
+
+/// Writes the Parquet footer incrementally. Unchanged row groups are written as
+/// raw pre-serialized bytes from the `FooterCache`, while modified/inserted row
+/// groups are serialized fresh. Falls back to full serialization when no cache
+/// is available. Streams directly to the writer without an intermediate buffer.
+fn end_file_incremental<W: Write>(
+    writer: &mut W,
+    metadata: &ThriftFileMetaData,
+    footer_cache: &Option<FooterCache>,
+    sources: &[RowGroupSource],
+) -> Result<u64> {
+    let cache = match footer_cache.as_ref() {
+        Some(c) if sources.len() == metadata.row_groups.len() => c,
+        _ => return end_file(writer, metadata),
+    };
+
+    use parquet_format_safe::thrift::protocol::{TCompactOutputProtocol, TOutputProtocol, TType};
+    use parquet_format_safe::thrift::protocol::{TFieldIdentifier, TListIdentifier, TStructIdentifier};
+
+    // Use SharedWriter so a single protocol instance stays alive for the
+    // entire serialization while we can also inject cached row group bytes.
+    let shared = SharedWriter::new(writer);
+    let mut prot = TCompactOutputProtocol::new(&shared);
+
+    prot.write_struct_begin(&TStructIdentifier::new("FileMetaData"))?;
+
+    // Field 1: version
+    prot.write_field_begin(&TFieldIdentifier::new("version", TType::I32, 1))?;
+    prot.write_i32(metadata.version)?;
+    prot.write_field_end()?;
+
+    // Field 2: schema
+    prot.write_field_begin(&TFieldIdentifier::new("schema", TType::List, 2))?;
+    prot.write_list_begin(&TListIdentifier::new(TType::Struct, metadata.schema.len() as u32))?;
+    for elem in &metadata.schema {
+        elem.write_to_out_protocol(&mut prot)?;
+    }
+    prot.write_list_end()?;
+    prot.write_field_end()?;
+
+    // Field 3: num_rows
+    prot.write_field_begin(&TFieldIdentifier::new("num_rows", TType::I64, 3))?;
+    prot.write_i64(metadata.num_rows)?;
+    prot.write_field_end()?;
+
+    // Field 4: row_groups
+    prot.write_field_begin(&TFieldIdentifier::new("row_groups", TType::List, 4))?;
+    prot.write_list_begin(&TListIdentifier::new(TType::Struct, metadata.row_groups.len() as u32))?;
+
+    // Write row groups: cached raw bytes or freshly serialized.
+    // Cached row group bytes are self-contained Thrift structs whose
+    // serialization is independent of the outer protocol state, so injecting
+    // them directly is safe. The protocol's field-delta tracking is unaffected
+    // because struct_begin/struct_end (which would push/pop the stack) write
+    // zero bytes and the push/pop is balanced.
+    for (i, source) in sources.iter().enumerate() {
+        match source {
+            RowGroupSource::Cached(orig_idx) if *orig_idx < cache.row_group_count() => {
+                shared.write_raw(cache.row_group_bytes(*orig_idx))?;
+            }
+            _ => {
+                metadata.row_groups[i].write_to_out_protocol(&mut prot)?;
+            }
+        }
+    }
+
+    prot.write_list_end()?;
+    prot.write_field_end()?;
+
+    // Field 5: key_value_metadata (optional)
+    if let Some(ref kv) = metadata.key_value_metadata {
+        prot.write_field_begin(&TFieldIdentifier::new("key_value_metadata", TType::List, 5))?;
+        prot.write_list_begin(&TListIdentifier::new(TType::Struct, kv.len() as u32))?;
+        for entry in kv {
+            entry.write_to_out_protocol(&mut prot)?;
+        }
+        prot.write_list_end()?;
+        prot.write_field_end()?;
+    }
+
+    // Field 6: created_by (optional)
+    if let Some(ref created_by) = metadata.created_by {
+        prot.write_field_begin(&TFieldIdentifier::new("created_by", TType::String, 6))?;
+        prot.write_string(created_by)?;
+        prot.write_field_end()?;
+    }
+
+    // Field 7: column_orders (optional)
+    if let Some(ref orders) = metadata.column_orders {
+        prot.write_field_begin(&TFieldIdentifier::new("column_orders", TType::List, 7))?;
+        prot.write_list_begin(&TListIdentifier::new(TType::Struct, orders.len() as u32))?;
+        for order in orders {
+            order.write_to_out_protocol(&mut prot)?;
+        }
+        prot.write_list_end()?;
+        prot.write_field_end()?;
+    }
+
+    // Field 8: encryption_algorithm (optional)
+    if let Some(ref algo) = metadata.encryption_algorithm {
+        prot.write_field_begin(&TFieldIdentifier::new("encryption_algorithm", TType::Struct, 8))?;
+        algo.write_to_out_protocol(&mut prot)?;
+        prot.write_field_end()?;
+    }
+
+    // Field 9: footer_signing_key_metadata (optional)
+    if let Some(ref key_meta) = metadata.footer_signing_key_metadata {
+        prot.write_field_begin(&TFieldIdentifier::new("footer_signing_key_metadata", TType::String, 9))?;
+        prot.write_bytes(key_meta)?;
+        prot.write_field_end()?;
+    }
+
+    prot.write_field_stop()?;
+    prot.write_struct_end()?;
+
+    let bytes_written = shared.bytes_written();
+    drop(prot);
+
+    // Write footer (metadata length + PAR1 magic)
+    let mut footer_buffer = [0u8; FOOTER_SIZE as usize];
+    footer_buffer[..4].copy_from_slice(&(bytes_written as i32).to_le_bytes());
+    footer_buffer[4..].copy_from_slice(&PARQUET_MAGIC);
+    // Write footer through the raw writer (protocol is dropped, RefCell is
+    // no longer borrowed).
+    shared.write_raw(&footer_buffer)?;
+
+    Ok(bytes_written + FOOTER_SIZE)
 }
 
 pub fn end_file<W: Write>(mut writer: &mut W, metadata: &ThriftFileMetaData) -> Result<u64> {
@@ -283,7 +459,7 @@ pub struct ParquetFile<W: Write> {
 
 pub enum Mode {
     Write,
-    Update(ThriftFileMetaData),
+    Update(ThriftFileMetaData, Option<FooterCache>),
 }
 
 impl<W: Write> ParquetFile<W> {
@@ -340,6 +516,7 @@ impl<W: Write> ParquetFile<W> {
         created_by: Option<String>,
         sorting_columns: Option<Vec<SortingColumn>>,
         metadata: ThriftFileMetaData,
+        footer_cache: Option<FooterCache>,
     ) -> Self {
         Self {
             writer,
@@ -352,7 +529,7 @@ impl<W: Write> ParquetFile<W> {
             page_specs: vec![],
             state: State::Initialised,
             metadata: Some(metadata.clone()), //TODO: do we need to keep it here?
-            mode: Mode::Update(metadata),
+            mode: Mode::Update(metadata, footer_cache),
             is_insert: vec![],
         }
     }
@@ -430,7 +607,7 @@ impl<W: Write> ParquetFile<W> {
         E: std::error::Error + From<Error>,
     {
         match &self.mode {
-            Mode::Update(metadata) => {
+            Mode::Update(metadata, _) => {
                 let ordinal = if let Some(ordinal) = ordinal {
                     let num_row_groups = metadata.row_groups.len();
                     let ordinal = ordinal as usize;
@@ -465,7 +642,7 @@ impl<W: Write> ParquetFile<W> {
         E: std::error::Error + From<Error>,
     {
         match &self.mode {
-            Mode::Update(_) => {
+            Mode::Update(_, _) => {
                 self.add_row_group(row_group, position as usize)?;
                 self.is_insert.push(true);
                 Ok(())
@@ -545,51 +722,72 @@ impl<W: Write> ParquetFile<W> {
                 self.metadata = Some(metadata);
                 Ok(self.offset + len)
             }
-            Mode::Update(metadata) => {
+            Mode::Update(metadata, footer_cache) => {
                 let mut num_rows = metadata.num_rows;
                 let original_rg_count = metadata.row_groups.len();
 
-                // Phase 1: replacements and appends (is_insert = false)
-                for (i, group) in self.row_groups.iter().enumerate() {
-                    if self.is_insert.get(i) == Some(&true) {
+                // Track which original row groups have been replaced.
+                let mut modified = vec![false; original_rg_count];
+
+                // Drain row_groups and is_insert so we can move instead of clone.
+                let groups = std::mem::take(&mut self.row_groups);
+                let is_insert_flags = std::mem::take(&mut self.is_insert);
+
+                // Partition into replacements/appends and insertions.
+                let mut insertion_groups = Vec::new();
+                for (group, is_ins) in groups.into_iter().zip(is_insert_flags.iter()) {
+                    if *is_ins {
+                        insertion_groups.push(group);
                         continue;
                     }
                     let ordinal = group
                         .ordinal
                         .ok_or_else(|| Error::oos("Row group ordinal is missing"))?;
+                    let new_rows = group.num_rows;
                     if (ordinal as usize) < original_rg_count {
                         num_rows -= metadata.row_groups[ordinal as usize].num_rows;
-                        metadata.row_groups[ordinal as usize] = group.clone();
+                        metadata.row_groups[ordinal as usize] = group;
+                        modified[ordinal as usize] = true;
                     } else {
-                        metadata.row_groups.push(group.clone());
+                        metadata.row_groups.push(group);
                     }
-                    num_rows += group.num_rows;
+                    num_rows += new_rows;
                 }
 
-                // Phase 2: insertions (is_insert = true), in ascending ordinal order
-                let mut insertions: Vec<_> = self
-                    .row_groups
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| self.is_insert.get(*i) == Some(&true))
-                    .map(|(_, g)| {
-                        (
-                            g.ordinal.unwrap_or(0) as usize,
-                            g.clone(),
-                        )
+                // Build a mapping: for each position in the final row_groups list,
+                // record whether it came from an original (possibly cached) entry
+                // or is a freshly inserted/modified entry.
+                let mut sources: Vec<RowGroupSource> = (0..metadata.row_groups.len())
+                    .map(|i| {
+                        if i < original_rg_count && !modified[i] {
+                            RowGroupSource::Cached(i)
+                        } else {
+                            RowGroupSource::Fresh
+                        }
+                    })
+                    .collect();
+
+                // Phase 2: insertions in ascending ordinal order
+                let mut insertions: Vec<_> = insertion_groups
+                    .into_iter()
+                    .map(|g| {
+                        let pos = g.ordinal.unwrap_or(0) as usize;
+                        (pos, g)
                     })
                     .collect();
                 insertions.sort_by_key(|(pos, _)| *pos);
-                for (pos, group) in insertions.into_iter() {
+
+                for (pos, group) in insertions {
                     let adjusted_pos = pos.min(metadata.row_groups.len());
-                    metadata.row_groups.insert(adjusted_pos, group.clone());
                     num_rows += group.num_rows;
+                    metadata.row_groups.insert(adjusted_pos, group);
+                    sources.insert(adjusted_pos, RowGroupSource::Inserted);
                 }
 
                 metadata.num_rows = num_rows;
-                metadata.key_value_metadata = metadata.key_value_metadata.take().map_or(
-                    key_value_metadata.clone(),
-                    |mut kv| {
+                match metadata.key_value_metadata.take() {
+                    None => metadata.key_value_metadata = key_value_metadata,
+                    Some(mut kv) => {
                         if let Some(new_kv) = key_value_metadata {
                             for new_entry in new_kv {
                                 if let Some(existing) =
@@ -601,11 +799,16 @@ impl<W: Write> ParquetFile<W> {
                                 }
                             }
                         }
-                        Some(kv)
-                    },
-                );
+                        metadata.key_value_metadata = Some(kv);
+                    }
+                }
 
-                let len = end_file(&mut self.writer, metadata)?;
+                let len = end_file_incremental(
+                    &mut self.writer,
+                    metadata,
+                    footer_cache,
+                    &sources,
+                )?;
                 self.state = State::Finished;
                 Ok(self.offset + len)
             }

@@ -28,8 +28,9 @@ use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{to_encodings, Partition};
 use parquet2::compression::CompressionOptions;
 use parquet2::metadata::{FileMetaData, KeyValue, SortingColumn};
-use parquet2::read::read_metadata_with_size;
+use parquet2::read::{read_metadata_with_footer_bytes, read_metadata_with_size};
 use parquet2::write;
+use parquet2::write::footer_cache::FooterCache;
 use parquet2::write::{ParquetFile, Version};
 use std::fs::File;
 use std::io::{Read as _, Seek, SeekFrom};
@@ -75,17 +76,31 @@ impl ParquetUpdater {
             }
         }
 
-        let metadata = read_metadata_with_size(&mut reader, read_file_size)?;
-        let file_metadata = metadata.clone();
-
         let is_rewrite = write_file_size == 0;
+
+        let (metadata, footer_cache, old_footer_size) = if is_rewrite {
+            let metadata = read_metadata_with_size(&mut reader, read_file_size)?;
+            (metadata, None, 0u64)
+        } else {
+            // In update mode, also capture raw footer bytes for incremental serialization.
+            let (metadata, raw_footer_bytes, footer_size) =
+                read_metadata_with_footer_bytes(&mut reader, read_file_size)?;
+            let cache = FooterCache::from_footer_bytes(raw_footer_bytes)
+                .map_err(|e| ParquetError::with_descr(
+                    ParquetErrorReason::Parquet2(parquet2::error::Error::oos(e.to_string())),
+                    "could not build footer cache",
+                ))?;
+            (metadata, Some(cache), footer_size)
+        };
+
+        let file_metadata = metadata.clone();
 
         let version = from(metadata.version);
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
         let options = write::WriteOptions { write_statistics, version };
 
-        let (parquet_file, accumulated_unused_bytes, old_footer_size) = if is_rewrite {
+        let (parquet_file, accumulated_unused_bytes) = if is_rewrite {
             // Rewrite mode: write to a fresh file
             let pf = ParquetFile::with_sorting_columns(
                 writer,
@@ -94,7 +109,7 @@ impl ParquetUpdater {
                 created_by,
                 sorting_columns,
             );
-            (pf, 0u64, 0u64)
+            (pf, 0u64)
         } else {
             // Update mode: append to existing file
             let accumulated_unused_bytes = metadata
@@ -109,15 +124,6 @@ impl ParquetUpdater {
                 .map(|m| m.unused_bytes)
                 .unwrap_or(0);
 
-            // Compute old footer size from the file's last 8 bytes.
-            let old_footer_size = {
-                let mut footer_buf = [0u8; 8];
-                reader.seek(SeekFrom::End(-8))?;
-                reader.read_exact(&mut footer_buf)?;
-                let metadata_len = u32::from_le_bytes(footer_buf[0..4].try_into().unwrap()) as u64;
-                metadata_len + 8
-            };
-
             // Seek writer to end of file so new data is appended after existing content.
             // The reader and writer are separate fds; reading metadata only moves the reader cursor.
             let mut writer = writer;
@@ -131,8 +137,9 @@ impl ParquetUpdater {
                 created_by,
                 sorting_columns,
                 metadata.into_thrift(),
+                footer_cache,
             );
-            (pf, accumulated_unused_bytes, old_footer_size)
+            (pf, accumulated_unused_bytes)
         };
 
         Ok(ParquetUpdater {
@@ -809,6 +816,7 @@ mod tests {
             created_by,
             None,
             metadata.into_thrift(),
+            None,
         );
         parquet_file.append(row_group)?;
         parquet_file.replace(replace_row_group, Some(0))?;
