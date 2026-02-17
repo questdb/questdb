@@ -182,6 +182,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
+    private final int cairoUnorderedPageFrameReduceQueueCapacity;
     private final long cairoWriteBackOffTimeoutOnMemPressureMs;
     private final boolean checkpointRecoveryEnabled;
     private final boolean checkpointRecoveryRebuildColumnIndexes;
@@ -1923,6 +1924,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             final int defaultReduceShardCount = queryWorkers > 0 ? Math.min(queryWorkers, 4) : 0;
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
+            this.cairoUnorderedPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4096));
             this.sqlParallelFilterPreTouchThreshold = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "0.05");
             this.sqlParallelFilterDispatchLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, Math.min(queryWorkers, 32));
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
@@ -3780,6 +3782,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getParquetExportBatchSize() {
+            return parquetExportBatchSize;
+        }
+
+        @Override
         public int getParquetExportCompressionCodec() {
             return parquetExportCompressionCodec;
         }
@@ -3792,11 +3799,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParquetExportCopyReportFrequencyLines() {
             return parquetExportCopyReportFrequencyLines;
-        }
-
-        @Override
-        public long getParquetExportBatchSize() {
-            return parquetExportBatchSize;
         }
 
         @Override
@@ -4357,6 +4359,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getTxnScoreboardEntryCount() {
             return sqlTxnScoreboardEntryCount;
+        }
+
+        @Override
+        public int getUnorderedPageFrameReduceQueueCapacity() {
+            return cairoUnorderedPageFrameReduceQueueCapacity;
         }
 
         @Override

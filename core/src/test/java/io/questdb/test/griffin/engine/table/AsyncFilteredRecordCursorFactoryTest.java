@@ -332,7 +332,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             }
                         }
                     } catch (Throwable e) {
-                        TestUtils.assertContains(e.getMessage(), "unexpected filter error");
+                        TestUtils.assertContains(e.getMessage(), "unexpected reduce error");
                     }
 
                     assertSql(

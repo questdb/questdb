@@ -204,7 +204,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     filter != null ? FILTER_AND_REDUCE : REDUCE,
                     reduceTaskFactory,
                     workerCount,
-                    PageFrameReduceTask.TYPE_GROUP_BY
+                    PageFrameReduceTask.TYPE_WINDOW_JOIN
             );
 
             this.cursor = new AsyncHorizonJoinRecordCursor(
