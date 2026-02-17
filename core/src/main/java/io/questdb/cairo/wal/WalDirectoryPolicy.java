@@ -34,6 +34,7 @@ public interface WalDirectoryPolicy {
 
     boolean isInUse(Path path);
 
+    @SuppressWarnings("SameReturnValue")
     default boolean isSeqPartInUse(Path seqDirPath, int partId) {
         return false;
     }
@@ -42,3 +43,4 @@ public interface WalDirectoryPolicy {
 
     boolean truncateFilesOnClose();
 }
+1
