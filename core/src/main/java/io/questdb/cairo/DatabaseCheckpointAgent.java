@@ -527,12 +527,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             LOG.info().$("_preferences~store included in the checkpoint").$();
                         }
 
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+
                         // Flush dirty pages and filesystem metadata to disk
                         if (!isIncrementalBackup && ff.sync() != 0) {
                             throw CairoException.critical(ff.errno()).put("Could not sync");
                         }
-
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                         LOG.info().$("checkpoint created").$();
                     }
                 } catch (Throwable e) {
