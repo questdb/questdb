@@ -92,7 +92,7 @@ public class SqlUtil {
 
     public static double getPercentileMultiplier(double percentile, int percentilePos) {
         double absPercentile = Math.abs(percentile);
-        if (Numbers.isNull(percentile) || absPercentile < 0.0d || absPercentile > 1.0d) {
+        if (Numbers.isNull(percentile) || absPercentile > 1.0d) {
             throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
         }
         return percentile >= 0 ? percentile : 1 - absPercentile;

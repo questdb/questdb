@@ -90,7 +90,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testInvalidPercentileInArray1() throws Exception {
         assertException(
-                "select percentile_disc(x::double, ARRAY[0.98, 1.1]) from long_sequence(1)",
+                "SELECT percentile_disc(x::DOUBLE, ARRAY[0.98, 1.1]) FROM long_sequence(1)",
                 39,
                 "invalid percentile"
         );
@@ -99,7 +99,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testInvalidPercentileInArray2() throws Exception {
         assertException(
-                "select percentile_disc(x::double, ARRAY[0.98, -1.1]) from long_sequence(1)",
+                "SELECT percentile_disc(x::DOUBLE, ARRAY[0.98, -1.1]) FROM long_sequence(1)",
                 39,
                 "invalid percentile"
         );
@@ -108,7 +108,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testInvalidPercentileInArrayMixed() throws Exception {
         assertException(
-                "select percentile_disc(x::double, ARRAY[0.5, 0.95, 1.5, 0.98]) from long_sequence(1)",
+                "SELECT percentile_disc(x::DOUBLE, ARRAY[0.5, 0.95, 1.5, 0.98]) FROM long_sequence(1)",
                 39,
                 "invalid percentile"
         );
@@ -117,8 +117,8 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+            execute("CREATE TABLE test AS (" +
+                    "SELECT x % 2 AS category, cast(x AS DOUBLE) AS value FROM long_sequence(10)" +
                     ")");
             assertSql(
                     """
@@ -126,7 +126,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             0\t[4.0,6.0,8.0]
                             1\t[3.0,5.0,7.0]
                             """,
-                    "select category, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) from test group by category order by category"
+                    "SELECT category, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY category ORDER BY category"
             );
         });
     }
@@ -134,15 +134,15 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscGroupByWithAllNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select 1 as category, null::double as value from long_sequence(5)" +
+            execute("CREATE TABLE test AS (" +
+                    "SELECT 1 AS category, null::DOUBLE AS value FROM long_sequence(5)" +
                     ")");
             assertSql(
                     """
                             category\tpercentile_disc
                             1\tnull
                             """,
-                    "select category, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) from test group by category"
+                    "SELECT category, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY category"
             );
         });
     }
@@ -150,8 +150,8 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscGroupByWithExtremePercentiles() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+            execute("CREATE TABLE test AS (" +
+                    "SELECT x % 2 AS category, cast(x AS DOUBLE) AS value FROM long_sequence(10)" +
                     ")");
             // cat=0: 2, 4, 6, 8, 10 → [0, 0.5, 1.0] → [2.0, 6.0, 10.0]
             // cat=1: 1, 3, 5, 7, 9 → [0, 0.5, 1.0] → [1.0, 5.0, 9.0]
@@ -161,7 +161,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             0\t[2.0,6.0,10.0]
                             1\t[1.0,5.0,9.0]
                             """,
-                    "select category, percentile_disc(value, ARRAY[0.0, 0.5, 1.0]) from test group by category order by category"
+                    "SELECT category, percentile_disc(value, ARRAY[0.0, 0.5, 1.0]) FROM test GROUP BY category ORDER BY category"
             );
         });
     }
@@ -169,9 +169,9 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscGroupByWithMultipleColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x % 2 as cat1, x % 3 as cat2, cast(x as double) as value " +
-                    "from long_sequence(12)" +
+            execute("CREATE TABLE test AS (" +
+                    "SELECT x % 2 AS cat1, x % 3 AS cat2, cast(x AS DOUBLE) AS value " +
+                    "FROM long_sequence(12)" +
                     ")");
             // cat1=0, cat2=0: values 6, 12 (2 values)
             //   25th: ceil(2*0.25)-1 = 0 → 6.0
@@ -207,8 +207,8 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             1\t1\t[1.0,1.0,7.0]
                             1\t2\t[5.0,5.0,11.0]
                             """,
-                    "select cat1, cat2, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) " +
-                            "from test group by cat1, cat2 order by cat1, cat2"
+                    "SELECT cat1, cat2, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) " +
+                            "FROM test GROUP BY cat1, cat2 ORDER BY cat1, cat2"
             );
         });
     }
@@ -216,10 +216,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscGroupByWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x % 2 as category, " +
-                    "case when x % 4 = 0 then null else cast(x as double) end as value " +
-                    "from long_sequence(10)" +
+            execute("CREATE TABLE test AS (" +
+                    "SELECT x % 2 AS category, " +
+                    "CASE WHEN x % 4 = 0 THEN null ELSE cast(x AS DOUBLE) END AS value " +
+                    "FROM long_sequence(10)" +
                     ")");
             // cat=0: 2, null, 6, null, 10 → non-null: 2, 6, 10 (3 values)
             //   25th: ceil(3*0.25)-1 = 0 → 2.0
@@ -235,7 +235,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             0\t[2.0,6.0,10.0]
                             1\t[3.0,5.0,7.0]
                             """,
-                    "select category, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) from test group by category order by category"
+                    "SELECT category, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY category ORDER BY category"
             );
         });
     }
@@ -243,8 +243,8 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscGroupByWithSingleElement() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x, cast(x as double) as value from long_sequence(5)" +
+            execute("CREATE TABLE test AS (" +
+                    "SELECT x, cast(x AS DOUBLE) AS value FROM long_sequence(5)" +
                     ")");
             // Each group has one value, all percentiles should return that value
             assertSql(
@@ -256,7 +256,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             4\t[4.0,4.0,4.0]
                             5\t[5.0,5.0,5.0]
                             """,
-                    "select x, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) from test group by x order by x"
+                    "SELECT x, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) FROM test GROUP BY x ORDER BY x"
             );
         });
     }
@@ -264,14 +264,14 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscWithFineGrainedPercentiles() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) value from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) value FROM long_sequence(100))");
             // Test with percentiles that have more decimal places
             assertSql(
                     """
                             count
                             100
                             """,
-                    "select count(*) from (select value, percentile_disc(value, ARRAY[0.1, 0.25, 0.333, 0.5, 0.667, 0.75, 0.9]) over () from test)"
+                    "SELECT count(*) FROM (SELECT value, percentile_disc(value, ARRAY[0.1, 0.25, 0.333, 0.5, 0.667, 0.75, 0.9]) OVER () FROM test)"
             );
         });
     }
@@ -279,7 +279,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscWithNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x - 6 as double) value from long_sequence(10))");
+            execute("CREATE TABLE test AS (SELECT cast(x - 6 AS DOUBLE) value FROM long_sequence(10))");
             // Values: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4
             // 25th: ceil(10*0.25)-1 = 2 → -3.0
             // 50th: ceil(10*0.50)-1 = 4 → -1.0
@@ -298,7 +298,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             3.0\t[-3.0,-1.0,2.0]
                             4.0\t[-3.0,-1.0,2.0]
                             """,
-                    "select value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+                    "SELECT value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) OVER () FROM test"
             );
         });
     }
@@ -306,7 +306,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscWithSinglePercentileInArray() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) value from long_sequence(10))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) value FROM long_sequence(10))");
             // Single element array should work like scalar version but return array
             assertSql(
                     """
@@ -322,7 +322,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             9.0\t[5.0]
                             10.0\t[5.0]
                             """,
-                    "select value, percentile_disc(value, ARRAY[0.5]) over () from test"
+                    "SELECT value, percentile_disc(value, ARRAY[0.5]) OVER () FROM test"
             );
         });
     }
@@ -330,18 +330,18 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiPercentileDiscWithVeryLargeArray() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) value from long_sequence(10))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) value FROM long_sequence(10))");
             // Test with 20 percentiles
             assertSql(
                     """
                             count
                             10
                             """,
-                    "select count(*) from (" +
-                            "select value, percentile_disc(value, ARRAY[" +
+                    "SELECT count(*) FROM (" +
+                            "SELECT value, percentile_disc(value, ARRAY[" +
                             "0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, " +
                             "0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0" +
-                            "]) over () from test)"
+                            "]) OVER () FROM test)"
             );
         });
     }
@@ -349,14 +349,14 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesAllNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            execute("insert into test values (null), (null), (null)");
+            execute("CREATE TABLE test (x LONG)");
+            execute("INSERT INTO test VALUES (null), (null), (null)");
             assertSql(
                     """
                             percentile_disc
                             null
                             """,
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -364,10 +364,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select 5.0 x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n[5.0,5.0,5.0,5.0]\n",
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -375,10 +375,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesAllZeros() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select 0.0 x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT 0.0 x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n[0.0,0.0,0.0,0.0]\n",
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -386,10 +386,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n[98.0,95.0,90.0,50.0]\n",
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -397,10 +397,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesEmptyArray() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n[]\n",
-                    "select percentile_disc(x, ARRAY[]) from test"
+                    "SELECT percentile_disc(x, ARRAY[]) FROM test"
             );
         });
     }
@@ -408,13 +408,13 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
+            execute("CREATE TABLE test (x DOUBLE)");
             assertSql(
                     """
                             percentile_disc
                             null
                             """,
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -422,10 +422,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesFloatValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as float) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS FLOAT) x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n[98.0,95.0,90.0,50.0]\n",
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -433,10 +433,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesIncludingEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n[100.0,98.0,1.0,50.0]\n",
-                    "select percentile_disc(x, ARRAY[1.0, 0.98, 0.0, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[1.0, 0.98, 0.0, 0.50]) FROM test"
             );
         });
     }
@@ -444,10 +444,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesLargeDataset() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(10000))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(10_000))");
             assertSql(
                     "percentile_disc\n[9800.0,9500.0,9000.0,5000.0]\n",
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -455,8 +455,8 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesOrdering() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (5.0), (1.0), (10.0), (3.0), (7.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (5.0), (1.0), (10.0), (3.0), (7.0)");
             // Sorted: 1, 3, 5, 7, 10
             // 0.98 -> ceil(5 * 0.98) - 1 = 4 -> 10.0
             // 0.95 -> ceil(5 * 0.95) - 1 = 4 -> 10.0
@@ -467,7 +467,7 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             percentile_disc
                             [10.0,10.0,10.0,5.0]
                             """,
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -475,10 +475,10 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesSinglePercentile() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n[50.0]\n",
-                    "select percentile_disc(x, ARRAY[0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.50]) FROM test"
             );
         });
     }
@@ -486,14 +486,14 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesSingleValue() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (42.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (42.0)");
             assertSql(
                     """
                             percentile_disc
                             [42.0,42.0,42.0,42.0]
                             """,
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -501,14 +501,14 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesSomeNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (null), (null), (null)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.0), (null), (null), (null)");
             assertSql(
                     """
                             percentile_disc
                             [1.0,1.0,1.0,1.0]
                             """,
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -516,14 +516,14 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesTwoValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (10.0), (20.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (10.0), (20.0)");
             assertSql(
                     """
                             percentile_disc
                             [20.0,20.0,20.0,10.0]
                             """,
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -531,14 +531,14 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesWithDuplicates() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (1.0), (2.0), (2.0), (3.0), (3.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.0), (1.0), (2.0), (2.0), (3.0), (3.0)");
             assertSql(
                     """
                             percentile_disc
                             [3.0,3.0,3.0,2.0]
                             """,
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -546,15 +546,15 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (category symbol, value double)");
-            execute("insert into test values ('A', 1.0), ('A', 2.0), ('A', 3.0), ('B', 10.0), ('B', 20.0), ('B', 30.0)");
+            execute("CREATE TABLE test (category SYMBOL, value DOUBLE)");
+            execute("INSERT INTO test VALUES ('A', 1.0), ('A', 2.0), ('A', 3.0), ('B', 10.0), ('B', 20.0), ('B', 30.0)");
             assertSql(
                     """
                             category\tpercentile_disc
                             A\t[3.0,3.0,3.0,2.0]
                             B\t[30.0,30.0,30.0,20.0]
                             """,
-                    "select category, percentile_disc(value, ARRAY[0.98, 0.95, 0.90, 0.50]) from test order by category"
+                    "SELECT category, percentile_disc(value, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test ORDER BY category"
             );
         });
     }
@@ -568,21 +568,21 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                             percentile_disc
                             [406.977,289.615,224.195,63.863]
                             """,
-                    "select percentile_disc(value, ARRAY[0.98, 0.95, 0.90, 0.50]) from tx_traffic");
+                    "SELECT percentile_disc(value, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM tx_traffic");
         });
     }
 
     @Test
     public void testMultiplePercentilesWithNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (-1.0), (5.0), (-5.0), (10.0), (-10.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.0), (-1.0), (5.0), (-5.0), (10.0), (-10.0)");
             assertSql(
                     """
                             percentile_disc
                             [10.0,10.0,10.0,-1.0]
                             """,
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
@@ -590,24 +590,12 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     @Test
     public void testMultiplePercentilesWithPrecision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(1000))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(1000))");
             assertSql(
                     "percentile_disc\n[980.0,950.0,900.0,500.0]\n",
-                    "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
+                    "SELECT percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) FROM test"
             );
         });
     }
 
-    @Test
-    public void testWithKnownData() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(txDdl);
-            execute(txDml);
-            assertSql("""
-                            percentile_disc
-                            [406.977,289.615,224.195,63.863]
-                            """,
-                    "select percentile_disc(value, ARRAY[0.98, 0.95, 0.90, 0.50]) from tx_traffic");
-        });
-    }
 }

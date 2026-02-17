@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -72,12 +72,12 @@ public class GroupByDoubleList {
     }
 
     public long add(GroupByDoubleList that, int lo, int hi) {
-        final int this_size = size();
-        final int that_size = hi - lo;
-        final int final_size = this_size + that_size;
-        checkCapacity(final_size);
-        Vect.memcpy(appendAddress(), that.addressOf(lo), that_size);
-        setSize(final_size);
+        final int thisSize = size();
+        final int thatSize = hi - lo;
+        final int finalSize = thisSize + thatSize;
+        checkCapacity(finalSize);
+        Vect.memcpy(appendAddress(), that.addressOf(lo), thatSize * 8L);
+        setSize(finalSize);
         return ptr();
     }
 
@@ -110,7 +110,7 @@ public class GroupByDoubleList {
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
             Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
 
-            Vect.memcpy(ptr + HEADER_SIZE, oldPtr + HEADER_SIZE, 8L * oldCapacity);
+            Vect.memcpy(ptr + HEADER_SIZE, oldPtr + HEADER_SIZE, 8L * oldSize);
 
             allocator.free(oldPtr, HEADER_SIZE + 8L * oldCapacity);
         }

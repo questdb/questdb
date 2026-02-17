@@ -22,7 +22,6 @@
  *
  ******************************************************************************/
 
-
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
@@ -113,7 +112,7 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
             return LONG_NULL;
         }
 
-        listA.sortAsUnsigned();
+        listA.sort();
 
         double percentile = percentileFunc.getDouble(record);
         double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);

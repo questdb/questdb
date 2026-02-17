@@ -90,10 +90,10 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void test0thPercentileLongValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n1\n",
-                    "select percentile_disc(x, 0) from test"
+                    "SELECT percentile_disc(x, 0) FROM test"
             );
         });
     }
@@ -101,10 +101,10 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void test100thPercentileLongValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n100\n",
-                    "select percentile_disc(x, 1.0) from test"
+                    "SELECT percentile_disc(x, 1.0) FROM test"
             );
         });
     }
@@ -112,10 +112,10 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void test50thPercentileIntValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as int) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS INT) x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n50\n",
-                    "select percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -123,21 +123,10 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void test50thPercentileLongValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n50\n",
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void test50thPercentileLongValuesWith5() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test as (select x from long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n50\n",
-                    "select percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -146,10 +135,10 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void test50thPercentileWithPrecision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select x from long_sequence(1000))");
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(1000))");
             assertSql(
                     "percentile_disc\n500\n",
-                    "select percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -157,7 +146,7 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testInvalidPercentile1() throws Exception {
         assertException(
-                "select percentile_disc(x, 1.1) from long_sequence(1)",
+                "SELECT percentile_disc(x, 1.1) FROM long_sequence(1)",
                 26,
                 "invalid percentile"
         );
@@ -166,25 +155,7 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testInvalidPercentile2() throws Exception {
         assertException(
-                "select percentile_disc(x, -1.1) from long_sequence(1)",
-                26,
-                "invalid percentile"
-        );
-    }
-
-    @Test
-    public void testInvalidPercentilePacked1() throws Exception {
-        assertException(
-                "select percentile_disc(x, 1.1) from long_sequence(1)",
-                26,
-                "invalid percentile"
-        );
-    }
-
-    @Test
-    public void testInvalidPercentilePacked2() throws Exception {
-        assertException(
-                "select percentile_disc(x, -1.1) from long_sequence(1)",
+                "SELECT percentile_disc(x, -1.1) FROM long_sequence(1)",
                 26,
                 "invalid percentile"
         );
@@ -193,11 +164,11 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testNegativeOnePercentile() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile)
             assertSql(
                     "percentile_disc\n1\n",
-                    "select percentile_disc(x, -1.0) from test"
+                    "SELECT percentile_disc(x, -1.0) FROM test"
             );
         });
     }
@@ -205,11 +176,11 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testNegativePercentile() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             // -0.95 should be equivalent to 1 - 0.95 = 0.05
             assertSql(
                     "percentile_disc\n6\n",
-                    "select percentile_disc(x, -0.95) from test"
+                    "SELECT percentile_disc(x, -0.95) FROM test"
             );
         });
     }
@@ -217,11 +188,11 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testNegativePercentileEqualsPositive() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             // -0.5 should be equivalent to 1 - 0.5 = 0.5
             assertSql(
                     "percentile_disc\n50\n",
-                    "select percentile_disc(x, -0.5) from test"
+                    "SELECT percentile_disc(x, -0.5) FROM test"
             );
         });
     }
@@ -229,14 +200,14 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            execute("insert into test values (1), (-1)");
+            execute("CREATE TABLE test (x LONG)");
+            execute("INSERT INTO test VALUES (1), (-1)");
             assertSql(
                     """
                             percentile_disc
-                            1
+                            -1
                             """,
-                    "select percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -244,14 +215,14 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testPercentileAllNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            execute("insert into test values (null), (null), (null)");
+            execute("CREATE TABLE test (x LONG)");
+            execute("INSERT INTO test VALUES (null), (null), (null)");
             assertSql(
                     """
                             percentile_disc
                             null
                             """,
-                    "select percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -259,10 +230,10 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testPercentileAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select 5L x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT 5L x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n5\n",
-                    "select percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -270,54 +241,13 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testPercentileEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x long)");
+            execute("CREATE TABLE test (x LONG)");
             assertSql(
                     """
                             percentile_disc
                             null
                             """,
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentilePackedAllNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            execute("insert into test values (null), (null), (null)");
-            assertSql(
-                    """
-                            percentile_disc
-                            null
-                            """,
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentilePackedEmptyTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            assertSql(
-                    """
-                            percentile_disc
-                            null
-                            """,
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testPercentilePackedWithPercentileBindVariable() throws Exception {
-        bindVariableService.setDouble(0, 0.5);
-        assertMemoryLeak(() -> {
-            execute("create table test as (select 5L x from long_sequence(100))");
-            assertSql(
-                    "percentile_disc\n5\n",
-                    "select percentile_disc(x, $1) from test"
+                    "SELECT percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -325,14 +255,14 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testPercentileSomeNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            execute("insert into test values (1), (null), (null), (null)");
+            execute("CREATE TABLE test (x LONG)");
+            execute("INSERT INTO test VALUES (1), (null), (null), (null)");
             assertSql(
                     """
                             percentile_disc
                             1
                             """,
-                    "select percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -341,25 +271,25 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     public void testPercentileWithPercentileBindVariable() throws Exception {
         bindVariableService.setDouble(0, 0.5);
         assertMemoryLeak(() -> {
-            execute("create table test as (select 5L x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT 5L x FROM long_sequence(100))");
             assertSql(
                     "percentile_disc\n5\n",
-                    "select percentile_disc(x, $1) from test"
+                    "SELECT percentile_disc(x, $1) FROM test"
             );
         });
     }
 
     @Test
-    public void testThrowsOnNegativeValuesPacked() throws Exception {
+    public void testNegativeValuesPacked() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            execute("insert into test values (1), (-1)");
+            execute("CREATE TABLE test (x LONG)");
+            execute("INSERT INTO test VALUES (1), (-1)");
             assertSql(
                     """
                             percentile_disc
-                            1
+                            -1
                             """,
-                    "select percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -373,7 +303,7 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
                             percentile_disc
                             289
                             """,
-                    "select percentile_disc(value, 0.95) from tx_traffic");
+                    "SELECT percentile_disc(value, 0.95) FROM tx_traffic");
         });
     }
 }

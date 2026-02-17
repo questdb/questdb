@@ -47,8 +47,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Arrays;
-
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
@@ -59,6 +57,7 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
     protected final int percentilePos;
     protected DirectArray out;
     protected int valueIndex;
+    private int[] indices = new int[0];
 
     public MultiPercentileDiscDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         this.arg = arg;
@@ -144,7 +143,9 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
         }
 
         // Calculate all required indices and validate percentiles
-        int[] indices = new int[viewLength];
+        if (indices.length < viewLength) {
+            indices = new int[viewLength];
+        }
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
             double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
@@ -155,11 +156,19 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
             indices[i] = N;
         }
 
-        // Sort indices to optimize quickSelectMultiple
-        Arrays.sort(indices);
+        // Insertion sort - the array is typically very small (2-10 elements)
+        for (int i = 1; i < viewLength; i++) {
+            int key = indices[i];
+            int j = i - 1;
+            while (j >= 0 && indices[j] > key) {
+                indices[j + 1] = indices[j];
+                j--;
+            }
+            indices[j + 1] = key;
+        }
 
         // Use optimized multi-select instead of full sorting - much faster for sparse percentiles
-        listA.quickSelectMultiple(0, size - 1, indices, 0, indices.length);
+        listA.quickSelectMultiple(0, size - 1, indices, 0, viewLength);
 
         // Now retrieve the values (they're already in the correct positions)
         for (int i = 0, len = view.length(); i < len; i++) {

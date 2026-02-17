@@ -38,9 +38,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntHashSet;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Arrays;
-
 public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDiscDoubleGroupByFunction implements UnaryFunction, GroupByFunction {
+    private final IntHashSet indexSet = new IntHashSet();
+    private int[] contIndices = new int[0];
+
     public MultiPercentileContDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         super(configuration, arg, percentileFunc, percentilePos);
     }
@@ -77,7 +78,7 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
         }
 
         // Collect all unique indices needed for interpolation
-        IntHashSet indexSet = new IntHashSet();
+        indexSet.clear();
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
             double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
@@ -95,14 +96,25 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
 
         // Convert to sorted array for quickSelectMultiple
         int indexCount = indexSet.size();
-        int[] indices = new int[indexCount];
-        for (int i = 0; i < indexCount; i++) {
-            indices[i] = indexSet.get(i);
+        if (contIndices.length < indexCount) {
+            contIndices = new int[indexCount];
         }
-        Arrays.sort(indices);
+        for (int i = 0; i < indexCount; i++) {
+            contIndices[i] = indexSet.get(i);
+        }
+        // Insertion sort - the array is typically very small (2-10 elements)
+        for (int i = 1; i < indexCount; i++) {
+            int key = contIndices[i];
+            int j = i - 1;
+            while (j >= 0 && contIndices[j] > key) {
+                contIndices[j + 1] = contIndices[j];
+                j--;
+            }
+            contIndices[j + 1] = key;
+        }
 
         // Use optimized multi-select instead of full sorting
-        listA.quickSelectMultiple(0, size - 1, indices, 0, indices.length);
+        listA.quickSelectMultiple(0, size - 1, contIndices, 0, indexCount);
 
         // Now compute interpolated values
         for (int i = 0, len = view.length(); i < len; i++) {

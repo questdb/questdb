@@ -36,9 +36,11 @@ import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -117,7 +119,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         private final Function percentilesFunc;
         private final int percentilesPos;
         private final MemoryARW resultMemory;
-        protected int type;
+        private final int type;
         private DirectArray result;
 
         public MultiPercentileContOverPartitionFunction(
@@ -252,8 +254,8 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         @Override
         public void preparePass2() {
             // Sort all lists and calculate percentiles for each percentile value
-            io.questdb.cairo.sql.RecordCursor cursor = map.getCursor();
-            io.questdb.cairo.map.MapRecord record = map.getRecord();
+            RecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
 
             while (cursor.hasNext()) {
                 MapValue value = record.getValue();
@@ -333,6 +335,19 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         }
 
         private long partition(long listPtr, long left, long right) {
+            // Median-of-three pivot selection
+            long mid = left + (right - left) / 2;
+            if (listMemory.getDouble(listPtr + left * 8) > listMemory.getDouble(listPtr + mid * 8)) {
+                swap(listPtr, left, mid);
+            }
+            if (listMemory.getDouble(listPtr + left * 8) > listMemory.getDouble(listPtr + right * 8)) {
+                swap(listPtr, left, right);
+            }
+            if (listMemory.getDouble(listPtr + mid * 8) > listMemory.getDouble(listPtr + right * 8)) {
+                swap(listPtr, mid, right);
+            }
+            swap(listPtr, mid, right);
+
             double pivot = listMemory.getDouble(listPtr + right * 8);
             long i = left - 1;
 
@@ -347,10 +362,15 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         }
 
         private void quickSort(long listPtr, long left, long right) {
-            if (left < right) {
+            while (left < right) {
                 long pi = partition(listPtr, left, right);
-                quickSort(listPtr, left, pi - 1);
-                quickSort(listPtr, pi + 1, right);
+                if (pi - left < right - pi) {
+                    quickSort(listPtr, left, pi - 1);
+                    left = pi + 1;
+                } else {
+                    quickSort(listPtr, pi + 1, right);
+                    right = pi - 1;
+                }
             }
         }
 
@@ -366,7 +386,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         private final MemoryARW listMemory;
         private final Function percentilesFunc;
         private final int percentilesPos;
-        protected int type;
+        private final int type;
         private DirectArray result;
         private double[] results;
         private long size;
@@ -514,6 +534,19 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         }
 
         private long partition(long left, long right) {
+            // Median-of-three pivot selection
+            long mid = left + (right - left) / 2;
+            if (listMemory.getDouble(left * 8) > listMemory.getDouble(mid * 8)) {
+                swap(left, mid);
+            }
+            if (listMemory.getDouble(left * 8) > listMemory.getDouble(right * 8)) {
+                swap(left, right);
+            }
+            if (listMemory.getDouble(mid * 8) > listMemory.getDouble(right * 8)) {
+                swap(mid, right);
+            }
+            swap(mid, right);
+
             double pivot = listMemory.getDouble(right * 8);
             long i = left - 1;
 
@@ -528,10 +561,15 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         }
 
         private void quickSort(long left, long right) {
-            if (left < right) {
+            while (left < right) {
                 long pi = partition(left, right);
-                quickSort(left, pi - 1);
-                quickSort(pi + 1, right);
+                if (pi - left < right - pi) {
+                    quickSort(left, pi - 1);
+                    left = pi + 1;
+                } else {
+                    quickSort(pi + 1, right);
+                    right = pi - 1;
+                }
             }
         }
 

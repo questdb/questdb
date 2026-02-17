@@ -22,7 +22,6 @@
  *
  ******************************************************************************/
 
-
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
@@ -35,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
 public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGroupByFunction implements UnaryFunction, GroupByFunction {
+    private final int[] indices = new int[2];
 
     public PercentileContDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         super(configuration, arg, percentileFunc, percentilePos);
@@ -68,7 +68,8 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
 
         // Need to select both adjacent indices for interpolation
         // Use quickSelectMultiple for efficiency
-        int[] indices = new int[]{lowerIndex, upperIndex};
+        indices[0] = lowerIndex;
+        indices[1] = upperIndex;
         listA.quickSelectMultiple(0, size - 1, indices, 0, 2);
 
         // Perform linear interpolation between the two adjacent values
@@ -83,6 +84,7 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
         return "percentile_cont";
     }
 
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("percentile_cont(").val(arg).val(')');
     }

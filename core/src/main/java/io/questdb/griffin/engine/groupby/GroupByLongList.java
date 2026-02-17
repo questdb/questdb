@@ -42,6 +42,7 @@ import io.questdb.std.Vect;
  */
 public class GroupByLongList {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
+    private static final int INSERTION_SORT_THRESHOLD = 47;
     private static final int MIN_INITIAL_CAPACITY = 2;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
@@ -72,12 +73,12 @@ public class GroupByLongList {
     }
 
     public long add(GroupByLongList that, int lo, int hi) {
-        final int this_size = size();
-        final int that_size = hi - lo;
-        final int final_size = this_size + that_size;
-        checkCapacity(final_size);
-        Vect.memcpy(appendAddress(), that.addressOf(lo), that_size);
-        setSize(final_size);
+        final int thisSize = size();
+        final int thatSize = hi - lo;
+        final int finalSize = thisSize + thatSize;
+        checkCapacity(finalSize);
+        Vect.memcpy(appendAddress(), that.addressOf(lo), thatSize * 8L);
+        setSize(finalSize);
         return ptr();
     }
 
@@ -159,6 +160,13 @@ public class GroupByLongList {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET) : 0;
     }
 
+    public void sort() {
+        int size = size();
+        if (size > 1) {
+            sort(0, size - 1, true);
+        }
+    }
+
     public void sortAsUnsigned() {
         Vect.sortULongAscInPlace(ptr() + HEADER_SIZE, size());
     }
@@ -173,6 +181,225 @@ public class GroupByLongList {
 
     private void setValueAt(long index, long value) {
         Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + 8L * index, value);
+    }
+
+    private void sort(int left, int right, boolean leftmost) {
+        int length = right - left + 1;
+
+        if (length < INSERTION_SORT_THRESHOLD) {
+            if (leftmost) {
+                for (int i = left, j = i; i < right; j = ++i) {
+                    long ai = getQuick(i + 1);
+                    while (ai < getQuick(j)) {
+                        setValueAt(j + 1, getQuick(j));
+                        if (j-- == left) {
+                            break;
+                        }
+                    }
+                    setValueAt(j + 1, ai);
+                }
+            } else {
+                do {
+                    if (left >= right) {
+                        return;
+                    }
+                } while (getQuick(++left) >= getQuick(left - 1));
+
+                for (int k = left; ++left <= right; k = ++left) {
+                    long a1 = getQuick(k), a2 = getQuick(left);
+                    if (a1 < a2) {
+                        a2 = a1;
+                        a1 = getQuick(left);
+                    }
+                    while (a1 < getQuick(--k)) {
+                        setValueAt(k + 2, getQuick(k));
+                    }
+                    setValueAt(++k + 1, a1);
+                    while (a2 < getQuick(--k)) {
+                        setValueAt(k + 1, getQuick(k));
+                    }
+                    setValueAt(k + 1, a2);
+                }
+                long last = getQuick(right);
+                while (last < getQuick(--right)) {
+                    setValueAt(right + 1, getQuick(right));
+                }
+                setValueAt(right + 1, last);
+            }
+            return;
+        }
+
+        int seventh = (length >> 3) + (length >> 6) + 1;
+
+        int e3 = (left + right) >>> 1;
+        int e2 = e3 - seventh;
+        int e1 = e2 - seventh;
+        int e4 = e3 + seventh;
+        int e5 = e4 + seventh;
+
+        if (getQuick(e2) < getQuick(e1)) {
+            swap(e2, e1);
+        }
+        if (getQuick(e3) < getQuick(e2)) {
+            long t = getQuick(e3);
+            setValueAt(e3, getQuick(e2));
+            setValueAt(e2, t);
+            if (t < getQuick(e1)) {
+                setValueAt(e2, getQuick(e1));
+                setValueAt(e1, t);
+            }
+        }
+        if (getQuick(e4) < getQuick(e3)) {
+            long t = getQuick(e4);
+            setValueAt(e4, getQuick(e3));
+            setValueAt(e3, t);
+            if (t < getQuick(e2)) {
+                setValueAt(e3, getQuick(e2));
+                setValueAt(e2, t);
+                if (t < getQuick(e1)) {
+                    setValueAt(e2, getQuick(e1));
+                    setValueAt(e1, t);
+                }
+            }
+        }
+        if (getQuick(e5) < getQuick(e4)) {
+            long t = getQuick(e5);
+            setValueAt(e5, getQuick(e4));
+            setValueAt(e4, t);
+            if (t < getQuick(e3)) {
+                setValueAt(e4, getQuick(e3));
+                setValueAt(e3, t);
+                if (t < getQuick(e2)) {
+                    setValueAt(e3, getQuick(e2));
+                    setValueAt(e2, t);
+                    if (t < getQuick(e1)) {
+                        setValueAt(e2, getQuick(e1));
+                        setValueAt(e1, t);
+                    }
+                }
+            }
+        }
+
+        int less = left;
+        int great = right;
+
+        if (getQuick(e1) != getQuick(e2) && getQuick(e2) != getQuick(e3) && getQuick(e3) != getQuick(e4) && getQuick(e4) != getQuick(e5)) {
+            long pivot1 = getQuick(e2);
+            long pivot2 = getQuick(e4);
+
+            setValueAt(e2, getQuick(left));
+            setValueAt(e4, getQuick(right));
+
+            //noinspection StatementWithEmptyBody
+            while (getQuick(++less) < pivot1) ;
+            //noinspection StatementWithEmptyBody
+            while (getQuick(--great) > pivot2) ;
+
+            outer:
+            for (int k = less - 1; ++k <= great; ) {
+                long ak = getQuick(k);
+                if (ak < pivot1) {
+                    setValueAt(k, getQuick(less));
+                    setValueAt(less, ak);
+                    ++less;
+                } else if (ak > pivot2) {
+                    while (getQuick(great) > pivot2) {
+                        if (great-- == k) {
+                            break outer;
+                        }
+                    }
+                    if (getQuick(great) < pivot1) {
+                        setValueAt(k, getQuick(less));
+                        setValueAt(less, getQuick(great));
+                        ++less;
+                    } else {
+                        setValueAt(k, getQuick(great));
+                    }
+                    setValueAt(great, ak);
+                    --great;
+                }
+            }
+
+            setValueAt(left, getQuick(less - 1));
+            setValueAt(less - 1, pivot1);
+            setValueAt(right, getQuick(great + 1));
+            setValueAt(great + 1, pivot2);
+
+            sort(left, less - 2, leftmost);
+            sort(great + 2, right, false);
+
+            if (less < e1 && e5 < great) {
+                while (getQuick(less) == pivot1) {
+                    ++less;
+                }
+                while (getQuick(great) == pivot2) {
+                    --great;
+                }
+
+                outer:
+                for (int k = less - 1; ++k <= great; ) {
+                    long ak = getQuick(k);
+                    if (ak == pivot1) {
+                        setValueAt(k, getQuick(less));
+                        setValueAt(less, ak);
+                        ++less;
+                    } else if (ak == pivot2) {
+                        while (getQuick(great) == pivot2) {
+                            if (great-- == k) {
+                                break outer;
+                            }
+                        }
+                        if (getQuick(great) == pivot1) {
+                            setValueAt(k, getQuick(less));
+                            setValueAt(less, getQuick(great));
+                            ++less;
+                        } else {
+                            setValueAt(k, getQuick(great));
+                        }
+                        setValueAt(great, ak);
+                        --great;
+                    }
+                }
+            }
+
+            sort(less, great, false);
+        } else {
+            long pivot = getQuick(e3);
+
+            for (int k = less; k <= great; ++k) {
+                if (getQuick(k) == pivot) {
+                    continue;
+                }
+                long ak = getQuick(k);
+                if (ak < pivot) {
+                    setValueAt(k, getQuick(less));
+                    setValueAt(less, ak);
+                    ++less;
+                } else {
+                    while (getQuick(great) > pivot) {
+                        --great;
+                    }
+                    if (getQuick(great) < pivot) {
+                        setValueAt(k, getQuick(less));
+                        setValueAt(less, getQuick(great));
+                        ++less;
+                    } else {
+                        setValueAt(k, getQuick(great));
+                    }
+                    setValueAt(great, ak);
+                    --great;
+                }
+            }
+
+            sort(left, less - 1, leftmost);
+            sort(great + 1, right, false);
+        }
+    }
+
+    private void swap(int a, int b) {
+        long tmp = getQuick(a);
+        setValueAt(a, getQuick(b));
+        setValueAt(b, tmp);
     }
 
     private long valueAt(long index) {

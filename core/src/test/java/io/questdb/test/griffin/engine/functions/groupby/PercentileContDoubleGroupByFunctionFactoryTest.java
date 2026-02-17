@@ -90,10 +90,10 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void test0thPercentileDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertSql(
                     "percentile_cont\n1.0\n",
-                    "select percentile_cont(x, 0) from test"
+                    "SELECT percentile_cont(x, 0) FROM test"
             );
         });
     }
@@ -101,10 +101,10 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void test100thPercentileDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertSql(
                     "percentile_cont\n100.0\n",
-                    "select percentile_cont(x, 1.0) from test"
+                    "SELECT percentile_cont(x, 1.0) FROM test"
             );
         });
     }
@@ -112,11 +112,11 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void test25thPercentileInterpolation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.0), (2.0), (3.0), (4.0)");
             assertSql(
                     "percentile_cont\n1.75\n",
-                    "select percentile_cont(x, 0.25) from test"
+                    "SELECT percentile_cont(x, 0.25) FROM test"
             );
         });
     }
@@ -124,10 +124,10 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void test50thPercentileDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertSql(
                     "percentile_cont\n50.5\n",
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -135,10 +135,10 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void test50thPercentileFloatValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as float) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS FLOAT) x FROM long_sequence(100))");
             assertSql(
                     "percentile_cont\n50.5\n",
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -146,10 +146,10 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void test50thPercentileWithPrecision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(1000))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(1000))");
             assertSql(
                     "percentile_cont\n500.5\n",
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -157,14 +157,14 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void test75thPercentileInterpolation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.0), (2.0), (3.0), (4.0)");
             assertSql(
                     """
                             percentile_cont
                             3.25
                             """,
-                    "select percentile_cont(x, 0.75) from test"
+                    "SELECT percentile_cont(x, 0.75) FROM test"
             );
         });
     }
@@ -172,14 +172,14 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testCompareDiscVsCont() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (2.0), (3.0), (4.0), (5.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.0), (2.0), (3.0), (4.0), (5.0)");
             assertSql(
                     """
                             percentile_cont\tpercentile_disc
                             3.0\t3.0
                             """,
-                    "select percentile_cont(x, 0.5), percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5), percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -187,8 +187,8 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testCompareDiscVsContInterpolation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.0), (2.0), (3.0), (4.0)");
             // For 4 values (indices 0-3):
             // percentile_cont(0.5): position = 0.5 * 3 = 1.5, interpolates between index 1 (2.0) and 2 (3.0) = 2.5
             // percentile_disc(0.5): ceil(4 * 0.5) - 1 = 1, returns value at index 1 = 2.0
@@ -197,7 +197,7 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
                             percentile_cont\tpercentile_disc
                             2.5\t2.0
                             """,
-                    "select percentile_cont(x, 0.5), percentile_disc(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5), percentile_disc(x, 0.5) FROM test"
             );
         });
     }
@@ -205,11 +205,11 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testInterpolationWithTwoValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (10.0), (20.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (10.0), (20.0)");
             assertSql(
                     "percentile_cont\n15.0\n",
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -217,7 +217,7 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testInvalidPercentile1() throws Exception {
         assertException(
-                "select percentile_cont(x::double, 1.1) from long_sequence(1)",
+                "SELECT percentile_cont(x::DOUBLE, 1.1) FROM long_sequence(1)",
                 34,
                 "invalid percentile"
         );
@@ -226,7 +226,7 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testInvalidPercentile2() throws Exception {
         assertException(
-                "select percentile_cont(x::double, -1.1) from long_sequence(1)",
+                "SELECT percentile_cont(x::DOUBLE, -1.1) FROM long_sequence(1)",
                 34,
                 "invalid percentile"
         );
@@ -235,11 +235,11 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testNegativeOnePercentile() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile = minimum)
             assertSql(
                     "percentile_cont\n1.0\n",
-                    "select percentile_cont(x, -1.0) from test"
+                    "SELECT percentile_cont(x, -1.0) FROM test"
             );
         });
     }
@@ -247,12 +247,12 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testNegativePercentile() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             // -0.95 should be equivalent to 1 - 0.95 = 0.05 (5th percentile)
             // position = 0.05 * (100 - 1) = 4.95, interpolating between indices 4 and 5 (values 5 and 6)
             assertSql(
                     "percentile_cont\n5.950000000000005\n",
-                    "select percentile_cont(x, -0.95) from test"
+                    "SELECT percentile_cont(x, -0.95) FROM test"
             );
         });
     }
@@ -260,11 +260,11 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testNegativePercentileEqualsPositive() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             // -0.5 should be equivalent to 1 - 0.5 = 0.5
             assertSql(
                     "percentile_cont\n50.5\n",
-                    "select percentile_cont(x, -0.5) from test"
+                    "SELECT percentile_cont(x, -0.5) FROM test"
             );
         });
     }
@@ -272,14 +272,14 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (-1.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.0), (-1.0)");
             assertSql(
                     """
                             percentile_cont
                             0.0
                             """,
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -287,14 +287,14 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testPercentileAllNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x long)");
-            execute("insert into test values (null), (null), (null)");
+            execute("CREATE TABLE test (x LONG)");
+            execute("INSERT INTO test VALUES (null), (null), (null)");
             assertSql(
                     """
                             percentile_cont
                             null
                             """,
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -302,10 +302,10 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testPercentileAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (select 5.0 x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
             assertSql(
                     "percentile_cont\n5.0\n",
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -313,8 +313,8 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testPercentileContGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+            execute("CREATE TABLE test AS (" +
+                    "SELECT x % 2 AS category, cast(x AS DOUBLE) AS value FROM long_sequence(10)" +
                     ")");
             assertSql(
                     """
@@ -322,7 +322,7 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
                             0\t6.0
                             1\t5.0
                             """,
-                    "select category, percentile_cont(value, 0.5) from test group by category order by category"
+                    "SELECT category, percentile_cont(value, 0.5) FROM test GROUP BY category ORDER BY category"
             );
         });
     }
@@ -330,8 +330,8 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testPercentileContGroupByWithInterpolation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test as (" +
-                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+            execute("CREATE TABLE test AS (" +
+                    "SELECT x % 2 AS category, cast(x AS DOUBLE) AS value FROM long_sequence(10)" +
                     ")");
             // cat=0: 2, 4, 6, 8, 10 → 75th percentile position = 0.75 * 4 = 3.0 → index 3 → 8.0
             // cat=1: 1, 3, 5, 7, 9 → 75th percentile position = 0.75 * 4 = 3.0 → index 3 → 7.0
@@ -341,7 +341,7 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
                             0\t8.0
                             1\t7.0
                             """,
-                    "select category, percentile_cont(value, 0.75) from test group by category order by category"
+                    "SELECT category, percentile_cont(value, 0.75) FROM test GROUP BY category ORDER BY category"
             );
         });
     }
@@ -349,13 +349,13 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testPercentileEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
+            execute("CREATE TABLE test (x DOUBLE)");
             assertSql(
                     """
                             percentile_cont
                             null
                             """,
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -363,14 +363,14 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testPercentileSomeNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (null), (null), (null)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.0), (null), (null), (null)");
             assertSql(
                     """
                             percentile_cont
                             1.0
                             """,
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -379,10 +379,10 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     public void testPercentileWithPercentileBindVariable() throws Exception {
         bindVariableService.setDouble(0, 0.5);
         assertMemoryLeak(() -> {
-            execute("create table test as (select 5.0 x from long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
             assertSql(
                     "percentile_cont\n5.0\n",
-                    "select percentile_cont(x, $1) from test"
+                    "SELECT percentile_cont(x, $1) FROM test"
             );
         });
     }
@@ -390,11 +390,11 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testSingleValue() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (42.0)");
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (42.0)");
             assertSql(
                     "percentile_cont\n42.0\n",
-                    "select percentile_cont(x, 0.5) from test"
+                    "SELECT percentile_cont(x, 0.5) FROM test"
             );
         });
     }
@@ -408,7 +408,7 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
                             percentile_cont
                             268.20624999999984
                             """,
-                    "select percentile_cont(value, 0.95) from tx_traffic");
+                    "SELECT percentile_cont(value, 0.95) FROM tx_traffic");
         });
     }
 
