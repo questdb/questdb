@@ -113,7 +113,7 @@ public final class TimestampSamplerFactory {
         int k = findIntervalEndIndex(cs, position, "sample");
         assert cs.length() > k;
 
-        long n = parseInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
+        long n = parseInterval(cs, k, position, "sample", Numbers.LONG_NULL, '?');
         return getInstance(driver, n, cs.charAt(k), position + k);
     }
 
@@ -130,23 +130,23 @@ public final class TimestampSamplerFactory {
      * @return parsed interval value
      * @throws SqlException when input string is invalid
      */
-    public static long parseInterval(CharSequence cs, int intervalEnd, int position, String kind, int maxValue, char unit) throws SqlException {
+    public static long parseInterval(CharSequence cs, int intervalEnd, int position, String kind, long maxValue, char unit) throws SqlException {
         if (intervalEnd == 0) {
             // 'SAMPLE BY m' is the same as 'SAMPLE BY 1m' etc.
             return 1;
         }
         try {
-            int n = Numbers.parseInt(cs, 0, intervalEnd);
+            long n = Numbers.parseLong(cs, 0, intervalEnd);
             if (n == 0) {
                 throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
             }
-            if (maxValue != Numbers.INT_NULL && n > maxValue) {
+            if (maxValue != Numbers.LONG_NULL && n > maxValue) {
                 throw SqlException.$(position, kind).put(" value too high for given units [value=").put(cs).put(", maximum=").put(maxValue).put(unit).put(']');
             }
             return n;
         } catch (NumericException e) {
             SqlException ex = SqlException.$(position, "invalid ").put(kind).put(" value [value=").put(cs);
-            if (maxValue != Numbers.INT_NULL) {
+            if (maxValue != Numbers.LONG_NULL) {
                 ex.put(", maximum=").put(maxValue).put(unit);
             }
             ex.put(']');
