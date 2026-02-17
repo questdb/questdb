@@ -3513,8 +3513,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     if (columnTypeB != columnTypeA
                             && !(isSymbolOrStringOrVarchar(columnTypeB) && isSymbolOrStringOrVarchar(columnTypeA))
-                            && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))
-                    ) {
+                            && !(isTimestamp(columnTypeB) && isTimestamp(columnTypeA))) {
                         throw SqlException.$(asOfJoinContext.aNodes.getQuick(k).position, "join column type mismatch");
                     }
 
@@ -3684,6 +3683,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterMetadata
             );
 
+            // Transfer ownership of filter resources to atom constructor.
+            // Null locals to prevent double-free if the constructor throws
+            // (the atom's own try/catch calls close() which frees these).
+            final CompiledFilter compiledFilter0 = compiledFilter;
+            final MemoryCARW bindVarMemory0 = bindVarMemory;
+            final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
+            final Function filter0 = filter;
+            compiledFilter = null;
+            bindVarMemory = null;
+            bindVarFunctions = null;
+            filter = null;
+
             // Choose async factory based on whether there are GROUP BY keys
             if (keyTypesCopy.getColumnCount() == 0) {
                 // Non-keyed GROUP BY: produces a single output row
@@ -3719,10 +3730,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveSymbolKeyColumnIndices,
                         columnSources,
                         columnIndices,
-                        compiledFilter,
-                        bindVarMemory,
-                        bindVarFunctions,
-                        filter,
+                        compiledFilter0,
+                        bindVarMemory0,
+                        bindVarFunctions0,
+                        filter0,
                         perWorkerFilters,
                         workerCount
                 );
@@ -3767,10 +3778,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     groupByColumnFilter,
                     columnSources,
                     columnIndices,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    filter,
+                    compiledFilter0,
+                    bindVarMemory0,
+                    bindVarFunctions0,
+                    filter0,
                     perWorkerFilters,
                     workerCount
             );

@@ -159,39 +159,21 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         this.sequenceRowCount = offsets.size();
         this.horizonJoinSymbolTableSource = new HorizonJoinSymbolTableSource(columnSources, columnIndexes);
 
-        // Filter resources
+        // Filter resources (ownership transferred from caller)
         this.compiledFilter = compiledFilter;
         this.bindVarMemory = bindVarMemory;
         this.bindVarFunctions = bindVarFunctions;
         this.ownerFilter = ownerFilter;
         this.perWorkerFilters = perWorkerFilters;
 
-        // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types)
-        if (masterAsOfJoinMapSinkClass != null || slaveAsOfJoinMapSinkClass != null) {
-            this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                    masterAsOfJoinMapSinkClass,
-                    masterAsOfJoinColumnTypes,
-                    masterAsOfJoinColumnFilter,
-                    null,
-                    null,
-                    asOfWriteSymbolAsString,
-                    asOfWriteStringAsVarcharMaster,
-                    writeTimestampAsNanosMaster
-            );
-            this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                    slaveAsOfJoinMapSinkClass,
-                    slaveAsOfJoinColumnTypes,
-                    slaveAsOfJoinColumnFilter,
-                    null,
-                    null,
-                    asOfWriteSymbolAsString,
-                    asOfWriteStringAsVarcharSlave,
-                    writeTimestampAsNanosSlave
-            );
-            this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(slotCount);
-            this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
-                perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
+        // Group by functions (ownership transferred from caller)
+        this.ownerGroupByFunctions = ownerGroupByFunctions;
+        this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+
+        try {
+            // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types)
+            if (masterAsOfJoinMapSinkClass != null || slaveAsOfJoinMapSinkClass != null) {
+                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(
                         masterAsOfJoinMapSinkClass,
                         masterAsOfJoinColumnTypes,
                         masterAsOfJoinColumnFilter,
@@ -200,8 +182,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                         asOfWriteSymbolAsString,
                         asOfWriteStringAsVarcharMaster,
                         writeTimestampAsNanosMaster
-                ));
-                perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
+                );
+                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
                         slaveAsOfJoinMapSinkClass,
                         slaveAsOfJoinColumnTypes,
                         slaveAsOfJoinColumnFilter,
@@ -210,103 +192,127 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                         asOfWriteSymbolAsString,
                         asOfWriteStringAsVarcharSlave,
                         writeTimestampAsNanosSlave
-                ));
+                );
+                this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(slotCount);
+                this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
+                            masterAsOfJoinMapSinkClass,
+                            masterAsOfJoinColumnTypes,
+                            masterAsOfJoinColumnFilter,
+                            null,
+                            null,
+                            asOfWriteSymbolAsString,
+                            asOfWriteStringAsVarcharMaster,
+                            writeTimestampAsNanosMaster
+                    ));
+                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
+                            slaveAsOfJoinMapSinkClass,
+                            slaveAsOfJoinColumnTypes,
+                            slaveAsOfJoinColumnFilter,
+                            null,
+                            null,
+                            asOfWriteSymbolAsString,
+                            asOfWriteStringAsVarcharSlave,
+                            writeTimestampAsNanosSlave
+                    ));
+                }
+            } else {
+                this.ownerMasterAsOfJoinMapSink = null;
+                this.ownerSlaveAsOfJoinMapSink = null;
+                this.perWorkerMasterAsOfJoinMapSinks = null;
+                this.perWorkerSlaveAsOfJoinMapSinks = null;
             }
-        } else {
-            this.ownerMasterAsOfJoinMapSink = null;
-            this.ownerSlaveAsOfJoinMapSink = null;
-            this.perWorkerMasterAsOfJoinMapSinks = null;
-            this.perWorkerSlaveAsOfJoinMapSinks = null;
-        }
 
-        // Timestamp scale factor for cross-resolution support (1 if same type, otherwise scale to nanos)
-        this.masterTimestampScale = masterTimestampScale;
+            // Timestamp scale factor for cross-resolution support (1 if same type, otherwise scale to nanos)
+            this.masterTimestampScale = masterTimestampScale;
 
-        // Per-worker locks
-        this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            // Per-worker locks
+            this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-        // Create time frame cursors from slave factory - one per worker + owner
-        final long lookahead = configuration.getSqlAsOfJoinLookAhead();
-        this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
-        this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale);
-        this.perWorkerSlaveTimeFrameCursors = new ObjList<>(slotCount);
-        this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
-        for (int i = 0; i < slotCount; i++) {
-            perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
-            perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale));
-        }
-
-        // Per-worker ASOF maps and SingleRecordSink targets for key comparison
-        if (asOfJoinKeyTypes != null) {
-            this.perWorkerAsOfJoinMaps = new ObjList<>(slotCount);
-            final SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
+            // Create time frame cursors from slave factory - one per worker + owner
+            final long lookahead = configuration.getSqlAsOfJoinLookAhead();
+            this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
+            this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale);
+            this.perWorkerSlaveTimeFrameCursors = new ObjList<>(slotCount);
+            this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes));
+                perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
+                perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale));
             }
-            this.ownerAsOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
-        } else {
-            this.perWorkerAsOfJoinMaps = null;
-            this.ownerAsOfJoinMap = null;
-        }
 
-        // Per-worker symbol translating records for integer-based symbol key comparison
-        if (masterSymbolKeyColumnIndices != null) {
-            this.ownerSymbolTranslatingRecord = new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
-            this.perWorkerSymbolTranslatingRecords = new ObjList<>(slotCount);
+            // Per-worker ASOF maps and SingleRecordSink targets for key comparison
+            if (asOfJoinKeyTypes != null) {
+                this.perWorkerAsOfJoinMaps = new ObjList<>(slotCount);
+                final SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes));
+                }
+                this.ownerAsOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
+            } else {
+                this.perWorkerAsOfJoinMaps = null;
+                this.ownerAsOfJoinMap = null;
+            }
+
+            // Per-worker symbol translating records for integer-based symbol key comparison
+            if (masterSymbolKeyColumnIndices != null) {
+                this.ownerSymbolTranslatingRecord = new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices);
+                this.perWorkerSymbolTranslatingRecords = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices));
+                }
+            } else {
+                this.ownerSymbolTranslatingRecord = null;
+                this.perWorkerSymbolTranslatingRecords = null;
+            }
+
+            // Group by updaters
+            final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
+            this.ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
+            this.perWorkerFunctionUpdaters = new ObjList<>(slotCount);
+            if (perWorkerGroupByFunctions != null) {
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerFunctionUpdaters.add(GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
+                }
+            } else {
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerFunctionUpdaters.add(ownerFunctionUpdater);
+                }
+            }
+
+            // Allocators
+            this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
+            if (perWorkerGroupByFunctions != null) {
+                this.perWorkerAllocators = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    perWorkerAllocators.add(allocator);
+                    GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
+                }
+            } else {
+                perWorkerAllocators = null;
+            }
+
+            // Per-worker combined records
+            this.ownerCombinedRecord = new HorizonJoinRecord();
+            ownerCombinedRecord.init(columnSources, columnIndexes);
+            this.perWorkerCombinedRecords = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSymbolTranslatingRecords.add(new SymbolTranslatingRecord(masterColumnCount, masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices));
+                HorizonJoinRecord record = new HorizonJoinRecord();
+                record.init(columnSources, columnIndexes);
+                perWorkerCombinedRecords.add(record);
             }
-        } else {
-            this.ownerSymbolTranslatingRecord = null;
-            this.perWorkerSymbolTranslatingRecords = null;
-        }
 
-        // Group by functions and updaters
-        this.ownerGroupByFunctions = ownerGroupByFunctions;
-        this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
-
-        final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
-        this.ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
-        this.perWorkerFunctionUpdaters = new ObjList<>(slotCount);
-        if (perWorkerGroupByFunctions != null) {
+            // Per-worker horizon timestamp iterators for sorted processing
+            this.ownerHorizonIterator = new AsyncHorizonTimestampIterator(offsets);
+            this.perWorkerHorizonIterators = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerFunctionUpdaters.add(GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
+                perWorkerHorizonIterators.add(new AsyncHorizonTimestampIterator(offsets));
             }
-        } else {
-            for (int i = 0; i < slotCount; i++) {
-                perWorkerFunctionUpdaters.add(ownerFunctionUpdater);
-            }
-        }
-
-        // Allocators
-        this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
-        GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
-        if (perWorkerGroupByFunctions != null) {
-            this.perWorkerAllocators = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
-                GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
-                perWorkerAllocators.add(allocator);
-                GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
-            }
-        } else {
-            perWorkerAllocators = null;
-        }
-
-        // Per-worker combined records
-        this.ownerCombinedRecord = new HorizonJoinRecord();
-        ownerCombinedRecord.init(columnSources, columnIndexes);
-        this.perWorkerCombinedRecords = new ObjList<>(slotCount);
-        for (int i = 0; i < slotCount; i++) {
-            HorizonJoinRecord record = new HorizonJoinRecord();
-            record.init(columnSources, columnIndexes);
-            perWorkerCombinedRecords.add(record);
-        }
-
-        // Per-worker horizon timestamp iterators for sorted processing
-        this.ownerHorizonIterator = new AsyncHorizonTimestampIterator(offsets);
-        this.perWorkerHorizonIterators = new ObjList<>(slotCount);
-        for (int i = 0; i < slotCount; i++) {
-            perWorkerHorizonIterators.add(new AsyncHorizonTimestampIterator(offsets));
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
