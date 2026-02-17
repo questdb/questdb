@@ -30,6 +30,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.histogram.org.HdrHistogram.GroupByHistogram;
 import io.questdb.std.histogram.org.HdrHistogram.Histogram;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -604,6 +605,53 @@ public class GroupByHistogramTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRecordValueFuzz() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            Histogram oracle = new Histogram(3);
+            GroupByHistogram offHeap = new GroupByHistogram(3);
+            offHeap.setAllocator(allocator);
+
+            for (int i = 0; i < 10_000; i++) {
+                long value = rnd.nextLong(1_000_000_000L) + 1;
+                oracle.recordValue(value);
+                offHeap.recordValue(value);
+            }
+
+            assertHistogramsEqual(oracle, offHeap);
+        }
+    }
+
+    @Test
+    public void testMergeFuzz() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+            Histogram oracleDest = new Histogram(3);
+            GroupByHistogram offHeapDest = new GroupByHistogram(3);
+            offHeapDest.setAllocator(allocator);
+
+            for (int h = 0; h < 5; h++) {
+                Histogram oracleSrc = new Histogram(3);
+                GroupByHistogram offHeapSrc = new GroupByHistogram(3);
+                offHeapSrc.setAllocator(allocator);
+
+                int count = rnd.nextInt(2000) + 100;
+                for (int i = 0; i < count; i++) {
+                    long value = rnd.nextLong(1_000_000_000L) + 1;
+                    oracleSrc.recordValue(value);
+                    offHeapSrc.recordValue(value);
+                }
+
+                oracleDest.add(oracleSrc);
+                offHeapDest.merge(offHeapSrc);
+                offHeapSrc.clear();
+            }
+
+            assertHistogramsEqual(oracleDest, offHeapDest);
+        }
+    }
+
+    @Test
     public void testRepointingAfterResize() {
         try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
             GroupByHistogram h1 = new GroupByHistogram(3);
@@ -646,6 +694,19 @@ public class GroupByHistogramTest extends AbstractCairoTest {
 
             h3.recordValue(500);
             Assert.assertEquals(5, h3.getTotalCount());
+        }
+    }
+
+    private void assertHistogramsEqual(Histogram oracle, GroupByHistogram offHeap) {
+        Assert.assertEquals(oracle.getTotalCount(), offHeap.getTotalCount());
+        Assert.assertEquals(oracle.getMinValue(), offHeap.getMinValue());
+        Assert.assertEquals(oracle.getMaxValue(), offHeap.getMaxValue());
+        Assert.assertEquals(oracle.getMean(), offHeap.getMean(), 0.0);
+        Assert.assertEquals(oracle.getStdDeviation(), offHeap.getStdDeviation(), 0.0);
+
+        double[] percentiles = {50.0, 75.0, 90.0, 95.0, 99.0, 99.9};
+        for (double p : percentiles) {
+            Assert.assertEquals(oracle.getValueAtPercentile(p), offHeap.getValueAtPercentile(p));
         }
     }
 }
