@@ -147,14 +147,6 @@ public class GroupByHistogram implements Mutable {
         allocatedSize = 0;
     }
 
-    public GroupByHistogram copy() {
-        throw new UnsupportedOperationException();
-    }
-
-    public GroupByHistogram copyCorrectedForCoordinatedOmission(long expectedIntervalBetweenValueSamples) {
-        throw new UnsupportedOperationException();
-    }
-
     // See Histogram.getCountAtIndex(int) at lines 209-211
     public long getCountAtIndex(int index) {
         if (ptr == 0) {
@@ -221,14 +213,6 @@ public class GroupByHistogram implements Mutable {
             long totalCount = Unsafe.getUnsafe().getLong(ptr);
             Unsafe.getUnsafe().putLong(ptr, totalCount + value);
         }
-    }
-
-    // Histogram.getCountAtNormalizedIndex(int) at lines 250-252
-    long getCountAtNormalizedIndex(int index) {
-        if (ptr == 0) {
-            return 0;
-        }
-        return Unsafe.getUnsafe().getLong(ptr + headerSize + ((long) index << 3));
     }
 
     // Histogram.getNormalizingIndexOffset() at lines 255-257
@@ -322,28 +306,6 @@ public class GroupByHistogram implements Mutable {
         long gapStart = ptr + headerSize + (oldNormalizedZeroIndex * 8L);
         long gapSize = countsDelta * 8L;
         Vect.memset(gapStart, gapSize, 0);
-    }
-
-    // Histogram.setCountAtIndex(int, long) at lines 289-291
-    void setCountAtIndex(int index, long value) {
-        checkBounds(index);
-        ensureCapacity();
-        int normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
-        Unsafe.getUnsafe().putLong(ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3), value);
-    }
-
-    // Histogram.setCountAtNormalizedIndex(int, long) at lines 294-296
-    void setCountAtNormalizedIndex(int index, long value) {
-        checkBounds(index);
-        ensureCapacity();
-        Unsafe.getUnsafe().putLong(ptr + headerSize + ((long) index << 3), value);
-    }
-
-    // Histogram.setNormalizingIndexOffset(int) at lines 299-301
-    void setNormalizingIndexOffset(int offset) {
-        if (ptr != 0) {
-            Unsafe.getUnsafe().putInt(ptr + normalizingIndexOffsetPosition, offset);
-        }
     }
 
     // Histogram.setTotalCount(long) at lines 304-306
@@ -565,10 +527,6 @@ public class GroupByHistogram implements Mutable {
         return bucketBaseIndex + offsetInBucket;
     }
 
-    private boolean isAutoResize() {
-        return autoResize;
-    }
-
     public void setAutoResize(boolean autoResize) {
         this.autoResize = autoResize;
     }
@@ -623,7 +581,7 @@ public class GroupByHistogram implements Mutable {
     public void add(final GroupByHistogram otherHistogram) throws CairoException {
         long highestRecordableValue = highestEquivalentValue(valueFromIndex(countsArrayLength - 1));
         if (highestRecordableValue < otherHistogram.getMaxValue()) {
-            if (!isAutoResize()) {
+            if (!autoResize) {
                 throw CairoException.nonCritical().put(
                         "The other histogram includes values that do not fit in this histogram's range.");
             }
