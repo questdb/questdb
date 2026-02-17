@@ -2134,7 +2134,7 @@ public class SqlOptimiser implements Mutable {
                     continue;
                 }
                 // Check if GROUP BY has a table prefix that SELECT doesn't have
-                int dotPos = Chars.indexOf(gNode.token, '.');
+                int dotPos = Chars.indexOfLastUnquoted(gNode.token, '.');
                 if (dotPos >= 0) {
                     CharSequence suffix = gNode.token.subSequence(dotPos + 1, gNode.token.length());
                     if (Chars.equalsIgnoreCase(suffix, sNode.token)) {
@@ -2142,7 +2142,7 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
                 // Check if SELECT has a table prefix that GROUP BY doesn't have
-                dotPos = Chars.indexOf(sNode.token, '.');
+                dotPos = Chars.indexOfLastUnquoted(sNode.token, '.');
                 if (dotPos >= 0) {
                     CharSequence suffix = sNode.token.subSequence(dotPos + 1, sNode.token.length());
                     if (Chars.equalsIgnoreCase(suffix, gNode.token)) {
