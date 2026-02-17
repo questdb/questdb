@@ -50,6 +50,7 @@ public class HorizonJoinRecord implements Record {
     public static final int SOURCE_MASTER = 0;
     public static final int SOURCE_SEQUENCE = 1;
     public static final int SOURCE_SLAVE = 2;
+
     private final BorrowedArray nullArray = new BorrowedArray();
     private int[] columnIndices;
     private int[] columnSources;
