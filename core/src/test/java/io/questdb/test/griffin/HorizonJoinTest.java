@@ -695,24 +695,6 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHorizonJoinUnknownHorizonColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
-
-            assertExceptionNoLeakCheck(
-                    "SELECT h.typo, avg(p.price) " +
-                            "FROM trades AS t " +
-                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                            "GROUP BY h.typo",
-                    7,
-                    "Invalid column: h.typo"
-            );
-        });
-    }
-
-    @Test
     public void testHorizonJoinNotKeyedAllColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -1525,6 +1507,70 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinTypeMismatchLongVsSymbol() throws Exception {
         assertHorizonJoinTypeMismatch("LONG", "SYMBOL");
+    }
+
+    @Test
+    public void testHorizonJoinUnknownHorizonColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT h.typo, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                            "GROUP BY h.typo",
+                    7,
+                    "Invalid column: h.typo"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinUnqualifiedTimestamp() throws Exception {
+        // Unqualified 'timestamp' should resolve to the horizon pseudo-table,
+        // same as 'offset' does.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            // Use unqualified 'offset' and 'timestamp' — both should resolve
+            // to the horizon pseudo-table columns
+            String sql = "SELECT offset / " + getSecondsDivisor() + " AS sec_offs, timestamp, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                    "GROUP BY offset, timestamp " +
+                    "ORDER BY sec_offs";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\ttimestamp\tavg
+                            0\t1970-01-01T00:00:01.000000Z\t20.0
+                            1\t1970-01-01T00:00:02.000000Z\t20.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test

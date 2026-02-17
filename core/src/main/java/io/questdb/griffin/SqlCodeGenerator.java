@@ -845,6 +845,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 columnIndices[i] = 0;
                 continue;
             }
+            if (Chars.equalsIgnoreCase(fullName, "timestamp")) {
+                columnSources[i] = HorizonJoinRecord.SOURCE_SEQUENCE;
+                columnIndices[i] = 1;
+                continue;
+            }
             int idx = slaveMetadata.getColumnIndexQuiet(fullName);
             if (idx >= 0) {
                 columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
