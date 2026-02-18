@@ -29,6 +29,9 @@ always consider what the behavior should be when something is NULL. Be careful
 to distinguish NULL as a sentinel value for "not initialized yet" vs. an actual
 NULL value.
 
+When choosing a name for a boolean variable, field or method, always use the
+is... prefix.
+
 ### Tests
 
 - write all tests using assertMemoryLeak()

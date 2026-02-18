@@ -67,7 +67,6 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private @Nullable PageFrameCursor pageFrameCursor;
     private int parquetVersion;
     private boolean rawArrayEncoding;
-    private @Nullable RecordCursorFactory rfc;
     private int rowGroupSize;
     private boolean statisticsEnabled;
     private String tableName;
@@ -87,7 +86,6 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.now = 0;
         this.nowTimestampType = 0;
         this.createOp = Misc.free(createOp);
-        this.rfc = Misc.free(rfc);
         pageFrameCursor = null;
         writeCallback = null;
         metadata = null;
@@ -224,6 +222,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.writeCallback = writeCallback;
         this.now = now;
         this.nowTimestampType = nowTimestampType;
+    }
+
+    public void setWriteCallback(StreamWriteParquetCallBack writeCallback) {
+        this.writeCallback = writeCallback;
     }
 
     public void setUpStreamPartitionParquetExporter() {
@@ -439,6 +441,99 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     dataPageSize,
                     parquetVersion
             );
+        }
+
+        public void setUp(RecordMetadata adjustedMetadata) {
+            // Set enclosing class metadata for writeHybridFrame()/writePageFrame() access
+            metadata = adjustedMetadata;
+            columnNames.reopen();
+            columnMetadata.reopen();
+            columnData.reopen();
+
+            for (int i = 0, n = adjustedMetadata.getColumnCount(); i < n; i++) {
+                CharSequence columnName = adjustedMetadata.getColumnName(i);
+                final int startSize = columnNames.size();
+                columnNames.put(columnName);
+                columnMetadata.add(columnNames.size() - startSize);
+                final int columnType = adjustedMetadata.getColumnType(i);
+                columnMetadata.add((long) i << 32 | columnType);
+            }
+            streamWriter = createStreamingParquetWriter(
+                    Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
+                    adjustedMetadata.getColumnCount(),
+                    columnNames.ptr(),
+                    columnNames.size(),
+                    columnMetadata.getAddress(),
+                    adjustedMetadata.getTimestampIndex(),
+                    descending,
+                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                    statisticsEnabled,
+                    rawArrayEncoding,
+                    rowGroupSize,
+                    dataPageSize,
+                    parquetVersion
+            );
+        }
+
+        public void setUp(RecordMetadata adjustedMetadata, PageFrameCursor pfc, int[] baseColumnMap) {
+            // Set enclosing class metadata so writePageFrame() can access it
+            metadata = adjustedMetadata;
+            pageFrameCursor = pfc;
+            columnNames.reopen();
+            columnMetadata.reopen();
+            columnData.reopen();
+
+            for (int i = 0, n = adjustedMetadata.getColumnCount(); i < n; i++) {
+                CharSequence columnName = adjustedMetadata.getColumnName(i);
+                final int startSize = columnNames.size();
+                columnNames.put(columnName);
+                columnMetadata.add(columnNames.size() - startSize);
+                final int columnType = adjustedMetadata.getColumnType(i);
+
+                if (ColumnType.isSymbol(columnType) && baseColumnMap[i] >= 0) {
+                    // Pass-through SYMBOL: use symbol table from page frame cursor
+                    StaticSymbolTable symbolTable = pfc.getSymbolTable(baseColumnMap[i]);
+                    assert symbolTable != null;
+                    int symbolColumnType = columnType;
+                    if (!symbolTable.containsNullValue()) {
+                        symbolColumnType |= 1 << 31;
+                    }
+                    columnMetadata.add((long) i << 32 | symbolColumnType);
+                } else {
+                    columnMetadata.add((long) i << 32 | columnType);
+                }
+            }
+            streamWriter = createStreamingParquetWriter(
+                    Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
+                    adjustedMetadata.getColumnCount(),
+                    columnNames.ptr(),
+                    columnNames.size(),
+                    columnMetadata.getAddress(),
+                    adjustedMetadata.getTimestampIndex(),
+                    descending,
+                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                    statisticsEnabled,
+                    rawArrayEncoding,
+                    rowGroupSize,
+                    dataPageSize,
+                    parquetVersion
+            );
+        }
+
+        public void writeHybridFrame(DirectLongList prebuiltColumnData, long frameRowCount) throws Exception {
+            assert streamWriter != -1 && writeCallback != null;
+            long buffer = writeStreamingParquetChunk(streamWriter, prebuiltColumnData.getAddress(), frameRowCount);
+            while (buffer != 0) {
+                streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
+                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
+            }
+            totalRows += frameRowCount;
+            entry.setStreamingSendRowCount(totalRows);
+            streamExportCurrentPtr = 0;
+            streamExportCurrentSize = 0;
         }
 
         public void writePageFrame(PageFrameCursor frameCursor, PageFrame frame) throws Exception {

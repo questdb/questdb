@@ -31,18 +31,29 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -52,6 +63,9 @@ import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SQLSerialParquetExporter.class);
@@ -105,7 +119,16 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         boolean success = false;
 
         try {
+            if (createOp != null && createOp.getPartitionBy() == PartitionBy.NONE) {
+                // Single-file streaming export without temp table.
+                // Multi-partition exports (partition_by MONTH etc.) still use the temp table path.
+                processStreamingExport(createOp, entry, cairoEngine);
+                success = true;
+                return CopyExportRequestTask.Phase.SUCCESS;
+            }
+
             if (createOp != null) {
+                // Multi-partition export: create temp table and populate with data
                 insertSelectReporter.of(circuitBreaker, entry, task.getCopyID(), task.getTableName());
                 createOp.setCopyDataProgressReporter(insertSelectReporter);
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
@@ -125,7 +148,9 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             // we can lift file name from the task as CharSequence (without materializing it) because this task was
             // and always is assigned to this instance of the exporter
             final CharSequence fileName = task.getFileName() != null ? task.getFileName() : tableName;
-            tableToken = cairoEngine.verifyTableName(task.getTableName());
+            if (tableToken == null) {
+                tableToken = cairoEngine.verifyTableName(task.getTableName());
+            }
             if (createOp == null) {
                 sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
             }
@@ -269,7 +294,6 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                     }
                     copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 } catch (CairoException e) {
-                    // drop failure doesn't affect task continuation - log and proceed
                     LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
                     copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 } catch (Throwable e) {
@@ -290,6 +314,168 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             if (ff.mkdirs(path, mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
             }
+        }
+    }
+
+    private void processStreamingExport(
+            CreateTableOperation createOp,
+            CopyExportContext.ExportTaskEntry entry,
+            CairoEngine cairoEngine
+    ) throws SqlException {
+        CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.STREAM_SENDING_DATA;
+        entry.setPhase(phase);
+        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+
+        final CharSequence fileName = task.getFileName() != null ? task.getFileName() : task.getTableName();
+
+        // Set up temp file path
+        tempPath.trimTo(0).concat(copyExportRoot).concat("tmp_");
+        Numbers.appendHex(tempPath, task.getCopyID(), true);
+        createDirsOrFail(ff, tempPath.slash(), configuration.getMkDirMode());
+        int tempBaseDirLen = tempPath.size();
+        tempPath.concat("export.parquet");
+
+        long fd = ff.openRW(tempPath.$(), configuration.getWriterFileOpenOpts());
+        if (fd < 0) {
+            throw CopyExportException.instance(phase, ff.errno())
+                    .put("could not create temp parquet file [path=").put(tempPath).put(']');
+        }
+
+        LOG.info().$("starting streaming parquet export [id=").$hexPadded(task.getCopyID())
+                .$(", selectText=").$(createOp.getSelectText()).$(']').$();
+
+        long fileOffset = 0;
+        try (
+                SqlCompiler compiler = cairoEngine.getSqlCompiler();
+                RecordToColumnBuffers buffers = new RecordToColumnBuffers();
+                DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER)
+        ) {
+            // Save the circuit breaker's cancelled flag before compile, because
+            // QueryProgress.close() -> QueryRegistry.unregister() will set it to null
+            final AtomicBoolean savedCancelledFlag = circuitBreaker.getCancelledFlag();
+            CompiledQuery cc = compiler.compile(createOp.getSelectText(), sqlExecutionContext);
+            RecordCursorFactory factory = cc.getRecordCursorFactory();
+
+            try {
+                CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
+                // File-write callback
+                final long finalFd = fd;
+                final long[] fileOffsetHolder = {0};
+                CopyExportRequestTask.StreamWriteParquetCallBack writeCallback = (dataPtr, dataLen) -> {
+                    long written = ff.write(finalFd, dataPtr, dataLen, fileOffsetHolder[0]);
+                    if (written != dataLen) {
+                        throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, ff.errno())
+                                .put("failed to write parquet data to temp file");
+                    }
+                    fileOffsetHolder[0] += dataLen;
+                };
+                task.setWriteCallback(writeCallback);
+
+                // Unwrap QueryProgress to access the real factory
+                RecordCursorFactory unwrapped = factory instanceof QueryProgress qp ? qp.getBaseFactory() : factory;
+
+                if (unwrapped instanceof VirtualRecordCursorFactory vf
+                        && vf.getBaseFactory().supportsPageFrameCursor()
+                        && !RecordToColumnBuffers.hasComputedBinaryColumn(vf)) {
+                    // Path A: Page-frame-backed export
+                    LOG.info().$("taking page frame path, base=").$(vf.getBaseFactory().getClass().getName()).$();
+                    try (PageFrameCursor pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                        pfc.setStreamingMode(true);
+                        buffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
+                        RecordMetadata adjustedMeta = buffers.getAdjustedMetadata();
+                        exporter.setUp(adjustedMeta, pfc, buffers.getBaseColumnMap());
+
+                        PageFrame frame;
+                        while ((frame = pfc.next()) != null) {
+                            if (circuitBreaker.checkIfTripped()) {
+                                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                            }
+                            long rowCount = buffers.buildColumnDataFromPageFrame(pfc, frame, columnData);
+                            exporter.writeHybridFrame(columnData, rowCount);
+                        }
+
+                        exporter.finishExport();
+                        numOfFiles = 1;
+                    }
+                } else if (factory.supportsPageFrameCursor()) {
+                    // Direct page frame export (no virtual columns)
+                    try (PageFrameCursor pfc = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                        pfc.setStreamingMode(true);
+                        RecordMetadata meta = factory.getMetadata();
+                        int colCount = meta.getColumnCount();
+                        int[] identityMap = new int[colCount];
+                        for (int i = 0; i < colCount; i++) {
+                            identityMap[i] = i;
+                        }
+                        exporter.setUp(meta, pfc, identityMap);
+
+                        PageFrame frame;
+                        while ((frame = pfc.next()) != null) {
+                            if (circuitBreaker.checkIfTripped()) {
+                                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                            }
+                            exporter.writePageFrame(pfc, frame);
+                        }
+
+                        exporter.finishExport();
+                        numOfFiles = 1;
+                    }
+                } else {
+                    // Path B: Cursor-based export (no page frame backing)
+                    processCursorExport(factory, buffers, columnData, exporter, phase);
+                }
+            } finally {
+                Misc.free(factory);
+                // Restore cancelled flag nulled by QueryProgress.close() -> QueryRegistry.unregister()
+                circuitBreaker.setCancelledFlag(savedCancelledFlag);
+            }
+        } catch (CopyExportException e) {
+            throw e;
+        } catch (SqlException e) {
+            throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrorCode());
+        } catch (CairoException e) {
+            throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrno());
+        } catch (Throwable e) {
+            throw CopyExportException.instance(phase, e.getMessage(), -1);
+        } finally {
+            ff.close(fd);
+        }
+
+        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+
+        // Move temp file to export location
+        phase = CopyExportRequestTask.Phase.MOVE_FILES;
+        entry.setPhase(phase);
+        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        moveFile(fileName);
+        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+
+        LOG.info().$("streaming parquet export completed [id=").$hexPadded(task.getCopyID())
+                .$(", totalRows=").$(task.getStreamPartitionParquetExporter().getTotalRows()).$(']').$();
+    }
+
+    private void processCursorExport(
+            RecordCursorFactory factory,
+            RecordToColumnBuffers buffers,
+            DirectLongList columnData,
+            CopyExportRequestTask.StreamPartitionParquetExporter exporter,
+            CopyExportRequestTask.Phase phase
+    ) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            buffers.setUp(factory.getMetadata());
+            exporter.setUp(buffers.getAdjustedMetadata());
+
+            long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
+            long rowCount;
+            while ((rowCount = buffers.buildColumnDataFromCursor(cursor, columnData, batchSize)) > 0) {
+                if (circuitBreaker.checkIfTripped()) {
+                    throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                }
+                exporter.writeHybridFrame(columnData, rowCount);
+            }
+
+            exporter.finishExport();
+            numOfFiles = 1;
         }
     }
 

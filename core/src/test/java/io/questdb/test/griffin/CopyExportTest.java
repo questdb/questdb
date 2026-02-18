@@ -35,9 +35,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.LongHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
@@ -60,7 +58,6 @@ import java.util.HashSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertTrue;
 
@@ -68,9 +65,6 @@ import static org.junit.Assert.assertTrue;
 public class CopyExportTest extends AbstractCairoTest {
 
     static HashSet<Class<?>> exceptionTypesToCatch = new HashSet<>();
-
-    public CopyExportTest() {
-    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -464,40 +458,15 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyParquetFailsWithMmapErrorCleansTempTable() throws Exception {
-        final LongHashSet tempTableColumnFds = new LongHashSet();
-        final AtomicBoolean failed = new AtomicBoolean(false);
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean close(long fd) {
-                tempTableColumnFds.remove(fd);
-                return super.close(fd);
-            }
-
-            @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (tempTableColumnFds.contains(fd) && failed.compareAndSet(false, true)) {
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                long fd = super.openRW(name, opts);
-                if (Utf8s.containsAscii(name, File.separator + "copy.") && Utf8s.endsWithAscii(name, ".d")) {
-                    tempTableColumnFds.add(fd);
-                }
-                return fd;
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            execute("create table test_table (x int, y long, z string)");
-            execute("insert into test_table values (1, 100L, 'hello'), (2, 200L, 'world')");
+        // The streaming export path does not create a temp table, so mmap errors on temp table
+        // column files don't affect it. Verify the export succeeds and no temp table is created.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (x INT, y LONG, z STRING)");
+            execute("INSERT INTO test_table VALUES (1, 100, 'hello'), (2, 200, 'world')");
 
             CopyExportRunnable stmt = () ->
                     runAndFetchCopyExportID(
-                            "copy (select * from test_table) to 'mmap_fail_output' with format parquet",
+                            "COPY (SELECT * FROM test_table) TO 'mmap_fail_output' WITH FORMAT parquet",
                             sqlExecutionContext
                     );
 
@@ -506,20 +475,30 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertSql(
                                 """
                                         status
-                                        failed
+                                        finished
                                         """,
                                 "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
                         );
 
+                        // Verify no temp table was created
                         ObjHashSet<TableToken> bucket = new ObjHashSet<>();
                         engine.getTableTokens(bucket, false);
                         for (int i = 0, n = bucket.size(); i < n; i++) {
                             TableToken token = bucket.get(i);
                             Assert.assertFalse(
-                                    "temp table should have been cleaned up: " + token.getTableName(),
+                                    "temp table should not have been created: " + token.getTableName(),
                                     token.getTableName().startsWith("copy.")
                             );
                         }
+
+                        // Verify data is correct
+                        assertSql("""
+                                        x\ty\tz
+                                        1\t100\thello
+                                        2\t200\tworld
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "mmap_fail_output.parquet') ORDER BY x"
+                        );
                     });
 
             testCopyExport(stmt, test);
@@ -1162,6 +1141,284 @@ public class CopyExportTest extends AbstractCairoTest {
                                         """, "select * from read_parquet('" + exportRoot + File.separator + "output3" + ".parquet') order by id");
                             }
                     );
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithArithmeticExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x LONG, y DOUBLE, name STRING)");
+            execute("INSERT INTO t1 VALUES (10, 1.5, 'a'), (20, 2.5, 'b'), (30, 3.5, 'c')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT x + 1 AS x_plus, y * 2 AS y_doubled, name FROM t1) TO 'arith_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "arith_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x_plus\ty_doubled\tname
+                                        11\t3.0\ta
+                                        21\t5.0\tb
+                                        31\t7.0\tc
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "arith_output.parquet') ORDER BY x_plus"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithCastExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x LONG, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (100, 1.5, '2024-01-01T00:00:00.000000Z'),
+                    (200, 2.5, '2024-01-02T00:00:00.000000Z'),
+                    (300, 3.5, '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT x::INT AS x_int, y::FLOAT AS y_float, ts FROM t1) TO 'cast_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "cast_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x_int\ty_float\tts
+                                        100\t1.5\t2024-01-01T00:00:00.000000Z
+                                        200\t2.5\t2024-01-02T00:00:00.000000Z
+                                        300\t3.5\t2024-01-03T00:00:00.000000Z
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "cast_output.parquet') ORDER BY x_int"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithComputedAndPassthroughColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x INT, y LONG, name STRING, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 100, 'alpha', '2024-01-01T00:00:00.000000Z'),
+                    (2, 200, 'beta', '2024-01-02T00:00:00.000000Z'),
+                    (3, 300, 'gamma', '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT x, x + y AS combined, name, ts FROM t1) TO 'mixed_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "mixed_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x\tcombined\tname\tts
+                                        1\t101\talpha\t2024-01-01T00:00:00.000000Z
+                                        2\t202\tbeta\t2024-01-02T00:00:00.000000Z
+                                        3\t303\tgamma\t2024-01-03T00:00:00.000000Z
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "mixed_output.parquet') ORDER BY x"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithComputedNullValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x INT, y DOUBLE, name STRING)");
+            execute("INSERT INTO t1 VALUES (1, 1.5, 'a'), (NULL, NULL, NULL), (3, 3.5, 'c')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT x::LONG AS x_long, y::FLOAT AS y_float, name FROM t1) TO 'null_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "null_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x_long\ty_float\tname
+                                        null\tnull\t
+                                        1\t1.5\ta
+                                        3\t3.5\tc
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "null_output.parquet') ORDER BY x_long"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithComputedSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x INT, name STRING)");
+            execute("INSERT INTO t1 VALUES (1, 'hello'), (2, 'world'), (3, 'test')");
+
+            // Cast STRING to SYMBOL - this creates a computed SYMBOL column
+            // which should be exported as STRING in Parquet
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT x, name::SYMBOL AS sym_name FROM t1) TO 'comp_sym_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "comp_sym_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x\tsym_name
+                                        1\thello
+                                        2\tworld
+                                        3\ttest
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "comp_sym_output.parquet') ORDER BY x"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithEmptyComputedResult() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x INT, y DOUBLE)");
+            execute("INSERT INTO t1 VALUES (1, 1.5), (2, 2.5), (3, 3.5)");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT x::LONG AS x_long, y FROM t1 WHERE x > 100) TO 'empty_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "empty_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        count
+                                        0
+                                        """,
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "empty_output.parquet')"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithFullMaterialization() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x INT, name STRING)");
+            execute("CREATE TABLE t2 (id INT, label STRING)");
+            execute("INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+            execute("INSERT INTO t2 VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma')");
+
+            // Cross join doesn't support page frame cursor, forces full materialization
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT t1.x, t2.label FROM t1 CROSS JOIN t2 WHERE t1.x = t2.id) TO 'full_mat_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "full_mat_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x\tlabel
+                                        1\talpha
+                                        2\tbeta
+                                        3\tgamma
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "full_mat_output.parquet') ORDER BY x"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithPassthroughSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (x INT, sym SYMBOL, name STRING)");
+            execute("INSERT INTO t1 VALUES (1, 'SYM_A', 'first'), (2, 'SYM_B', 'second'), (3, 'SYM_A', 'third')");
+
+            // Pass-through symbol: sym is a direct column reference, should be preserved
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT x, sym, name FROM t1) TO 'sym_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "sym_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x\tsym\tname
+                                        1\tSYM_A\tfirst
+                                        2\tSYM_B\tsecond
+                                        3\tSYM_A\tthird
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "sym_output.parquet') ORDER BY x"
+                        );
+                    });
 
             testCopyExport(stmt, test);
         });
@@ -1991,56 +2248,44 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testParquetExportWithLargeSymbolTable() throws Exception {
-        // Test export with 10k distinct symbols using a projection that forces temp table creation.
-        // This tests batch commits and symbol re-scaling during parquet export.
+        // Test export with 10k distinct symbols using a projection with computed columns.
+        // The streaming export path handles this without creating a temp table.
         final int symbolCount = 10_000;
-        AtomicInteger symbolCapacityScaled = new AtomicInteger(0);
-        setProperty(PropertyKey.CAIRO_PARQUET_EXPORT_BATCH_SIZE, 1000);
 
-        // Custom FilesFacade to intercept parquet file rename and verify symbol capacity
-        // This happens when the parquet export is complete, just before temp table cleanup
-        FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public int rename(LPSZ from, LPSZ to) {
-                // Check if we're renaming a parquet file (export completion)
-                if (Utf8s.containsAscii(to, "_meta.prev") && Utf8s.containsAscii(to, "dbRoot" + Files.SEPARATOR + "copy.")) {
-                    symbolCapacityScaled.incrementAndGet();
-                }
-                return super.rename(from, to);
-            }
-        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE symbol_test (ts TIMESTAMP, sym SYMBOL, value LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL;");
 
-        assertMemoryLeak(ff, () -> {
-            // Create table with symbol column
-            execute("create table symbol_test (ts timestamp, sym symbol, value long) timestamp(ts) partition by DAY BYPASS WAL;");
-
-            // Insert rows with 10k distinct symbol values
-            String insertQuery = "insert batch 10000 into symbol_test select " +
-                    "x::timestamp as ts, " +
-                    "'sym' || (x % " + symbolCount + ")::string as sym, " +
-                    "x as value " +
-                    "from long_sequence(" + symbolCount + ")";
+            String insertQuery = "INSERT BATCH 10000 INTO symbol_test SELECT " +
+                    "x::TIMESTAMP AS ts, " +
+                    "'sym' || (x % " + symbolCount + ")::STRING AS sym, " +
+                    "x AS value " +
+                    "FROM long_sequence(" + symbolCount + ")";
             execute(insertQuery);
             drainWalQueue();
 
-            // Export using a projection that keeps the symbol column but forces temp table usage
-            // The computed column (value + 1) forces the query to use a temp table
             CopyExportRunnable stmt = () ->
                     runAndFetchCopyExportID(
-                            "copy (select ts, sym, value + 1 as adjusted_value from symbol_test order by ts) to 'symbol_export' with format parquet",
+                            "COPY (SELECT ts, sym, value + 1 AS adjusted_value FROM symbol_test ORDER BY ts) TO 'symbol_export' WITH FORMAT parquet",
                             sqlExecutionContext
                     );
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "symbol_export.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
                         // Verify distinct symbol count matches
                         assertSql("count_distinct\n" + symbolCount + "\n",
-                                "select count(distinct sym) from read_parquet('" + exportRoot + File.separator + "symbol_export.parquet')");
-
-                        // Expect at least a few symbol re-scaling operations from default capacity 128 to 10,000.
-                        // In practice it's 6, but the scaling algorithm may become more aggressive in the future.
-                        Assert.assertTrue("Expected symbol capacity to be scaled up during export, but it was not. This suggests the batch commit and symbol re-scaling logic may not have been triggered.",
-                                symbolCapacityScaled.get() > 3);
+                                "SELECT count_distinct(sym) FROM read_parquet('" + exportRoot + File.separator + "symbol_export.parquet')");
+                        // Verify computed column
+                        assertSql("""
+                                        adjusted_value
+                                        2
+                                        """,
+                                "SELECT adjusted_value FROM read_parquet('" + exportRoot + File.separator + "symbol_export.parquet') WHERE sym = 'sym1'"
+                        );
                     });
 
             testCopyExport(stmt, test);

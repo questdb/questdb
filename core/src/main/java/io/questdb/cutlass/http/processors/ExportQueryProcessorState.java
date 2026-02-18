@@ -35,11 +35,13 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
+import io.questdb.cutlass.parquet.RecordToColumnBuffers;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
@@ -48,6 +50,14 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
+
+    enum ParquetExportMode {
+        CURSOR_BASED,
+        DIRECT_PAGE_FRAME,
+        PAGE_FRAME_BACKED,
+        TEMP_TABLE
+    }
+
     final StringSink fileName = new StringSink();
     final StringSink sqlText = new StringSink();
     private final CopyExportContext copyExportContext;
@@ -65,10 +75,13 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean descending;
     boolean firstParquetWriteCall = true;
     boolean hasNext;
+    DirectLongList materializerColumnData;
+    RecordToColumnBuffers materializer;
     RecordMetadata metadata;
     boolean noMeta = false;
     PageFrameCursor pageFrameCursor;
     long parquetFileOffset = 0;
+    ParquetExportMode parquetExportMode;
     boolean pausedQuery = false;
     int queryState;
     Record record;
@@ -98,8 +111,13 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         fileName.clear();
         rnd = null;
         record = null;
+        if (serialParquetExporter != null) {
+            serialParquetExporter.clearExportResources();
+        }
         cursor = Misc.free(cursor);
         pageFrameCursor = Misc.free(pageFrameCursor);
+        materializer = Misc.free(materializer);
+        materializerColumnData = Misc.free(materializerColumnData);
         firstParquetWriteCall = true;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
@@ -125,6 +143,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         releaseExportEntry();
         createParquetOp = Misc.free(createParquetOp);
         parquetExportTableName = null;
+        parquetExportMode = null;
         parquetFileOffset = 0;
         exportModel.clear();
         errorMessage.clear();
@@ -136,11 +155,16 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void close() {
+        if (serialParquetExporter != null) {
+            serialParquetExporter.clearExportResources();
+            serialParquetExporter = null;
+        }
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
         pageFrameCursor = Misc.free(pageFrameCursor);
+        materializer = Misc.free(materializer);
+        materializerColumnData = Misc.free(materializerColumnData);
         task = Misc.free(task);
-        serialParquetExporter = null;
         writeCallback.of(null, null);
     }
 

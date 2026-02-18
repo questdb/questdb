@@ -109,6 +109,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    public ObjList<Function> getFunctions() {
+        return functions;
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = base.getCursor(executionContext);
@@ -121,6 +125,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.close();
             throw th;
         }
+    }
+
+    public PriorityMetadata getPriorityMetadata() {
+        return priorityMetadata;
     }
 
     @Override
