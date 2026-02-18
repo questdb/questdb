@@ -40,7 +40,7 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onTableDropped(String tableName, boolean cascadePermissions) {
+    public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
     }
 
     @Override

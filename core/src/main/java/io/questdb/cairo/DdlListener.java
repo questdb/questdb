@@ -45,7 +45,7 @@ public interface DdlListener {
      */
     void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind);
 
-    void onTableDropped(String tableName, boolean cascadePermissions);
+    void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions);
 
     void onTableRenamed(TableToken oldTableToken, TableToken newTableToken);
 }

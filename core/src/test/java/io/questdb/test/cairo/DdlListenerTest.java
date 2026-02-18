@@ -68,7 +68,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
                     assertEquals("tab2", tableName);
                     Assert.assertFalse(cascadePermissions);
                     callbackCounters[3]++;
@@ -136,7 +136,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
                     assertEquals("mv", tableName);
                     Assert.assertFalse(cascadePermissions);
                     callbackCounters[3]++;
@@ -202,7 +202,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
                     assertEquals("v", tableName);
                     Assert.assertFalse(cascadePermissions);
                     callbackCounters[3]++;
@@ -265,7 +265,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
                     callbackCounters[3]++;
                 }
 
@@ -336,7 +336,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
                     callbackCounters[3]++;
                 }
 

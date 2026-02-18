@@ -45,7 +45,7 @@ public class GenericDropOperation implements Operation {
             compiler.execute(this, sqlExecutionContext);
         }
         if (!ifExists || tt != null) {
-            onTableDropped(engine.getDdlListener(entityName), entityName);
+            onTableOrViewOrMatViewDropped(engine.getDdlListener(entityName), entityName);
         }
         return future;
     }
@@ -76,7 +76,7 @@ public class GenericDropOperation implements Operation {
         return ifExists;
     }
 
-    protected void onTableDropped(DdlListener ddlListener, String tableName) {
-        ddlListener.onTableDropped(tableName, false);
+    protected void onTableOrViewOrMatViewDropped(DdlListener ddlListener, String tableName) {
+        ddlListener.onTableOrViewOrMatViewDropped(tableName, false);
     }
 }
