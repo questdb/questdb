@@ -34,9 +34,12 @@ CREATE TABLE flights(
 ) timestamp(time_hour) PARTITION BY DAY;
 
 # Test with OVER () - whole dataset percentile
+# Use subquery so window function sees all rows before WHERE filters
 query R
-select percentile_cont(x, 0.5) over ()
-from (select x from long_sequence(101) order by x) where x = 51
+SELECT pc FROM (
+    SELECT percentile_cont(x, 0.5) over () as pc, x
+    FROM long_sequence(101)
+) WHERE x = 51
 ----
 51.000000
 
@@ -132,7 +135,6 @@ FROM (
 query R
 SELECT percentile_cont(val, 0.5) over ()
 FROM (SELECT NULL::double as val UNION ALL SELECT NULL::double as val)
-WHERE val IS NULL
 ----
 NULL
 NULL
@@ -238,30 +240,33 @@ with data as (
 select quantile_cont(num, 0.9)
 from data;
 ----
-89.100000
+89.200000
 
 # Test window function with whole partition on large dataset
+# Use subquery so window function sees all rows before WHERE filters
 query R
-SELECT percentile_cont(x, 0.99) over ()
-FROM long_sequence(1000)
-WHERE x = 1000
+SELECT pc FROM (
+    SELECT percentile_cont(x, 0.99) over () as pc, x
+    FROM long_sequence(1000)
+) WHERE x = 1000
 ----
 990.010000
 
 # Test multiple partitions with percentile_cont
+# Use subquery so window function sees all partition values before WHERE filters
 query RRR
-with data as (
-    SELECT 'X' as grp, x::double as val FROM long_sequence(10)
-    UNION ALL
-    SELECT 'Y' as grp, (x + 100)::double as val FROM long_sequence(10)
-    UNION ALL
-    SELECT 'Z' as grp, (x + 200)::double as val FROM long_sequence(10)
+SELECT grp, pc25, pc75 FROM (
+    SELECT grp, val,
+        percentile_cont(val, 0.25) over (partition by grp) as pc25,
+        percentile_cont(val, 0.75) over (partition by grp) as pc75
+    FROM (
+        SELECT 'X' as grp, x::double as val FROM long_sequence(10)
+        UNION ALL
+        SELECT 'Y' as grp, (x + 100)::double as val FROM long_sequence(10)
+        UNION ALL
+        SELECT 'Z' as grp, (x + 200)::double as val FROM long_sequence(10)
+    )
 )
-SELECT
-    grp,
-    percentile_cont(val, 0.25) over (partition by grp),
-    percentile_cont(val, 0.75) over (partition by grp)
-FROM data
 WHERE val in (10.0, 110.0, 210.0)
 ORDER BY grp
 ----

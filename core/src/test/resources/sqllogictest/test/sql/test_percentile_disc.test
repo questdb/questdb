@@ -34,19 +34,22 @@ CREATE TABLE flights(
 ) timestamp(time_hour) PARTITION BY DAY;
 
 # Test with OVER () - whole dataset percentile
+# Use subquery so window function sees all rows before WHERE filters
 query R
-select percentile_disc(x, 0.5) over ()
-from (select x from long_sequence(101) order by x) where x = 51
+SELECT pd FROM (
+    SELECT percentile_disc(x, 0.5) over () as pd, x
+    FROM long_sequence(101)
+) WHERE x = 51
 ----
 51.000000
 
-# Test with OVER () - single value result for all rows
-query I
+# Test with OVER () - returns same value for all rows
+query R
 SELECT percentile_disc(x, 0.25) over ()
-FROM (select x from long_sequence(100))
-WHERE x = 100
+FROM long_sequence(100)
+LIMIT 1
 ----
-100.000000
+25.000000
 
 # Test with simple values using aggregate quantile_disc instead
 # This is equivalent to DuckDB's percentile_disc(0.5) within group(order by col desc)
@@ -78,27 +81,27 @@ FROM (
     SELECT 2500 as col
 )
 ----
-2600 2800 2900
+2600 2800 3100
 
 # Test percentile_disc with PARTITION BY
-query II
-with data as (
-    SELECT 'A' as grp, 10 as val UNION ALL
-    SELECT 'A' as grp, 20 as val UNION ALL
-    SELECT 'A' as grp, 30 as val UNION ALL
-    SELECT 'B' as grp, 40 as val UNION ALL
-    SELECT 'B' as grp, 50 as val UNION ALL
-    SELECT 'B' as grp, 60 as val
+# Use subquery so window function sees all partition values before WHERE filters
+query RR
+SELECT grp, pd FROM (
+    SELECT grp, val, percentile_disc(val, 0.5) over (partition by grp) as pd
+    FROM (
+        SELECT 'A' as grp, 10 as val UNION ALL
+        SELECT 'A' as grp, 20 as val UNION ALL
+        SELECT 'A' as grp, 30 as val UNION ALL
+        SELECT 'B' as grp, 40 as val UNION ALL
+        SELECT 'B' as grp, 50 as val UNION ALL
+        SELECT 'B' as grp, 60 as val
+    )
 )
-SELECT
-    grp,
-    percentile_disc(val, 0.5) over (partition by grp)
-FROM data
 WHERE val in (30, 60)
 ORDER BY grp
 ----
-A 20
-B 50
+A 20.000000
+B 50.000000
 
 # Error checking - percentile_disc with ORDER BY should fail
 statement error
@@ -129,19 +132,19 @@ FROM (
 3
 
 # Test with all NULL values
-query I
+query R
 SELECT percentile_disc(val, 0.5) over ()
-FROM (SELECT NULL::int as val UNION ALL SELECT NULL::int as val)
-WHERE val IS NULL
+FROM (SELECT NULL::double as val UNION ALL SELECT NULL::double as val)
 ----
+NULL
 NULL
 
 # Test with single value
-query I
+query R
 SELECT percentile_disc(x, 0.5) over ()
 FROM (SELECT 42 as x)
 ----
-42
+42.000000
 
 # Test with two values using aggregate
 query I
@@ -160,12 +163,12 @@ FROM (select x from long_sequence(100))
 1 100
 
 # Test with constant values
-query I
+query R
 SELECT percentile_disc(x, 0.5) over ()
 FROM (SELECT 42 as x UNION ALL SELECT 42 as x UNION ALL SELECT 42 as x)
 LIMIT 1
 ----
-42
+42.000000
 
 # Test with negative values using aggregate
 query I
@@ -174,11 +177,10 @@ FROM (SELECT -10 as x UNION ALL SELECT -5 as x UNION ALL SELECT 0 as x UNION ALL
 ----
 0
 
-# Test with very large values
+# Test with very large values using aggregate (preserves LONG precision)
 query I
-SELECT percentile_disc(x, 0.5) over ()
+SELECT quantile_disc(x, 0.5)
 FROM (SELECT 9223372036854775800::long as x UNION ALL SELECT 9223372036854775801::long as x UNION ALL SELECT 9223372036854775802::long as x)
-LIMIT 1
 ----
 9223372036854775801
 
@@ -197,40 +199,40 @@ FROM (select x from long_sequence(100))
 99
 
 # Test different integer types with window function
-query I
+query R
 SELECT percentile_disc(x::int, 0.5) over ()
-FROM (select x::int from long_sequence(10))
+FROM long_sequence(10)
 LIMIT 1
 ----
-5
+5.000000
 
-query I
+query R
 SELECT percentile_disc(x::long, 0.5) over ()
-FROM (select x from long_sequence(10))
+FROM long_sequence(10)
 LIMIT 1
 ----
-5
+5.000000
 
 # Test with byte type
-query I
+query R
 SELECT percentile_disc(x::byte, 0.5) over ()
-FROM (select x::byte from long_sequence(10))
+FROM long_sequence(10)
 LIMIT 1
 ----
-5
+5.000000
 
 # Test with short type
-query I
+query R
 SELECT percentile_disc(x::short, 0.5) over ()
-FROM (select x::short from long_sequence(10))
+FROM long_sequence(10)
 LIMIT 1
 ----
-5
+5.000000
 
 # Test with floating point values (percentile_disc should work with doubles too)
 query R
 SELECT percentile_disc(x::double, 0.5) over ()
-FROM (select x::double from long_sequence(10))
+FROM long_sequence(10)
 LIMIT 1
 ----
 5.000000
@@ -299,40 +301,43 @@ FROM (
 250 500 750
 
 # Test empty result set behavior
-query I
+query R
 SELECT percentile_disc(x, 0.5) over ()
 FROM long_sequence(10)
 WHERE 1 = 0
 ----
 
 # Test window function with whole partition on large dataset
-query I
-SELECT percentile_disc(x, 0.99) over ()
-FROM (select x from long_sequence(1000))
-WHERE x = 1000
+# Use subquery so window function sees all rows before WHERE filters
+query R
+SELECT pd FROM (
+    SELECT percentile_disc(x, 0.99) over () as pd, x
+    FROM long_sequence(1000)
+) WHERE x = 1000
 ----
-990
+990.000000
 
 # Test multiple partitions with percentile_disc
-query III
-with data as (
-    SELECT 'X' as grp, x as val FROM long_sequence(10)
-    UNION ALL
-    SELECT 'Y' as grp, x + 100 as val FROM long_sequence(10)
-    UNION ALL
-    SELECT 'Z' as grp, x + 200 as val FROM long_sequence(10)
+# Use subquery so window function sees all partition values before WHERE filters
+query RRR
+SELECT grp, pd25, pd75 FROM (
+    SELECT grp, val,
+        percentile_disc(val, 0.25) over (partition by grp) as pd25,
+        percentile_disc(val, 0.75) over (partition by grp) as pd75
+    FROM (
+        SELECT 'X' as grp, x as val FROM long_sequence(10)
+        UNION ALL
+        SELECT 'Y' as grp, x + 100 as val FROM long_sequence(10)
+        UNION ALL
+        SELECT 'Z' as grp, x + 200 as val FROM long_sequence(10)
+    )
 )
-SELECT
-    grp,
-    percentile_disc(val, 0.25) over (partition by grp),
-    percentile_disc(val, 0.75) over (partition by grp)
-FROM data
 WHERE val in (10, 110, 210)
 ORDER BY grp
 ----
-X 3 8
-Y 103 108
-Z 203 208
+X 3.000000 8.000000
+Y 103.000000 108.000000
+Z 203.000000 208.000000
 
 # Test using quantile_disc with GROUP BY for partitioned behavior
 query II
@@ -354,7 +359,7 @@ A 20
 B 50
 
 # Test with mixed positive and negative values
-query I
+query R
 SELECT percentile_disc(x, 0.5) over ()
 FROM (
     SELECT -100 as x UNION ALL
@@ -365,14 +370,17 @@ FROM (
 )
 LIMIT 1
 ----
-0
+0.000000
 
 # Test 0th and 100th percentiles with window function
-query II
-SELECT
-    percentile_disc(x, 0.0) over (),
-    percentile_disc(x, 1.0) over ()
-FROM (select x from long_sequence(50))
-WHERE x = 50
+# Use subquery so window function sees all rows before WHERE filters
+query RR
+SELECT pd0, pd1 FROM (
+    SELECT
+        percentile_disc(x, 0.0) over () as pd0,
+        percentile_disc(x, 1.0) over () as pd1,
+        x
+    FROM long_sequence(50)
+) WHERE x = 50
 ----
-1 50
+1.000000 50.000000

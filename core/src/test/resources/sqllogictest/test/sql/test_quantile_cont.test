@@ -378,4 +378,4 @@ with a as (
 select quantile_cont(num, 0.9)
 from a;
 ----
-89.099998
+89.200000

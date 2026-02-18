@@ -615,52 +615,63 @@ public class GroupByDoubleList {
      * @param to      end index (exclusive) in the indices array
      */
     public void quickSelectMultiple(int lo, int hi, int[] indices, int from, int to) {
-        if (from >= to || lo >= hi) {
-            return;
-        }
+        while (from < to && lo < hi) {
+            int pivotIndex = partition(lo, hi);
 
-        // Find pivot and partition
-        int pivotIndex = partition(lo, hi);
+            // Find which indices fall into which partition
+            int splitPoint = from;
+            while (splitPoint < to && indices[splitPoint] < pivotIndex) {
+                splitPoint++;
+            }
 
-        // Find which indices fall into which partition
-        int splitPoint = from;
-        while (splitPoint < to && indices[splitPoint] < pivotIndex) {
-            splitPoint++;
-        }
+            // Skip the pivot itself if it's one of our target indices
+            int afterPivot = splitPoint;
+            while (afterPivot < to && indices[afterPivot] == pivotIndex) {
+                afterPivot++;
+            }
 
-        // Recursively select in left partition (elements < pivot)
-        if (splitPoint > from) {
-            quickSelectMultiple(lo, pivotIndex - 1, indices, from, splitPoint);
-        }
+            boolean hasLeft = splitPoint > from;
+            boolean hasRight = afterPivot < to;
 
-        // Skip the pivot itself if it's one of our target indices
-        int afterPivot = splitPoint;
-        while (afterPivot < to && indices[afterPivot] == pivotIndex) {
-            afterPivot++;
-        }
-
-        // Recursively select in right partition (elements > pivot)
-        if (afterPivot < to) {
-            quickSelectMultiple(pivotIndex + 1, hi, indices, afterPivot, to);
+            if (hasLeft && hasRight) {
+                // Recurse on smaller side, iterate on larger to limit stack depth
+                if ((pivotIndex - lo) <= (hi - pivotIndex)) {
+                    quickSelectMultiple(lo, pivotIndex - 1, indices, from, splitPoint);
+                    lo = pivotIndex + 1;
+                    from = afterPivot;
+                } else {
+                    quickSelectMultiple(pivotIndex + 1, hi, indices, afterPivot, to);
+                    hi = pivotIndex - 1;
+                    to = splitPoint;
+                }
+            } else if (hasLeft) {
+                hi = pivotIndex - 1;
+                to = splitPoint;
+            } else if (hasRight) {
+                lo = pivotIndex + 1;
+                from = afterPivot;
+            } else {
+                break;
+            }
         }
     }
 
     /**
      * Internal QuickSelect implementation using the partition method.
+     * Iterative to avoid StackOverflowError on degenerate inputs (e.g. all-identical values).
      */
     private void quickSelectImpl(int lo, int hi, int k) {
-        if (lo >= hi) {
-            return;
-        }
+        while (lo < hi) {
+            int pivotIndex = partition(lo, hi);
 
-        int pivotIndex = partition(lo, hi);
-
-        if (k < pivotIndex) {
-            quickSelectImpl(lo, pivotIndex - 1, k);
-        } else if (k > pivotIndex) {
-            quickSelectImpl(pivotIndex + 1, hi, k);
+            if (k < pivotIndex) {
+                hi = pivotIndex - 1;
+            } else if (k > pivotIndex) {
+                lo = pivotIndex + 1;
+            } else {
+                break;
+            }
         }
-        // If k == pivotIndex, we're done - the element is in the correct position
     }
 
     /**
