@@ -19,7 +19,6 @@ use crate::parquet_read::slicer::{
     DataPageFixedSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer,
 };
 use crate::parquet_read::{ColumnChunkBuffers, ColumnChunkStats, RowGroupStatBuffers};
-use llvm_mca::{llvm_mca_begin, llvm_mca_end};
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -1257,7 +1256,6 @@ pub fn decode_page(
         (PhysicalType::Int32, logical_type, converted_type) => {
             match (page.encoding(), dict, logical_type, column_type.tag()) {
                 (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
-                    llvm_mca_begin!("decode_page_int32_byte_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1268,11 +1266,9 @@ pub fn decode_page(
                             nulls::BYTE,
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_int32_byte_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::GeoByte) => {
-                    llvm_mca_begin!("decode_page_int32_geobyte_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1283,11 +1279,9 @@ pub fn decode_page(
                             nulls::GEOHASH_BYTE,
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_int32_geobyte_plain");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
-                    llvm_mca_begin!("decode_page_int32_byte_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -1298,11 +1292,9 @@ pub fn decode_page(
                             nulls::BYTE,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_byte_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoByte) => {
-                    llvm_mca_begin!("decode_page_int32_geobyte_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -1313,7 +1305,6 @@ pub fn decode_page(
                             nulls::GEOHASH_BYTE,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_geobyte_delta");
                     Ok(())
                 }
                 (
@@ -1322,7 +1313,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Byte,
                 ) => {
-                    llvm_mca_begin!("decode_page_int32_byte_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -1336,7 +1326,6 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_byte_rledict");
                     Ok(())
                 }
                 (
@@ -1345,7 +1334,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoByte,
                 ) => {
-                    llvm_mca_begin!("decode_page_int32_geobyte_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -1359,11 +1347,9 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_geobyte_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-                    llvm_mca_begin!("decode_page_int32_short_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1374,11 +1360,9 @@ pub fn decode_page(
                             nulls::SHORT,
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_int32_short_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::GeoShort) => {
-                    llvm_mca_begin!("decode_page_int32_geoshort_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1389,11 +1373,9 @@ pub fn decode_page(
                             nulls::GEOHASH_SHORT,
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_int32_geoshort_plain");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-                    llvm_mca_begin!("decode_page_int32_short_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -1404,11 +1386,9 @@ pub fn decode_page(
                             nulls::SHORT,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_short_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoShort) => {
-                    llvm_mca_begin!("decode_page_int32_geoshort_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -1419,7 +1399,6 @@ pub fn decode_page(
                             nulls::GEOHASH_SHORT,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_geoshort_delta");
                     Ok(())
                 }
                 (
@@ -1428,7 +1407,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Short | ColumnTypeTag::Char,
                 ) => {
-                    llvm_mca_begin!("decode_page_int32_short_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -1442,7 +1420,6 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_short_rledict");
                     Ok(())
                 }
                 (
@@ -1451,7 +1428,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoShort,
                 ) => {
-                    llvm_mca_begin!("decode_page_int32_geoshort_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -1465,33 +1441,27 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_geoshort_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::Int) => {
-                    llvm_mca_begin!("decode_page_int32_int_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
                     )?;
-                    llvm_mca_end!("decode_page_int32_int_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
-                    llvm_mca_begin!("decode_page_int32_ipv4_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
                     )?;
-                    llvm_mca_end!("decode_page_int32_ipv4_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::GeoInt) => {
-                    llvm_mca_begin!("decode_page_int32_geoint_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1502,11 +1472,9 @@ pub fn decode_page(
                             nulls::GEOHASH_INT,
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_int32_geoint_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
-                    llvm_mca_begin!("decode_page_int32_date_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1518,11 +1486,9 @@ pub fn decode_page(
                             DayToMillisConverter::new(),
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_int32_date_plain");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int) => {
-                    llvm_mca_begin!("decode_page_int32_int_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -1533,11 +1499,9 @@ pub fn decode_page(
                             nulls::INT,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_int_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
-                    llvm_mca_begin!("decode_page_int32_ipv4_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -1548,11 +1512,9 @@ pub fn decode_page(
                             nulls::IPV4,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_ipv4_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoInt) => {
-                    llvm_mca_begin!("decode_page_int32_geoint_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -1563,7 +1525,6 @@ pub fn decode_page(
                             nulls::GEOHASH_INT,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_geoint_delta");
                     Ok(())
                 }
                 (
@@ -1572,7 +1533,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Int,
                 ) => {
-                    llvm_mca_begin!("decode_page_int32_int_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -1586,7 +1546,6 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_int_rledict");
                     Ok(())
                 }
                 (
@@ -1595,7 +1554,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::IPv4,
                 ) => {
-                    llvm_mca_begin!("decode_page_int32_ipv4_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -1609,7 +1567,6 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_ipv4_rledict");
                     Ok(())
                 }
                 (
@@ -1618,7 +1575,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoInt,
                 ) => {
-                    llvm_mca_begin!("decode_page_int32_geoint_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -1632,7 +1588,6 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int32_geoint_rledict");
                     Ok(())
                 }
                 (encoding, dict, logical_type, ColumnTypeTag::Double) => {
@@ -1646,7 +1601,6 @@ pub fn decode_page(
 
                     match (encoding, dict) {
                         (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                            llvm_mca_begin!("decode_page_int32_double_rledict");
                             let dict_decoder = ConvertablePrimitiveDictDecoder::new(
                                 dict_page,
                                 Int32ToDoubleConverter::new(scale),
@@ -1663,11 +1617,9 @@ pub fn decode_page(
                                     bufs,
                                 )?,
                             )?;
-                            llvm_mca_end!("decode_page_int32_double_rledict");
                             Ok(())
                         }
                         (Encoding::Plain, _) => {
-                            llvm_mca_begin!("decode_page_int32_double_plain");
                             decode_page0(
                                 page,
                                 row_lo,
@@ -1679,7 +1631,6 @@ pub fn decode_page(
                                     Int32ToDoubleConverter::new(scale),
                                 ),
                             )?;
-                            llvm_mca_end!("decode_page_int32_double_plain");
                             Ok(())
                         }
                         _ => Err(encoding_error),
@@ -1696,18 +1647,15 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
                 ) => {
-                    llvm_mca_begin!("decode_page_int64_long_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::LONG),
                     )?;
-                    llvm_mca_end!("decode_page_int64_long_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::GeoLong) => {
-                    llvm_mca_begin!("decode_page_int64_geolong_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1718,7 +1666,6 @@ pub fn decode_page(
                             nulls::GEOHASH_LONG,
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_int64_geolong_plain");
                     Ok(())
                 }
                 (
@@ -1727,7 +1674,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
                 ) => {
-                    llvm_mca_begin!("decode_page_int64_long_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -1738,11 +1684,9 @@ pub fn decode_page(
                             nulls::LONG,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int64_long_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoLong) => {
-                    llvm_mca_begin!("decode_page_int64_geolong_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -1753,7 +1697,6 @@ pub fn decode_page(
                             nulls::GEOHASH_LONG,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int64_geolong_delta");
                     Ok(())
                 }
                 (
@@ -1762,7 +1705,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
                 ) => {
-                    llvm_mca_begin!("decode_page_int64_long_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -1776,7 +1718,6 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int64_long_rledict");
                     Ok(())
                 }
                 (
@@ -1785,7 +1726,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoLong,
                 ) => {
-                    llvm_mca_begin!("decode_page_int64_geolong_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -1799,7 +1739,6 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int64_geolong_rledict");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -1808,7 +1747,6 @@ pub fn decode_page(
         (PhysicalType::FixedLenByteArray(16), Some(PrimitiveLogicalType::Uuid), _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Uuid) => {
-                    llvm_mca_begin!("decode_page_fixed16_uuid_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1820,7 +1758,6 @@ pub fn decode_page(
                             Int128ToUuidConverter::new(),
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_fixed16_uuid_plain");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -1829,7 +1766,6 @@ pub fn decode_page(
         (PhysicalType::FixedLenByteArray(16), _logical_type, _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long128) => {
-                    llvm_mca_begin!("decode_page_fixed16_long128_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1840,7 +1776,6 @@ pub fn decode_page(
                             Long128::NULL,
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_fixed16_long128_plain");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -1849,7 +1784,6 @@ pub fn decode_page(
         (PhysicalType::FixedLenByteArray(32), _logical_type, _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long256) => {
-                    llvm_mca_begin!("decode_page_fixed32_long256_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1860,7 +1794,6 @@ pub fn decode_page(
                             Long256::NULL,
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_fixed32_long256_plain");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -1871,7 +1804,6 @@ pub fn decode_page(
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::String) => {
-                    llvm_mca_begin!("decode_page_bytearray_string_deltalength");
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -1880,11 +1812,9 @@ pub fn decode_page(
                         row_hi,
                         &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_string_deltalength");
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Varchar) => {
-                    llvm_mca_begin!("decode_page_bytearray_varchar_deltalength");
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -1893,7 +1823,6 @@ pub fn decode_page(
                         row_hi,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_varchar_deltalength");
                     Ok(())
                 }
                 (
@@ -1901,7 +1830,6 @@ pub fn decode_page(
                     Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
-                    llvm_mca_begin!("decode_page_bytearray_varchar_rledict");
                     let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
@@ -1916,11 +1844,9 @@ pub fn decode_page(
                         row_hi,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_varchar_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, ColumnTypeTag::String) => {
-                    llvm_mca_begin!("decode_page_bytearray_string_plain");
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         page,
@@ -1928,11 +1854,9 @@ pub fn decode_page(
                         row_hi,
                         &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_string_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Varchar) => {
-                    llvm_mca_begin!("decode_page_bytearray_varchar_plain");
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         page,
@@ -1940,11 +1864,9 @@ pub fn decode_page(
                         row_hi,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_varchar_plain");
                     Ok(())
                 }
                 (Encoding::DeltaByteArray, _, ColumnTypeTag::Varchar) => {
-                    llvm_mca_begin!("decode_page_bytearray_varchar_deltabytearray");
                     let mut slicer =
                         DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -1953,11 +1875,9 @@ pub fn decode_page(
                         row_hi,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_varchar_deltabytearray");
                     Ok(())
                 }
                 (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
-                    llvm_mca_begin!("decode_page_bytearray_symbol_rledict");
                     if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
                         return Err(fmt_err!(
                             Unsupported,
@@ -1977,7 +1897,6 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_symbol_rledict");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -1987,7 +1906,6 @@ pub fn decode_page(
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::Plain, _, ColumnTypeTag::Binary) => {
-                    llvm_mca_begin!("decode_page_bytearray_binary_plain");
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         page,
@@ -1995,11 +1913,9 @@ pub fn decode_page(
                         row_hi,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_binary_plain");
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Binary) => {
-                    llvm_mca_begin!("decode_page_bytearray_binary_deltalength");
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -2008,7 +1924,6 @@ pub fn decode_page(
                         row_hi,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_binary_deltalength");
                     Ok(())
                 }
                 (
@@ -2016,7 +1931,6 @@ pub fn decode_page(
                     Some(dict_page),
                     ColumnTypeTag::Binary,
                 ) => {
-                    llvm_mca_begin!("decode_page_bytearray_binary_rledict");
                     let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
@@ -2031,11 +1945,9 @@ pub fn decode_page(
                         row_hi,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_binary_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Array) => {
-                    llvm_mca_begin!("decode_page_bytearray_array_plain");
                     // raw array encoding
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
@@ -2044,11 +1956,9 @@ pub fn decode_page(
                         row_hi,
                         &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_array_plain");
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Array) => {
-                    llvm_mca_begin!("decode_page_bytearray_array_deltalength");
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -2057,7 +1967,6 @@ pub fn decode_page(
                         row_hi,
                         &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
-                    llvm_mca_end!("decode_page_bytearray_array_deltalength");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -2067,7 +1976,6 @@ pub fn decode_page(
             // Int96 is used for nano timestamps
             match (page.encoding(), dict, logical_type, column_type.tag()) {
                 (Encoding::Plain, _, _, ColumnTypeTag::Timestamp) => {
-                    llvm_mca_begin!("decode_page_int96_timestamp_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2079,7 +1987,6 @@ pub fn decode_page(
                             Int96ToTimestampConverter::new(),
                         ),
                     )?;
-                    llvm_mca_end!("decode_page_int96_timestamp_plain");
                     Ok(())
                 }
                 (
@@ -2088,7 +1995,6 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Timestamp,
                 ) => {
-                    llvm_mca_begin!("decode_page_int96_timestamp_rledict");
                     let dict_decoder =
                         ConvertablePrimitiveDictDecoder::<
                             Int96Timestamp,
@@ -2107,7 +2013,6 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_int96_timestamp_rledict");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -2118,14 +2023,12 @@ pub fn decode_page(
                 bufs.aux_vec.clear();
                 bufs.aux_ptr = ptr::null_mut();
 
-                llvm_mca_begin!("decode_page_double_double_plain");
                 decode_page0(
                     page,
                     row_lo,
                     row_hi,
                     &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
                 )?;
-                llvm_mca_end!("decode_page_double_double_plain");
                 Ok(())
             }
             (
@@ -2136,7 +2039,6 @@ pub fn decode_page(
                 bufs.aux_vec.clear();
                 bufs.aux_ptr = ptr::null_mut();
 
-                llvm_mca_begin!("decode_page_double_double_rledict");
                 let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
                 decode_page0(
                     page,
@@ -2150,14 +2052,11 @@ pub fn decode_page(
                         bufs,
                     )?,
                 )?;
-                llvm_mca_end!("decode_page_double_double_rledict");
                 Ok(())
             }
             (Encoding::Plain, _, ColumnTypeTag::Array) => {
-                llvm_mca_begin!("decode_page_double_array_plain");
                 let mut slicer = DataPageFixedSlicer::<8>::new(values_buffer, row_count);
                 decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
-                llvm_mca_end!("decode_page_double_array_plain");
                 Ok(())
             }
             (
@@ -2165,7 +2064,6 @@ pub fn decode_page(
                 Some(dict_page),
                 ColumnTypeTag::Array,
             ) => {
-                llvm_mca_begin!("decode_page_double_array_rledict");
                 let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
                 let mut slicer = RleDictionarySlicer::try_new(
                     values_buffer,
@@ -2175,7 +2073,6 @@ pub fn decode_page(
                     &DOUBLE_NULL,
                 )?;
                 decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
-                llvm_mca_end!("decode_page_double_array_rledict");
                 Ok(())
             }
             _ => Err(encoding_error),
@@ -2192,7 +2089,6 @@ pub fn decode_page(
                     PhysicalType::Float,
                     ColumnTypeTag::Float,
                 ) => {
-                    llvm_mca_begin!("decode_page_float_float_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2206,40 +2102,33 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    llvm_mca_end!("decode_page_float_float_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Float) => {
-                    llvm_mca_begin!("decode_page_float_float_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
                     )?;
-                    llvm_mca_end!("decode_page_float_float_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-                    llvm_mca_begin!("decode_page_boolean_boolean_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainBooleanDecoder::new(values_buffer, row_hi, bufs, 0),
                     )?;
-                    llvm_mca_end!("decode_page_boolean_boolean_plain");
                     Ok(())
                 }
                 (Encoding::Rle, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-                    llvm_mca_begin!("decode_page_boolean_boolean_rle");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
                     )?;
-                    llvm_mca_end!("decode_page_boolean_boolean_rle");
                     Ok(())
                 }
                 _ => Err(encoding_error),
