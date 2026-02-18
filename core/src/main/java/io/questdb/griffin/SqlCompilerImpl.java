@@ -2270,6 +2270,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = expectToken(lexer, "'='");
                     if (tok.length() == 1 && tok.charAt(0) == '=') {
                         CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
+                        securityContext.authorizeAlterTableSetParam(tableToken);
                         alterTableSetParam(paramName, value, paramNamePosition, tableToken, tableNamePosition, tableMetadata.getTableId());
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");

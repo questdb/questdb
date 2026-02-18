@@ -107,6 +107,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableSetParam(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableSetType(TableToken tableToken) {
     }
 
