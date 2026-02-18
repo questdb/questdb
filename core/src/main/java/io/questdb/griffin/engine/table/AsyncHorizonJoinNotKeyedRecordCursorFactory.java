@@ -198,10 +198,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     workerCount
             );
 
-            this.cursor = new AsyncHorizonJoinNotKeyedRecordCursor(
-                    groupByFunctions,
-                    slaveFactory
-            );
+            this.cursor = new AsyncHorizonJoinNotKeyedRecordCursor(groupByFunctions, slaveFactory);
         } catch (Throwable th) {
             close();
             throw th;

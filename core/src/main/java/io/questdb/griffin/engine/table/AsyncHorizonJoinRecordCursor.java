@@ -24,9 +24,13 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.MessageBus;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
+import io.questdb.cairo.map.ShardedMapCursor;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -42,19 +46,27 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
 class AsyncHorizonJoinRecordCursor implements RecordCursor {
+    private final MessageBus messageBus;
+    private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker;
+    private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch();
+    private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
+    private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
     private final RecordCursorFactory slaveFactory;
     private final LongList slavePartitionCeilings = new LongList();
     private final LongList slavePartitionTimestamps = new LongList();
@@ -62,6 +74,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
     private final DirectIntList slaveTimeFramePartitionIndexes;
     private final LongList slaveTimeFrameRowCounts = new LongList();
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
     private boolean isDataMapBuilt;
@@ -71,11 +84,15 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private TablePageFrameCursor slaveFrameCursor;
 
     public AsyncHorizonJoinRecordCursor(
+            CairoEngine engine,
+            MessageBus messageBus,
             ObjList<Function> recordFunctions,
             RecordCursorFactory slaveFactory
     ) {
         try {
             this.isOpen = true;
+            this.messageBus = messageBus;
+            this.postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             this.recordFunctions = recordFunctions;
             this.slaveFactory = slaveFactory;
             this.recordA = new VirtualRecord(recordFunctions);
@@ -176,10 +193,26 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         frameSequence.dispatchAndAwait();
 
         final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
+        final GroupByShardingContext shardingCtx = atom.getShardingContext();
 
-        // Merge all per-worker maps into the owner map
-        final Map dataMap = atom.mergeOwnerMap();
-        mapCursor = dataMap.getCursor();
+        if (!atom.isSharded()) {
+            final Map dataMap = shardingCtx.mergeOwnerMap();
+            mapCursor = dataMap.getCursor();
+        } else {
+            final ObjList<Map> shards = shardingCtx.mergeShards(
+                    messageBus,
+                    frameSequence.getWorkStealingStrategy(),
+                    circuitBreaker,
+                    postAggregationCircuitBreaker,
+                    postAggregationDoneLatch,
+                    postAggregationStartedCounter
+            );
+            if (postAggregationCircuitBreaker.checkIfTripped()) {
+                throwTimeoutException();
+            }
+            shardedCursor.of(shards);
+            mapCursor = shardedCursor;
+        }
 
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
@@ -236,6 +269,14 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         }
     }
 
+    private void throwTimeoutException() {
+        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
+            throw CairoException.queryCancelled();
+        } else {
+            throw CairoException.queryTimedOut();
+        }
+    }
+
     void of(UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
         if (!isOpen) {
@@ -244,6 +285,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         }
         this.frameSequence = frameSequence;
         this.executionContext = executionContext;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
 
         // Get slave page frame cursor for time frame initialization
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);

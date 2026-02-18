@@ -39,14 +39,15 @@ import org.junit.Test;
 // This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
 // in CI frequently along with other fuzz tests.
 public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
+    private static final int MIN_PAGE_FRAME_MAX_ROWS = 100;
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
-    private static final int PAGE_FRAME_MAX_ROWS = 100;
-    private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
+    private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * MIN_PAGE_FRAME_MAX_ROWS;
     private final boolean convertToParquet;
     private final boolean enableParallelHorizonJoin;
+    private final Rnd rnd;
 
     public ParallelHorizonJoinFuzzTest() {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
+        this.rnd = TestUtils.generateRandom(LOG);
         this.enableParallelHorizonJoin = rnd.nextBoolean();
         this.convertToParquet = rnd.nextBoolean();
     }
@@ -54,13 +55,20 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
+        final int pageFrameMaxRows = MIN_PAGE_FRAME_MAX_ROWS + rnd.nextInt(10);
         // Async horizon join uses small page frames.
-        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, PAGE_FRAME_MAX_ROWS);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, pageFrameMaxRows);
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1 + rnd.nextInt(4));
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1 + rnd.nextInt(PAGE_FRAME_COUNT));
+        // Randomize the sharding threshold so that both sharded and non-sharded paths are exercised.
+        // Keyed tests produce ~500 group keys (100 symbols × 5 offsets), so a range of 1-1000
+        // gives roughly equal chances for both paths.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1 + rnd.nextInt(1000));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(enableParallelHorizonJoin));
         super.setUp();
     }
@@ -284,8 +292,8 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                                 """
                                         CREATE TABLE IF NOT EXISTS trades (
                                                 ts TIMESTAMP,
-                                                sym SYMBOL CAPACITY 2048,
-                                                side SYMBOL CAPACITY 4,
+                                                sym SYMBOL,
+                                                side SYMBOL,
                                                 price DOUBLE,
                                                 amount DOUBLE
                                         ) TIMESTAMP(ts) PARTITION BY HOUR;

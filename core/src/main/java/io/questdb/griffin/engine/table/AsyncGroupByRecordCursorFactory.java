@@ -132,7 +132,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
                     workerCount
             );
-            this.cursor = new AsyncGroupByRecordCursor(engine, recordFunctions, messageBus);
+            this.cursor = new AsyncGroupByRecordCursor(engine, messageBus, recordFunctions);
             this.workerCount = workerCount;
         } catch (Throwable th) {
             close();
@@ -213,10 +213,10 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         record.init(frameMemory);
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
+        final GroupByMapFragment fragment = atom.getFragment(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
-            fragment.resetLocalStats();
+            atom.resetLocalStats(slotId);
 
             if (atom.isSharded()) {
                 fragment.shard();
@@ -243,7 +243,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             DirectLongList rows,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.MapFragment fragment,
+            GroupByMapFragment fragment,
             RecordSink mapSink
     ) {
         final Map map = fragment.reopenMap();
@@ -267,7 +267,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             DirectLongList rows,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.MapFragment fragment,
+            GroupByMapFragment fragment,
             RecordSink mapSink
     ) {
         // The first map is used to write keys.
@@ -304,7 +304,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             long frameRowCount,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.MapFragment fragment,
+            GroupByMapFragment fragment,
             RecordSink mapSink
     ) {
         final Map map = fragment.reopenMap();
@@ -327,7 +327,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             long frameRowCount,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.MapFragment fragment,
+            GroupByMapFragment fragment,
             RecordSink mapSink
     ) {
         // The first map is used to write keys.
@@ -390,12 +390,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         rows.clear();
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final AsyncGroupByAtom.MapFragment fragment = atom.getFragment(slotId);
+        final GroupByMapFragment fragment = atom.getFragment(slotId);
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
-            fragment.resetLocalStats();
+            atom.resetLocalStats(slotId);
 
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);

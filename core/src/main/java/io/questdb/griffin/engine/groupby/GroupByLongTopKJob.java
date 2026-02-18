@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
@@ -76,7 +75,7 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
 
         final boolean owner = stealingAtom != null && stealingAtom == atom;
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, (ExecutionCircuitBreaker) circuitBreaker);
+            final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
             try {
                 if (circuitBreaker.checkIfTripped()) {
                     return;

@@ -208,6 +208,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             );
 
             this.cursor = new AsyncHorizonJoinRecordCursor(
+                    engine,
+                    messageBus,
                     recordFunctions,
                     slaveFactory
             );
@@ -260,17 +262,48 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     private static void aggregateRecord(
             HorizonJoinRecord horizonJoinRecord,
             long masterRowId,
-            Map partialMap,
+            GroupByMapFragment fragment,
             RecordSink groupByKeyCopier,
             GroupByFunctionsUpdater functionUpdater
     ) {
-        MapKey key = partialMap.withKey();
+        final Map map = fragment.reopenMap();
+        MapKey key = map.withKey();
         key.put(horizonJoinRecord, groupByKeyCopier);
         MapValue value = key.createValue();
         if (value.isNew()) {
             functionUpdater.updateNew(value, horizonJoinRecord, masterRowId);
         } else {
             functionUpdater.updateExisting(value, horizonJoinRecord, masterRowId);
+        }
+    }
+
+    private static void aggregateRecordSharded(
+            HorizonJoinRecord horizonJoinRecord,
+            long masterRowId,
+            GroupByMapFragment fragment,
+            RecordSink groupByKeyCopier,
+            GroupByFunctionsUpdater functionUpdater
+    ) {
+        final Map lookupShard = fragment.getShards().getQuick(0);
+        final MapKey lookupKey = lookupShard.withKey();
+        lookupKey.put(horizonJoinRecord, groupByKeyCopier);
+        lookupKey.commit();
+        final long hashCode = lookupKey.hash();
+
+        final Map shard = fragment.getShardMap(hashCode);
+        final MapKey shardKey;
+        if (shard != lookupShard) {
+            shardKey = shard.withKey();
+            shardKey.copyFrom(lookupKey);
+        } else {
+            shardKey = lookupKey;
+        }
+
+        MapValue shardValue = shardKey.createValue(hashCode);
+        if (shardValue.isNew()) {
+            functionUpdater.updateNew(shardValue, horizonJoinRecord, masterRowId);
+        } else {
+            functionUpdater.updateExisting(shardValue, horizonJoinRecord, masterRowId);
         }
     }
 
@@ -319,8 +352,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
         try {
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final Map partialMap = atom.getMap(slotId);
-            final RecordSink groupByKeyCopier = atom.getMapSink(slotId);
+            final GroupByMapFragment groupByMapFragment = atom.getFragment(slotId);
+            final RecordSink groupByMapSink = atom.getMapSink(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
             final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
             final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
@@ -376,19 +409,19 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processHorizonTimestamps(
+                    atom,
                     horizonIterator,
+                    slaveTimeFrameHelper,
+                    baseRowId,
                     record,
                     masterKeyRecord,
-                    baseRowId,
-                    atom,
-                    slaveTimeFrameHelper,
                     asOfJoinMap,
                     masterAsOfJoinMapSink,
                     slaveAsOfJoinMapSink,
                     slaveRecord,
                     horizonJoinRecord,
-                    partialMap,
-                    groupByKeyCopier,
+                    groupByMapFragment,
+                    groupByMapSink,
                     functionUpdater
             );
         } finally {
@@ -412,21 +445,28 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
      * Watermarks are tracked internally by the helper and reset via toTop().
      */
     private static void processHorizonTimestamps(
+            AsyncHorizonJoinAtom atom,
             AsyncHorizonTimestampIterator horizonIterator,
+            HorizonJoinTimeFrameHelper slaveTimeFrameHelper,
+            long baseRowId,
             PageFrameMemoryRecord masterRecord,
             Record masterKeyRecord,
-            long baseRowId,
-            AsyncHorizonJoinAtom atom,
-            HorizonJoinTimeFrameHelper slaveTimeFrameHelper,
             Map asOfJoinMap,
             RecordSink masterAsOfJoinMapSink,
             RecordSink slaveAsOfJoinMapSink,
             Record slaveRecord,
             HorizonJoinRecord horizonJoinRecord,
-            Map partialMap,
-            RecordSink groupByKeyCopier,
+            GroupByMapFragment groupByMapFragment,
+            RecordSink groupByMapSink,
             GroupByFunctionsUpdater functionUpdater
     ) {
+        atom.resetLocalStats(groupByMapFragment.slotId);
+
+        if (atom.isSharded()) {
+            groupByMapFragment.shard();
+        }
+
+        final boolean sharded = !groupByMapFragment.isNotSharded();
         final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
 
         // Reset helper state and clear the ASOF join map for this frame
@@ -508,8 +548,14 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                 matchedSlaveRecord = slaveRecord;
             }
             horizonJoinRecord.of(masterRecord, offset, horizonTs, matchedSlaveRecord);
-            aggregateRecord(horizonJoinRecord, masterRowId, partialMap, groupByKeyCopier, functionUpdater);
+            if (sharded) {
+                aggregateRecordSharded(horizonJoinRecord, masterRowId, groupByMapFragment, groupByMapSink, functionUpdater);
+            } else {
+                aggregateRecord(horizonJoinRecord, masterRowId, groupByMapFragment, groupByMapSink, functionUpdater);
+            }
         }
+
+        atom.maybeEnableSharding(groupByMapFragment);
     }
 
     /**
@@ -549,8 +595,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
         try {
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-            final Map partialMap = atom.getMap(slotId);
-            final RecordSink groupByKeyCopier = atom.getMapSink(slotId);
+            final GroupByMapFragment groupByMapFragment = atom.getFragment(slotId);
+            final RecordSink groupByMapSink = atom.getMapSink(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
             final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
 
@@ -570,19 +616,19 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processHorizonTimestamps(
+                    atom,
                     horizonIterator,
+                    slaveTimeFrameHelper,
+                    baseRowId,
                     record,
                     masterKeyRecord,
-                    baseRowId,
-                    atom,
-                    slaveTimeFrameHelper,
                     asOfJoinMap,
                     masterAsOfJoinMapSink,
                     slaveAsOfJoinMapSink,
                     slaveRecord,
                     horizonJoinRecord,
-                    partialMap,
-                    groupByKeyCopier,
+                    groupByMapFragment,
+                    groupByMapSink,
                     functionUpdater
             );
         } finally {

@@ -31,8 +31,6 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -59,16 +57,16 @@ import org.jetbrains.annotations.Nullable;
  * Atom for keyed HORIZON JOIN GROUP BY that uses Maps for aggregation.
  * <p>
  * This class extends {@link BaseAsyncHorizonJoinAtom} and adds:
- * - Per-worker aggregation Maps (key -> value)
+ * - Per-worker aggregation Maps (key -> value) via {@link GroupByShardingContext}
  * - Per-worker map sinks for populating map keys (supports expression keys)
+ * - Radix partitioning (sharding) for high-cardinality GROUP BY
  */
 public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
     private final ObjList<Function> ownerKeyFunctions;
-    private final Map ownerMap;
     private final RecordSink ownerMapSink;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final ObjList<RecordSink> perWorkerMapSinks;
-    private final ObjList<Map> perWorkerMaps;
+    private final GroupByShardingContext shardingCtx;
 
     public AsyncHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -195,29 +193,27 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 );
             }
 
-            // Per-worker aggregation maps
-            this.perWorkerMaps = new ObjList<>(workerCount);
-            for (int i = 0; i < workerCount; i++) {
-                perWorkerMaps.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
-            }
-            this.ownerMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            // Create sharding context with stored key/value types.
+            // Reuse function updaters and per-worker locks from the base class.
+            final ColumnTypes storedKeyTypes = new ArrayColumnTypes().addAll(keyTypes);
+            final ColumnTypes storedValueTypes = new ArrayColumnTypes().addAll(valueTypes);
+            this.shardingCtx = new GroupByShardingContext(
+                    configuration,
+                    storedKeyTypes,
+                    storedValueTypes,
+                    ownerFunctionUpdater,
+                    perWorkerFunctionUpdaters,
+                    perWorkerLocks,
+                    workerCount
+            );
         } catch (Throwable th) {
             close();
             throw th;
         }
     }
 
-    public Map getMap(int slotId) {
-        Map map;
-        if (slotId == -1) {
-            map = ownerMap;
-        } else {
-            map = perWorkerMaps.getQuick(slotId);
-        }
-        if (!map.isOpen()) {
-            map.reopen();
-        }
-        return map;
+    public GroupByMapFragment getFragment(int slotId) {
+        return shardingCtx.getFragment(slotId);
     }
 
     public RecordSink getMapSink(int slotId) {
@@ -225,6 +221,10 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             return ownerMapSink;
         }
         return perWorkerMapSinks.getQuick(slotId);
+    }
+
+    public GroupByShardingContext getShardingContext() {
+        return shardingCtx;
     }
 
     @Override
@@ -270,23 +270,25 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         }
     }
 
-    /**
-     * Merge all per-worker maps into the owner map.
-     */
-    public Map mergeOwnerMap() {
-        if (!ownerMap.isOpen()) {
-            ownerMap.reopen();
-        }
+    public boolean isSharded() {
+        return shardingCtx.isSharded();
+    }
 
-        for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
-            Map workerMap = perWorkerMaps.getQuick(i);
-            if (workerMap.isOpen() && workerMap.size() > 0) {
-                ownerMap.merge(workerMap, ownerFunctionUpdater);
-                workerMap.close();
-            }
-        }
+    public void maybeEnableSharding(GroupByMapFragment fragment) {
+        shardingCtx.maybeEnableSharding(fragment, getTotalFunctionCardinality(fragment.slotId));
+    }
 
-        return ownerMap;
+    @Override
+    public void reopen() {
+        shardingCtx.reopen();
+        super.reopen();
+    }
+
+    public void resetLocalStats(int slotId) {
+        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).resetStats();
+        }
     }
 
     @Override
@@ -296,19 +298,33 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
 
     @Override
     protected void clearAggregationState() {
-        Misc.free(ownerMap);
-        Misc.freeObjListAndKeepObjects(perWorkerMaps);
+        shardingCtx.clear();
     }
 
     @Override
     protected void closeAggregationState() {
-        Misc.free(ownerMap);
-        Misc.freeObjList(perWorkerMaps);
+        shardingCtx.close();
         Misc.freeObjList(ownerKeyFunctions);
         if (perWorkerKeyFunctions != null) {
             for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
             }
         }
+    }
+
+    private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
+    }
+
+    private long getTotalFunctionCardinality(int slotId) {
+        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+        long totalCardinality = 0;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
+        }
+        return totalCardinality;
     }
 }
