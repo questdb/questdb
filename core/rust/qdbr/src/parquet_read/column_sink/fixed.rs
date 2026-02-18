@@ -238,7 +238,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
     }
 
     fn result(&self) -> ParquetResult<()> {
-        self.slicer.result().clone()
+        self.slicer.result()
     }
 }
 
@@ -649,7 +649,7 @@ impl<const N: usize, const WORDS: usize, T: DataPageSlicer> Pushable
     }
 
     fn result(&self) -> ParquetResult<()> {
-        self.slicer.result().clone()
+        self.slicer.result()
     }
 }
 
@@ -747,7 +747,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for SignExtendDecimalColumnSink
     }
 
     fn result(&self) -> ParquetResult<()> {
-        self.slicer.result().clone()
+        self.slicer.result()
     }
 }
 
