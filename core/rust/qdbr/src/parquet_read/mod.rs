@@ -5,6 +5,7 @@ use parquet2::metadata::FileMetaData;
 use qdb_core::col_type::ColumnType;
 
 mod column_sink;
+mod decimal;
 mod decode;
 mod jni;
 mod meta;
