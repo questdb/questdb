@@ -200,6 +200,59 @@ The build will copy artifacts as follows:
 core/src/main/c -> core/src/main/resources/io/questdb/bin
 ```
 
+## Developing with the Java ILP client
+
+The QuestDB server tests use the [Java ILP client](https://github.com/questdb/java-questdb-client)
+for integration testing. By default, the client is resolved from Maven Central. If you need to
+modify both the client and server simultaneously, you can use the local development workflow.
+
+### Setup
+
+The Java client is available as a git submodule in `java-questdb-client/`. Initialize it with:
+
+```bash
+git submodule update --init java-questdb-client
+```
+
+### Building with local client changes
+
+Use the `local-client` profile to build the client from the submodule and use it in tests:
+
+```bash
+mvn test -P local-client
+```
+
+This will:
+1. Build the client from `java-questdb-client/` first
+2. Use the locally built client (version `1.0.1-SNAPSHOT`) for server tests
+
+### IntelliJ IDEA setup
+
+To work on both the client and server in IntelliJ IDEA:
+
+1. Initialize the submodule (see Setup above)
+2. Open IntelliJ IDEA and go to **File > Project Structure > Modules**
+3. Click **+** (Add) > **Import Module**
+4. Select `java-questdb-client/core/pom.xml` and click **OK**
+5. IntelliJ will import the client module alongside the server modules
+6. In the **Project** view, you can now navigate and edit both codebases
+
+To ensure IntelliJ uses the local client instead of the Maven Central version:
+
+1. Open the **Maven** tool window (usually on the right side, or via **View > Tool Windows > Maven**)
+2. Expand **Profiles** and check `local-client`
+3. Click the **Reload All Maven Projects** button (circular arrows icon)
+
+Now when you run tests from IntelliJ, they will use your local client changes.
+
+### Workflow tips
+
+- Make changes to both `java-questdb-client/` and `core/` as needed
+- Run tests with `-P local-client` to verify everything works together
+- When done, commit changes to each repository separately
+- The client submodule changes should be pushed to the
+  [java-questdb-client](https://github.com/questdb/java-questdb-client) repository
+
 ## Local setup for frontend development
 
 The frontend code (i.e. web console) is located in a [separate repository](https://github.com/questdb/ui/tree/main/packages/web-console).

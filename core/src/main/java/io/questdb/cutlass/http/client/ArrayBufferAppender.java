@@ -22,16 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.http.client;
 
-import java.io.Closeable;
+@SuppressWarnings("unused")
+public interface ArrayBufferAppender {
+    void putBlockOfBytes(long from, long len);
 
-public interface LineChannel extends Closeable {
-    void close();
+    void putByte(byte b);
 
-    int errno();
+    void putDouble(double value);
 
-    int receive(long ptr, int len);
+    void putInt(int value);
 
-    void send(long ptr, int len);
+    void putLong(long value);
 }

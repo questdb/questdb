@@ -22,9 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.array;
+package io.questdb.cairo.sql.async;
+
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 @FunctionalInterface
-public interface ArrayShapeAppender<T> {
-    void append(ArrayBufferAppender mem, T values);
+public interface UnorderedPageFrameReducer {
+    void reduce(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            int frameIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    );
 }

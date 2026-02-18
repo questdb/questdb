@@ -56,7 +56,6 @@ public class IlpTimestampColumnBenchmark {
     }
 
     private static Connection createConnection() throws Exception {
-        Class.forName("org.postgresql.Driver");
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
