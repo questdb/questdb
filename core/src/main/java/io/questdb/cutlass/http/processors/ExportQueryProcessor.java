@@ -49,6 +49,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.parquet.RecordToColumnBuffers;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -56,7 +57,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.ExportModel;
@@ -194,7 +194,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     final int order = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
                     state.descending = order == ORDER_DESC;
                     if (isParquet) {
-                        state.parquetExportMode = determineParquetExportMode(state.recordCursorFactory);
+                        state.parquetExportMode = RecordToColumnBuffers.determineExportMode(state.recordCursorFactory);
                     }
                     for (int retries = 0; runQuery; retries++) {
                         try {
@@ -203,7 +203,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                     case DIRECT_PAGE_FRAME ->
                                             state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(sqlExecutionContext, order);
                                     case PAGE_FRAME_BACKED -> {
-                                        RecordCursorFactory unwrapped = unwrapFactory(state.recordCursorFactory);
+                                        RecordCursorFactory unwrapped = RecordToColumnBuffers.unwrapFactory(state.recordCursorFactory);
                                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
                                         state.pageFrameCursor = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                                     }
@@ -234,13 +234,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
                             if (isParquet) {
-                                state.parquetExportMode = determineParquetExportMode(state.recordCursorFactory);
+                                state.parquetExportMode = RecordToColumnBuffers.determineExportMode(state.recordCursorFactory);
                             }
                         }
                     }
                     // Set up materializer for parquet export modes that need it
-                    if (isParquet && state.parquetExportMode == ExportQueryProcessorState.ParquetExportMode.PAGE_FRAME_BACKED) {
-                        RecordCursorFactory unwrapped = unwrapFactory(state.recordCursorFactory);
+                    if (isParquet && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
+                        RecordCursorFactory unwrapped = RecordToColumnBuffers.unwrapFactory(state.recordCursorFactory);
                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
                         state.pageFrameCursor.setStreamingMode(true);
                         RecordToColumnBuffers buffers = new RecordToColumnBuffers();
@@ -252,7 +252,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             Misc.free(buffers);
                             throw th;
                         }
-                    } else if (isParquet && state.parquetExportMode == ExportQueryProcessorState.ParquetExportMode.CURSOR_BASED) {
+                    } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
                         RecordToColumnBuffers buffers = new RecordToColumnBuffers();
                         buffers.setUp(state.recordCursorFactory.getMetadata());
                         state.materializer = buffers;
@@ -341,24 +341,30 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
     }
 
-    private static ExportQueryProcessorState.ParquetExportMode determineParquetExportMode(RecordCursorFactory factory) {
-        RecordCursorFactory unwrapped = unwrapFactory(factory);
-        if (factory.supportsPageFrameCursor()) {
-            return ExportQueryProcessorState.ParquetExportMode.DIRECT_PAGE_FRAME;
+    void writeParquetData(ExportQueryProcessorState state, long dataPtr, long dataLen)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (dataLen <= 0) {
+            return;
         }
-        if (unwrapped instanceof VirtualRecordCursorFactory vf && vf.getBaseFactory().supportsPageFrameCursor()) {
-            if (RecordToColumnBuffers.hasComputedBinaryColumn(vf)) {
-                return ExportQueryProcessorState.ParquetExportMode.TEMP_TABLE;
-            }
-            return ExportQueryProcessorState.ParquetExportMode.PAGE_FRAME_BACKED;
-        }
-        RecordMetadata meta = factory.getMetadata();
-        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(meta.getColumnType(i)) == ColumnType.BINARY) {
-                return ExportQueryProcessorState.ParquetExportMode.TEMP_TABLE;
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        HttpChunkedResponse response = context.getChunkedResponse();
+        if (state.firstParquetWriteCall) {
+            state.firstParquetWriteCall = false;
+            if (!state.getExportModel().isNoDelay()) {
+                header(response, state, 200);
             }
         }
-        return ExportQueryProcessorState.ParquetExportMode.CURSOR_BASED;
+
+        while (state.parquetFileOffset < dataLen) {
+            long remainingSize = dataLen - state.parquetFileOffset;
+            int sendLSize = (int) Math.min(Integer.MAX_VALUE, remainingSize);
+
+            state.parquetFileOffset += response.writeBytes(dataPtr + state.parquetFileOffset, sendLSize);
+            response.bookmark();
+            response.sendChunk(false);
+        }
+
+        state.parquetFileOffset = 0;
     }
 
     private static boolean isExpUrl(Utf8Sequence tok) {
@@ -487,10 +493,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
-    private static RecordCursorFactory unwrapFactory(RecordCursorFactory factory) {
-        return factory instanceof QueryProgress qp ? qp.getBaseFactory() : factory;
-    }
-
     private void compileParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
         assert state.copyID == -1;
         CopyExportContext.ExportTaskEntry entry = null;
@@ -509,7 +511,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
             state.copyID = entry.getId();
             state.firstParquetWriteCall = true;
-            if (state.parquetExportMode == ExportQueryProcessorState.ParquetExportMode.TEMP_TABLE) {
+            if (state.parquetExportMode == ParquetExportMode.TEMP_TABLE) {
                 String tableName = getTableName(state.copyID);
                 state.setParquetExportTableName(tableName);
                 var createOp = copyExportContext.validateAndCreateParquetExportTableOp(
@@ -679,8 +681,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 var exportMode = state.parquetExportMode;
                 state.task.of(
                         entry,
-                        exportMode == ExportQueryProcessorState.ParquetExportMode.TEMP_TABLE ? state.getParquetTempTableCreate() : null,
-                        exportMode == ExportQueryProcessorState.ParquetExportMode.TEMP_TABLE ? state.getParquetExportTableName() : null,
+                        exportMode == ParquetExportMode.TEMP_TABLE ? state.getParquetTempTableCreate() : null,
+                        exportMode == ParquetExportMode.TEMP_TABLE ? state.getParquetExportTableName() : null,
                         state.fileName,
                         state.getExportModel().getCompressionCodec(),
                         state.getExportModel().getCompressionLevel(),
@@ -692,7 +694,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         nowTimestampType,
                         now,
                         state.descending,
-                        exportMode == ExportQueryProcessorState.ParquetExportMode.DIRECT_PAGE_FRAME ? state.pageFrameCursor : null,
+                        exportMode == ParquetExportMode.DIRECT_PAGE_FRAME ? state.pageFrameCursor : null,
                         state.metadata,
                         state.getWriteCallback()
                 );
@@ -1376,31 +1378,5 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         response.status(200, CONTENT_TYPE_CSV);
         response.headers().setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();
-    }
-
-    void writeParquetData(ExportQueryProcessorState state, long dataPtr, long dataLen)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (dataLen <= 0) {
-            return;
-        }
-        HttpConnectionContext context = state.getHttpConnectionContext();
-        HttpChunkedResponse response = context.getChunkedResponse();
-        if (state.firstParquetWriteCall) {
-            state.firstParquetWriteCall = false;
-            if (!state.getExportModel().isNoDelay()) {
-                header(response, state, 200);
-            }
-        }
-
-        while (state.parquetFileOffset < dataLen) {
-            long remainingSize = dataLen - state.parquetFileOffset;
-            int sendLSize = (int) Math.min(Integer.MAX_VALUE, remainingSize);
-
-            state.parquetFileOffset += response.writeBytes(dataPtr + state.parquetFileOffset, sendLSize);
-            response.bookmark();
-            response.sendChunk(false);
-        }
-
-        state.parquetFileOffset = 0;
     }
 }

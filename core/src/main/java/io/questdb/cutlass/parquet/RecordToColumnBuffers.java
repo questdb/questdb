@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -48,6 +49,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.std.Decimal128;
@@ -82,10 +84,7 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     private final Decimal128 decimal128A = new Decimal128();
     private final Decimal256 decimal256A = new Decimal256();
     private final PageFrameMemoryRecord pageFrameRecord = new PageFrameMemoryRecord();
-    private final DirectLongList pfAuxPageAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-    private final DirectLongList pfAuxPageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-    private final DirectLongList pfPageAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-    private final DirectLongList pfPageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+    private final ReusablePageFrameMemory pfMemory = new ReusablePageFrameMemory();
     private GenericRecordMetadata adjustedMetadata;
     // Per output col: base col index, or -1 if computed
     private int[] baseColumnMap;
@@ -96,6 +95,30 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     private ObjList<Function> functions;
     private boolean isPageFrameBacked;
     private int outputColumnCount;
+
+    /**
+     * Determines the export mode for a given RecordCursorFactory.
+     * Shared by both HTTP and SQL export paths.
+     */
+    public static ParquetExportMode determineExportMode(RecordCursorFactory factory) {
+        RecordCursorFactory unwrapped = unwrapFactory(factory);
+        if (factory.supportsPageFrameCursor()) {
+            return ParquetExportMode.DIRECT_PAGE_FRAME;
+        }
+        if (unwrapped instanceof VirtualRecordCursorFactory vf && vf.getBaseFactory().supportsPageFrameCursor()) {
+            if (hasComputedBinaryColumn(vf)) {
+                return ParquetExportMode.TEMP_TABLE;
+            }
+            return ParquetExportMode.PAGE_FRAME_BACKED;
+        }
+        RecordMetadata meta = factory.getMetadata();
+        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+            if (ColumnType.tagOf(meta.getColumnType(i)) == ColumnType.BINARY) {
+                return ParquetExportMode.TEMP_TABLE;
+            }
+        }
+        return ParquetExportMode.CURSOR_BASED;
+    }
 
     /**
      * Checks whether a VirtualRecordCursorFactory has any computed BINARY columns.
@@ -118,6 +141,13 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Unwraps a QueryProgress wrapper to access the underlying factory.
+     */
+    public static RecordCursorFactory unwrapFactory(RecordCursorFactory factory) {
+        return factory instanceof QueryProgress qp ? qp.getBaseFactory() : factory;
     }
 
     /**
@@ -222,10 +252,7 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
             Misc.free(auxBuffers.getQuick(i));
         }
         auxBuffers.clear();
-        pfPageAddresses.clear();
-        pfAuxPageAddresses.clear();
-        pfPageSizes.clear();
-        pfAuxPageSizes.clear();
+        pfMemory.clear();
         baseColumnMap = null;
         computedBufferIdx = null;
         functions = null;
@@ -239,10 +266,7 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     @Override
     public void close() {
         clear();
-        Misc.free(pfPageAddresses);
-        Misc.free(pfAuxPageAddresses);
-        Misc.free(pfPageSizes);
-        Misc.free(pfAuxPageSizes);
+        Misc.free(pfMemory);
         pageFrameRecord.close();
     }
 
@@ -430,97 +454,8 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     }
 
     private void populatePageFrameRecord(PageFrame frame) {
-        int baseColumnCount = frame.getColumnCount();
-
-        pfPageAddresses.clear();
-        pfAuxPageAddresses.clear();
-        pfPageSizes.clear();
-        pfAuxPageSizes.clear();
-
-        boolean hasColumnTops = false;
-        for (int col = 0; col < baseColumnCount; col++) {
-            long addr = frame.getPageAddress(col);
-            pfPageAddresses.add(addr);
-            pfPageSizes.add(frame.getPageSize(col));
-            pfAuxPageAddresses.add(frame.getAuxPageAddress(col));
-            pfAuxPageSizes.add(frame.getAuxPageSize(col));
-            if (addr == 0) {
-                hasColumnTops = true;
-            }
-        }
-
-        final boolean finalHasColumnTops = hasColumnTops;
-        pageFrameRecord.init(new PageFrameMemory() {
-            @Override
-            public long getAuxPageAddress(int columnIndex) {
-                return pfAuxPageAddresses.get(columnIndex);
-            }
-
-            @Override
-            public DirectLongList getAuxPageAddresses() {
-                return pfAuxPageAddresses;
-            }
-
-            @Override
-            public DirectLongList getAuxPageSizes() {
-                return pfAuxPageSizes;
-            }
-
-            @Override
-            public int getColumnCount() {
-                return baseColumnCount;
-            }
-
-            @Override
-            public int getColumnOffset() {
-                return 0;
-            }
-
-            @Override
-            public byte getFrameFormat() {
-                return PartitionFormat.NATIVE;
-            }
-
-            @Override
-            public int getFrameIndex() {
-                return 0;
-            }
-
-            @Override
-            public long getPageAddress(int columnIndex) {
-                return pfPageAddresses.get(columnIndex);
-            }
-
-            @Override
-            public DirectLongList getPageAddresses() {
-                return pfPageAddresses;
-            }
-
-            @Override
-            public long getPageSize(int columnIndex) {
-                return pfPageSizes.get(columnIndex);
-            }
-
-            @Override
-            public DirectLongList getPageSizes() {
-                return pfPageSizes;
-            }
-
-            @Override
-            public long getRowIdOffset() {
-                return frame.getPartitionLo();
-            }
-
-            @Override
-            public boolean hasColumnTops() {
-                return finalHasColumnTops;
-            }
-
-            @Override
-            public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
-                return false;
-            }
-        });
+        pfMemory.of(frame);
+        pageFrameRecord.init(pfMemory);
         pageFrameRecord.setRowIndex(0);
     }
 
@@ -556,11 +491,7 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
             case ColumnType.FLOAT -> dataBuf.putFloat(record.getFloat(col));
             case ColumnType.DOUBLE -> dataBuf.putDouble(record.getDouble(col));
             case ColumnType.STRING -> StringTypeDriver.appendValue(auxBuf, dataBuf, record.getStrA(col));
-            case ColumnType.VARCHAR -> {
-                // In cursor-based mode, symbol columns are converted to varchar
-                Utf8Sequence seq = record.getVarcharA(col);
-                VarcharTypeDriver.appendValue(auxBuf, dataBuf, seq);
-            }
+            case ColumnType.VARCHAR -> VarcharTypeDriver.appendValue(auxBuf, dataBuf, record.getVarcharA(col));
             case ColumnType.SYMBOL -> {
                 // Symbols get converted to STRING in adjusted metadata
                 CharSequence sym = record.getSymA(col);
@@ -669,7 +600,129 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
             if (columnIndex < virtualColumnReservedSlots) {
                 return null;
             }
-            return pageFrameCursor.getSymbolTable(columnIndex - virtualColumnReservedSlots);
+            return pageFrameCursor.newSymbolTable(columnIndex - virtualColumnReservedSlots);
+        }
+    }
+
+    /**
+     * Reusable PageFrameMemory backed by DirectLongLists. Updated in-place per frame
+     * to avoid allocating a new object on every call (zero-GC on data path).
+     */
+    private static class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseable {
+        private final DirectLongList auxPageAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+        private final DirectLongList auxPageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+        private final DirectLongList pageAddresses = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+        private final DirectLongList pageSizes = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+        private int columnCount;
+        private boolean hasColumnTops;
+        private long rowIdOffset;
+
+        @Override
+        public void clear() {
+            pageAddresses.clear();
+            auxPageAddresses.clear();
+            pageSizes.clear();
+            auxPageSizes.clear();
+        }
+
+        @Override
+        public void close() {
+            Misc.free(pageAddresses);
+            Misc.free(auxPageAddresses);
+            Misc.free(pageSizes);
+            Misc.free(auxPageSizes);
+        }
+
+        @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return auxPageAddresses.get(columnIndex);
+        }
+
+        @Override
+        public DirectLongList getAuxPageAddresses() {
+            return auxPageAddresses;
+        }
+
+        @Override
+        public DirectLongList getAuxPageSizes() {
+            return auxPageSizes;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return columnCount;
+        }
+
+        @Override
+        public int getColumnOffset() {
+            return 0;
+        }
+
+        @Override
+        public byte getFrameFormat() {
+            return PartitionFormat.NATIVE;
+        }
+
+        @Override
+        public int getFrameIndex() {
+            return 0;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return pageAddresses.get(columnIndex);
+        }
+
+        @Override
+        public DirectLongList getPageAddresses() {
+            return pageAddresses;
+        }
+
+        @Override
+        public long getPageSize(int columnIndex) {
+            return pageSizes.get(columnIndex);
+        }
+
+        @Override
+        public DirectLongList getPageSizes() {
+            return pageSizes;
+        }
+
+        @Override
+        public long getRowIdOffset() {
+            return rowIdOffset;
+        }
+
+        @Override
+        public boolean hasColumnTops() {
+            return hasColumnTops;
+        }
+
+        public void of(PageFrame frame) {
+            this.columnCount = frame.getColumnCount();
+            this.rowIdOffset = frame.getPartitionLo();
+
+            pageAddresses.clear();
+            auxPageAddresses.clear();
+            pageSizes.clear();
+            auxPageSizes.clear();
+
+            hasColumnTops = false;
+            for (int col = 0; col < columnCount; col++) {
+                long addr = frame.getPageAddress(col);
+                pageAddresses.add(addr);
+                pageSizes.add(frame.getPageSize(col));
+                auxPageAddresses.add(frame.getAuxPageAddress(col));
+                auxPageSizes.add(frame.getAuxPageSize(col));
+                if (addr == 0) {
+                    hasColumnTops = true;
+                }
+            }
+        }
+
+        @Override
+        public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
+            return false;
         }
     }
 }

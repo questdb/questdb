@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.parquet.RecordToColumnBuffers;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -50,13 +51,6 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
-
-    enum ParquetExportMode {
-        CURSOR_BASED,
-        DIRECT_PAGE_FRAME,
-        PAGE_FRAME_BACKED,
-        TEMP_TABLE
-    }
 
     final StringSink fileName = new StringSink();
     final StringSink sqlText = new StringSink();

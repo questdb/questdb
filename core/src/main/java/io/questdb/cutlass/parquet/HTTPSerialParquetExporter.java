@@ -61,10 +61,10 @@ public class HTTPSerialParquetExporter {
     protected CopyExportRequestTask task;
     // Streaming export state (persists across PeerIsSlowToReadException resumes).
     // Ownership is transferred from ExportQueryProcessorState via setup methods.
-    private PageFrameCursor streamingPfc;
     private RecordCursor fullCursor;
     private RecordToColumnBuffers materializer;
     private DirectLongList materializerColumnData;
+    private PageFrameCursor streamingPfc;
 
     public HTTPSerialParquetExporter(CairoEngine engine) {
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
