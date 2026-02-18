@@ -239,7 +239,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
     @Override
     public boolean usesCompiledFilter() {
-        return frameSequence.getAtom().getCompiledFilter() != null;
+        return frameSequence.getAtom().getFilterContext().getCompiledFilter() != null;
     }
 
     private static void aggregateRecord(
@@ -295,8 +295,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final SimpleMapValue value = atom.getMapValue(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
             final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
-            final CompiledFilter compiledFilter = atom.getCompiledFilter();
-            final Function filter = atom.getFilter(slotId);
+            final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+            final Function filter = filterCtx.getFilter(slotId);
 
             // Apply filter to master rows
             final DirectLongList rows = filterCtx.getFilteredRows(slotId);

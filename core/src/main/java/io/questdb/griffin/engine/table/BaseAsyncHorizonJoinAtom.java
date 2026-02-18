@@ -382,22 +382,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         return perWorkerAsOfJoinMaps != null ? perWorkerAsOfJoinMaps.getQuick(slotId) : null;
     }
 
-    public ObjList<Function> getBindVarFunctions() {
-        return filterCtx.getBindVarFunctions();
-    }
-
-    public MemoryCARW getBindVarMemory() {
-        return filterCtx.getBindVarMemory();
-    }
-
-    public CompiledFilter getCompiledFilter() {
-        return filterCtx.getCompiledFilter();
-    }
-
-    public Function getFilter(int slotId) {
-        return filterCtx.getFilter(slotId);
-    }
-
     public AsyncFilterContext getFilterContext() {
         return filterCtx;
     }
