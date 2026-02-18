@@ -4,7 +4,7 @@ use std::slice;
 use crate::allocator::QdbAllocator;
 use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;
-use crate::parquet_read::decode::ParquetColumnIndex;
+use crate::parquet_read::row_groups::ParquetColumnIndex;
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, DecodeContext, ParquetDecoder,
     RowGroupBuffers, RowGroupStatBuffers,

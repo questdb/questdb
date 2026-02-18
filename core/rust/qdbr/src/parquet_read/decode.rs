@@ -1,8 +1,6 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
-use crate::parquet::util::{align8b, ARRAY_NDIMS_LIMIT};
-use crate::parquet_read::column_sink::var::ARRAY_AUX_SIZE;
 use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, RawArrayColumnSink, StringColumnSink, VarcharColumnSink,
 };
@@ -18,46 +16,25 @@ use crate::parquet_read::decoders::{
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
 use crate::parquet_read::slicer::{
-    DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer,
-    PlainVarSlicer,
+    DataPageFixedSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer,
 };
-use crate::parquet_read::{
-    ColumnChunkBuffers, ColumnChunkStats, DecodeContext, ParquetDecoder, RowGroupBuffers,
-    RowGroupStatBuffers,
-};
-use crate::parquet_write::array::{
-    append_array_null, append_array_nulls, calculate_array_shape, LevelsIterator,
-};
+use crate::parquet_read::{ColumnChunkBuffers, ColumnChunkStats, RowGroupStatBuffers};
+use llvm_mca::{llvm_mca_begin, llvm_mca_end};
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
 use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::page::DataPageHeader;
 use parquet2::read::levels::get_bit_width;
-use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
+use parquet2::read::{SlicedDataPage, SlicedDictPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, Long128, Long256};
 use std::cmp::min;
-use std::{cmp, i32, ptr, slice};
+use std::{i32, ptr};
 
-impl RowGroupBuffers {
-    pub fn new(allocator: QdbAllocator) -> Self {
-        Self {
-            column_bufs_ptr: ptr::null_mut(),
-            column_bufs: AcVec::new_in(allocator),
-        }
-    }
+mod array;
 
-    pub fn ensure_n_columns(&mut self, required_cols: usize) -> ParquetResult<()> {
-        if self.column_bufs.len() < required_cols {
-            let allocator = self.column_bufs.allocator().clone();
-            self.column_bufs
-                .resize_with(required_cols, || ColumnChunkBuffers::new(allocator.clone()))?;
-            self.column_bufs_ptr = self.column_bufs.as_mut_ptr();
-        }
-        Ok(())
-    }
-}
+use self::array::{decode_array_page, decode_array_page_filtered};
 
 impl RowGroupStatBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
@@ -132,710 +109,11 @@ const LONG256_NULL: [u8; 32] = [
 ];
 const DOUBLE_NULL: [u8; 8] = [0, 0, 0, 0, 0, 0, 248, 127];
 
-/// The local positional index as it is stored in parquet.
-/// Not to be confused with the field_id in the parquet metadata.
-pub type ParquetColumnIndex = i32;
-
-impl ParquetDecoder {
-    pub fn decode_row_group(
-        &self,
-        ctx: &mut DecodeContext,
-        row_group_bufs: &mut RowGroupBuffers,
-        columns: &[(ParquetColumnIndex, ColumnType)],
-        row_group_index: u32,
-        row_group_lo: u32,
-        row_group_hi: u32,
-    ) -> ParquetResult<usize> {
-        if row_group_index > self.row_group_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "row group index {} out of range [0,{})",
-                row_group_index,
-                self.row_group_count
-            ));
-        }
-
-        let accumulated_size = self.row_group_sizes_acc[row_group_index as usize];
-        row_group_bufs.ensure_n_columns(columns.len())?;
-
-        let mut decoded = 0usize;
-        for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
-            let column_idx = column_idx as usize;
-            let mut column_type = self.columns[column_idx].column_type.ok_or_else(|| {
-                fmt_err!(
-                    InvalidType,
-                    "unknown column type, column index: {}",
-                    column_idx
-                )
-            })?;
-
-            // Special case for handling symbol columns in QuestDB-created Parquet files.
-            // The `read_parquet` function does not support symbol columns,
-            // so this workaround allows them to be read as varchar columns.
-            if column_type.tag() == ColumnTypeTag::Symbol
-                && to_column_type.tag() == ColumnTypeTag::Varchar
-            {
-                column_type = to_column_type;
-            }
-
-            if column_type != to_column_type {
-                return Err(fmt_err!(
-                    InvalidType,
-                    "requested column type {} does not match file column type {}, column index: {}",
-                    to_column_type,
-                    column_type,
-                    column_idx
-                ));
-            }
-
-            let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
-
-            // Get the column's format from the "questdb" key-value metadata stored in the file.
-            let (column_top, format) = self
-                .qdb_meta
-                .as_ref()
-                .and_then(|m| m.schema.get(column_idx))
-                .map(|c| (c.column_top, c.format))
-                .unwrap_or((0, None));
-
-            if column_top >= row_group_hi as usize + accumulated_size {
-                column_chunk_bufs.reset();
-                continue;
-            }
-
-            let col_info = QdbMetaCol { column_type, column_top, format };
-            match self.decode_column_chunk(
-                ctx,
-                column_chunk_bufs,
-                row_group_index as usize,
-                row_group_lo as usize,
-                row_group_hi as usize,
-                column_idx,
-                col_info,
-            ) {
-                Ok(column_chunk_decoded) => {
-                    if decoded > 0 && decoded != column_chunk_decoded {
-                        return Err(fmt_err!(
-                            InvalidLayout,
-                            "column chunk size {column_chunk_decoded} does not match previous size {decoded}",
-                        ));
-                    }
-                    decoded = column_chunk_decoded;
-                }
-                Err(err) => {
-                    return Err(err);
-                }
-            }
-        }
-
-        Ok(decoded)
-    }
-
-    /// Decode only specific rows from a row group.
-    /// The `rows_filter` contains the row indices (relative to the row group) to decode.
-    /// For example, if rows_filter = [2, 3, 4, 5, 6, 9], only those rows will be decoded.
-    #[allow(clippy::too_many_arguments)]
-    pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
-        &self,
-        ctx: &mut DecodeContext,
-        row_group_bufs: &mut RowGroupBuffers,
-        dest_col_offset: usize,
-        columns: &[(ParquetColumnIndex, ColumnType)],
-        row_group_index: u32,
-        row_group_lo: u32,
-        row_group_hi: u32,
-        rows_filter: &[i64],
-    ) -> ParquetResult<usize> {
-        if row_group_index > self.row_group_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "row group index {} out of range [0,{})",
-                row_group_index,
-                self.row_group_count
-            ));
-        }
-
-        let output_count = if FILL_NULLS {
-            (row_group_hi - row_group_lo) as usize
-        } else {
-            rows_filter.len()
-        };
-
-        if !FILL_NULLS && rows_filter.is_empty() {
-            // No rows to decode
-            row_group_bufs.ensure_n_columns(dest_col_offset + columns.len())?;
-            for i in 0..columns.len() {
-                let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_offset + i];
-                column_chunk_bufs.reset();
-            }
-            return Ok(0);
-        }
-
-        let accumulated_size = self.row_group_sizes_acc[row_group_index as usize];
-        row_group_bufs.ensure_n_columns(dest_col_offset + columns.len())?;
-
-        let mut decoded = 0usize;
-
-        for (i, &(column_idx, to_column_type)) in columns.iter().enumerate() {
-            let dest_col_idx = dest_col_offset + i;
-            let column_idx = column_idx as usize;
-            let mut column_type = self.columns[column_idx].column_type.ok_or_else(|| {
-                fmt_err!(
-                    InvalidType,
-                    "unknown column type, column index: {}",
-                    column_idx
-                )
-            })?;
-
-            // Special case for handling symbol columns in QuestDB-created Parquet files.
-            if column_type.tag() == ColumnTypeTag::Symbol
-                && to_column_type.tag() == ColumnTypeTag::Varchar
-            {
-                column_type = to_column_type;
-            }
-
-            if column_type != to_column_type {
-                return Err(fmt_err!(
-                    InvalidType,
-                    "requested column type {} does not match file column type {}, column index: {}",
-                    to_column_type,
-                    column_type,
-                    column_idx
-                ));
-            }
-
-            let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
-
-            // Get the column's format from the "questdb" key-value metadata stored in the file.
-            let (column_top, format) = self
-                .qdb_meta
-                .as_ref()
-                .and_then(|m| m.schema.get(column_idx))
-                .map(|c| (c.column_top, c.format))
-                .unwrap_or((0, None));
-
-            if column_top >= row_group_hi as usize + accumulated_size {
-                column_chunk_bufs.reset();
-                continue;
-            }
-
-            let col_info = QdbMetaCol { column_type, column_top, format };
-
-            // Decode the column chunk with row filter
-            match self.decode_column_chunk_filtered::<FILL_NULLS>(
-                ctx,
-                column_chunk_bufs,
-                row_group_index as usize,
-                row_group_lo as usize,
-                row_group_hi as usize,
-                column_idx,
-                col_info,
-                rows_filter,
-            ) {
-                Ok(column_chunk_decoded) => {
-                    if decoded > 0 && decoded != column_chunk_decoded {
-                        return Err(fmt_err!(
-                            InvalidLayout,
-                            "column chunk size {column_chunk_decoded} does not match previous size {decoded}",
-                        ));
-                    }
-                    decoded = column_chunk_decoded;
-                }
-                Err(err) => {
-                    return Err(err);
-                }
-            }
-        }
-
-        Ok(output_count)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn decode_column_chunk_filtered<const FILL_NULLS: bool>(
-        &self,
-        ctx: &mut DecodeContext,
-        column_chunk_bufs: &mut ColumnChunkBuffers,
-        row_group_index: usize,
-        row_group_lo: usize,
-        row_group_hi: usize,
-        column_index: usize,
-        col_info: QdbMetaCol,
-        rows_filter: &[i64],
-    ) -> ParquetResult<usize> {
-        let columns = self.metadata.row_groups[row_group_index].columns();
-        let column_metadata = &columns[column_index];
-
-        let chunk_size = column_metadata.compressed_size();
-        let chunk_size = chunk_size
-            .try_into()
-            .map_err(|_| fmt_err!(Layout, "column chunk size overflow, size: {chunk_size}"))?;
-
-        let buf = unsafe { slice::from_raw_parts(ctx.file_ptr, ctx.file_size as usize) };
-        let page_reader = SlicePageReader::new(buf, column_metadata, chunk_size)?;
-
-        match self.metadata.version {
-            1 | 2 => Ok(()),
-            ver => Err(fmt_err!(Unsupported, "unsupported parquet version: {ver}")),
-        }?;
-
-        let mut dict = None;
-        let mut page_row_start = 0usize;
-        let mut filter_idx = 0usize;
-        let filter_count = rows_filter.len();
-
-        column_chunk_bufs.reset();
-
-        let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
-        let decompress_buffer = &mut ctx.decompress_buffer;
-
-        for maybe_page in page_reader {
-            let sliced_page = maybe_page?;
-
-            match sliced_page {
-                SlicedPage::Dict(dict_page) => {
-                    let page = decompress_sliced_dict(dict_page, dict_decompress_buffer)?;
-                    dict = Some(page);
-                }
-                SlicedPage::Data(page) => {
-                    let page_row_count_opt = sliced_page_row_count(&page, col_info.column_type);
-
-                    if let Some(page_row_count) = page_row_count_opt {
-                        let page_end = page_row_start + page_row_count;
-                        if page_end <= row_group_lo {
-                            page_row_start = page_end;
-                            continue;
-                        }
-                        if page_row_start >= row_group_hi {
-                            break;
-                        }
-
-                        let page_filter_start = filter_idx;
-                        if filter_count - filter_idx <= 64 {
-                            while filter_idx < filter_count
-                                && (rows_filter[filter_idx] as usize + row_group_lo) < page_end
-                            {
-                                filter_idx += 1;
-                            }
-                        } else {
-                            filter_idx += rows_filter[filter_idx..]
-                                .partition_point(|&r| (r as usize + row_group_lo) < page_end);
-                        }
-
-                        if FILL_NULLS {
-                            let row_lo = row_group_lo.saturating_sub(page_row_start);
-                            let row_hi = (row_group_hi - page_row_start).min(page_row_count);
-                            let page = decompress_sliced_data(&page, decompress_buffer)?;
-                            decode_page_filtered::<true>(
-                                &page,
-                                dict.as_ref(),
-                                column_chunk_bufs,
-                                col_info,
-                                page_row_start,
-                                page_row_count,
-                                row_group_lo,
-                                row_lo,
-                                row_hi,
-                                &rows_filter[page_filter_start..filter_idx],
-                            )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
-                        } else if page_filter_start < filter_idx {
-                            let page = decompress_sliced_data(&page, decompress_buffer)?;
-                            decode_page_filtered::<false>(
-                                &page,
-                                dict.as_ref(),
-                                column_chunk_bufs,
-                                col_info,
-                                page_row_start,
-                                page_row_count,
-                                row_group_lo,
-                                0,
-                                0,
-                                &rows_filter[page_filter_start..filter_idx],
-                            )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
-                        }
-                        page_row_start = page_end;
-                    } else {
-                        if page_row_start >= row_group_hi {
-                            break;
-                        }
-
-                        let page = decompress_sliced_data(&page, decompress_buffer)?;
-                        let page_row_count = page_row_count(&page, col_info.column_type)?;
-                        let page_end = page_row_start + page_row_count;
-
-                        if page_end <= row_group_lo {
-                            page_row_start = page_end;
-                            continue;
-                        }
-
-                        let page_filter_start = filter_idx;
-                        if filter_count - filter_idx <= 64 {
-                            while filter_idx < filter_count
-                                && (rows_filter[filter_idx] as usize + row_group_lo) < page_end
-                            {
-                                filter_idx += 1;
-                            }
-                        } else {
-                            filter_idx += rows_filter[filter_idx..]
-                                .partition_point(|&r| (r as usize + row_group_lo) < page_end);
-                        }
-
-                        if FILL_NULLS {
-                            let row_lo = row_group_lo.saturating_sub(page_row_start);
-                            let row_hi = (row_group_hi - page_row_start).min(page_row_count);
-
-                            decode_page_filtered::<true>(
-                                &page,
-                                dict.as_ref(),
-                                column_chunk_bufs,
-                                col_info,
-                                page_row_start,
-                                page_row_count,
-                                row_group_lo,
-                                row_lo,
-                                row_hi,
-                                &rows_filter[page_filter_start..filter_idx],
-                            )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
-                        } else if page_filter_start < filter_idx {
-                            decode_page_filtered::<false>(
-                                &page,
-                                dict.as_ref(),
-                                column_chunk_bufs,
-                                col_info,
-                                page_row_start,
-                                page_row_count,
-                                row_group_lo,
-                                0,
-                                0,
-                                &rows_filter[page_filter_start..filter_idx],
-                            )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
-                        }
-                        page_row_start = page_end;
-                    }
-                }
-            };
-        }
-
-        column_chunk_bufs.refresh_ptrs();
-        if FILL_NULLS {
-            Ok(row_group_hi - row_group_lo)
-        } else {
-            Ok(filter_count)
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn decode_column_chunk(
-        &self,
-        ctx: &mut DecodeContext,
-        column_chunk_bufs: &mut ColumnChunkBuffers,
-        row_group_index: usize,
-        row_group_lo: usize,
-        row_group_hi: usize,
-        column_index: usize,
-        col_info: QdbMetaCol,
-    ) -> ParquetResult<usize> {
-        let columns = self.metadata.row_groups[row_group_index].columns();
-        let column_metadata = &columns[column_index];
-
-        let chunk_size = column_metadata.compressed_size();
-        let chunk_size = chunk_size
-            .try_into()
-            .map_err(|_| fmt_err!(Layout, "column chunk size overflow, size: {chunk_size}"))?;
-
-        let buf = unsafe { slice::from_raw_parts(ctx.file_ptr, ctx.file_size as usize) };
-        let page_reader = SlicePageReader::new(buf, column_metadata, chunk_size)?;
-
-        match self.metadata.version {
-            1 | 2 => Ok(()),
-            ver => Err(fmt_err!(Unsupported, "unsupported parquet version: {ver}")),
-        }?;
-
-        let mut dict = None;
-        let mut row_count = 0usize;
-
-        column_chunk_bufs.reset();
-
-        let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
-        let decompress_buffer = &mut ctx.decompress_buffer;
-
-        for maybe_page in page_reader {
-            let sliced_page = maybe_page?;
-
-            match sliced_page {
-                SlicedPage::Dict(dict_page) => {
-                    let page = decompress_sliced_dict(dict_page, dict_decompress_buffer)?;
-                    dict = Some(page);
-                }
-                SlicedPage::Data(page) => {
-                    let page_row_count_opt = sliced_page_row_count(&page, col_info.column_type);
-
-                    if let Some(page_row_count) = page_row_count_opt {
-                        if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
-                            let page = decompress_sliced_data(&page, decompress_buffer)?;
-                            decode_page(
-                                &page,
-                                dict.as_ref(),
-                                column_chunk_bufs,
-                                col_info,
-                                row_group_lo.saturating_sub(row_count),
-                                cmp::min(page_row_count, row_group_hi - row_count),
-                            )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
-                        }
-                        row_count += page_row_count;
-                    } else {
-                        let page = decompress_sliced_data(&page, decompress_buffer)?;
-                        let page_row_count = page_row_count(&page, col_info.column_type)?;
-
-                        if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
-                            decode_page(
-                                &page,
-                                dict.as_ref(),
-                                column_chunk_bufs,
-                                col_info,
-                                row_group_lo.saturating_sub(row_count),
-                                cmp::min(page_row_count, row_group_hi - row_count),
-                            )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
-                        }
-                        row_count += page_row_count;
-                    }
-                }
-            };
-        }
-
-        column_chunk_bufs.refresh_ptrs();
-        Ok(row_count)
-    }
-
-    pub fn read_column_chunk_stats(
-        &self,
-        row_group_stat_buffers: &mut RowGroupStatBuffers,
-        columns: &[(ParquetColumnIndex, ColumnType)],
-        row_group_index: u32,
-    ) -> ParquetResult<()> {
-        if row_group_index >= self.row_group_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "row group index {} out of range [0,{})",
-                row_group_index,
-                self.row_group_count
-            ));
-        }
-
-        row_group_stat_buffers.ensure_n_columns(columns.len())?;
-        let row_group_index = row_group_index as usize;
-        for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
-            let column_idx = column_idx as usize;
-            let column_type = self.columns[column_idx].column_type.ok_or_else(|| {
-                fmt_err!(
-                    InvalidType,
-                    "unknown column type, column index: {}",
-                    column_idx
-                )
-            })?;
-            if column_type != to_column_type {
-                return Err(fmt_err!(
-                    InvalidType,
-                    "requested column type {} does not match file column type {}, column index: {}",
-                    to_column_type,
-                    column_type,
-                    column_idx
-                ));
-            }
-
-            let columns_meta = self.metadata.row_groups[row_group_index].columns();
-            let column_metadata = &columns_meta[column_idx];
-            let column_chunk = column_metadata.column_chunk();
-            let stats = &mut row_group_stat_buffers.column_chunk_stats[dest_col_idx];
-
-            stats.min_value.clear();
-            stats.max_value.clear();
-
-            if let Some(meta_data) = &column_chunk.meta_data {
-                if let Some(statistics) = &meta_data.statistics {
-                    if let Some(min) = statistics.min_value.as_ref() {
-                        stats.min_value.extend_from_slice(min)?;
-                    }
-                    if let Some(max) = statistics.max_value.as_ref() {
-                        stats.max_value.extend_from_slice(max)?;
-                    }
-                }
-            }
-
-            stats.min_value_ptr = stats.min_value.as_mut_ptr();
-            stats.min_value_size = stats.min_value.len();
-            stats.max_value_ptr = stats.max_value.as_mut_ptr();
-            stats.max_value_size = stats.max_value.len();
-        }
-        Ok(())
-    }
-
-    pub fn find_row_group_by_timestamp(
-        &self,
-        timestamp: i64,
-        row_lo: usize,
-        row_hi: usize,
-        timestamp_column_index: u32,
-    ) -> ParquetResult<u64> {
-        if timestamp_column_index >= self.col_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "timestamp column index {} out of range [0,{})",
-                timestamp_column_index,
-                self.col_count
-            ));
-        }
-
-        let timestamp_column_index = timestamp_column_index as usize;
-        let column_type = self.columns[timestamp_column_index]
-            .column_type
-            .ok_or_else(|| {
-                fmt_err!(
-                    InvalidType,
-                    "unknown timestamp column type, column index: {}",
-                    timestamp_column_index
-                )
-            })?;
-        if column_type.tag() != ColumnTypeTag::Timestamp {
-            return Err(fmt_err!(
-                InvalidType,
-                "expected timestamp column, but got {}, column index: {}",
-                column_type,
-                timestamp_column_index
-            ));
-        }
-
-        let row_group_count = self.row_group_count;
-        let mut row_count = 0usize;
-        for (row_group_idx, row_group_meta) in self.metadata.row_groups.iter().enumerate() {
-            let columns_meta = row_group_meta.columns();
-            let column_metadata = &columns_meta[timestamp_column_index];
-            let column_chunk = column_metadata.column_chunk();
-            let column_chunk_meta = column_chunk.meta_data.as_ref().ok_or_else(|| {
-                fmt_err!(
-                    InvalidType,
-                    "metadata not found for timestamp column, column index: {}",
-                    timestamp_column_index
-                )
-            })?;
-
-            let column_chunk_size = column_chunk_meta.num_values as usize;
-            if row_hi + 1 < row_count {
-                break;
-            }
-            if row_lo < row_count + column_chunk_size {
-                let column_chunk_stats =
-                    column_chunk_meta.statistics.as_ref().ok_or_else(|| {
-                        fmt_err!(
-                            InvalidLayout,
-                            "statistics not found for timestamp column, column index: {}",
-                            timestamp_column_index
-                        )
-                    })?;
-
-                let min_value = long_stat_value(&column_chunk_stats.min_value)?;
-                let max_value = long_stat_value(&column_chunk_stats.max_value)?;
-
-                // Our overall scan direction is Vect#BIN_SEARCH_SCAN_DOWN (increasing
-                // scan direction) and we're iterating over row groups left-to-right,
-                // so as soon as we find the matching timestamp, we're done.
-                //
-                // The returned value includes the row group index shifted by +1,
-                // as well as a flag to tell the caller that the timestamp is at the
-                // right boundary of a row group or in a gap between two row groups
-                // and, thus, row group decoding is not needed.
-
-                // Check if we're at the left boundary or within the row group.
-                if timestamp >= min_value && timestamp < max_value {
-                    // We'll have to decode the group and search in it (even value).
-                    return Ok(2 * (row_group_idx + 1) as u64);
-                }
-                // The value is to the left of the row group.
-                // It must be either the right boundary of the previous row group
-                // or a gap between the previous and the current row groups.
-                if timestamp < min_value {
-                    // We don't need to decode the row group (odd value).
-                    return Ok((2 * row_group_idx + 1) as u64);
-                }
-            }
-            row_count += column_chunk_size;
-        }
-
-        // The value is to the right of the last row group, no need to decode (odd value).
-        Ok((2 * row_group_count + 1) as u64)
-    }
-}
-
 /// Decode a filtered data page.
 /// - `FILL_NULLS = false`: skip rows not in filter
 /// - `FILL_NULLS = true`: fill nulls for rows not in filter
 #[allow(clippy::too_many_arguments)]
-fn decode_page_filtered<const FILL_NULLS: bool>(
+pub(super) fn decode_page_filtered<const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
     bufs: &mut ColumnChunkBuffers,
@@ -1979,6 +1257,7 @@ pub fn decode_page(
         (PhysicalType::Int32, logical_type, converted_type) => {
             match (page.encoding(), dict, logical_type, column_type.tag()) {
                 (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
+                    llvm_mca_begin!("decode_page_int32_byte_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -1989,9 +1268,11 @@ pub fn decode_page(
                             nulls::BYTE,
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_int32_byte_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::GeoByte) => {
+                    llvm_mca_begin!("decode_page_int32_geobyte_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2002,9 +1283,11 @@ pub fn decode_page(
                             nulls::GEOHASH_BYTE,
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_int32_geobyte_plain");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
+                    llvm_mca_begin!("decode_page_int32_byte_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -2015,9 +1298,11 @@ pub fn decode_page(
                             nulls::BYTE,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_byte_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoByte) => {
+                    llvm_mca_begin!("decode_page_int32_geobyte_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -2028,6 +1313,7 @@ pub fn decode_page(
                             nulls::GEOHASH_BYTE,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_geobyte_delta");
                     Ok(())
                 }
                 (
@@ -2036,6 +1322,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Byte,
                 ) => {
+                    llvm_mca_begin!("decode_page_int32_byte_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2049,6 +1336,7 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_byte_rledict");
                     Ok(())
                 }
                 (
@@ -2057,6 +1345,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoByte,
                 ) => {
+                    llvm_mca_begin!("decode_page_int32_geobyte_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2070,9 +1359,11 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_geobyte_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+                    llvm_mca_begin!("decode_page_int32_short_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2083,9 +1374,11 @@ pub fn decode_page(
                             nulls::SHORT,
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_int32_short_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::GeoShort) => {
+                    llvm_mca_begin!("decode_page_int32_geoshort_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2096,9 +1389,11 @@ pub fn decode_page(
                             nulls::GEOHASH_SHORT,
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_int32_geoshort_plain");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+                    llvm_mca_begin!("decode_page_int32_short_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -2109,9 +1404,11 @@ pub fn decode_page(
                             nulls::SHORT,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_short_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoShort) => {
+                    llvm_mca_begin!("decode_page_int32_geoshort_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -2122,6 +1419,7 @@ pub fn decode_page(
                             nulls::GEOHASH_SHORT,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_geoshort_delta");
                     Ok(())
                 }
                 (
@@ -2130,6 +1428,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Short | ColumnTypeTag::Char,
                 ) => {
+                    llvm_mca_begin!("decode_page_int32_short_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2143,6 +1442,7 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_short_rledict");
                     Ok(())
                 }
                 (
@@ -2151,6 +1451,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoShort,
                 ) => {
+                    llvm_mca_begin!("decode_page_int32_geoshort_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2164,27 +1465,33 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_geoshort_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::Int) => {
+                    llvm_mca_begin!("decode_page_int32_int_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
                     )?;
+                    llvm_mca_end!("decode_page_int32_int_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
+                    llvm_mca_begin!("decode_page_int32_ipv4_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
                     )?;
+                    llvm_mca_end!("decode_page_int32_ipv4_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::GeoInt) => {
+                    llvm_mca_begin!("decode_page_int32_geoint_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2195,9 +1502,11 @@ pub fn decode_page(
                             nulls::GEOHASH_INT,
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_int32_geoint_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
+                    llvm_mca_begin!("decode_page_int32_date_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2209,9 +1518,11 @@ pub fn decode_page(
                             DayToMillisConverter::new(),
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_int32_date_plain");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int) => {
+                    llvm_mca_begin!("decode_page_int32_int_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -2222,9 +1533,11 @@ pub fn decode_page(
                             nulls::INT,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_int_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
+                    llvm_mca_begin!("decode_page_int32_ipv4_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -2235,9 +1548,11 @@ pub fn decode_page(
                             nulls::IPV4,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_ipv4_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoInt) => {
+                    llvm_mca_begin!("decode_page_int32_geoint_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -2248,6 +1563,7 @@ pub fn decode_page(
                             nulls::GEOHASH_INT,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_geoint_delta");
                     Ok(())
                 }
                 (
@@ -2256,6 +1572,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Int,
                 ) => {
+                    llvm_mca_begin!("decode_page_int32_int_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2269,6 +1586,7 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_int_rledict");
                     Ok(())
                 }
                 (
@@ -2277,6 +1595,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::IPv4,
                 ) => {
+                    llvm_mca_begin!("decode_page_int32_ipv4_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2290,6 +1609,7 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_ipv4_rledict");
                     Ok(())
                 }
                 (
@@ -2298,6 +1618,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoInt,
                 ) => {
+                    llvm_mca_begin!("decode_page_int32_geoint_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2311,6 +1632,7 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int32_geoint_rledict");
                     Ok(())
                 }
                 (encoding, dict, logical_type, ColumnTypeTag::Double) => {
@@ -2324,6 +1646,7 @@ pub fn decode_page(
 
                     match (encoding, dict) {
                         (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
+                            llvm_mca_begin!("decode_page_int32_double_rledict");
                             let dict_decoder = ConvertablePrimitiveDictDecoder::new(
                                 dict_page,
                                 Int32ToDoubleConverter::new(scale),
@@ -2340,9 +1663,11 @@ pub fn decode_page(
                                     bufs,
                                 )?,
                             )?;
+                            llvm_mca_end!("decode_page_int32_double_rledict");
                             Ok(())
                         }
                         (Encoding::Plain, _) => {
+                            llvm_mca_begin!("decode_page_int32_double_plain");
                             decode_page0(
                                 page,
                                 row_lo,
@@ -2354,6 +1679,7 @@ pub fn decode_page(
                                     Int32ToDoubleConverter::new(scale),
                                 ),
                             )?;
+                            llvm_mca_end!("decode_page_int32_double_plain");
                             Ok(())
                         }
                         _ => Err(encoding_error),
@@ -2370,15 +1696,18 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
                 ) => {
+                    llvm_mca_begin!("decode_page_int64_long_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::LONG),
                     )?;
+                    llvm_mca_end!("decode_page_int64_long_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, _, ColumnTypeTag::GeoLong) => {
+                    llvm_mca_begin!("decode_page_int64_geolong_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2389,6 +1718,7 @@ pub fn decode_page(
                             nulls::GEOHASH_LONG,
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_int64_geolong_plain");
                     Ok(())
                 }
                 (
@@ -2397,6 +1727,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
                 ) => {
+                    llvm_mca_begin!("decode_page_int64_long_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -2407,9 +1738,11 @@ pub fn decode_page(
                             nulls::LONG,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int64_long_delta");
                     Ok(())
                 }
                 (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoLong) => {
+                    llvm_mca_begin!("decode_page_int64_geolong_delta");
                     decode_page0(
                         page,
                         row_lo,
@@ -2420,6 +1753,7 @@ pub fn decode_page(
                             nulls::GEOHASH_LONG,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int64_geolong_delta");
                     Ok(())
                 }
                 (
@@ -2428,6 +1762,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
                 ) => {
+                    llvm_mca_begin!("decode_page_int64_long_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2441,6 +1776,7 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int64_long_rledict");
                     Ok(())
                 }
                 (
@@ -2449,6 +1785,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::GeoLong,
                 ) => {
+                    llvm_mca_begin!("decode_page_int64_geolong_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2462,6 +1799,7 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int64_geolong_rledict");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -2470,6 +1808,7 @@ pub fn decode_page(
         (PhysicalType::FixedLenByteArray(16), Some(PrimitiveLogicalType::Uuid), _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Uuid) => {
+                    llvm_mca_begin!("decode_page_fixed16_uuid_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2481,6 +1820,7 @@ pub fn decode_page(
                             Int128ToUuidConverter::new(),
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_fixed16_uuid_plain");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -2489,6 +1829,7 @@ pub fn decode_page(
         (PhysicalType::FixedLenByteArray(16), _logical_type, _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long128) => {
+                    llvm_mca_begin!("decode_page_fixed16_long128_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2499,6 +1840,7 @@ pub fn decode_page(
                             Long128::NULL,
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_fixed16_long128_plain");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -2507,6 +1849,7 @@ pub fn decode_page(
         (PhysicalType::FixedLenByteArray(32), _logical_type, _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long256) => {
+                    llvm_mca_begin!("decode_page_fixed32_long256_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2517,6 +1860,7 @@ pub fn decode_page(
                             Long256::NULL,
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_fixed32_long256_plain");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -2527,6 +1871,7 @@ pub fn decode_page(
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::String) => {
+                    llvm_mca_begin!("decode_page_bytearray_string_deltalength");
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -2535,9 +1880,11 @@ pub fn decode_page(
                         row_hi,
                         &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_string_deltalength");
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Varchar) => {
+                    llvm_mca_begin!("decode_page_bytearray_varchar_deltalength");
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -2546,6 +1893,7 @@ pub fn decode_page(
                         row_hi,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_varchar_deltalength");
                     Ok(())
                 }
                 (
@@ -2553,6 +1901,7 @@ pub fn decode_page(
                     Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
+                    llvm_mca_begin!("decode_page_bytearray_varchar_rledict");
                     let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
@@ -2567,9 +1916,11 @@ pub fn decode_page(
                         row_hi,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_varchar_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, ColumnTypeTag::String) => {
+                    llvm_mca_begin!("decode_page_bytearray_string_plain");
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         page,
@@ -2577,9 +1928,11 @@ pub fn decode_page(
                         row_hi,
                         &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_string_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Varchar) => {
+                    llvm_mca_begin!("decode_page_bytearray_varchar_plain");
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         page,
@@ -2587,9 +1940,11 @@ pub fn decode_page(
                         row_hi,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_varchar_plain");
                     Ok(())
                 }
                 (Encoding::DeltaByteArray, _, ColumnTypeTag::Varchar) => {
+                    llvm_mca_begin!("decode_page_bytearray_varchar_deltabytearray");
                     let mut slicer =
                         DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -2598,9 +1953,11 @@ pub fn decode_page(
                         row_hi,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_varchar_deltabytearray");
                     Ok(())
                 }
                 (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
+                    llvm_mca_begin!("decode_page_bytearray_symbol_rledict");
                     if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
                         return Err(fmt_err!(
                             Unsupported,
@@ -2620,6 +1977,7 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_symbol_rledict");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -2629,6 +1987,7 @@ pub fn decode_page(
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::Plain, _, ColumnTypeTag::Binary) => {
+                    llvm_mca_begin!("decode_page_bytearray_binary_plain");
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         page,
@@ -2636,9 +1995,11 @@ pub fn decode_page(
                         row_hi,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_binary_plain");
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Binary) => {
+                    llvm_mca_begin!("decode_page_bytearray_binary_deltalength");
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -2647,6 +2008,7 @@ pub fn decode_page(
                         row_hi,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_binary_deltalength");
                     Ok(())
                 }
                 (
@@ -2654,6 +2016,7 @@ pub fn decode_page(
                     Some(dict_page),
                     ColumnTypeTag::Binary,
                 ) => {
+                    llvm_mca_begin!("decode_page_bytearray_binary_rledict");
                     let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
@@ -2668,9 +2031,11 @@ pub fn decode_page(
                         row_hi,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_binary_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Array) => {
+                    llvm_mca_begin!("decode_page_bytearray_array_plain");
                     // raw array encoding
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
@@ -2679,9 +2044,11 @@ pub fn decode_page(
                         row_hi,
                         &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_array_plain");
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Array) => {
+                    llvm_mca_begin!("decode_page_bytearray_array_deltalength");
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
@@ -2690,6 +2057,7 @@ pub fn decode_page(
                         row_hi,
                         &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
+                    llvm_mca_end!("decode_page_bytearray_array_deltalength");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -2699,6 +2067,7 @@ pub fn decode_page(
             // Int96 is used for nano timestamps
             match (page.encoding(), dict, logical_type, column_type.tag()) {
                 (Encoding::Plain, _, _, ColumnTypeTag::Timestamp) => {
+                    llvm_mca_begin!("decode_page_int96_timestamp_plain");
                     decode_page0(
                         page,
                         row_lo,
@@ -2710,6 +2079,7 @@ pub fn decode_page(
                             Int96ToTimestampConverter::new(),
                         ),
                     )?;
+                    llvm_mca_end!("decode_page_int96_timestamp_plain");
                     Ok(())
                 }
                 (
@@ -2718,6 +2088,7 @@ pub fn decode_page(
                     _,
                     ColumnTypeTag::Timestamp,
                 ) => {
+                    llvm_mca_begin!("decode_page_int96_timestamp_rledict");
                     let dict_decoder =
                         ConvertablePrimitiveDictDecoder::<
                             Int96Timestamp,
@@ -2736,6 +2107,7 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_int96_timestamp_rledict");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -2746,12 +2118,14 @@ pub fn decode_page(
                 bufs.aux_vec.clear();
                 bufs.aux_ptr = ptr::null_mut();
 
+                llvm_mca_begin!("decode_page_double_double_plain");
                 decode_page0(
                     page,
                     row_lo,
                     row_hi,
                     &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
                 )?;
+                llvm_mca_end!("decode_page_double_double_plain");
                 Ok(())
             }
             (
@@ -2762,6 +2136,7 @@ pub fn decode_page(
                 bufs.aux_vec.clear();
                 bufs.aux_ptr = ptr::null_mut();
 
+                llvm_mca_begin!("decode_page_double_double_rledict");
                 let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
                 decode_page0(
                     page,
@@ -2775,11 +2150,14 @@ pub fn decode_page(
                         bufs,
                     )?,
                 )?;
+                llvm_mca_end!("decode_page_double_double_rledict");
                 Ok(())
             }
             (Encoding::Plain, _, ColumnTypeTag::Array) => {
+                llvm_mca_begin!("decode_page_double_array_plain");
                 let mut slicer = DataPageFixedSlicer::<8>::new(values_buffer, row_count);
                 decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
+                llvm_mca_end!("decode_page_double_array_plain");
                 Ok(())
             }
             (
@@ -2787,6 +2165,7 @@ pub fn decode_page(
                 Some(dict_page),
                 ColumnTypeTag::Array,
             ) => {
+                llvm_mca_begin!("decode_page_double_array_rledict");
                 let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
                 let mut slicer = RleDictionarySlicer::try_new(
                     values_buffer,
@@ -2796,6 +2175,7 @@ pub fn decode_page(
                     &DOUBLE_NULL,
                 )?;
                 decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
+                llvm_mca_end!("decode_page_double_array_rledict");
                 Ok(())
             }
             _ => Err(encoding_error),
@@ -2812,6 +2192,7 @@ pub fn decode_page(
                     PhysicalType::Float,
                     ColumnTypeTag::Float,
                 ) => {
+                    llvm_mca_begin!("decode_page_float_float_rledict");
                     let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
                     decode_page0(
                         page,
@@ -2825,33 +2206,40 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
+                    llvm_mca_end!("decode_page_float_float_rledict");
                     Ok(())
                 }
                 (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Float) => {
+                    llvm_mca_begin!("decode_page_float_float_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
                     )?;
+                    llvm_mca_end!("decode_page_float_float_plain");
                     Ok(())
                 }
                 (Encoding::Plain, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
+                    llvm_mca_begin!("decode_page_boolean_boolean_plain");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut PlainBooleanDecoder::new(values_buffer, row_hi, bufs, 0),
                     )?;
+                    llvm_mca_end!("decode_page_boolean_boolean_plain");
                     Ok(())
                 }
                 (Encoding::Rle, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
+                    llvm_mca_begin!("decode_page_boolean_boolean_rle");
                     decode_page0(
                         page,
                         row_lo,
                         row_hi,
                         &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
                     )?;
+                    llvm_mca_end!("decode_page_boolean_boolean_rle");
                     Ok(())
                 }
                 _ => Err(encoding_error),
@@ -3481,697 +2869,7 @@ fn decode_null_bitmap<'a>(
     Ok(Some(iter))
 }
 
-#[allow(clippy::while_let_on_iterator)]
-#[allow(clippy::too_many_arguments)]
-fn decode_array_page_filtered<T: DataPageSlicer, const FILL_NULLS: bool>(
-    page: &DataPage<'_>,
-    page_row_start: usize,
-    page_row_count: usize,
-    row_group_lo: usize,
-    row_lo: usize,
-    row_hi: usize,
-    rows_filter: &[i64],
-    slicer: &mut T,
-    buffers: &mut ColumnChunkBuffers,
-) -> ParquetResult<()> {
-    if FILL_NULLS {
-        let output_count = row_hi - row_lo;
-        buffers.aux_vec.reserve(output_count * ARRAY_AUX_SIZE)?;
-        if rows_filter.is_empty() {
-            append_array_nulls(&mut buffers.aux_vec, &buffers.data_vec, output_count)?;
-            return Ok(());
-        }
-    } else {
-        if rows_filter.is_empty() {
-            return Ok(());
-        }
-        buffers
-            .aux_vec
-            .reserve(rows_filter.len() * ARRAY_AUX_SIZE)?;
-    }
-
-    let (rep_levels, def_levels, _) = split_buffer(page)?;
-
-    let max_rep_level = page.descriptor.max_rep_level;
-    let max_def_level = page.descriptor.max_def_level;
-
-    if max_rep_level > ARRAY_NDIMS_LIMIT as i16 {
-        return Err(fmt_err!(
-            Unsupported,
-            "too large number of array dimensions {max_rep_level}"
-        ));
-    }
-
-    let mut levels_iter = LevelsIterator::try_new(
-        page.num_values(),
-        max_rep_level,
-        max_def_level,
-        rep_levels,
-        def_levels,
-    )?;
-
-    match max_rep_level {
-        1 => decode_array_filtered_loop::<T, FILL_NULLS, 1>(
-            &mut levels_iter,
-            max_rep_level,
-            max_def_level,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            slicer,
-            buffers,
-        ),
-        2 => decode_array_filtered_loop::<T, FILL_NULLS, 2>(
-            &mut levels_iter,
-            max_rep_level,
-            max_def_level,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            slicer,
-            buffers,
-        ),
-        _ => decode_array_filtered_loop::<T, FILL_NULLS, 0>(
-            &mut levels_iter,
-            max_rep_level,
-            max_def_level,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            slicer,
-            buffers,
-        ),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn decode_array_filtered_loop<T: DataPageSlicer, const FILL_NULLS: bool, const REP_LEVEL: i16>(
-    levels_iter: &mut LevelsIterator,
-    max_rep_level: i16,
-    max_def_level: i16,
-    page_row_start: usize,
-    page_row_count: usize,
-    row_group_lo: usize,
-    row_lo: usize,
-    row_hi: usize,
-    rows_filter: &[i64],
-    slicer: &mut T,
-    buffers: &mut ColumnChunkBuffers,
-) -> ParquetResult<()> {
-    let mut current_row = 0usize;
-    let mut filter_idx = 0usize;
-    let filter_len = rows_filter.len();
-    let mut def_scratch = Vec::new();
-
-    if FILL_NULLS && row_lo > 0 {
-        let non_null_skipped = levels_iter.skip_rows(row_lo, max_def_level as u32)?;
-        slicer.skip(non_null_skipped);
-        current_row = row_lo;
-    }
-
-    while current_row < page_row_count {
-        if FILL_NULLS && current_row >= row_hi {
-            break;
-        }
-        if !FILL_NULLS && filter_idx >= filter_len {
-            break;
-        }
-
-        let row_pos = page_row_start + current_row;
-        let in_filter =
-            filter_idx < filter_len && (rows_filter[filter_idx] as usize + row_group_lo) == row_pos;
-
-        if in_filter {
-            let result = if REP_LEVEL == 1 {
-                read_and_append_one_row_1d(
-                    levels_iter,
-                    max_def_level as u32,
-                    slicer,
-                    buffers,
-                    &mut def_scratch,
-                )?
-            } else if REP_LEVEL == 2 {
-                read_and_append_one_row_2d(
-                    levels_iter,
-                    max_def_level as u32,
-                    slicer,
-                    buffers,
-                    &mut def_scratch,
-                )?
-            } else {
-                read_and_append_one_row_generic(
-                    levels_iter,
-                    max_rep_level as u32,
-                    max_def_level as u32,
-                    slicer,
-                    buffers,
-                )?
-            };
-            let Some(first_vs) = result else {
-                break;
-            };
-
-            filter_idx += 1;
-            current_row += 1;
-            if filter_idx == 1 && first_vs > 0 && filter_len > 1 {
-                // estimate total size
-                buffers.data_vec.reserve(first_vs * (filter_len - 1))?;
-            }
-        } else {
-            let next_match_row = if filter_idx < filter_len {
-                let abs_row = rows_filter[filter_idx] as usize + row_group_lo;
-                abs_row.saturating_sub(page_row_start)
-            } else {
-                debug_assert!(FILL_NULLS);
-                row_hi
-            };
-            let skip_count = next_match_row.saturating_sub(current_row);
-
-            if skip_count > 0 {
-                let non_null_skipped = levels_iter.skip_rows(skip_count, max_def_level as u32)?;
-                slicer.skip(non_null_skipped);
-                if FILL_NULLS {
-                    append_array_nulls(&mut buffers.aux_vec, &buffers.data_vec, skip_count)?;
-                }
-                current_row += skip_count;
-            }
-        }
-    }
-
-    if FILL_NULLS && current_row < row_hi {
-        let remaining = row_hi - current_row;
-        append_array_nulls(&mut buffers.aux_vec, &buffers.data_vec, remaining)?;
-    }
-
-    Ok(())
-}
-
-fn decode_array_page<T: DataPageSlicer>(
-    page: &DataPage,
-    row_lo: usize,
-    row_hi: usize,
-    slicer: &mut T,
-    buffers: &mut ColumnChunkBuffers,
-) -> ParquetResult<()> {
-    let (rep_levels, def_levels, _) = split_buffer(page)?;
-
-    let max_rep_level = page.descriptor.max_rep_level;
-    let max_def_level = page.descriptor.max_def_level;
-
-    if max_rep_level > ARRAY_NDIMS_LIMIT as i16 {
-        return Err(fmt_err!(
-            Unsupported,
-            "too large number of array dimensions {max_rep_level}"
-        ));
-    }
-
-    buffers
-        .aux_vec
-        .reserve((row_hi - row_lo) * ARRAY_AUX_SIZE)?;
-
-    let mut levels_iter = LevelsIterator::try_new(
-        page.num_values(),
-        max_rep_level,
-        max_def_level,
-        rep_levels,
-        def_levels,
-    )?;
-
-    match max_rep_level {
-        1 => decode_array_rows_1d(
-            &mut levels_iter,
-            max_def_level as u32,
-            row_lo,
-            row_hi,
-            slicer,
-            buffers,
-        ),
-        2 => decode_array_rows_2d(
-            &mut levels_iter,
-            max_def_level as u32,
-            row_lo,
-            row_hi,
-            slicer,
-            buffers,
-        ),
-        _ => decode_array_rows_generic(
-            &mut levels_iter,
-            max_rep_level as u32,
-            max_def_level as u32,
-            row_lo,
-            row_hi,
-            slicer,
-            buffers,
-        ),
-    }
-}
-
-fn decode_array_rows_1d<T: DataPageSlicer>(
-    levels_iter: &mut LevelsIterator,
-    max_def_level: u32,
-    row_lo: usize,
-    row_hi: usize,
-    slicer: &mut T,
-    buffers: &mut ColumnChunkBuffers,
-) -> ParquetResult<()> {
-    if row_lo > 0 {
-        let non_null_skipped = levels_iter.skip_rows(row_lo, max_def_level)?;
-        slicer.skip(non_null_skipped);
-    }
-
-    let target_rows = row_hi - row_lo;
-    if target_rows == 0 {
-        return Ok(());
-    }
-
-    let mut def_scratch = Vec::new();
-
-    let Some(first_vs) = read_and_append_one_row_1d(
-        levels_iter,
-        max_def_level,
-        slicer,
-        buffers,
-        &mut def_scratch,
-    )?
-    else {
-        return Ok(());
-    };
-    if target_rows > 1 && first_vs > 0 {
-        // estimate total size
-        buffers.data_vec.reserve(first_vs * (target_rows - 1))?;
-    }
-    for _ in 1..target_rows {
-        if read_and_append_one_row_1d(
-            levels_iter,
-            max_def_level,
-            slicer,
-            buffers,
-            &mut def_scratch,
-        )?
-        .is_none()
-        {
-            break;
-        }
-    }
-    Ok(())
-}
-
-fn decode_array_rows_2d<T: DataPageSlicer>(
-    levels_iter: &mut LevelsIterator,
-    max_def_level: u32,
-    row_lo: usize,
-    row_hi: usize,
-    slicer: &mut T,
-    buffers: &mut ColumnChunkBuffers,
-) -> ParquetResult<()> {
-    if row_lo > 0 {
-        let non_null_skipped = levels_iter.skip_rows(row_lo, max_def_level)?;
-        slicer.skip(non_null_skipped);
-    }
-
-    let target_rows = row_hi - row_lo;
-    if target_rows == 0 {
-        return Ok(());
-    }
-
-    let mut def_scratch = Vec::new();
-
-    let Some(first_vs) = read_and_append_one_row_2d(
-        levels_iter,
-        max_def_level,
-        slicer,
-        buffers,
-        &mut def_scratch,
-    )?
-    else {
-        return Ok(());
-    };
-    if target_rows > 1 && first_vs > 0 {
-        // estimate total size
-        buffers.data_vec.reserve(first_vs * (target_rows - 1))?;
-    }
-    for _ in 1..target_rows {
-        if read_and_append_one_row_2d(
-            levels_iter,
-            max_def_level,
-            slicer,
-            buffers,
-            &mut def_scratch,
-        )?
-        .is_none()
-        {
-            break;
-        }
-    }
-    Ok(())
-}
-
-#[inline]
-fn read_and_append_one_row_1d<T: DataPageSlicer>(
-    levels_iter: &mut LevelsIterator,
-    max_def_level: u32,
-    slicer: &mut T,
-    buffers: &mut ColumnChunkBuffers,
-    def_scratch: &mut Vec<u32>,
-) -> ParquetResult<Option<usize>> {
-    let first_def = if levels_iter.has_lookahead() {
-        let (_, def) = levels_iter.take_lookahead();
-        Some(def)
-    } else {
-        match levels_iter.next_rep_def() {
-            Some(Ok((_, def))) => Some(def),
-            Some(Err(e)) => return Err(e),
-            None => None,
-        }
-    };
-
-    let Some(first_def) = first_def else {
-        return Ok(None);
-    };
-
-    if first_def == 0 {
-        append_array_null(&mut buffers.aux_vec, &buffers.data_vec)?;
-        return Ok(Some(0));
-    }
-
-    let mut element_count = 1usize;
-    let mut non_null_count: usize = if first_def == max_def_level { 1 } else { 0 };
-    let mut has_nulls = first_def != max_def_level;
-
-    def_scratch.clear();
-    if has_nulls {
-        def_scratch.push(first_def);
-    }
-
-    loop {
-        match levels_iter.next_rep_def() {
-            None => break,
-            Some(Err(e)) => return Err(e),
-            Some(Ok((rep, def))) => {
-                if rep == 0 {
-                    levels_iter.set_lookahead(rep, def);
-                    break;
-                }
-                if def == max_def_level {
-                    non_null_count += 1;
-                } else if !has_nulls {
-                    has_nulls = true;
-                    def_scratch.reserve(element_count + 1);
-                    def_scratch.resize(element_count, max_def_level);
-                }
-                if has_nulls {
-                    def_scratch.push(def);
-                }
-                element_count += 1;
-            }
-        }
-    }
-
-    // 8 bytes shape ([element_count: u32, pad: u32]) + 8 bytes per f64 element.
-    // Currently arrays only support f64 elements.
-    let value_size = 8 + 8 * element_count;
-    let data_start = buffers.data_vec.len();
-    buffers.data_vec.reserve(value_size)?;
-
-    buffers
-        .aux_vec
-        .extend_from_slice(&data_start.to_le_bytes())?;
-    buffers
-        .aux_vec
-        .extend_from_slice(&value_size.to_le_bytes())?;
-
-    buffers
-        .data_vec
-        .extend_from_slice(&(element_count as u32).to_le_bytes())?;
-    buffers.data_vec.extend_from_slice(&[0u8; 4])?;
-
-    if non_null_count == element_count {
-        slicer.next_slice_into(element_count, &mut buffers.data_vec)?;
-    } else {
-        for &def in def_scratch.iter() {
-            if def == max_def_level {
-                slicer.next_into(&mut buffers.data_vec)?;
-            } else {
-                buffers
-                    .data_vec
-                    .extend_from_slice(&f64::NAN.to_le_bytes())?;
-            }
-        }
-    }
-
-    Ok(Some(value_size))
-}
-
-#[inline]
-fn read_and_append_one_row_2d<T: DataPageSlicer>(
-    levels_iter: &mut LevelsIterator,
-    max_def_level: u32,
-    slicer: &mut T,
-    buffers: &mut ColumnChunkBuffers,
-    def_scratch: &mut Vec<u32>,
-) -> ParquetResult<Option<usize>> {
-    let first_def = if levels_iter.has_lookahead() {
-        let (_, def) = levels_iter.take_lookahead();
-        Some(def)
-    } else {
-        match levels_iter.next_rep_def() {
-            Some(Ok((_, def))) => Some(def),
-            Some(Err(e)) => return Err(e),
-            None => None,
-        }
-    };
-
-    let Some(first_def) = first_def else {
-        return Ok(None);
-    };
-
-    if first_def == 0 {
-        append_array_null(&mut buffers.aux_vec, &buffers.data_vec)?;
-        return Ok(Some(0));
-    }
-
-    let mut dim0 = 1u32;
-    let mut cur_dim1 = 1u32;
-    let mut max_dim1 = 0u32;
-    let mut total_elements = 1usize;
-    let mut non_null_count: usize = if first_def == max_def_level { 1 } else { 0 };
-    let mut has_nulls = first_def != max_def_level;
-
-    def_scratch.clear();
-    if has_nulls {
-        def_scratch.push(first_def);
-    }
-
-    loop {
-        match levels_iter.next_rep_def() {
-            None => break,
-            Some(Err(e)) => return Err(e),
-            Some(Ok((rep, def))) => {
-                if rep == 0 {
-                    levels_iter.set_lookahead(rep, def);
-                    break;
-                }
-                if rep == 1 {
-                    max_dim1 = max_dim1.max(cur_dim1);
-                    cur_dim1 = 1;
-                    dim0 += 1;
-                } else {
-                    cur_dim1 += 1;
-                }
-                if def == max_def_level {
-                    non_null_count += 1;
-                } else if !has_nulls {
-                    has_nulls = true;
-                    def_scratch.reserve(total_elements + 1);
-                    def_scratch.resize(total_elements, max_def_level);
-                }
-                if has_nulls {
-                    def_scratch.push(def);
-                }
-                total_elements += 1;
-            }
-        }
-    }
-    max_dim1 = max_dim1.max(cur_dim1);
-
-    // 8 bytes shape ([dim0: u32, max_dim1: u32]) + 8 bytes per f64 element.
-    // Currently arrays only support f64 elements.
-    let value_size = 8 + 8 * total_elements;
-    let data_start = buffers.data_vec.len();
-    buffers.data_vec.reserve(value_size)?;
-
-    buffers
-        .aux_vec
-        .extend_from_slice(&data_start.to_le_bytes())?;
-    buffers
-        .aux_vec
-        .extend_from_slice(&value_size.to_le_bytes())?;
-
-    buffers.data_vec.extend_from_slice(&dim0.to_le_bytes())?;
-    buffers
-        .data_vec
-        .extend_from_slice(&max_dim1.to_le_bytes())?;
-
-    if non_null_count == total_elements {
-        slicer.next_slice_into(total_elements, &mut buffers.data_vec)?;
-    } else {
-        for &def in def_scratch.iter() {
-            if def == max_def_level {
-                slicer.next_into(&mut buffers.data_vec)?;
-            } else {
-                buffers
-                    .data_vec
-                    .extend_from_slice(&f64::NAN.to_le_bytes())?;
-            }
-        }
-    }
-
-    Ok(Some(value_size))
-}
-
-#[inline]
-fn read_and_append_one_row_generic<T: DataPageSlicer>(
-    levels_iter: &mut LevelsIterator,
-    max_rep_level: u32,
-    max_def_level: u32,
-    slicer: &mut T,
-    buffers: &mut ColumnChunkBuffers,
-) -> ParquetResult<Option<usize>> {
-    match levels_iter.next_levels() {
-        Some(Ok(levels)) => {
-            let vs = append_array(
-                &mut buffers.aux_vec,
-                &mut buffers.data_vec,
-                max_rep_level,
-                max_def_level,
-                &levels.rep_levels,
-                &levels.def_levels,
-                slicer,
-            )?;
-            Ok(Some(vs))
-        }
-        Some(Err(e)) => Err(e),
-        None => Ok(None),
-    }
-}
-
-fn decode_array_rows_generic<T: DataPageSlicer>(
-    levels_iter: &mut LevelsIterator,
-    max_rep_level: u32,
-    max_def_level: u32,
-    row_lo: usize,
-    row_hi: usize,
-    slicer: &mut T,
-    buffers: &mut ColumnChunkBuffers,
-) -> ParquetResult<()> {
-    if row_lo > 0 {
-        let non_null_skipped = levels_iter.skip_rows(row_lo, max_def_level)?;
-        slicer.skip(non_null_skipped);
-    }
-
-    let target_rows = row_hi - row_lo;
-    if target_rows == 0 {
-        return Ok(());
-    }
-
-    let Some(first_vs) = read_and_append_one_row_generic(
-        levels_iter,
-        max_rep_level,
-        max_def_level,
-        slicer,
-        buffers,
-    )?
-    else {
-        return Ok(());
-    };
-    if target_rows > 1 && first_vs > 0 {
-        buffers.data_vec.reserve(first_vs * (target_rows - 1))?;
-    }
-    for _ in 1..target_rows {
-        if read_and_append_one_row_generic(
-            levels_iter,
-            max_rep_level,
-            max_def_level,
-            slicer,
-            buffers,
-        )?
-        .is_none()
-        {
-            break;
-        }
-    }
-    Ok(())
-}
-
-fn append_array<T: DataPageSlicer>(
-    aux_mem: &mut AcVec<u8>,
-    data_mem: &mut AcVec<u8>,
-    max_rep_level: u32,
-    max_def_level: u32,
-    rep_levels: &[u32],
-    def_levels: &[u32],
-    slicer: &mut T,
-) -> ParquetResult<usize> {
-    if def_levels.len() == 1 && def_levels[0] == 0 {
-        append_array_null(aux_mem, data_mem)?;
-        return Ok(0);
-    }
-
-    let shape_size = align8b(4 * max_rep_level as usize);
-    let value_size = shape_size + 8 * rep_levels.len();
-
-    aux_mem.extend_from_slice(&data_mem.len().to_le_bytes())?;
-    aux_mem.extend_from_slice(&value_size.to_le_bytes())?;
-
-    // first, calculate and write shape
-    let mut shape = [0_u32; ARRAY_NDIMS_LIMIT];
-    calculate_array_shape(&mut shape, max_rep_level, rep_levels);
-    data_mem.reserve(value_size)?;
-    let mut num_elements: usize = 1;
-    for &dim in shape.iter().take(max_rep_level as usize) {
-        num_elements *= dim as usize;
-        data_mem.extend_from_slice(&dim.to_le_bytes())?;
-    }
-    if num_elements != def_levels.len() {
-        return Err(fmt_err!(
-            InvalidLayout,
-            "incomplete array structure: expected {} elements, present {}",
-            num_elements,
-            def_levels.len(),
-        ));
-    }
-    // add an optional padding
-    if !max_rep_level.is_multiple_of(2) {
-        data_mem.extend_from_slice(&0_u32.to_le_bytes())?;
-    }
-
-    // next, copy elements
-    let non_null_count = def_levels.iter().filter(|&&d| d == max_def_level).count();
-    if non_null_count == def_levels.len() {
-        // All non-null: batch copy.
-        slicer.next_slice_into(def_levels.len(), data_mem)?;
-    } else {
-        for &def_level in def_levels {
-            if def_level == max_def_level {
-                slicer.next_into(data_mem)?;
-            } else {
-                data_mem.extend_from_slice(&f64::NAN.to_le_bytes())?;
-            }
-        }
-    }
-    Ok(value_size)
-}
-
-fn decompress_sliced_dict<'a>(
+pub(super) fn decompress_sliced_dict<'a>(
     page: SlicedDictPage<'a>,
     buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DictPage<'a>> {
@@ -4190,7 +2888,7 @@ fn decompress_sliced_dict<'a>(
     })
 }
 
-fn decompress_sliced_data<'a>(
+pub(super) fn decompress_sliced_data<'a>(
     page: &'a SlicedDataPage<'a>,
     decompress_buffer: &'a mut Vec<u8>,
 ) -> ParquetResult<DataPage<'a>> {
@@ -4247,7 +2945,10 @@ fn decompress_sliced_data<'a>(
     })
 }
 
-fn sliced_page_row_count(page: &SlicedDataPage, column_type: ColumnType) -> Option<usize> {
+pub(super) fn sliced_page_row_count(
+    page: &SlicedDataPage,
+    column_type: ColumnType,
+) -> Option<usize> {
     match &page.header {
         DataPageHeader::V2(header) => Some(header.num_rows as usize),
         DataPageHeader::V1(header) => match column_type.tag() {
@@ -4263,7 +2964,7 @@ fn sliced_page_row_count(page: &SlicedDataPage, column_type: ColumnType) -> Opti
     }
 }
 
-fn page_row_count(page: &DataPage, column_type: ColumnType) -> ParquetResult<usize> {
+pub(super) fn page_row_count(page: &DataPage, column_type: ColumnType) -> ParquetResult<usize> {
     match &page.header {
         // V2 has explicit number of rows in the header.
         DataPageHeader::V2(header) => Ok(header.num_rows as usize),
@@ -4305,7 +3006,7 @@ fn page_row_count(page: &DataPage, column_type: ColumnType) -> ParquetResult<usi
     }
 }
 
-fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
+pub(super) fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
     let value = value
         .as_ref()
         .ok_or_else(|| fmt_err!(InvalidLayout, "missing statistics value"))?;
