@@ -484,32 +484,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
-    public void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException {
-        switch (op.getOperationCode()) {
-            case OperationCodes.CREATE_TABLE:
-                executeCreateTable((CreateTableOperation) op, executionContext);
-                break;
-            case OperationCodes.CREATE_VIEW:
-                executeCreateView((CreateViewOperation) op, executionContext);
-                break;
-            case OperationCodes.CREATE_MAT_VIEW:
-                executeCreateMatView((CreateMatViewOperation) op, executionContext);
-                break;
-            case OperationCodes.DROP_TABLE:
-                executeDropTable((GenericDropOperation) op, executionContext);
-                break;
-            case OperationCodes.DROP_VIEW:
-                executeDropView((GenericDropOperation) op, executionContext);
-                break;
-            case OperationCodes.DROP_MAT_VIEW:
-                executeDropMatView((GenericDropOperation) op, executionContext);
-                break;
-            case OperationCodes.DROP_ALL:
-                executeDropAllTables(executionContext);
-                break;
-            default:
-                throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
-        }
+    public boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException {
+        return switch (op.getOperationCode()) {
+            case OperationCodes.CREATE_TABLE -> executeCreateTable((CreateTableOperation) op, executionContext);
+            case OperationCodes.CREATE_VIEW -> executeCreateView((CreateViewOperation) op, executionContext);
+            case OperationCodes.CREATE_MAT_VIEW -> executeCreateMatView((CreateMatViewOperation) op, executionContext);
+            case OperationCodes.DROP_TABLE -> executeDropTable((GenericDropOperation) op, executionContext);
+            case OperationCodes.DROP_VIEW -> executeDropView((GenericDropOperation) op, executionContext);
+            case OperationCodes.DROP_MAT_VIEW -> executeDropMatView((GenericDropOperation) op, executionContext);
+            case OperationCodes.DROP_ALL -> executeDropAllTables(executionContext);
+            default ->
+                    throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
+        };
     }
 
     @Override
@@ -3853,7 +3839,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
+    private boolean executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
         if (createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_IMMEDIATE
                 && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_TIMER
                 && createMatViewOp.getRefreshType() != MatViewDefinition.REFRESH_TYPE_MANUAL) {
@@ -3875,6 +3861,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(createMatViewOp.getTableNamePosition(), "materialized view already exists");
                 }
+                return false;
             } else {
                 CharSequence volumeAlias = createMatViewOp.getVolumeAlias();
                 if (volumeAlias != null) {
@@ -3945,6 +3932,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
             QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
+            return true;
         } catch (Throwable th) {
             if (th instanceof CairoException) {
                 ((CairoException) th).position(createMatViewOp.getTableNamePosition());
@@ -3956,7 +3944,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
+    private boolean executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
         boolean needRegister = createTableOp.needRegister();
         long sqlId = 0;
         long beginNanos = 0;
@@ -3980,6 +3968,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
                 }
+                return false;
             } else {
                 // create table (...) ... in volume volumeAlias;
                 CharSequence volumeAlias = createTableOp.getVolumeAlias();
@@ -4135,6 +4124,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (needRegister) {
                 QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
             }
+            return true;
         } catch (Throwable e) {
             if (e instanceof CairoException) {
                 ((CairoException) e).position(createTableOp.getTableNamePosition());
@@ -4151,7 +4141,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeCreateView(CreateViewOperation createViewOp, SqlExecutionContext executionContext) throws SqlException {
+    private boolean executeCreateView(CreateViewOperation createViewOp, SqlExecutionContext executionContext) throws SqlException {
         final long sqlId = queryRegistry.register(createViewOp.getSqlText(), executionContext);
         final long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createViewOp.getSqlText(), executionContext, false);
@@ -4167,6 +4157,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(createViewOp.getTableNamePosition(), "view already exists");
                 }
+                return false;
             } else {
                 final ViewDefinition viewDefinition;
                 final TableToken viewToken;
@@ -4221,6 +4212,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
             QueryProgress.logEnd(sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
+            return true;
         } catch (Throwable th) {
             if (th instanceof CairoException) {
                 ((CairoException) th).position(createViewOp.getTableNamePosition());
@@ -4232,13 +4224,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void executeDropAllTables(SqlExecutionContext executionContext) {
+    private boolean executeDropAllTables(SqlExecutionContext executionContext) {
         // collect table names
         dropAllTablesFailedTableNames.clear();
         tableTokenBucket.clear();
         engine.getTableTokens(tableTokenBucket, false);
         final SecurityContext securityContext = executionContext.getSecurityContext();
         TableToken tableToken;
+        boolean dropped = false;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             tableToken = tableTokenBucket.get(i);
             if (!tableToken.isSystem()) {
@@ -4251,6 +4244,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 try {
                     engine.dropTableOrViewOrMatView(path, tableToken);
+                    dropped = true;
                 } catch (CairoException report) {
                     // it will fail when there are readers/writers and lock cannot be acquired
                     dropAllTablesFailedTableNames.put(tableToken.getTableName(), report.getMessage());
@@ -4272,16 +4266,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             throw ex.put(']');
         }
+        return dropped;
     }
 
-    private void executeDropMatView(
+    private boolean executeDropMatView(
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
-                return;
+                return false;
             }
             throw SqlException.matViewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
@@ -4297,7 +4292,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, mat view dropped already
-                return;
+                return false;
             } else if (!op.ifExists() && ex.isTableDropped()) {
                 // Concurrently dropped, this should report mat view does not exist
                 throw CairoException.matViewDoesNotExist(op.getEntityName());
@@ -4306,16 +4301,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             queryRegistry.unregister(queryId, sqlExecutionContext);
         }
+        return true;
     }
 
-    private void executeDropTable(
+    private boolean executeDropTable(
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
-                return;
+                return false;
             }
             throw SqlException.tableDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
@@ -4331,7 +4327,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, table dropped already
-                return;
+                return false;
             } else if (!op.ifExists() && ex.isTableDropped()) {
                 // Concurrently dropped, this should report table does not exist
                 throw CairoException.tableDoesNotExist(op.getEntityName());
@@ -4340,16 +4336,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             queryRegistry.unregister(queryId, sqlExecutionContext);
         }
+        return true;
     }
 
-    private void executeDropView(
+    private boolean executeDropView(
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
-                return;
+                return false;
             }
             throw SqlException.viewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
@@ -4366,7 +4363,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (CairoException ex) {
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, mat view dropped already
-                return;
+                return false;
             } else if (!op.ifExists() && ex.isTableDropped()) {
                 // Concurrently dropped, this should report view does not exist
                 throw CairoException.viewDoesNotExist(op.getEntityName());
@@ -4375,6 +4372,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             queryRegistry.unregister(queryId, sqlExecutionContext);
         }
+        return true;
     }
 
     private int filterApply(

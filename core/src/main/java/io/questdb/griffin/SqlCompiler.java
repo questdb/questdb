@@ -54,7 +54,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * @throws SqlException   in case of known, typically validation, errors
      * @throws CairoException in case of unexpected, typically runtime, errors
      */
-    void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
+    boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
