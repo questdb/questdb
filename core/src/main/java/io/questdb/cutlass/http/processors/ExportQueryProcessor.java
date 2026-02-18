@@ -35,6 +35,8 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -704,28 +706,28 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 switch (exportMode) {
                     case DIRECT_PAGE_FRAME -> state.task.setUpStreamPartitionParquetExporter();
                     case PAGE_FRAME_BACKED -> {
-                        RecordMetadata adjustedMeta = state.materializer.getAdjustedMetadata();
-                        state.task.getStreamPartitionParquetExporter().setUp(
-                                adjustedMeta, state.pageFrameCursor, state.materializer.getBaseColumnMap()
-                        );
-                        exporter.setupPageFrameBackedExport(
-                                state.pageFrameCursor, state.materializer, state.materializerColumnData
-                        );
-                        // Transfer ownership to exporter
+                        PageFrameCursor pfc = state.pageFrameCursor;
+                        RecordToColumnBuffers mat = state.materializer;
+                        DirectLongList matData = state.materializerColumnData;
                         state.pageFrameCursor = null;
                         state.materializer = null;
                         state.materializerColumnData = null;
+                        RecordMetadata adjustedMeta = mat.getAdjustedMetadata();
+                        state.task.getStreamPartitionParquetExporter().setUp(
+                                adjustedMeta, pfc, mat.getBaseColumnMap()
+                        );
+                        exporter.setupPageFrameBackedExport(pfc, mat, matData);
                     }
                     case CURSOR_BASED -> {
-                        RecordMetadata adjustedMeta = state.materializer.getAdjustedMetadata();
-                        state.task.getStreamPartitionParquetExporter().setUp(adjustedMeta);
-                        exporter.setupCursorBasedExport(
-                                state.cursor, state.materializer, state.materializerColumnData
-                        );
-                        // Transfer ownership to exporter
+                        RecordCursor cur = state.cursor;
+                        RecordToColumnBuffers mat = state.materializer;
+                        DirectLongList matData = state.materializerColumnData;
                         state.cursor = null;
                         state.materializer = null;
                         state.materializerColumnData = null;
+                        RecordMetadata adjustedMeta = mat.getAdjustedMetadata();
+                        state.task.getStreamPartitionParquetExporter().setUp(adjustedMeta);
+                        exporter.setupCursorBasedExport(cur, mat, matData);
                     }
                     case TEMP_TABLE -> {
                         // Stream partition parquet exporter set up in process() after temp table is created

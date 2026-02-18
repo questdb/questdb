@@ -242,6 +242,12 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         return frameRowCount;
     }
 
+    /**
+     * Resets state for reuse: frees data/aux buffers and nulls references,
+     * but retains {@code pfMemory}'s native allocations (DirectLongLists).
+     * Use {@link #close()} to fully release all native memory including
+     * {@code pfMemory}.
+     */
     @Override
     public void clear() {
         for (int i = 0, n = dataBuffers.size(); i < n; i++) {

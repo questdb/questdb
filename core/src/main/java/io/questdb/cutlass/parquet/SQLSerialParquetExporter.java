@@ -335,6 +335,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         createDirsOrFail(ff, tempPath.slash(), configuration.getMkDirMode());
         int tempBaseDirLen = tempPath.size();
         tempPath.concat("export.parquet");
+        int tempFilePathLen = tempPath.size();
 
         long fd = ff.openRW(tempPath.$(), configuration.getWriterFileOpenOpts());
         if (fd < 0) {
@@ -381,11 +382,17 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                         exporter.setUp(meta, pfc, identityMap);
 
                         PageFrame frame;
+                        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
                         while ((frame = pfc.next()) != null) {
                             if (circuitBreaker.checkIfTripped()) {
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
                             exporter.writePageFrame(pfc, frame);
+                            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
+                            if (currentRowsWritten > previousRowsWritten) {
+                                pfc.releaseOpenPartitions();
+                                previousRowsWritten = currentRowsWritten;
+                            }
                         }
 
                         exporter.finishExport();
@@ -402,12 +409,18 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                         exporter.setUp(adjustedMeta, pfc, buffers.getBaseColumnMap());
 
                         PageFrame frame;
+                        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
                         while ((frame = pfc.next()) != null) {
                             if (circuitBreaker.checkIfTripped()) {
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
                             long rowCount = buffers.buildColumnDataFromPageFrame(pfc, frame, columnData);
                             exporter.writeHybridFrame(columnData, rowCount);
+                            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
+                            if (currentRowsWritten > previousRowsWritten) {
+                                pfc.releaseOpenPartitions();
+                                previousRowsWritten = currentRowsWritten;
+                            }
                         }
 
                         exporter.finishExport();
@@ -437,6 +450,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         phase = CopyExportRequestTask.Phase.MOVE_FILES;
         entry.setPhase(phase);
         copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        tempPath.trimTo(tempFilePathLen);
         moveFile(fileName);
         // Clean up the now-empty temp directory
         tempPath.trimTo(tempBaseDirLen);
