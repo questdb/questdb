@@ -62,7 +62,6 @@ import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 import java.io.File;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -347,7 +346,6 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                 .$(", selectText=").$(selectText).$(", mode=").$(mode).$(']').$();
 
         RecordCursorFactory factory = null;
-        final AtomicBoolean savedCancelledFlag = circuitBreaker.getCancelledFlag();
         try (
                 SqlCompiler compiler = cairoEngine.getSqlCompiler();
                 RecordToColumnBuffers buffers = new RecordToColumnBuffers();
@@ -355,6 +353,10 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         ) {
             CompiledQuery cc = compiler.compile(selectText, sqlExecutionContext);
             factory = cc.getRecordCursorFactory();
+            // Unwrap QueryProgress so that its register/unregister lifecycle
+            // does not null the circuit breaker's cancelledFlag when cursors close.
+            // The outer COPY command handles query registration and cancellation.
+            RecordCursorFactory baseFactory = RecordToColumnBuffers.unwrapFactory(factory);
             CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
             // File-write callback
             final long finalFd = fd;
@@ -371,9 +373,9 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
 
             switch (mode) {
                 case DIRECT_PAGE_FRAME -> {
-                    try (PageFrameCursor pfc = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                    try (PageFrameCursor pfc = baseFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                         pfc.setStreamingMode(true);
-                        RecordMetadata meta = factory.getMetadata();
+                        RecordMetadata meta = baseFactory.getMetadata();
                         int colCount = meta.getColumnCount();
                         int[] identityMap = new int[colCount];
                         for (int i = 0; i < colCount; i++) {
@@ -400,8 +402,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                     }
                 }
                 case PAGE_FRAME_BACKED -> {
-                    RecordCursorFactory unwrapped = RecordToColumnBuffers.unwrapFactory(factory);
-                    VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
+                    VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) baseFactory;
                     try (PageFrameCursor pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                         pfc.setStreamingMode(true);
                         buffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
@@ -427,7 +428,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                         numOfFiles = 1;
                     }
                 }
-                case CURSOR_BASED -> processCursorExport(factory, buffers, columnData, exporter, phase);
+                case CURSOR_BASED -> processCursorExport(baseFactory, buffers, columnData, exporter, phase);
                 default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
             }
         } catch (CopyExportException e) {
@@ -440,7 +441,6 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
             Misc.free(factory);
-            circuitBreaker.setCancelledFlag(savedCancelledFlag);
             ff.close(fd);
         }
 
