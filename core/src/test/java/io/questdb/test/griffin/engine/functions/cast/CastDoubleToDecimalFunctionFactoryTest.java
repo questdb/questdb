@@ -247,19 +247,19 @@ public class CastDoubleToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     assertException(
                             "WITH data AS (SELECT 1000.0 AS value) SELECT cast(value as DECIMAL(4,2)) FROM data",
                             50,
-                            "inconvertible value: `1000.0` [DOUBLE -> DECIMAL(4,2)]"
+                            "inconvertible value: 1000.0 [DOUBLE -> DECIMAL(4,2)]"
                     );
 
                     assertException(
                             "with data as (select -1e30d v) select cast(v as decimal(24,2)) from data",
                             43,
-                            "inconvertible value: `-1.0E30` [DOUBLE -> DECIMAL(24,2)]"
+                            "inconvertible value: -1.0E30 [DOUBLE -> DECIMAL(24,2)]"
                     );
 
                     assertException(
                             "with data as (select 1e36d v) select cast(v as decimal(42,12)) from data",
                             42,
-                            "inconvertible value: `1.0E36` [DOUBLE -> DECIMAL(42,12)]"
+                            "inconvertible value: 1.0E36 [DOUBLE -> DECIMAL(42,12)]"
                     );
                 }
         );
