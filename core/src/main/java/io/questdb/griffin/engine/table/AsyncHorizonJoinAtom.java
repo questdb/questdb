@@ -47,6 +47,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -104,6 +105,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerFilter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             long masterTsScale,
             long slaveTsScale,
@@ -138,6 +140,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 bindVarMemory,
                 bindVarFunctions,
                 ownerFilter,
+                filterUsedColumnIndexes,
                 perWorkerFilters,
                 masterTsScale,
                 slaveTsScale,

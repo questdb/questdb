@@ -24,10 +24,10 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 
 /**
  * Iterator that produces horizon timestamps (master_timestamp + offset) in sorted order
@@ -51,6 +51,10 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     private final LongList offsets;
     private long currentHorizonTs;
     private long currentIndex;
+    // Position within the filtered rows list, i.e., the compact buffer index
+    // used by PageFrameFilteredMemoryRecord for late-materialized columns.
+    private long currentMasterRowCompactIdx;
+    // Absolute row index within the page frame (e.g., filteredRows[pos]).
     private long currentMasterRowIdx;
     private int currentOffsetIdx;
     private DirectLongList filteredRows;
@@ -58,8 +62,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     private int heapSize;
     private boolean isFiltered;
     private long masterRowCount;
-    private PageFrameMemoryRecord record;
-    private int timestampColumnIndex;
+    private long tsColumnAddress;
     private long tupleCount;
 
     public AsyncHorizonTimestampIterator(LongList offsets) {
@@ -79,6 +82,15 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
      */
     public long getHorizonTimestamp() {
         return currentHorizonTs;
+    }
+
+    /**
+     * Returns the compact index of the current master row within the filtered rows list.
+     * This is the sequential position (0, 1, 2, ...) used to index into compact buffers
+     * created by late materialization with {@code fillWithNulls=false}.
+     */
+    public long getMasterRowCompactIndex() {
+        return currentMasterRowCompactIdx;
     }
 
     /**
@@ -109,14 +121,14 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         long pos = heapPos[0];
         int offsetIdx = heapOffsetIdx[0];
         currentOffsetIdx = offsetIdx;
+        currentMasterRowCompactIdx = pos;
         currentMasterRowIdx = isFiltered ? filteredRows.get(pos) : pos;
 
         // Advance this stream to the next position
         long nextPos = pos + 1;
         if (nextPos < masterRowCount) {
             long nextRowIdx = isFiltered ? filteredRows.get(nextPos) : (frameRowLo + nextPos);
-            record.setRowIndex(nextRowIdx);
-            long nextHorizonTs = Math.addExact(record.getTimestamp(timestampColumnIndex), offsets.getQuick(offsetIdx));
+            long nextHorizonTs = Math.addExact(readTimestamp(nextRowIdx), offsets.getQuick(offsetIdx));
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -138,14 +150,12 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     /**
      * Initializes the iterator for a new page frame.
      *
-     * @param record               record positioned at the frame (used to read timestamps)
-     * @param frameRowLo           first row index in the frame
-     * @param frameRowCount        number of rows in the frame
-     * @param timestampColumnIndex index of the timestamp column in the record
+     * @param tsColumnAddress base address of the timestamp column data
+     * @param frameRowLo      first row index in the frame
+     * @param frameRowCount   number of rows in the frame
      */
-    public void of(PageFrameMemoryRecord record, long frameRowLo, long frameRowCount, int timestampColumnIndex) {
-        this.record = record;
-        this.timestampColumnIndex = timestampColumnIndex;
+    public void of(long tsColumnAddress, long frameRowLo, long frameRowCount) {
+        this.tsColumnAddress = tsColumnAddress;
         this.frameRowLo = frameRowLo;
         this.masterRowCount = frameRowCount;
         this.isFiltered = false;
@@ -158,13 +168,11 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     /**
      * Initializes the iterator for filtered rows in a page frame.
      *
-     * @param record               record positioned at the frame (used to read timestamps)
-     * @param filteredRows         list of filtered row indices
-     * @param timestampColumnIndex index of the timestamp column in the record
+     * @param tsColumnAddress base address of the timestamp column data
+     * @param filteredRows    list of filtered row indices
      */
-    public void ofFiltered(PageFrameMemoryRecord record, DirectLongList filteredRows, int timestampColumnIndex) {
-        this.record = record;
-        this.timestampColumnIndex = timestampColumnIndex;
+    public void ofFiltered(long tsColumnAddress, DirectLongList filteredRows) {
+        this.tsColumnAddress = tsColumnAddress;
         this.masterRowCount = filteredRows.size();
         this.filteredRows = filteredRows;
         this.isFiltered = true;
@@ -184,13 +192,16 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     private void initHeap(long firstRowIdx, boolean hasRows) {
         heapSize = 0;
         if (hasRows) {
-            record.setRowIndex(firstRowIdx);
-            long firstMasterTs = record.getTimestamp(timestampColumnIndex);
+            long firstMasterTs = readTimestamp(firstRowIdx);
             for (int k = 0, n = offsets.size(); k < n; k++) {
                 long horizonTs = Math.addExact(firstMasterTs, offsets.getQuick(k));
                 heapInsert(horizonTs, k);
             }
         }
+    }
+
+    private long readTimestamp(long rowIdx) {
+        return Unsafe.getUnsafe().getLong(tsColumnAddress + (rowIdx << 3));
     }
 
     private void siftDown() {

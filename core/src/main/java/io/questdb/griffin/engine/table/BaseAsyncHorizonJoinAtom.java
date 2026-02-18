@@ -56,6 +56,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -137,6 +138,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerFilter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             long masterTimestampScale,
             long slaveTsScale,
@@ -152,17 +154,16 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         this.horizonJoinSymbolTableSource = new HorizonJoinSymbolTableSource(columnSources, columnIndexes);
 
         // Filter and memory pool resources (ownership transferred from caller)
-        // TODO(puzpuzpuz): use late materialization
         this.filterCtx = new AsyncFilterContext(
                 configuration,
                 compiledFilter,
                 bindVarMemory,
                 bindVarFunctions,
                 ownerFilter,
-                null, // no late materialization
+                filterUsedColumnIndexes,
                 perWorkerFilters,
                 workerCount,
-                0, // no filtered memory records
+                workerCount,
                 1, // owner memory pool capacity
                 1  // per-worker memory pool capacity
         );

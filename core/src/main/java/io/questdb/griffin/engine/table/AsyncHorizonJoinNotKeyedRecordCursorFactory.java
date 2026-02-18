@@ -37,9 +37,11 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -59,6 +61,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -126,6 +129,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
+            @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
@@ -178,6 +182,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     bindVarMemory,
                     bindVarFunctions,
                     filter,
+                    filterUsedColumnIndexes,
                     perWorkerFilters,
                     masterTsScale,
                     slaveTsScale,
@@ -286,8 +291,17 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
         final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
+        final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        final PageFrameMemory frameMemory;
+        if (useLateMaterialization) {
+            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+        } else {
+            frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        }
         record.init(frameMemory);
 
         try {
@@ -304,7 +318,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
-                final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
                 applyCompiledFilter(
                         compiledFilter,
                         filterCtx.getBindVarMemory(),
@@ -323,6 +336,15 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 return;
             }
 
+            if (isParquetFrame) {
+                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+            }
+            if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {
+                PageFrameFilteredMemoryRecord filteredMemoryRecord = filterCtx.getPageFrameFilteredMemoryRecord(slotId);
+                filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
+                record = filteredMemoryRecord;
+            }
+
             // Get ASOF join resources
             final HorizonJoinTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
             final Map asOfJoinMap = atom.getAsOfJoinMap(slotId);  // Cache: joinKey -> rowId
@@ -335,7 +357,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
-            horizonIterator.ofFiltered(record, rows, masterTimestampColumnIndex);
+            horizonIterator.ofFiltered(frameMemory.getPageAddress(masterTimestampColumnIndex), rows);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processHorizonTimestamps(
@@ -406,7 +428,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final long offset = atom.getOffset(offsetIdx);
 
             // Position master record at the correct row
-            masterRecord.setRowIndex(masterRowIdx);
+            masterRecord.setRowIndex(masterRowIdx, horizonIterator.getMasterRowCompactIndex());
             final long masterRowId = baseRowId + masterRowIdx;
 
             // Scale horizon timestamp for ASOF lookup (when master/slave have different timestamp types)
@@ -526,7 +548,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
-            horizonIterator.of(record, 0, frameRowCount, masterTimestampColumnIndex);
+            horizonIterator.of(frameMemory.getPageAddress(masterTimestampColumnIndex), 0, frameRowCount);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
             processHorizonTimestamps(

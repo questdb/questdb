@@ -47,6 +47,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
     };
     private static final boolean RUN_ALL_PERMUTATIONS = true;
     private static final int RUN_N_PERMUTATIONS = 10;
+    private boolean convertToParquet;
     private Rnd rnd;
 
     @Override
@@ -54,7 +55,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
     public void setUp() {
         rnd = TestUtils.generateRandom(LOG);
         final boolean enableParallelHorizonJoin = rnd.nextBoolean();
-        LOG.info().$("parallel horizon join enabled: ").$(enableParallelHorizonJoin).$();
+        convertToParquet = rnd.nextBoolean();
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(enableParallelHorizonJoin));
         // async horizon join uses small page frames
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100);
@@ -73,6 +74,12 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
             int tradeSize = rnd.nextInt(100) + 1;
             int duplicatePercentage = 30 + rnd.nextInt(71);
             var aggregatedColumns = prepareFuzzTables(rnd, tradeSize, avgTradeSpread, duplicatePercentage, symbols);
+
+            if (convertToParquet) {
+                execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+                execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            }
+
             var aggregates = prepareFuzzAggregations(rnd, aggregatedColumns);
             String horizonAggregates = aggregates.toString().replace("(val", "(p.val");
 

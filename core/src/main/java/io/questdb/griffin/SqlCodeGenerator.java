@@ -3423,6 +3423,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Now that we know parallelism is confirmed, steal the filter from the
             // master factory. If parallelism was downgraded, the filter stays in the
             // master factory and the non-parallel path applies it correctly.
+            IntHashSet filterUsedColumnIndexes = null;
             if (supportsParallelism && canStealFilter) {
                 RecordCursorFactory filterFactory = masterFactory;
                 masterFactory = masterFactory.getBaseFactory();
@@ -3432,6 +3433,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 bindVarFunctions = filterFactory.getBindVarFunctions();
                 filter = filterFactory.getFilter();
                 filterExpr = filterFactory.getStealFilterExpr();
+                filterUsedColumnIndexes = new IntHashSet();
+                collectColumnIndexes(sqlNodeStack, masterFactory.getMetadata(), filterExpr, filterUsedColumnIndexes);
+                // Include the timestamp column: AsyncHorizonTimestampIterator reads it
+                // before remaining columns are materialized.
+                filterUsedColumnIndexes.add(masterTimestampColumnIndex);
                 filterFactory.halfClose();
             }
 
@@ -3757,6 +3763,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         bindVarMemory0,
                         bindVarFunctions0,
                         filter0,
+                        filterUsedColumnIndexes,
                         perWorkerFilters,
                         workerCount
                 );
@@ -3804,6 +3811,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     bindVarMemory0,
                     bindVarFunctions0,
                     filter0,
+                    filterUsedColumnIndexes,
                     perWorkerFilters,
                     workerCount
             );

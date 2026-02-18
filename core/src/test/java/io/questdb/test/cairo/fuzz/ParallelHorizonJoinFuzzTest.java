@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -41,11 +42,13 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
+    private final boolean convertToParquet;
     private final boolean enableParallelHorizonJoin;
 
     public ParallelHorizonJoinFuzzTest() {
-        this.enableParallelHorizonJoin = TestUtils.generateRandom(LOG).nextBoolean();
-        LOG.info().$("parallel horizon join enabled: ").$(enableParallelHorizonJoin).$();
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        this.enableParallelHorizonJoin = rnd.nextBoolean();
+        this.convertToParquet = rnd.nextBoolean();
     }
 
     @Override
@@ -94,6 +97,28 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 rangeOffsets(-2, 2),
                 true,
                 "t.side = :side"
+        );
+    }
+
+    @Test
+    public void testParallelHorizonJoinLateMaterialization() throws Exception {
+        // price ranges from 10 to 30; price > 28 passes ~10% of rows,
+        // well below the 20% selectivity threshold for late materialization.
+        testParallelHorizonJoin(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                true,
+                "t.price > 28.0"
+        );
+    }
+
+    @Test
+    public void testParallelHorizonJoinLateMaterializationNotKeyed() throws Exception {
+        testParallelHorizonJoin(
+                "RANGE FROM -2s TO 2s STEP 1s AS h",
+                rangeOffsets(-2, 2),
+                false,
+                "t.price > 28.0"
         );
     }
 
@@ -263,14 +288,17 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                                                 side SYMBOL CAPACITY 4,
                                                 price DOUBLE,
                                                 amount DOUBLE
-                                        ) TIMESTAMP(ts) PARTITION BY DAY;
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR;
                                         """,
                                 sqlExecutionContext
                         );
+                        // 3_600_000 us = 3.6s per row; with ROW_COUNT rows this spans
+                        // multiple hourly partitions, allowing Parquet conversion
+                        // (the most recent partition stays native).
                         engine.execute(
                                 "INSERT INTO trades"
                                         + "  SELECT "
-                                        + "      '2020-01-01T00:05'::timestamp + (10000*x) + rnd_long(-200, 200, 0) as ts, "
+                                        + "      '2020-01-01T00:05'::timestamp + (3600000*x) + rnd_long(-200, 200, 0) as ts, "
                                         + "      rnd_symbol_zipf(100, 2.0) AS sym, "
                                         + "      rnd_symbol('buy', 'sell') as side, "
                                         + "      rnd_double() * 20 + 10 AS price, "
@@ -285,20 +313,26 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                                             sym SYMBOL CAPACITY 1024,
                                             bid DOUBLE,
                                             ask DOUBLE
-                                        ) TIMESTAMP(ts) PARTITION BY DAY;
+                                        ) TIMESTAMP(ts) PARTITION BY HOUR;
                                         """,
                                 sqlExecutionContext
                         );
+                        // Price rows at 360_000 us = 360ms spacing, 10x denser than trades.
                         engine.execute(
                                 "INSERT INTO prices "
                                         + "  SELECT "
-                                        + "      '2020-01-01'::timestamp + (60000*x) + rnd_long(-200, 200, 0) as ts, "
+                                        + "      '2020-01-01'::timestamp + (360000*x) + rnd_long(-200, 200, 0) as ts, "
                                         + "      rnd_symbol_zipf(100, 2.0) as sym, "
                                         + "      rnd_double() * 10.0 + 5.0 as bid, "
                                         + "      rnd_double() * 10.0 + 5.0 as ask "
                                         + "  FROM long_sequence(" + 10 * ROW_COUNT + ");",
                                 sqlExecutionContext
                         );
+
+                        if (convertToParquet) {
+                            engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
 
                         final StringSink horizonSink = new StringSink();
                         TestUtils.printSql(engine, sqlExecutionContext, horizonQuery, horizonSink);
