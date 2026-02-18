@@ -1880,8 +1880,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
                         // SET REFRESH LIMIT
-                        final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
                         securityContext.authorizeAlterMatViewSetRefreshLimit(matViewToken);
+                        final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
                         final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
                                 matViewNamePosition,
                                 matViewToken,
@@ -1891,6 +1891,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         compiledQuery.ofAlter(setRefreshLimit.build());
                     } else if (isImmediateKeyword(tok) || isManualKeyword(tok) || isEveryKeyword(tok) || isPeriodKeyword(tok)) {
                         // SET REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] ...
+                        securityContext.authorizeAlterMatViewSetRefreshType(matViewToken);
                         int refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
                         int every = 0;
                         char everyUnit = 0;
@@ -2031,7 +2032,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
                         }
 
-                        securityContext.authorizeAlterMatViewSetRefreshType(matViewToken);
                         final AlterOperationBuilder setTimer = alterOperationBuilder.ofSetMatViewRefresh(
                                 matViewNamePosition,
                                 matViewToken,
@@ -2264,13 +2264,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else if (isSetKeyword(tok)) {
                 tok = expectToken(lexer, "'param', 'ttl' or 'type'");
                 if (isParamKeyword(tok)) {
+                    securityContext.authorizeAlterTableSetParam(tableToken);
                     final int paramNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "param name");
                     final CharSequence paramName = GenericLexer.immutableOf(tok);
                     tok = expectToken(lexer, "'='");
                     if (tok.length() == 1 && tok.charAt(0) == '=') {
                         CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
-                        securityContext.authorizeAlterTableSetParam(tableToken);
                         alterTableSetParam(paramName, value, paramNamePosition, tableToken, tableNamePosition, tableMetadata.getTableId());
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
