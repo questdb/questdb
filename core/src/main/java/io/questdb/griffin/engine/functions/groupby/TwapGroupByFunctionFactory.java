@@ -24,45 +24,26 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class LastCharGroupByFunction extends FirstCharGroupByFunction {
-
-    public LastCharGroupByFunction(@NotNull Function arg) {
-        super(arg);
+public class TwapGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "twap(DN)";
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
-        if (count > 0) {
-            final long addr = ptr + ((long) count - 1) * Character.BYTES;
-            mapValue.putChar(valueIndex + 1, Unsafe.getUnsafe().getChar(addr));
-        }
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (rowId > mapValue.getLong(valueIndex)) {
-            computeFirst(mapValue, record, rowId);
-        }
-    }
-
-    @Override
-    public String getName() {
-        return "last";
-    }
-
-    @Override
-    public void merge(MapValue destValue, MapValue srcValue) {
-        long srcRowId = srcValue.getLong(valueIndex);
-        long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
-            destValue.putLong(valueIndex, srcRowId);
-            destValue.putChar(valueIndex + 1, srcValue.getChar(valueIndex + 1));
-        }
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new TwapGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 }

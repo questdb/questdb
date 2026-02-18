@@ -31,7 +31,9 @@ import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.client.HttpClient;
@@ -40,6 +42,7 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.BootstrapTest;
 import io.questdb.test.tools.TestUtils;
@@ -94,6 +97,56 @@ public class HttpErrorHandlingTest extends BootstrapTest {
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     assertExecRequest(httpClient);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSecurityContextFactoryThrowsCairoException() throws Exception {
+        final Bootstrap bootstrap = new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                        return new PropServerConfiguration(
+                                bootstrap.getRootDirectory(),
+                                bootstrap.loadProperties(),
+                                getEnv(),
+                                bootstrap.getLog(),
+                                bootstrap.getBuildInformation(),
+                                FilesFacadeImpl.INSTANCE,
+                                bootstrap.getMicrosecondClock(),
+                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
+                                    @Override
+                                    public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                                        return (principalContext, interfaceId) -> {
+                                            throw CairoException.nonCritical().put("test security context error");
+                                        };
+                                    }
+                                }
+                        );
+                    }
+                },
+                getServerMainArgs()
+        );
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(bootstrap)) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                    request.GET().url("/exec").query("query", "SELECT 1");
+                    try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
+                        responseHeaders.await();
+                        TestUtils.assertEquals(
+                                String.valueOf(HttpURLConnection.HTTP_INTERNAL_ERROR),
+                                responseHeaders.getStatusCode()
+                        );
+                        StringSink sink = new StringSink();
+                        responseHeaders.getResponse().copyTextTo(sink);
+                        TestUtils.assertContains(sink, "test security context error");
+                    }
                 }
             }
         });
