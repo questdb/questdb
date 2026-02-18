@@ -452,7 +452,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     for (int i = 0; i < columnCount; i++) {
                         var funcArg = groupByFuncArgs.getQuick(i);
                         if (funcArg != null) {
-                            long ptr = slaveColumnSinkPtrs.get(i);
+                            long ptr = slaveColumnSinkPtrs.getQuick(i);
                             columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                             slaveColumnSinkPtrs.set(i, columnSink.ptr());
                         }
@@ -494,7 +494,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                     for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                         final int mapIndex = mapIndexes.getQuick(i);
-                        final long ptr = slaveColumnSinkPtrs.get(mapIndex);
+                        final long ptr = slaveColumnSinkPtrs.getQuick(mapIndex);
                         if (ptr != 0) {
                             final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                             groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
@@ -576,7 +576,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     for (int i = 0; i < columnCount; i++) {
                         var funcArg = groupByFuncArgs.getQuick(i);
                         if (funcArg != null) {
-                            long ptr = slaveColumnSinkPtrs.get(i);
+                            long ptr = slaveColumnSinkPtrs.getQuick(i);
                             columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                             slaveColumnSinkPtrs.set(i, columnSink.ptr());
                         }
@@ -618,7 +618,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     if (rowLo < rowHi) {
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
-                            final long ptr = slaveColumnSinkPtrs.get(mapIndex);
+                            final long ptr = slaveColumnSinkPtrs.getQuick(mapIndex);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                 groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
@@ -1192,7 +1192,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         for (int i = 0; i < columnCount; i++) {
                             var funcArg = groupByFuncArgs.getQuick(i);
                             if (funcArg != null) {
-                                long ptr = slaveColumnSinkPtrs.get(i);
+                                long ptr = slaveColumnSinkPtrs.getQuick(i);
                                 columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                                 slaveColumnSinkPtrs.set(i, columnSink.ptr());
                             }
@@ -1236,7 +1236,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         IntList mapIndexes = atom.getGroupByFunctionToColumnIndex();
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             final int mapIndex = mapIndexes.getQuick(i);
-                            final long ptr = slaveColumnSinkPtrs.get(mapIndex);
+                            final long ptr = slaveColumnSinkPtrs.getQuick(mapIndex);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                 groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
@@ -1348,7 +1348,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         for (int i = 0; i < columnCount; i++) {
                             var funcArg = groupByFuncArgs.getQuick(i);
                             if (funcArg != null) {
-                                long ptr = slaveColumnSinkPtrs.get(i);
+                                long ptr = slaveColumnSinkPtrs.getQuick(i);
                                 columnSink.of(ptr).put(joinRecord, funcArg, (short) groupByFuncTypes.getQuick(i));
                                 slaveColumnSinkPtrs.set(i, columnSink.ptr());
                             }
@@ -1391,7 +1391,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         if (rowLo < rowHi) {
                             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                                 final int mapIndex = mapIndexes.getQuick(i);
-                                final long ptr = slaveColumnSinkPtrs.get(mapIndex);
+                                final long ptr = slaveColumnSinkPtrs.getQuick(mapIndex);
                                 if (ptr != 0) {
                                     final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                                     groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
