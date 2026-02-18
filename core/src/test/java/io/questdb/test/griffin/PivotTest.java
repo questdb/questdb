@@ -256,7 +256,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [side]
                             GroupBy vectorized: false
                               keys: [side]
-                              values: [first_not_null(case([first(price),NaN,symbol])),first_not_null(case([first(price)_2,NaN,symbol]))]
+                              values: [first_not_null(case([first(price),NaN,symbol,switch(symbol,'BTC-USD',first(price),NaN)])),first_not_null(case([first(price)_2,NaN,symbol,switch(symbol,'BTC-USD',first(price)_2,NaN)]))]
                                 VirtualRecord
                                   functions: [side,first(price),symbol,first(price)]
                                     Async JIT Group By workers: 1
@@ -296,7 +296,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [side]
                             GroupBy vectorized: false
                               keys: [side]
-                              values: [first_not_null(case([first(price),NaN,symbol])),first_not_null(case([first(amount),NaN,symbol]))]
+                              values: [first_not_null(case([first(price),NaN,symbol,switch(symbol,'BTC-USD',first(price),NaN)])),first_not_null(case([first(amount),NaN,symbol,switch(symbol,'BTC-USD',first(amount),NaN)]))]
                                 Async JIT Group By workers: 1
                                   keys: [side,symbol]
                                   values: [first(price),first(amount)]
@@ -596,7 +596,7 @@ public class PivotTest extends AbstractSqlParserTest {
                       keys: [side]
                         GroupBy vectorized: false
                           keys: [side]
-                          values: [first_not_null(case([open,NaN,symbol])),first_not_null(case([high,NaN,symbol])),first_not_null(case([low,NaN,symbol])),first_not_null(case([close,NaN,symbol]))]
+                          values: [first_not_null(case([open,NaN,symbol,switch(symbol,'BTC-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'BTC-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'BTC-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'BTC-USD',close,NaN)]))]
                             Async JIT Group By workers: 1
                               keys: [side,symbol]
                               values: [first(price),max(price),min(price),last(price)]
@@ -1702,7 +1702,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                           keys: [timestamp, vehicle_id]
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
-                                              values: [first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name]))]
+                                              values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i002',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i004',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i008',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i003',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i007',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i005',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i006',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i001',avg(int_value),NaN)]))]
                                                 Async Group By workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [avg(int_value)]
@@ -1714,7 +1714,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                           keys: [timestamp, vehicle_id]
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
-                                              values: [first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name]))]
+                                              values: [first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s001',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s005',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s006',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s009',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s003',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s008',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s002',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s004',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s007',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s000',last(str_value),null)]))]
                                                 Async Group By workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [last(str_value)]
@@ -2357,7 +2357,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [side]
                             GroupBy vectorized: false
                               keys: [side]
-                              values: [first_not_null(case([last(price),NaN,symbol])),first_not_null(case([last(price),NaN,symbol])),first_not_null(case([last(price),NaN,symbol]))]
+                              values: [first_not_null(case([last(price),NaN,symbol,switch(symbol,'ETH-USDT',last(price),NaN)])),first_not_null(case([last(price),NaN,symbol,switch(symbol,'BTC-USDT',last(price),NaN)])),first_not_null(case([last(price),NaN,symbol,switch(symbol,'DOGE-USDT',last(price),NaN)]))]
                                 GroupBy vectorized: false
                                   keys: [side,symbol]
                                   values: [last(price)]
@@ -3026,7 +3026,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [symbol]
                             GroupBy vectorized: false
                               keys: [symbol]
-                              values: [first_not_null(case([price,NaN,side])),first_not_null(case([price,NaN,side]))]
+                              values: [first_not_null(case([price,NaN,side,switch(side,'buy',price,NaN)])),first_not_null(case([price,NaN,side,switch(side,'sell',price,NaN)]))]
                                 GroupBy vectorized: false
                                   keys: [symbol,side]
                                   values: [sum(last)]
@@ -3567,7 +3567,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 """
                         GroupBy vectorized: false
                           keys: [side]
-                          values: [first_not_null(case([open,NaN,symbol])),first_not_null(case([high,NaN,symbol])),first_not_null(case([low,NaN,symbol])),first_not_null(case([close,NaN,symbol])),first_not_null(case([open,NaN,symbol])),first_not_null(case([high,NaN,symbol])),first_not_null(case([low,NaN,symbol])),first_not_null(case([close,NaN,symbol]))]
+                          values: [first_not_null(case([open,NaN,symbol,switch(symbol,'ETH-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'ETH-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'ETH-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'ETH-USD',close,NaN)])),first_not_null(case([open,NaN,symbol,switch(symbol,'BTC-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'BTC-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'BTC-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'BTC-USD',close,NaN)]))]
                             Async JIT Group By workers: 1
                               keys: [side,symbol]
                               values: [first_not_null(price),max(price),min(price),last_not_null(price)]
@@ -3643,7 +3643,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                   keys: [timestamp asc]
                                     GroupBy vectorized: false
                                       keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name]))]
+                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
                                         Async JIT Group By workers: 1
                                           keys: [timestamp,vehicle_id,sensor_name]
                                           values: [avg(int_value)]
@@ -3655,7 +3655,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                   keys: [timestamp]
                                     GroupBy vectorized: false
                                       keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name]))]
+                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
                                         Async JIT Group By workers: 1
                                           keys: [timestamp,vehicle_id,sensor_name]
                                           values: [avg(int_value)]
