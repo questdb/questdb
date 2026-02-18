@@ -249,23 +249,15 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     public AlterOperation deepClone() {
         final LongList extraInfo = new LongList(this.extraInfo);
-        final ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.extraStrInfo.size());
-        for (int i = 0, n = this.extraStrInfo.size(); i < n; i++) {
-            charSequenceObjList.add(Chars.toString(this.extraStrInfo.getStrA(i)));
+        final ObjList<CharSequence> charSequenceObjList = new ObjList<>(this.activeExtraStrInfo.size());
+        for (int i = 0, n = this.activeExtraStrInfo.size(); i < n; i++) {
+            charSequenceObjList.add(Chars.toString(this.activeExtraStrInfo.getStrA(i)));
         }
 
         final AlterOperation alterOperation = newInstance(extraInfo, charSequenceObjList);
         alterOperation.command = this.command;
-
-        if (this.activeExtraStrInfo == this.extraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
-        } else if (this.activeExtraStrInfo == this.directExtraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
-        } else {
-            assert false;
-        }
+        alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
         alterOperation.init(this.getCmdType(), this.getCommandName(), this.tableToken, this.getTableId(), this.getTableVersion(), this.tableNamePosition);
-
         return alterOperation;
     }
 
