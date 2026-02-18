@@ -1618,7 +1618,7 @@ fn decode_page_filtered<const FILL_NULLS: bool>(
                         &mut RleDictionaryDecoder::try_new(
                             values_buffer,
                             dict_decoder,
-                            row_hi,
+                            page_row_count,
                             nulls::SYMBOL,
                             bufs,
                         )?,
