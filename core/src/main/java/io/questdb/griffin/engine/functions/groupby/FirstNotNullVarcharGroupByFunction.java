@@ -39,9 +39,9 @@ public class FirstNotNullVarcharGroupByFunction extends FirstVarcharGroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getBool(valueIndex + 2)) {
-            final Utf8Sequence val = arg.getVarcharA(record);
-            if (val != null) {
+        final Utf8Sequence val = arg.getVarcharA(record);
+        if (val != null) {
+            if (mapValue.getBool(valueIndex + 2) || rowId < mapValue.getLong(valueIndex)) {
                 mapValue.putLong(valueIndex, rowId);
                 long ptr = mapValue.getLong(valueIndex + 1);
                 sink.of(ptr).clearAndSet(val);
@@ -64,7 +64,7 @@ public class FirstNotNullVarcharGroupByFunction extends FirstVarcharGroupByFunct
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getBool(valueIndex + 2)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
             destValue.putBool(valueIndex + 2, false);
