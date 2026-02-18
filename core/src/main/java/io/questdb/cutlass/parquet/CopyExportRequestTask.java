@@ -59,6 +59,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private int dataPageSize;
     private boolean descending;
     private CopyExportContext.ExportTaskEntry entry;
+    private @Nullable ParquetExportMode exportMode;
     private RecordCursorFactory factory;
     private CharSequence fileName;
     private RecordMetadata metadata;
@@ -68,6 +69,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private int parquetVersion;
     private boolean rawArrayEncoding;
     private int rowGroupSize;
+    private @Nullable String selectText;
     private boolean statisticsEnabled;
     private String tableName;
     private @Nullable StreamWriteParquetCallBack writeCallback;
@@ -75,6 +77,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     @Override
     public void clear() {
         this.entry = null;
+        this.exportMode = null;
+        this.selectText = null;
         this.tableName = null;
         this.fileName = null;
         this.compressionCodec = -1;
@@ -130,6 +134,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         return entry;
     }
 
+    public @Nullable ParquetExportMode getExportMode() {
+        return exportMode;
+    }
+
     public CharSequence getFileName() {
         return fileName;
     }
@@ -156,6 +164,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public int getRowGroupSize() {
         return rowGroupSize;
+    }
+
+    public @Nullable String getSelectText() {
+        return selectText;
     }
 
     public SecurityContext getSecurityContext() {
@@ -203,7 +215,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             boolean descending,
             PageFrameCursor pageFrameCursor, // for streaming export
             RecordMetadata metadata,
-            StreamWriteParquetCallBack writeCallback
+            StreamWriteParquetCallBack writeCallback,
+            @Nullable ParquetExportMode exportMode,
+            @Nullable String selectText
     ) {
         this.entry = entry;
         this.tableName = tableName;
@@ -222,6 +236,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.writeCallback = writeCallback;
         this.now = now;
         this.nowTimestampType = nowTimestampType;
+        this.exportMode = exportMode;
+        this.selectText = selectText;
     }
 
     public void setWriteCallback(StreamWriteParquetCallBack writeCallback) {

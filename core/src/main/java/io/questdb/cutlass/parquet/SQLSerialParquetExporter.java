@@ -118,26 +118,13 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         boolean success = false;
 
         try {
-            if (createOp != null && createOp.getPartitionBy() == PartitionBy.NONE) {
-                // Try streaming export. Compile the query and determine the mode
-                // using the same logic as the HTTP path.
-                try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
-                    final AtomicBoolean savedCancelledFlag = circuitBreaker.getCancelledFlag();
-                    CompiledQuery cc = compiler.compile(createOp.getSelectText(), sqlExecutionContext);
-                    RecordCursorFactory factory = cc.getRecordCursorFactory();
-                    try {
-                        ParquetExportMode mode = RecordToColumnBuffers.determineExportMode(factory);
-                        if (mode != ParquetExportMode.TEMP_TABLE) {
-                            processStreamingExport(factory, mode, createOp, entry, cairoEngine);
-                            success = true;
-                            return CopyExportRequestTask.Phase.SUCCESS;
-                        }
-                    } finally {
-                        Misc.free(factory);
-                        circuitBreaker.setCancelledFlag(savedCancelledFlag);
-                    }
-                }
-                // TEMP_TABLE: fall through to existing temp-table code below
+            ParquetExportMode exportMode = task.getExportMode();
+            if (exportMode != null && exportMode != ParquetExportMode.TEMP_TABLE) {
+                // Streaming export: the mode was determined upstream in
+                // CopyExportFactory so we avoid an extra query compilation.
+                processStreamingExport(task.getSelectText(), exportMode, entry, cairoEngine);
+                success = true;
+                return CopyExportRequestTask.Phase.SUCCESS;
             }
 
             if (createOp != null) {
@@ -331,9 +318,8 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
     }
 
     private void processStreamingExport(
-            RecordCursorFactory factory,
+            String selectText,
             ParquetExportMode mode,
-            CreateTableOperation createOp,
             CopyExportContext.ExportTaskEntry entry,
             CairoEngine cairoEngine
     ) throws SqlException {
@@ -357,12 +343,17 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         }
 
         LOG.info().$("starting streaming parquet export [id=").$hexPadded(task.getCopyID())
-                .$(", selectText=").$(createOp.getSelectText()).$(", mode=").$(mode).$(']').$();
+                .$(", selectText=").$(selectText).$(", mode=").$(mode).$(']').$();
 
+        RecordCursorFactory factory = null;
+        final AtomicBoolean savedCancelledFlag = circuitBreaker.getCancelledFlag();
         try (
+                SqlCompiler compiler = cairoEngine.getSqlCompiler();
                 RecordToColumnBuffers buffers = new RecordToColumnBuffers();
                 DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER)
         ) {
+            CompiledQuery cc = compiler.compile(selectText, sqlExecutionContext);
+            factory = cc.getRecordCursorFactory();
             CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
             // File-write callback
             final long finalFd = fd;
@@ -435,6 +426,8 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         } catch (Throwable e) {
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
+            Misc.free(factory);
+            circuitBreaker.setCancelledFlag(savedCancelledFlag);
             ff.close(fd);
         }
 

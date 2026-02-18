@@ -696,7 +696,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.descending,
                         exportMode == ParquetExportMode.DIRECT_PAGE_FRAME ? state.pageFrameCursor : null,
                         state.metadata,
-                        state.getWriteCallback()
+                        state.getWriteCallback(),
+                        null,
+                        null
                 );
                 exporter.of(state.task);
                 switch (exportMode) {
