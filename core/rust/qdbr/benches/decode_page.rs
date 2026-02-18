@@ -865,6 +865,169 @@ fn build_fixed_rle_dict_pages<T: NativeType>(
     (data_page, dict_page)
 }
 
+/// Build RLE dictionary-encoded DataPage + DictPage for variable-length values.
+///
+/// `unique_values` provides the dictionary entries. Non-null row `i` maps to
+/// `unique_values[i % unique_values.len()]`. The dict page stores entries in
+/// the Parquet variable-length format (u32 LE length + bytes).
+fn build_var_rle_dict_pages(
+    unique_values: &[Vec<u8>],
+    null_pct: u8,
+    row_count: usize,
+    primitive_type: PrimitiveType,
+) -> (DataPage, DictPage) {
+    let cardinality = unique_values.len();
+    let mut indices: Vec<u32> = Vec::new();
+    let mut null_count = 0usize;
+
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            null_count += 1;
+            continue;
+        }
+        indices.push((i % cardinality) as u32);
+    }
+
+    // Dict buffer: for each entry, u32 LE length + bytes
+    let mut dict_buffer = Vec::new();
+    for value in unique_values {
+        dict_buffer.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        dict_buffer.extend_from_slice(value);
+    }
+
+    let max_key = if unique_values.is_empty() {
+        0u32
+    } else {
+        unique_values.len() as u32 - 1
+    };
+    let bits_per_key = dict_bit_width(max_key as u64);
+
+    // Build data page: definition levels (V1) + RLE-encoded indices
+    let mut data_buffer = Vec::new();
+
+    if null_count > 0 {
+        // Definition levels with V1 length prefix
+        data_buffer.extend_from_slice(&[0u8; 4]);
+        let dl_start = data_buffer.len();
+        let def_levels = (0..row_count).map(|i| !is_null_at(i, null_pct));
+        encode_bool(&mut data_buffer, def_levels, row_count).unwrap();
+        let dl_len = (data_buffer.len() - dl_start) as i32;
+        data_buffer[dl_start - 4..dl_start].copy_from_slice(&dl_len.to_le_bytes());
+    }
+
+    // RLE-encoded dictionary indices
+    let non_null_len = indices.len();
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        indices.into_iter(),
+        non_null_len,
+        bits_per_key as u32,
+    )
+    .unwrap();
+
+    let max_def_level = if null_count > 0 { 1 } else { 0 };
+
+    let header = DataPageHeader::V1(DataPageHeaderV1 {
+        num_values: row_count as i32,
+        encoding: Encoding::RleDictionary.into(),
+        definition_level_encoding: Encoding::Rle.into(),
+        repetition_level_encoding: Encoding::Rle.into(),
+        statistics: None,
+    });
+    let data_page = DataPage::new(
+        header,
+        data_buffer,
+        Descriptor {
+            primitive_type,
+            max_def_level,
+            max_rep_level: 0,
+        },
+        Some(row_count),
+    );
+
+    let dict_page = DictPage::new(dict_buffer, unique_values.len(), false);
+
+    (data_page, dict_page)
+}
+
+/// Number of f64 elements per array row in LIST-encoded array benchmarks.
+const ARRAY_ELEMS_PER_ROW: usize = 4;
+
+/// Build a plain DataPage for 1D `Double[]` using Parquet LIST encoding
+/// (`PhysicalType::Double` with rep/def levels).
+///
+/// Schema: optional group col (LIST) { repeated group list { optional double element; } }
+///   max_rep_level = 1, max_def_level = 3
+///   def_level 0 = null array, 3 = non-null element
+///
+/// Each non-null row has `ARRAY_ELEMS_PER_ROW` non-null elements.
+fn build_array_list_plain_page(row_count: usize, null_pct: u8) -> DataPage {
+    let max_rep_level: i16 = 1;
+    let max_def_level: i16 = 3;
+
+    let mut rep_levels: Vec<u32> = Vec::new();
+    let mut def_levels: Vec<u32> = Vec::new();
+    let mut values: Vec<f64> = Vec::new();
+
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            rep_levels.push(0);
+            def_levels.push(0);
+        } else {
+            for j in 0..ARRAY_ELEMS_PER_ROW {
+                rep_levels.push(if j == 0 { 0 } else { 1 });
+                def_levels.push(3);
+                values.push((i * ARRAY_ELEMS_PER_ROW + j) as f64);
+            }
+        }
+    }
+
+    let num_values = rep_levels.len();
+
+    let mut data_buffer = Vec::new();
+
+    // Rep levels (V1 length-prefixed)
+    data_buffer.extend_from_slice(&[0u8; 4]);
+    let rl_start = data_buffer.len();
+    encode_u32(&mut data_buffer, rep_levels.into_iter(), num_values, 1).unwrap();
+    let rl_len = (data_buffer.len() - rl_start) as i32;
+    data_buffer[rl_start - 4..rl_start].copy_from_slice(&rl_len.to_le_bytes());
+
+    // Def levels (V1 length-prefixed)
+    data_buffer.extend_from_slice(&[0u8; 4]);
+    let dl_start = data_buffer.len();
+    encode_u32(&mut data_buffer, def_levels.into_iter(), num_values, 2).unwrap();
+    let dl_len = (data_buffer.len() - dl_start) as i32;
+    data_buffer[dl_start - 4..dl_start].copy_from_slice(&dl_len.to_le_bytes());
+
+    // Plain f64 values
+    for v in &values {
+        data_buffer.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let primitive_type = PrimitiveType::from_physical("col".to_string(), PhysicalType::Double);
+
+    let header = DataPageHeader::V1(DataPageHeaderV1 {
+        num_values: num_values as i32,
+        encoding: Encoding::Plain.into(),
+        definition_level_encoding: Encoding::Rle.into(),
+        repetition_level_encoding: Encoding::Rle.into(),
+        statistics: None,
+    });
+
+    DataPage::new(
+        header,
+        data_buffer,
+        Descriptor {
+            primitive_type,
+            max_def_level,
+            max_rep_level,
+        },
+        Some(num_values),
+    )
+}
+
 fn make_ipv4_data(row_count: usize, null_pct: u8) -> Vec<i32> {
     let mut data = Vec::with_capacity(row_count);
     for i in 0..row_count {
@@ -1208,6 +1371,25 @@ fn build_cases() -> Vec<BenchCase> {
         }
     }
 
+    // Varchar — RLE dictionary
+    for &card in &DICT_CARDINALITIES {
+        for &null_pct in null_pcts(true) {
+            let values: Vec<Vec<u8>> = (0..card).map(|i| format!("v{i}").into_bytes()).collect();
+            let column_type = ColumnType::new(ColumnTypeTag::Varchar, 0);
+            let primitive_type = primitive_type_for(column_type);
+            let (page, dict) =
+                build_var_rle_dict_pages(&values, null_pct, ROW_COUNT, primitive_type);
+            cases.push(build_case(
+                format!("varchar_dict_c{card}_n{null_pct}"),
+                page,
+                Some(dict),
+                column_type,
+                None,
+                ROW_COUNT,
+            ));
+        }
+    }
+
     for &encoding in &LEN_ENCODINGS {
         let enc = enc_label(encoding);
         for &null_pct in null_pcts(true) {
@@ -1236,6 +1418,27 @@ fn build_cases() -> Vec<BenchCase> {
         }
     }
 
+    // Binary — RLE dictionary
+    for &card in &DICT_CARDINALITIES {
+        for &null_pct in null_pcts(true) {
+            let values: Vec<Vec<u8>> = (0..card)
+                .map(|i| vec![i as u8; 8 + (i % 5)])
+                .collect();
+            let column_type = ColumnType::new(ColumnTypeTag::Binary, 0);
+            let primitive_type = primitive_type_for(column_type);
+            let (page, dict) =
+                build_var_rle_dict_pages(&values, null_pct, ROW_COUNT, primitive_type);
+            cases.push(build_case(
+                format!("binary_dict_c{card}_n{null_pct}"),
+                page,
+                Some(dict),
+                column_type,
+                None,
+                ROW_COUNT,
+            ));
+        }
+    }
+
     for &encoding in &LEN_ENCODINGS {
         let enc = enc_label(encoding);
         for &null_pct in null_pcts(true) {
@@ -1248,6 +1451,22 @@ fn build_cases() -> Vec<BenchCase> {
             );
             cases.push(build_case(
                 format!("array_{enc}_n{null_pct}"),
+                page,
+                None,
+                column_type,
+                None,
+                ROW_COUNT,
+            ));
+        }
+    }
+
+    // Array (LIST encoding, PhysicalType::Double) — plain
+    {
+        let column_type = encode_array_type(ColumnTypeTag::Double, 1).expect("array type");
+        for &null_pct in null_pcts(true) {
+            let page = build_array_list_plain_page(ROW_COUNT, null_pct);
+            cases.push(build_case(
+                format!("array_list_plain_n{null_pct}"),
                 page,
                 None,
                 column_type,
