@@ -31,9 +31,9 @@ import io.questdb.std.LongList;
  * Used for pre-allocating map capacity based on previous execution stats.
  */
 class GroupByMapStats {
+    final LongList medianList = new LongList();
     // We don't use median for heap size since heap is mmapped lazily initialized memory.
     long maxHeapSize;
-    LongList medianList = new LongList();
     long medianSize;
     long mergedHeapSize;
     long mergedSize;

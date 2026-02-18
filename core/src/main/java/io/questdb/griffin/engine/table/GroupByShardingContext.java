@@ -316,10 +316,6 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
-    int getShardCount() {
-        return NUM_SHARDS;
-    }
-
     boolean isSharded() {
         return sharded;
     }
@@ -359,7 +355,6 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         shardAll();
 
         // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
-        final int shardCount = getShardCount();
         final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
         final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
         final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
@@ -372,7 +367,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         int mergedCount = 0; // used for work stealing decisions
 
         try {
-            for (int shardIndex = 0; shardIndex < shardCount; shardIndex++) {
+            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 while (true) {
                     long cursor = pubSeq.next();
                     if (cursor < 0) {

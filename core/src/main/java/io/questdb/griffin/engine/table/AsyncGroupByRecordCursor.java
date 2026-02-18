@@ -60,6 +60,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
+
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
     private final CairoConfiguration configuration;
@@ -232,7 +234,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         postAggregationDoneLatch.reset();
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
-        final int shardCount = atom.getShardCount();
         final RingQueue<GroupByLongTopKTask> queue = messageBus.getGroupByLongTopKQueue();
         final MPSequence pubSeq = messageBus.getGroupByLongTopKPubSeq();
         final MCSequence subSeq = messageBus.getGroupByLongTopKSubSeq();
@@ -245,14 +246,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         int processedCount = 0; // used for work stealing decisions
 
         try {
-            for (int i = 0; i < shardCount; i++) {
+            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 while (true) {
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
                         if (workStealingStrategy.shouldSteal(processedCount)) {
-                            final Map shard = atom.getDestShards().getQuick(i);
+                            final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
                             shard.getCursor().longTopK(ownerList, longFunc);
                             ownCount++;
@@ -268,7 +269,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                                 postAggregationDoneLatch,
                                 atom,
                                 longFunc,
-                                i,
+                                shardIndex,
                                 destList.getOrder(),
                                 destList.getCapacity()
                         );

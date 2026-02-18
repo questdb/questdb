@@ -228,7 +228,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void close() {
-        shardingCtx.close();
+        Misc.free(shardingCtx);
         Misc.freeObjList(ownerKeyFunctions);
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
@@ -303,10 +303,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // thread-unsafe
     public ObjList<DirectLongLongSortedList> getPerWorkerLongTopKLists() {
         return perWorkerLongTopKLists;
-    }
-
-    public int getShardCount() {
-        return shardingCtx.getShardCount();
     }
 
     public GroupByShardingContext getShardingContext() {
