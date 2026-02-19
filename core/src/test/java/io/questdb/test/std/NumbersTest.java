@@ -394,6 +394,34 @@ public class NumbersTest {
     }
 
     @Test
+    public void testFormatDoubleSubnormals() {
+        // Smallest subnormal
+        sink.clear();
+        Numbers.append(sink, Double.MIN_VALUE);
+        Assert.assertEquals(Double.MIN_VALUE, Double.parseDouble(sink.toString()), 0);
+
+        // Largest subnormal (just below Double.MIN_NORMAL)
+        sink.clear();
+        Numbers.append(sink, Math.nextDown(Double.MIN_NORMAL));
+        Assert.assertEquals(Math.nextDown(Double.MIN_NORMAL), Double.parseDouble(sink.toString()), 0);
+
+        // Negative subnormals
+        sink.clear();
+        Numbers.append(sink, -Double.MIN_VALUE);
+        Assert.assertEquals(-Double.MIN_VALUE, Double.parseDouble(sink.toString()), 0);
+
+        sink.clear();
+        Numbers.append(sink, -Math.nextDown(Double.MIN_NORMAL));
+        Assert.assertEquals(-Math.nextDown(Double.MIN_NORMAL), Double.parseDouble(sink.toString()), 0);
+
+        // A subnormal in the middle of the range
+        sink.clear();
+        double midSubnormal = Double.longBitsToDouble(0x0008_0000_0000_0000L);
+        Numbers.append(sink, midSubnormal);
+        Assert.assertEquals(midSubnormal, Double.parseDouble(sink.toString()), 0);
+    }
+
+    @Test
     public void testFormatDoubleRoundEven() {
         // Ryu round-half-to-even: when the removed portion is exactly 0.5
         // and the retained significand is even, don't round up.

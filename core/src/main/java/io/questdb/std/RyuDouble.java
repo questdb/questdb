@@ -362,6 +362,7 @@ class RyuDouble {
      * The 192-bit product is: high0 * 2^128 + (low0 + high1) * 2^64 + low1.
      * We extract the upper 128 bits and right-shift by (shift - 64).
      */
+    // Requires shift in [65, 127] (guaranteed by the Ryu algorithm).
     private static long mulShift64(long m, long mul0, long mul1, int shift) {
         // Math.multiplyHigh is signed; correct for unsigned by adding m
         // when the other operand is negative (MSB set).
@@ -377,7 +378,10 @@ class RyuDouble {
         return (high << (64 - s)) | (mid >>> s);
     }
 
+    // Requires p in [0, 63] because Java's << masks the shift count to 6 bits.
+    // Callers guarantee p < 63 via the surrounding `q < 63` guard.
     private static boolean multipleOfPowerOf2(long value, int p) {
+        assert p >= 0 && p < 64;
         return (value & ((1L << p) - 1)) == 0;
     }
 
