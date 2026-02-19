@@ -715,33 +715,33 @@ public class Utf8sTest {
     }
 
     @Test
-    public void testPutQuotedJsonStr() {
+    public void testPutQuotedEscapedStr() {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(64)) {
-            sink.putQuotedJsonStr("hello");
+            sink.putQuotedEscapedStr("hello");
             Assert.assertEquals("\"hello\"", sink.toString());
 
             sink.clear();
-            sink.putQuotedJsonStr("say \"hi\"");
+            sink.putQuotedEscapedStr("say \"hi\"");
             Assert.assertEquals("\"say \\\"hi\\\"\"", sink.toString());
 
             sink.clear();
-            sink.putQuotedJsonStr("back\\slash");
+            sink.putQuotedEscapedStr("back\\slash");
             Assert.assertEquals("\"back\\\\slash\"", sink.toString());
 
             sink.clear();
-            sink.putQuotedJsonStr("tab\there");
+            sink.putQuotedEscapedStr("tab\there");
             Assert.assertEquals("\"tab\\there\"", sink.toString());
 
             sink.clear();
-            sink.putQuotedJsonStr("new\nline");
+            sink.putQuotedEscapedStr("new\nline");
             Assert.assertEquals("\"new\\nline\"", sink.toString());
 
             sink.clear();
-            sink.putQuotedJsonStr("");
+            sink.putQuotedEscapedStr("");
             Assert.assertEquals("\"\"", sink.toString());
 
             sink.clear();
-            sink.putQuotedJsonStr("table~1");
+            sink.putQuotedEscapedStr("table~1");
             Assert.assertEquals("\"table~1\"", sink.toString());
         }
     }

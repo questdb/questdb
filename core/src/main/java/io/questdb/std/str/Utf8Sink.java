@@ -76,11 +76,6 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return escapeJsonStr(cs, 0, cs.length());
     }
 
-    default Utf8Sink putQuotedJsonStr(@NotNull CharSequence cs) {
-        putAscii('"').escapeJsonStr(cs).putAscii('"');
-        return this;
-    }
-
     default Utf8Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
         int i = lo;
         while (i < hi) {
@@ -316,6 +311,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     @Override
     default Utf8Sink putQuoted(@NotNull CharSequence cs) {
         putAscii('\"').put(cs).putAscii('\"');
+        return this;
+    }
+
+    default Utf8Sink putQuotedEscapedStr(@NotNull CharSequence cs) {
+        putAscii('"').escapeJsonStr(cs).putAscii('"');
         return this;
     }
 
