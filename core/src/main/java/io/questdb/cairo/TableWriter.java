@@ -2177,7 +2177,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getTruncateVersion();
     }
 
-    // public visibility because of tests
+    @TestOnly
     public TxWriter getTxWriter() {
         return txWriter;
     }
