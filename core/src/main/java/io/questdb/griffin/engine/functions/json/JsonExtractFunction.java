@@ -223,6 +223,11 @@ public class JsonExtractFunction implements Function {
     }
 
     @Override
+    public int getComplexity() {
+        return COMPLEXITY_JSON;
+    }
+
+    @Override
     public byte getGeoByte(Record rec) {
         throw new UnsupportedOperationException();
     }

@@ -488,6 +488,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlSmallPageFrameMaxRows;
     private final int sqlSmallPageFrameMinRows;
     private final int sqlSortKeyMaxPages;
+    private final int sqlSortKeyMaterializationThreshold;
     private final long sqlSortKeyPageSize;
     private final int sqlSortLightValueMaxPages;
     private final long sqlSortLightValuePageSize;
@@ -1489,6 +1490,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 128 * 1024);
             this.sqlSortKeyMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlSortKeyMaterializationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MATERIALIZATION_THRESHOLD, 3);
             this.sqlSortLightValuePageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             this.sqlSortLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
@@ -4206,6 +4208,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlSortKeyMaxPages() {
             return sqlSortKeyMaxPages;
+        }
+
+        @Override
+        public int getSqlSortKeyMaterializationThreshold() {
+            return sqlSortKeyMaterializationThreshold;
         }
 
         @Override

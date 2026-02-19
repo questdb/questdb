@@ -1087,6 +1087,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSortKeyMaterializationThreshold() {
+        return getDelegate().getSqlSortKeyMaterializationThreshold();
+    }
+
+    @Override
     public long getSqlSortKeyPageSize() {
         return getDelegate().getSqlSortKeyPageSize();
     }

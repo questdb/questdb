@@ -111,6 +111,11 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             return value;
         }
 
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
+        }
+
         public CharSequence getStr(Record rec, StringBuilderSink sink) {
             if (matcher == null || replacementStr == null) {
                 return null;
@@ -196,7 +201,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class StringBuilderSink implements CharSequence {
+    public static class StringBuilderSink implements CharSequence {
         private final StringBuilder buffer = new StringBuilder();
 
         @Override

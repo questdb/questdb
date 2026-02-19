@@ -636,6 +636,8 @@ public interface CairoConfiguration {
 
     int getSqlSortKeyMaxPages();
 
+    int getSqlSortKeyMaterializationThreshold();
+
     long getSqlSortKeyPageSize();
 
     int getSqlSortLightValueMaxPages();
