@@ -103,7 +103,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) throws SqlException {
         super(metadata);
         try {
@@ -175,7 +179,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             entityColumnFilter.of(keyTypes.getColumnCount());
             this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, configuration);
 
-            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
         } catch (Throwable th) {
             close();
             throw th;
@@ -258,6 +262,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final Map dataMap;
         private final Function offsetFunc;
         private final int offsetFuncPos;
+        private final Function sampleFromFunc;
+        private final int sampleFromFuncPos;
+        private final int sampleFromFuncType;
+        private final Function sampleToFunc;
+        private final int sampleToFuncPos;
         private final TimestampDriver timestampDriver;
         private final Function timezoneNameFunc;
         private final int timezoneNameFuncPos;
@@ -286,7 +295,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Function timezoneNameFunc,
                 int timezoneNameFuncPos,
                 Function offsetFunc,
-                int offsetFuncPos
+                int offsetFuncPos,
+                Function sampleFromFunc,
+                int sampleFromFuncPos,
+                Function sampleToFunc,
+                int sampleToFuncPos
         ) {
             super(functions);
             try {
@@ -303,7 +316,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 this.timezoneNameFuncPos = timezoneNameFuncPos;
                 this.offsetFunc = offsetFunc;
                 this.offsetFuncPos = offsetFuncPos;
+                this.sampleFromFunc = sampleFromFunc;
+                this.sampleFromFuncPos = sampleFromFuncPos;
+                this.sampleToFunc = sampleToFunc;
+                this.sampleToFuncPos = sampleToFuncPos;
                 this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+                this.sampleFromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -324,6 +342,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             Misc.free(timezoneNameFunc);
             Misc.clear(offsetFunc);
             Misc.free(offsetFunc);
+            Misc.clear(sampleFromFunc);
+            Misc.free(sampleFromFunc);
+            Misc.clear(sampleToFunc);
+            Misc.free(sampleToFunc);
         }
 
         @Override
@@ -350,6 +372,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             isMapFilled = false;
             isMapBuilt = false;
             parseParams(this, executionContext);
+            sampleFromFunc.init(managedCursor, executionContext);
+            sampleToFunc.init(managedCursor, executionContext);
             areTimestampsInitialized = false;
         }
 
@@ -715,7 +739,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 // this is the default path, we align time intervals to the first observation
                 sampler.setStart(timestamp);
             } else {
-                sampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+                // FROM-TO may apply to align to calendar queries, fixing the lower bound.
+                if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
+                    long from = sampleFromFunc.getTimestamp(null);
+                    sampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) : 0);
+                } else {
+                    sampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+                }
             }
             prevSample = sampler.round(timestamp);
             loSample = prevSample; // the lowest timestamp value
