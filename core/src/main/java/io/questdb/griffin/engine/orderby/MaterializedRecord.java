@@ -24,13 +24,12 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -40,10 +39,11 @@ import org.jetbrains.annotations.Nullable;
 
 class MaterializedRecord implements Record {
     private Record baseRecord;
-    private DirectLongList[] buffers;
+    private MemoryCARW buffer;
+    private int[] colOffsets;
     private int[] colToBufferIndex;
-    private int[] colTypes;
     private int ordinal;
+    private int stride;
 
     @Override
     public ArrayView getArray(int col, int columnType) {
@@ -64,7 +64,7 @@ class MaterializedRecord implements Record {
     public boolean getBool(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffers[idx].get(ordinal) != 0L;
+            return buffer.getBool(rowOffset(idx));
         }
         return baseRecord.getBool(col);
     }
@@ -73,7 +73,7 @@ class MaterializedRecord implements Record {
     public byte getByte(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return (byte) buffers[idx].get(ordinal);
+            return buffer.getByte(rowOffset(idx));
         }
         return baseRecord.getByte(col);
     }
@@ -82,7 +82,7 @@ class MaterializedRecord implements Record {
     public char getChar(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return (char) buffers[idx].get(ordinal);
+            return buffer.getChar(rowOffset(idx));
         }
         return baseRecord.getChar(col);
     }
@@ -91,7 +91,7 @@ class MaterializedRecord implements Record {
     public long getDate(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffers[idx].get(ordinal);
+            return buffer.getLong(rowOffset(idx));
         }
         return baseRecord.getDate(col);
     }
@@ -130,7 +130,7 @@ class MaterializedRecord implements Record {
     public double getDouble(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return Double.longBitsToDouble(buffers[idx].get(ordinal));
+            return buffer.getDouble(rowOffset(idx));
         }
         return baseRecord.getDouble(col);
     }
@@ -139,7 +139,7 @@ class MaterializedRecord implements Record {
     public float getFloat(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return Float.intBitsToFloat((int) buffers[idx].get(ordinal));
+            return buffer.getFloat(rowOffset(idx));
         }
         return baseRecord.getFloat(col);
     }
@@ -148,7 +148,7 @@ class MaterializedRecord implements Record {
     public byte getGeoByte(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return (byte) buffers[idx].get(ordinal);
+            return buffer.getByte(rowOffset(idx));
         }
         return baseRecord.getGeoByte(col);
     }
@@ -157,7 +157,7 @@ class MaterializedRecord implements Record {
     public int getGeoInt(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return (int) buffers[idx].get(ordinal);
+            return buffer.getInt(rowOffset(idx));
         }
         return baseRecord.getGeoInt(col);
     }
@@ -166,7 +166,7 @@ class MaterializedRecord implements Record {
     public long getGeoLong(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffers[idx].get(ordinal);
+            return buffer.getLong(rowOffset(idx));
         }
         return baseRecord.getGeoLong(col);
     }
@@ -175,7 +175,7 @@ class MaterializedRecord implements Record {
     public short getGeoShort(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return (short) buffers[idx].get(ordinal);
+            return buffer.getShort(rowOffset(idx));
         }
         return baseRecord.getGeoShort(col);
     }
@@ -184,7 +184,7 @@ class MaterializedRecord implements Record {
     public int getIPv4(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return (int) buffers[idx].get(ordinal);
+            return buffer.getIPv4(rowOffset(idx));
         }
         return baseRecord.getIPv4(col);
     }
@@ -193,7 +193,7 @@ class MaterializedRecord implements Record {
     public int getInt(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return (int) buffers[idx].get(ordinal);
+            return buffer.getInt(rowOffset(idx));
         }
         return baseRecord.getInt(col);
     }
@@ -207,7 +207,7 @@ class MaterializedRecord implements Record {
     public long getLong(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffers[idx].get(ordinal);
+            return buffer.getLong(rowOffset(idx));
         }
         return baseRecord.getLong(col);
     }
@@ -256,7 +256,7 @@ class MaterializedRecord implements Record {
     public short getShort(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return (short) buffers[idx].get(ordinal);
+            return buffer.getShort(rowOffset(idx));
         }
         return baseRecord.getShort(col);
     }
@@ -291,7 +291,7 @@ class MaterializedRecord implements Record {
     public long getTimestamp(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffers[idx].get(ordinal);
+            return buffer.getLong(rowOffset(idx));
         }
         return baseRecord.getTimestamp(col);
     }
@@ -327,33 +327,19 @@ class MaterializedRecord implements Record {
         return baseRecord;
     }
 
-    void of(Record baseRecord, int[] colToBufferIndex, int[] colTypes, DirectLongList[] buffers) {
+    void of(Record baseRecord, int[] colToBufferIndex, int[] colOffsets, int stride, MemoryCARW buffer) {
         this.baseRecord = baseRecord;
         this.colToBufferIndex = colToBufferIndex;
-        this.colTypes = colTypes;
-        this.buffers = buffers;
+        this.colOffsets = colOffsets;
+        this.stride = stride;
+        this.buffer = buffer;
     }
 
     void setOrdinal(int ordinal) {
         this.ordinal = ordinal;
     }
 
-    static long extractValue(Record record, int colIndex, int colType) {
-        return switch (ColumnType.tagOf(colType)) {
-            case ColumnType.BOOLEAN -> record.getBool(colIndex) ? 1L : 0L;
-            case ColumnType.BYTE -> record.getByte(colIndex);
-            case ColumnType.SHORT -> record.getShort(colIndex);
-            case ColumnType.CHAR -> record.getChar(colIndex);
-            case ColumnType.INT -> record.getInt(colIndex);
-            case ColumnType.IPv4 -> record.getIPv4(colIndex);
-            case ColumnType.FLOAT -> Float.floatToRawIntBits(record.getFloat(colIndex));
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE -> record.getLong(colIndex);
-            case ColumnType.DOUBLE -> Double.doubleToRawLongBits(record.getDouble(colIndex));
-            case ColumnType.GEOBYTE -> record.getGeoByte(colIndex);
-            case ColumnType.GEOSHORT -> record.getGeoShort(colIndex);
-            case ColumnType.GEOINT -> record.getGeoInt(colIndex);
-            case ColumnType.GEOLONG -> record.getGeoLong(colIndex);
-            default -> throw new UnsupportedOperationException("unsupported column type for materialization: " + ColumnType.nameOf(colType));
-        };
+    private long rowOffset(int bufferIdx) {
+        return (long) ordinal * stride + colOffsets[bufferIdx];
     }
 }
