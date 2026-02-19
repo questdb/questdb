@@ -36,8 +36,8 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameCursor;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -341,32 +341,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
             throw ServerDisconnectException.INSTANCE;
         }
-    }
-
-    void writeParquetData(ExportQueryProcessorState state, long dataPtr, long dataLen)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (dataLen <= 0) {
-            return;
-        }
-        HttpConnectionContext context = state.getHttpConnectionContext();
-        HttpChunkedResponse response = context.getChunkedResponse();
-        if (state.firstParquetWriteCall) {
-            state.firstParquetWriteCall = false;
-            if (!state.getExportModel().isNoDelay()) {
-                header(response, state, 200);
-            }
-        }
-
-        while (state.parquetFileOffset < dataLen) {
-            long remainingSize = dataLen - state.parquetFileOffset;
-            int sendLSize = (int) Math.min(Integer.MAX_VALUE, remainingSize);
-
-            state.parquetFileOffset += response.writeBytes(dataPtr + state.parquetFileOffset, sendLSize);
-            response.bookmark();
-            response.sendChunk(false);
-        }
-
-        state.parquetFileOffset = 0;
     }
 
     private static boolean isExpUrl(Utf8Sequence tok) {
@@ -1388,5 +1362,31 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         response.status(200, CONTENT_TYPE_CSV);
         response.headers().setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();
+    }
+
+    void writeParquetData(ExportQueryProcessorState state, long dataPtr, long dataLen)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (dataLen <= 0) {
+            return;
+        }
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        HttpChunkedResponse response = context.getChunkedResponse();
+        if (state.firstParquetWriteCall) {
+            state.firstParquetWriteCall = false;
+            if (!state.getExportModel().isNoDelay()) {
+                header(response, state, 200);
+            }
+        }
+
+        while (state.parquetFileOffset < dataLen) {
+            long remainingSize = dataLen - state.parquetFileOffset;
+            int sendLSize = (int) Math.min(Integer.MAX_VALUE, remainingSize);
+
+            state.parquetFileOffset += response.writeBytes(dataPtr + state.parquetFileOffset, sendLSize);
+            response.bookmark();
+            response.sendChunk(false);
+        }
+
+        state.parquetFileOffset = 0;
     }
 }
