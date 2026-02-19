@@ -79,6 +79,8 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
     // Per computed col: aux memory (for var-size) or null (for fixed-size)
     private final ObjList<MemoryCARWImpl> auxBuffers = new ObjList<>();
+    // Reuse pool for MemoryCARWImpl instances released by releasePinnedBuffers()
+    private final ObjList<MemoryCARWImpl> bufferPool = new ObjList<>();
     // Per computed col: data memory
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
     private final Decimal128 decimal128A = new Decimal128();
@@ -259,6 +261,10 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     @Override
     public void clear() {
         releasePinnedBuffers();
+        for (int i = 0, n = bufferPool.size(); i < n; i++) {
+            Misc.free(bufferPool.getQuick(i));
+        }
+        bufferPool.clear();
         for (int i = 0, n = dataBuffers.size(); i < n; i++) {
             Misc.free(dataBuffers.getQuick(i));
         }
@@ -302,11 +308,14 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
      */
     public void releasePinnedBuffers() {
         for (int i = 0, n = pinnedDataBuffers.size(); i < n; i++) {
-            Misc.free(pinnedDataBuffers.getQuick(i));
+            bufferPool.add(pinnedDataBuffers.getQuick(i));
         }
         pinnedDataBuffers.clear();
         for (int i = 0, n = pinnedAuxBuffers.size(); i < n; i++) {
-            Misc.free(pinnedAuxBuffers.getQuick(i));
+            MemoryCARWImpl buf = pinnedAuxBuffers.getQuick(i);
+            if (buf != null) {
+                bufferPool.add(buf);
+            }
         }
         pinnedAuxBuffers.clear();
     }
@@ -464,11 +473,8 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     }
 
     private void allocateBuffer(int columnType) {
-        dataBuffers.add(new MemoryCARWImpl(DEFAULT_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_PARQUET_EXPORTER));
-        auxBuffers.add(ColumnType.isVarSize(columnType)
-                ? new MemoryCARWImpl(DEFAULT_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_PARQUET_EXPORTER)
-                : null
-        );
+        dataBuffers.add(obtainBuffer());
+        auxBuffers.add(ColumnType.isVarSize(columnType) ? obtainBuffer() : null);
     }
 
     private void buildComputedColumnIndices() {
@@ -482,6 +488,18 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
                 k++;
             }
         }
+    }
+
+    private MemoryCARWImpl obtainBuffer() {
+        int n = bufferPool.size();
+        if (n > 0) {
+            MemoryCARWImpl buf = bufferPool.getQuick(n - 1);
+            bufferPool.setQuick(n - 1, null);
+            bufferPool.setPos(n - 1);
+            buf.truncate();
+            return buf;
+        }
+        return new MemoryCARWImpl(DEFAULT_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_PARQUET_EXPORTER);
     }
 
     private void materializeComputedColumns(long frameRowCount) {
