@@ -2955,6 +2955,114 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetMissingFile() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            // Prepare partition for parquet conversion
+            long partitionTimestamp;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                partitionTimestamp = writer.preparePartitionForParquetConversion(
+                        timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z")
+                );
+                Assert.assertTrue(partitionTimestamp > -1L);
+            }
+
+            // Produce parquet file
+            try (
+                    TableReader reader = newOffPoolReader(configuration, PRODUCT);
+                    Path path = new Path();
+                    Path other = new Path()
+            ) {
+                path.of(root).concat(PRODUCT_FS);
+                other.of(root).concat(PRODUCT_FS);
+                int pathSize = path.size();
+
+                int partitionIndex = reader.getPartitionIndexByTimestamp(partitionTimestamp);
+                long fileLength = TableUtils.produceParquetFromNative(
+                        reader, path, other, pathSize, partitionTimestamp,
+                        PRODUCT, partitionIndex, configuration
+                );
+                Assert.assertTrue(fileLength > 0);
+            }
+
+            // Mark parquet ready, then delete the parquet file
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
+
+                // Delete the parquet file to simulate a missing file
+                try (Path path = new Path()) {
+                    TableUtils.setPathForNativePartition(path.of(root).concat(PRODUCT_FS),
+                            timestampType, PartitionBy.DAY, partitionTimestamp,
+                            writer.getTxWriter().getPartitionNameTxn(
+                                    writer.getTxWriter().getPartitionIndex(partitionTimestamp)
+                            )
+                    );
+                    path.concat(TableUtils.PARQUET_PARTITION_NAME).$();
+                    Assert.assertTrue("Parquet file should exist before deletion", FF.exists(path.$()));
+                    FF.remove(path.$());
+                    Assert.assertFalse("Parquet file should be deleted", FF.exists(path.$()));
+                }
+
+                // switchNativePartitionWithParquet should return false and clear the generated flag
+                Assert.assertFalse(writer.switchNativePartitionWithParquet(partitionTimestamp));
+
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+                Assert.assertFalse("parquetGenerated flag should be cleared",
+                        txWriter.isPartitionParquetGenerated(partitionIndex));
+                Assert.assertFalse("partition should remain native",
+                        txWriter.isPartitionParquet(partitionIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetActivePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            // Find the last (active) partition timestamp
+            long activePartitionTimestamp;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                activePartitionTimestamp = writer.getTxWriter().getMaxTimestamp();
+
+                // switchNativePartitionWithParquet on the active partition should return true (skip)
+                // without throwing an exception
+                Assert.assertTrue(writer.switchNativePartitionWithParquet(activePartitionTimestamp));
+
+                // Partition should remain native (not converted)
+                TxWriter txWriter = writer.getTxWriter();
+                int partitionIndex = txWriter.getPartitionIndex(
+                        txWriter.getLogicalPartitionTimestamp(activePartitionTimestamp)
+                );
+                Assert.assertFalse("Active partition should not be converted to parquet",
+                        txWriter.isPartitionParquet(partitionIndex));
+            }
+        });
+    }
+
+    @Test
     public void testTableLock() {
         CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
 

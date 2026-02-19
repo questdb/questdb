@@ -2826,7 +2826,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
         metadata.setTtlHoursOrMonths(ttlHoursOrMonths);
         writeMetadataToDisk();
-        enforceTtl();
     }
 
     public void setSeqTxn(long seqTxn) {
