@@ -4793,7 +4793,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             executionContext.getMessageBus(),
                                             orderedMetadata,
                                             baseFactory,
-                                            reduceTaskFactory,
                                             filter,
                                             filterUsedColumnIndexes,
                                             compileWorkerFilterConditionally(
@@ -5954,7 +5953,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 bindVarFunctions,
                                 filter,
                                 filterUsedColumnIndexes,
-                                reduceTaskFactory,
                                 compileWorkerFilterConditionally(
                                         executionContext,
                                         filter,
@@ -6015,7 +6013,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             filterExpr,
                                             factory.getMetadata()
                                     ),
-                                    reduceTaskFactory,
                                     executionContext.getSharedQueryWorkerCount()
                             ),
                             executionContext
