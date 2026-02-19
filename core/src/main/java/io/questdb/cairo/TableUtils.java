@@ -1550,7 +1550,7 @@ public final class TableUtils {
      * @param pathSize           Root path size for restoring paths after modifications
      * @param partitionTimestamp Timestamp of the partition
      * @param tableName          Name of the table
-     * @param partitionIndex     Number of rows in the partition
+     * @param partitionIndex     Index of the partition in the transaction file
      * @param configuration      Cairo configuration for parquet encoder options
      * @return The length of the produced Parquet file
      */
