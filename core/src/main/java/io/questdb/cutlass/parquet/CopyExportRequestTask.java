@@ -473,39 +473,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         public void setUp(RecordMetadata adjustedMetadata) {
-            // Set enclosing class metadata for writeHybridFrame()/writePageFrame() access
-            metadata = adjustedMetadata;
-            columnNames.reopen();
-            columnMetadata.reopen();
-            columnData.reopen();
-
-            for (int i = 0, n = adjustedMetadata.getColumnCount(); i < n; i++) {
-                CharSequence columnName = adjustedMetadata.getColumnName(i);
-                final int startSize = columnNames.size();
-                columnNames.put(columnName);
-                columnMetadata.add(columnNames.size() - startSize);
-                final int columnType = adjustedMetadata.getColumnType(i);
-                columnMetadata.add((long) i << 32 | columnType);
-            }
-            streamWriter = createStreamingParquetWriter(
-                    Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
-                    adjustedMetadata.getColumnCount(),
-                    columnNames.ptr(),
-                    columnNames.size(),
-                    columnMetadata.getAddress(),
-                    adjustedMetadata.getTimestampIndex(),
-                    descending,
-                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                    statisticsEnabled,
-                    rawArrayEncoding,
-                    rowGroupSize,
-                    dataPageSize,
-                    parquetVersion
-            );
+            setUp(adjustedMetadata, null, null);
         }
 
         public void setUp(RecordMetadata adjustedMetadata, PageFrameCursor pfc, int[] baseColumnMap) {
-            // Set enclosing class metadata so writePageFrame() can access it
             metadata = adjustedMetadata;
             pageFrameCursor = pfc;
             columnNames.reopen();
@@ -519,7 +490,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 columnMetadata.add(columnNames.size() - startSize);
                 final int columnType = adjustedMetadata.getColumnType(i);
 
-                if (ColumnType.isSymbol(columnType) && baseColumnMap[i] >= 0) {
+                if (baseColumnMap != null && ColumnType.isSymbol(columnType) && baseColumnMap[i] >= 0) {
                     // Pass-through SYMBOL: use symbol table from page frame cursor
                     StaticSymbolTable symbolTable = pfc.getSymbolTable(baseColumnMap[i]);
                     assert symbolTable != null;
