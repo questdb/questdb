@@ -25,6 +25,7 @@
 package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.log.Log;
@@ -79,6 +80,8 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         try {
             CopyExportRequestTask task = queue.get(cursor);
+            RecordCursorFactory selectFactory = task.getSelectFactory();
+            task.setSelectFactory(null);
             localTaskCopy.of(
                     task.getEntry(),
                     task.getCreateOp(),
@@ -101,6 +104,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     task.getExportMode(),
                     task.getSelectText()
             );
+            localTaskCopy.setSelectFactory(selectFactory);
             task.clear();
         } finally {
             subSeq.done(cursor);

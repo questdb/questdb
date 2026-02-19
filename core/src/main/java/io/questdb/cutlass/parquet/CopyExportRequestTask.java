@@ -60,7 +60,6 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private boolean descending;
     private CopyExportContext.ExportTaskEntry entry;
     private ParquetExportMode exportMode;
-    private RecordCursorFactory factory;
     private CharSequence fileName;
     private RecordMetadata metadata;
     private long now;
@@ -69,13 +68,16 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private int parquetVersion;
     private boolean rawArrayEncoding;
     private int rowGroupSize;
+    private RecordCursorFactory selectFactory;
     private @Nullable String selectText;
     private boolean statisticsEnabled;
     private String tableName;
+    private RecordCursorFactory tempTableFactory;
     private @Nullable StreamWriteParquetCallBack writeCallback;
 
     @Override
     public void clear() {
+        this.selectFactory = Misc.free(selectFactory);
         this.entry = null;
         this.exportMode = null;
         this.selectText = null;
@@ -97,14 +99,15 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         metadata = null;
         streamPartitionParquetExporter.clear();
         descending = false;
-        if (factory != null) { // owned only if setUpStreamPartitionParquetExporter called with factory
-            factory = Misc.free(factory);
+        if (tempTableFactory != null) {
+            tempTableFactory = Misc.free(tempTableFactory);
             pageFrameCursor = Misc.free(pageFrameCursor);
         }
     }
 
     @Override
     public void close() {
+        selectFactory = Misc.free(selectFactory);
         Misc.free(streamPartitionParquetExporter);
     }
 
@@ -118,6 +121,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public int getCompressionLevel() {
         return compressionLevel;
+    }
+
+    public RecordCursorFactory getSelectFactory() {
+        return selectFactory;
     }
 
     public long getCopyID() {
@@ -242,6 +249,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.selectText = selectText;
     }
 
+    public void setSelectFactory(RecordCursorFactory selectFactory) {
+        this.selectFactory = selectFactory;
+    }
+
     public void setWriteCallback(StreamWriteParquetCallBack writeCallback) {
         this.writeCallback = writeCallback;
     }
@@ -254,9 +265,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
     }
 
-    public void setUpStreamPartitionParquetExporter(RecordCursorFactory factory, PageFrameCursor pageFrameCursor, RecordMetadata metadata, boolean descending) {
+    public void setUpStreamPartitionParquetExporter(RecordCursorFactory tempTableFactory, PageFrameCursor pageFrameCursor, RecordMetadata metadata, boolean descending) {
         assert this.pageFrameCursor == null;
-        this.factory = factory;
+        this.tempTableFactory = tempTableFactory;
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.descending = descending;
@@ -367,8 +378,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         public void freeOwnedPageFrameCursor() {
-            if (factory != null) {
-                factory = Misc.free(factory);
+            if (tempTableFactory != null) {
+                tempTableFactory = Misc.free(tempTableFactory);
                 pageFrameCursor = Misc.free(pageFrameCursor);
             }
         }

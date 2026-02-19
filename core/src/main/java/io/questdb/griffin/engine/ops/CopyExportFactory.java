@@ -111,6 +111,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 CopyExportContext.CopyTrigger.SQL
         );
         long copyID = entry.getId();
+        RecordCursorFactory selectFactory = null;
         try {
             CreateTableOperation createOp = null;
             if (this.tableName != null) {
@@ -146,13 +147,16 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         selectQuery.closeAllButSelect();
                         throw SqlException.$(0, "Copy command only accepts SELECT queries");
                     }
-                    try (RecordCursorFactory rcf = selectQuery.getRecordCursorFactory()) {
+                    RecordCursorFactory rcf = selectQuery.getRecordCursorFactory();
+                    try {
                         int resolvedPartitionBy = partitionBy == -1 ? PartitionBy.NONE : partitionBy;
                         if (resolvedPartitionBy == PartitionBy.NONE) {
                             exportMode = RecordToColumnBuffers.determineExportMode(rcf);
-                        }
-                        if (exportMode == null || exportMode == ParquetExportMode.TEMP_TABLE) {
+                        } else {
+                            // Re-partitioning always requires a temp table
                             exportMode = ParquetExportMode.TEMP_TABLE;
+                        }
+                        if (exportMode == ParquetExportMode.TEMP_TABLE) {
                             CreateTableOperationImpl impl = new CreateTableOperationImpl(
                                     Chars.toString(resolvedSelectText),
                                     tableName,
@@ -168,18 +172,26 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                                     rcf.getMetadata(), rcf.getScanDirection()
                             );
                             createOp = impl;
+                        } else {
+                            selectFactory = rcf;
+                            rcf = null;
                         }
+                    } finally {
+                        Misc.free(rcf);
                     }
                 } catch (SqlException ex) {
                     ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
                     Misc.free(createOp);
+                    selectFactory = Misc.free(selectFactory);
                     throw ex;
                 } catch (CairoException ex) {
                     ex.position(tableOrSelectTextPos + ex.getPosition());
                     Misc.free(createOp);
+                    selectFactory = Misc.free(selectFactory);
                     throw ex;
                 } catch (Throwable ex) {
                     Misc.free(createOp);
+                    selectFactory = Misc.free(selectFactory);
                     throw ex;
                 }
             }
@@ -235,6 +247,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         exportMode,
                         resolvedSelectText
                 );
+                task.setSelectFactory(selectFactory);
+                selectFactory = null;
             } finally {
                 copyRequestPubSeq.done(processingCursor);
             }
@@ -253,6 +267,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getMessage()).I$();
             throw ex;
         } finally {
+            Misc.free(selectFactory);
             if (entry != null) {
                 copyContext.releaseEntry(entry);
             }

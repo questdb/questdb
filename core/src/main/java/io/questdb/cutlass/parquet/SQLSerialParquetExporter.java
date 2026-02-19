@@ -38,8 +38,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.text.CopyExportContext;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
@@ -122,7 +120,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                 case DIRECT_PAGE_FRAME, PAGE_FRAME_BACKED, CURSOR_BASED -> {
                     // Streaming export: the mode was determined upstream in
                     // CopyExportFactory so we avoid an extra query compilation.
-                    processStreamingExport(task.getSelectText(), exportMode, entry, cairoEngine);
+                    processStreamingExport(task.getSelectFactory(), exportMode, entry, cairoEngine);
                     success = true;
                     return CopyExportRequestTask.Phase.SUCCESS;
                 }
@@ -322,7 +320,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
     }
 
     private void processStreamingExport(
-            String selectText,
+            RecordCursorFactory selectFactory,
             ParquetExportMode mode,
             CopyExportContext.ExportTaskEntry entry,
             CairoEngine cairoEngine
@@ -348,20 +346,16 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         }
 
         LOG.info().$("starting streaming parquet export [id=").$hexPadded(task.getCopyID())
-                .$(", selectText=").$(selectText).$(", mode=").$(mode).$(']').$();
+                .$(", selectText=").$(task.getSelectText()).$(", mode=").$(mode).$(']').$();
 
-        RecordCursorFactory factory = null;
         try (
-                SqlCompiler compiler = cairoEngine.getSqlCompiler();
                 RecordToColumnBuffers buffers = new RecordToColumnBuffers();
                 DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER)
         ) {
-            CompiledQuery cc = compiler.compile(selectText, sqlExecutionContext);
-            factory = cc.getRecordCursorFactory();
             // Unwrap QueryProgress so that its register/unregister lifecycle
             // does not null the circuit breaker's cancelledFlag when cursors close.
             // The outer COPY command handles query registration and cancellation.
-            RecordCursorFactory baseFactory = RecordToColumnBuffers.unwrapFactory(factory);
+            RecordCursorFactory baseFactory = RecordToColumnBuffers.unwrapFactory(selectFactory);
             CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
             // File-write callback
             final long finalFd = fd;
@@ -445,7 +439,6 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         } catch (Throwable e) {
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
-            Misc.free(factory);
             ff.close(fd);
         }
 
