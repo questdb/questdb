@@ -74,6 +74,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
     private final RecordToColumnBuffers streamBuffers = new RecordToColumnBuffers();
     private final Path tempPath;
     private final Path toParquet;
+    private final FileWriteCallback writeCallback = new FileWriteCallback();
     private CharSequence copyExportRoot;
     private int numOfFiles;
 
@@ -361,16 +362,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             RecordCursorFactory baseFactory = RecordToColumnBuffers.unwrapFactory(selectFactory);
             CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
             // File-write callback
-            final long finalFd = fd;
-            final long[] fileOffsetHolder = {0};
-            CopyExportRequestTask.StreamWriteParquetCallBack writeCallback = (dataPtr, dataLen) -> {
-                long written = ff.write(finalFd, dataPtr, dataLen, fileOffsetHolder[0]);
-                if (written != dataLen) {
-                    throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, ff.errno())
-                            .put("failed to write parquet data to temp file");
-                }
-                fileOffsetHolder[0] += dataLen;
-            };
+            writeCallback.of(ff, fd);
             task.setWriteCallback(writeCallback);
 
             switch (mode) {
@@ -598,5 +590,27 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
 
     int getNumOfFiles() {
         return numOfFiles;
+    }
+
+    private static class FileWriteCallback implements CopyExportRequestTask.StreamWriteParquetCallBack {
+        private long fd;
+        private FilesFacade ff;
+        private long fileOffset;
+
+        @Override
+        public void onWrite(long dataPtr, long dataLen) {
+            long written = ff.write(fd, dataPtr, dataLen, fileOffset);
+            if (written != dataLen) {
+                throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, ff.errno())
+                        .put("failed to write parquet data to temp file");
+            }
+            fileOffset += dataLen;
+        }
+
+        void of(FilesFacade ff, long fd) {
+            this.ff = ff;
+            this.fd = fd;
+            this.fileOffset = 0;
+        }
     }
 }
