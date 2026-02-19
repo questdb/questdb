@@ -549,6 +549,18 @@ public class NumbersDoubleToDecimalTest {
     }
 
     @Test
+    public void testTargetLossyTruncateExcessExceedsPow10Table() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 1e-25 has naturalScale=42 (Ryu: output=1, e10=-1).
+        // With scale=2, excess=naturalScale-scale can exceed the pow10 table size.
+        // The entire significand is shifted out, so the result must be 0.
+        Numbers.doubleToDecimal(1e-25, d, 18, 2, true);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("0.00", ss.toString());
+    }
+
+    @Test
     public void testTargetLossyTruncateAllFractionalDigits() throws NumericException {
         Decimal64 d = new Decimal64();
         // 123.456 with target scale=0 → truncate to 123

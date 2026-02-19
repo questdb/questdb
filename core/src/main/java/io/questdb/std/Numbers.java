@@ -771,8 +771,14 @@ public final class Numbers {
         // Truncate extra fractional digits if lossy
         if (lossy && naturalScale > scale) {
             int excess = naturalScale - scale;
-            output /= pow10[excess];
-            olength -= excess;
+            if (excess >= olength) {
+                // All significand digits are truncated — result is zero
+                output = 0;
+                olength = 0;
+            } else {
+                output /= pow10[excess];
+                olength -= excess;
+            }
             e10[0] += excess;
             decExp = e10[0] + olength;
             naturalScale = scale;
