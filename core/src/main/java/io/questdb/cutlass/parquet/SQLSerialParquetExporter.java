@@ -410,14 +410,20 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
 
                         PageFrame frame;
                         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
+                        long inFlightRows = 0;
                         while ((frame = pfc.next()) != null) {
                             if (circuitBreaker.checkIfTripped()) {
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
                             long rowCount = buffers.buildColumnDataFromPageFrame(pfc, frame, columnData);
                             exporter.writeHybridFrame(columnData, rowCount);
+                            inFlightRows += rowCount;
                             long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
                             if (currentRowsWritten > previousRowsWritten) {
+                                inFlightRows -= (currentRowsWritten - previousRowsWritten);
+                                if (inFlightRows <= rowCount) {
+                                    buffers.releasePinnedBuffers();
+                                }
                                 pfc.releaseOpenPartitions();
                                 previousRowsWritten = currentRowsWritten;
                             }
@@ -471,12 +477,23 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             exporter.setUp(buffers.getAdjustedMetadata());
 
             long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
+            long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
+            long inFlightRows = 0;
             long rowCount;
             while ((rowCount = buffers.buildColumnDataFromCursor(cursor, columnData, batchSize)) > 0) {
                 if (circuitBreaker.checkIfTripped()) {
                     throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                 }
                 exporter.writeHybridFrame(columnData, rowCount);
+                inFlightRows += rowCount;
+                long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
+                if (currentRowsWritten > previousRowsWritten) {
+                    inFlightRows -= (currentRowsWritten - previousRowsWritten);
+                    if (inFlightRows <= rowCount) {
+                        buffers.releasePinnedBuffers();
+                    }
+                    previousRowsWritten = currentRowsWritten;
+                }
             }
 
             exporter.finishExport();

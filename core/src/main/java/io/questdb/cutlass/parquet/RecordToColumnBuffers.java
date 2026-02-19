@@ -85,6 +85,9 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     private final Decimal256 decimal256A = new Decimal256();
     private final PageFrameMemoryRecord pageFrameRecord = new PageFrameMemoryRecord();
     private final ReusablePageFrameMemory pfMemory = new ReusablePageFrameMemory();
+    // Buffers that Rust still references (pending_partitions). Freed after row group flush.
+    private final ObjList<MemoryCARWImpl> pinnedAuxBuffers = new ObjList<>();
+    private final ObjList<MemoryCARWImpl> pinnedDataBuffers = new ObjList<>();
     private GenericRecordMetadata adjustedMetadata;
     // Per output col: base col index, or -1 if computed
     private int[] baseColumnMap;
@@ -249,6 +252,7 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
      */
     @Override
     public void clear() {
+        releasePinnedBuffers();
         for (int i = 0, n = dataBuffers.size(); i < n; i++) {
             Misc.free(dataBuffers.getQuick(i));
         }
@@ -280,6 +284,21 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
 
     public int[] getBaseColumnMap() {
         return baseColumnMap;
+    }
+
+    /**
+     * Frees all pinned buffers that were being held for Rust's pending_partitions.
+     * Call after a row group flush when all pinned partitions have been drained.
+     */
+    public void releasePinnedBuffers() {
+        for (int i = 0, n = pinnedDataBuffers.size(); i < n; i++) {
+            Misc.free(pinnedDataBuffers.getQuick(i));
+        }
+        pinnedDataBuffers.clear();
+        for (int i = 0, n = pinnedAuxBuffers.size(); i < n; i++) {
+            Misc.free(pinnedAuxBuffers.getQuick(i));
+        }
+        pinnedAuxBuffers.clear();
     }
 
     /**
@@ -458,13 +477,43 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     }
 
     private void resetBuffers() {
+        // Check if any buffer has data that Rust may still reference.
+        boolean hasData = false;
         for (int i = 0; i < computedCount; i++) {
-            dataBuffers.getQuick(i).truncate();
-            MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
-            if (auxBuf != null) {
-                auxBuf.truncate();
+            if (dataBuffers.getQuick(i).getAppendOffset() > 0) {
+                hasData = true;
+                break;
             }
         }
+
+        if (hasData) {
+            // Pin current buffers (Rust still references them via pending_partitions)
+            // and allocate fresh ones for the next frame.
+            for (int i = 0; i < computedCount; i++) {
+                pinnedDataBuffers.add(dataBuffers.getQuick(i));
+                pinnedAuxBuffers.add(auxBuffers.getQuick(i));
+            }
+            dataBuffers.clear();
+            auxBuffers.clear();
+            computedCount = 0;
+            for (int i = 0; i < outputColumnCount; i++) {
+                if (computedBufferIdx[i] >= 0) {
+                    computedBufferIdx[i] = computedCount;
+                    allocateBuffer(adjustedMetadata.getColumnType(i));
+                    computedCount++;
+                }
+            }
+        } else {
+            // First call or empty buffers: truncate in place.
+            for (int i = 0; i < computedCount; i++) {
+                dataBuffers.getQuick(i).truncate();
+                MemoryCARWImpl auxBuf = auxBuffers.getQuick(i);
+                if (auxBuf != null) {
+                    auxBuf.truncate();
+                }
+            }
+        }
+
         // Write the zero offset of the first string in a STRING data column.
         // StringTypeDriver will then append the offset of the first available byte
         // after each written string (start offset of the next, yet unwritten string).

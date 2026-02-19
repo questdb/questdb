@@ -269,6 +269,8 @@ public class HTTPSerialParquetExporter {
         }
 
         long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
+        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
+        long inFlightRows = 0;
         long rowCount;
         while ((rowCount = materializer.buildColumnDataFromCursor(fullCursor, materializerColumnData, batchSize)) > 0) {
             if (circuitBreaker.checkIfTripped()) {
@@ -276,6 +278,17 @@ public class HTTPSerialParquetExporter {
                 throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
             exporter.writeHybridFrame(materializerColumnData, rowCount);
+            inFlightRows += rowCount;
+
+            // Release pinned buffers after Rust has written a row group
+            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
+            if (currentRowsWritten > previousRowsWritten) {
+                inFlightRows -= (currentRowsWritten - previousRowsWritten);
+                if (inFlightRows <= rowCount) {
+                    materializer.releasePinnedBuffers();
+                }
+                previousRowsWritten = currentRowsWritten;
+            }
 
             LOG.info().$("cursor stream export progress [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInBatch=").$(rowCount)
@@ -307,6 +320,7 @@ public class HTTPSerialParquetExporter {
 
         PageFrame frame;
         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
+        long inFlightRows = 0;
         while ((frame = streamingPfc.next()) != null) {
             if (circuitBreaker.checkIfTripped()) {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
@@ -314,10 +328,15 @@ public class HTTPSerialParquetExporter {
             }
             long rowCount = materializer.buildColumnDataFromPageFrame(streamingPfc, frame, materializerColumnData);
             exporter.writeHybridFrame(materializerColumnData, rowCount);
+            inFlightRows += rowCount;
 
-            // Release partitions after Rust has written a row group
+            // Release partitions and pinned buffers after Rust has written a row group
             long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
             if (currentRowsWritten > previousRowsWritten) {
+                inFlightRows -= (currentRowsWritten - previousRowsWritten);
+                if (inFlightRows <= rowCount) {
+                    materializer.releasePinnedBuffers();
+                }
                 streamingPfc.releaseOpenPartitions();
                 previousRowsWritten = currentRowsWritten;
             }

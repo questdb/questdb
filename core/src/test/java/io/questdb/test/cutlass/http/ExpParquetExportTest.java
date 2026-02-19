@@ -786,6 +786,38 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportCursorBasedMultipleRowGroups() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // CROSS JOIN produces a CURSOR_BASED factory (no page frame support).
+                    // 10 x 500 = 5000 rows with computed columns and small row groups
+                    // exercises the buffer pinning fix in the cursor-based path.
+                    engine.execute("""
+                            CREATE TABLE cb_t1 AS (
+                                SELECT x AS a FROM long_sequence(10)
+                            )""", sqlExecutionContext);
+                    engine.execute("""
+                            CREATE TABLE cb_t2 AS (
+                                SELECT x AS b,
+                                rnd_str(5, 10, 0) AS s,
+                                rnd_varchar(5, 10, 0) AS vc,
+                                rnd_double_array(1, 5) AS arr
+                                FROM long_sequence(500)
+                            )""", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.s FROM cb_t1 CROSS JOIN cb_t2",
+                            "SELECT cb_t1.a * cb_t2.b AS product, cb_t2.s FROM cb_t1 CROSS JOIN cb_t2",
+                            // VARCHAR and ARRAY through cursor-based buffers
+                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.vc FROM cb_t1 CROSS JOIN cb_t2",
+                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.arr FROM cb_t1 CROSS JOIN cb_t2",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 200);
+                });
+    }
+
+    @Test
     public void testParquetExportCompressionCode() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1367,6 +1399,37 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFrameCircuitBreaker() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // ~100 daily partitions with 1000 rows each.  The heavy
+                    // rnd_str() computation per row makes each page frame
+                    // slow enough for the 1ms timeout to trip the breaker.
+                    engine.execute("""
+                            CREATE TABLE cb_test AS (
+                                SELECT x,
+                                timestamp_sequence('2024-01-01', 864_000_000L) AS ts
+                                FROM long_sequence(100_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+
+                    params.clear();
+                    // x + 1 forces PAGE_FRAME_BACKED; rnd_str generates
+                    // large strings that dominate per-frame cost.
+                    params.put("query", "SELECT x + 1 AS cx, rnd_str(500, 1000, 0) AS big, ts FROM cb_test");
+                    params.put("fmt", "parquet");
+                    params.put("timeout", "1");
+                    // With a very short timeout the circuit breaker should trip
+                    // during PAGE_FRAME_BACKED export. Depending on timing, the
+                    // server may return an error or simply disconnect.
+                    try {
+                        testHttpClient.assertGetContains("/exp", "timeout, query aborted", params);
+                    } catch (HttpClientException e) {
+                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameComputedColumns() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1383,6 +1446,27 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     };
 
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameDescending() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE desc_test AS (
+                                SELECT x, x * 2.0 AS dbl_col,
+                                timestamp_sequence('2024-01-01', 1_000_000L) AS ts
+                                FROM long_sequence(200)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT x + 1 AS computed_x, dbl_col, ts FROM desc_test ORDER BY ts DESC",
+                            "SELECT x::INT AS x_int, dbl_col::FLOAT AS dbl_float, ts FROM desc_test ORDER BY ts DESC",
+                            "SELECT x, x * 3 + 1 AS expr_col, ts FROM desc_test ORDER BY ts DESC",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
                 });
     }
 
@@ -1419,6 +1503,53 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     };
 
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameMultipleRowGroups() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE rg_test AS (
+                                SELECT x, x * 2.0 AS dbl_col,
+                                timestamp_sequence('2024-01-01', 100_000L) AS ts
+                                FROM long_sequence(5000)
+                            ) TIMESTAMP(ts) PARTITION BY HOUR""", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT x + 1 AS computed_x, dbl_col, ts FROM rg_test",
+                            "SELECT x::INT AS x_int, dbl_col::FLOAT AS dbl_float, ts FROM rg_test",
+                            // Computed STRING column: exercises var-size buffer pinning in PAGE_FRAME_BACKED
+                            "SELECT x::STRING AS str_x, dbl_col, ts FROM rg_test",
+                    };
+
+                    // Use a small max_row_group to force multiple row groups
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 200);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameVarcharAndArrayColumns() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE vca_test AS (
+                                SELECT x,
+                                rnd_varchar(1, 15, 1) AS vc_col,
+                                rnd_double_array(1, 5) AS arr_col,
+                                timestamp_sequence('2024-01-01', 1_000_000L) AS ts
+                                FROM long_sequence(200)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+
+                    // x + 1 forces PAGE_FRAME_BACKED; vc_col and arr_col are pass-through
+                    String[] queries = {
+                            "SELECT x + 1 AS computed_x, vc_col, arr_col, ts FROM vca_test",
+                            "SELECT x * 2 AS doubled, vc_col, ts FROM vca_test",
+                            "SELECT x + 1 AS computed_x, arr_col FROM vca_test",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
                 });
     }
 

@@ -1256,6 +1256,53 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryWithComputedColumnsMultipleRowGroups() throws Exception {
+        // PAGE_FRAME_BACKED: computed columns + small row_group_size forces
+        // multiple row group flushes and exercises buffer pinning.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE pfb_rg AS (
+                        SELECT x, x * 2.0 AS dbl_col,
+                        timestamp_sequence('2024-01-01', 100_000L) AS ts
+                        FROM long_sequence(5000)
+                    ) TIMESTAMP(ts) PARTITION BY HOUR""");
+
+            // x::STRING produces a computed var-size STRING column, exercising buffer pinning
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT x + 1 AS computed_x, x::STRING AS str_x, dbl_col, ts FROM pfb_rg) TO 'pfb_rg_output' WITH FORMAT parquet row_group_size 100",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "pfb_rg_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("count\n5000\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "pfb_rg_output.parquet')");
+                        // Verify computed column values including the STRING column
+                        assertSql("""
+                                        computed_x\tstr_x\tdbl_col
+                                        2\t1\t2.0
+                                        """,
+                                "SELECT computed_x, str_x, dbl_col FROM read_parquet('" + exportRoot + File.separator + "pfb_rg_output.parquet') WHERE computed_x = 2"
+                        );
+                        assertSql("""
+                                        computed_x\tstr_x\tdbl_col
+                                        5001\t5000\t10000.0
+                                        """,
+                                "SELECT computed_x, str_x, dbl_col FROM read_parquet('" + exportRoot + File.separator + "pfb_rg_output.parquet') WHERE computed_x = 5001"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyQueryWithComputedNullValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (x INT, y DOUBLE, name STRING)");
@@ -1317,6 +1364,44 @@ public class CopyExportTest extends AbstractCairoTest {
                                         """,
                                 "SELECT * FROM read_parquet('" + exportRoot + File.separator + "comp_sym_output.parquet') ORDER BY x"
                         );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithCursorBasedMultipleRowGroups() throws Exception {
+        // CURSOR_BASED: CROSS JOIN produces a non-page-frame factory.
+        // Small row_group_size forces multiple batches and exercises buffer pinning.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cb_t1 AS (SELECT x AS a FROM long_sequence(10))");
+            execute("""
+                    CREATE TABLE cb_t2 AS (
+                        SELECT x AS b,
+                        rnd_str(5, 10, 0) AS s,
+                        rnd_varchar(5, 10, 0) AS vc,
+                        rnd_double_array(1, 5) AS arr
+                        FROM long_sequence(500)
+                    )""");
+
+            // All columns materialized through buffers in cursor mode:
+            // STRING (s), VARCHAR (vc), and ARRAY (arr) exercise var-size buffer pinning
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.s, cb_t2.vc, cb_t2.arr FROM cb_t1 CROSS JOIN cb_t2) TO 'cb_rg_output' WITH FORMAT parquet row_group_size 100",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "cb_rg_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("count\n5000\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "cb_rg_output.parquet')");
                     });
 
             testCopyExport(stmt, test);
