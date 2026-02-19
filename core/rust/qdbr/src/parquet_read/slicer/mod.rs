@@ -143,6 +143,151 @@ impl<'a, const N: usize> DataPageFixedSlicer<'a, N> {
     }
 }
 
+pub struct DataPageDynSlicer<'a> {
+    data: &'a [u8],
+    pos: usize,
+    sliced_row_count: usize,
+    elem_size: usize,
+}
+
+impl DataPageSlicer for DataPageDynSlicer<'_> {
+    #[inline]
+    fn next(&mut self) -> &[u8] {
+        let res = &self.data[self.pos..self.pos + self.elem_size];
+        self.pos += self.elem_size;
+        res
+    }
+
+    #[inline]
+    fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
+        let res = &self.data[self.pos..self.pos + self.elem_size];
+        self.pos += self.elem_size;
+        dest.extend_from_slice(res)
+    }
+
+    #[inline]
+    fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
+        let len = self.elem_size * count;
+        let res = &self.data[self.pos..self.pos + len];
+        self.pos += len;
+        dest.extend_from_slice(res)
+    }
+
+    #[inline]
+    fn skip(&mut self, count: usize) {
+        self.pos += self.elem_size * count;
+    }
+
+    fn count(&self) -> usize {
+        self.sliced_row_count
+    }
+
+    fn data_size(&self) -> usize {
+        self.sliced_row_count * self.elem_size
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        Ok(())
+    }
+}
+
+impl<'a> DataPageDynSlicer<'a> {
+    pub fn new(data: &'a [u8], row_count: usize, elem_size: usize) -> Self {
+        Self {
+            data,
+            pos: 0,
+            sliced_row_count: row_count,
+            elem_size,
+        }
+    }
+}
+
+pub struct DeltaBinaryPackedSlicer<'a, const N: usize> {
+    decoder: delta_bitpacked::Decoder<'a>,
+    sliced_row_count: usize,
+    error: ParquetResult<()>,
+    error_value: [u8; N],
+    buffer: [u8; N],
+}
+
+impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
+    #[inline]
+    fn next(&mut self) -> &[u8] {
+        let res = self.decoder.next();
+        match res {
+            Some(val) => match val {
+                Ok(val) => {
+                    let bytes = val.to_le_bytes();
+                    self.buffer[..N].copy_from_slice(&bytes[..N]);
+                    &self.buffer
+                }
+                Err(_) => {
+                    // TODO(amunra): Clean-up, this is _not_ a layout error!
+                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
+                    &self.error_value
+                }
+            },
+            None => {
+                // TODO(amunra): Clean-up, this is _not_ a layout error!
+                self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
+                &self.error_value
+            }
+        }
+    }
+
+    #[inline]
+    fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
+        match self.decoder.next() {
+            Some(Ok(val)) => {
+                let bytes = val.to_le_bytes();
+                dest.extend_from_slice(&bytes[..N])
+            }
+            Some(Err(_)) | None => {
+                self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
+                dest.extend_from_slice(&self.error_value)
+            }
+        }
+    }
+
+    fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
+        for _ in 0..count {
+            self.next_into::<S>(dest)?;
+        }
+        Ok(())
+    }
+
+    fn skip(&mut self, count: usize) {
+        for _ in 0..count {
+            self.decoder.next();
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.sliced_row_count
+    }
+
+    fn data_size(&self) -> usize {
+        self.sliced_row_count * N
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        self.error.clone()
+    }
+}
+
+impl<'a, const N: usize> DeltaBinaryPackedSlicer<'a, N> {
+    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
+        let decoder = delta_bitpacked::Decoder::try_new(data)?;
+        Ok(Self {
+            decoder,
+            sliced_row_count: row_count,
+            error: Ok(()),
+            error_value: [0; N],
+            buffer: [0; N],
+        })
+    }
+}
+
 pub struct DeltaLengthArraySlicer<'a> {
     data: &'a [u8],
     sliced_row_count: usize,

@@ -3,6 +3,7 @@ use num_traits::AsPrimitive;
 pub mod array;
 mod binary;
 mod boolean;
+pub(crate) mod decimal;
 pub(crate) mod file;
 pub use file::ParquetWriter;
 mod fixed_len_bytes;
