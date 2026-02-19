@@ -71,7 +71,6 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
 
     private static class Func128 extends Decimal128Function implements UnaryFunction {
         private final Function arg;
-        private final byte[] digits = new byte[21];
         private final int position;
         private final int precision;
         private final int scale;
@@ -97,7 +96,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
                 return;
             }
             try {
-                Numbers.doubleToDecimal(d, decimal, precision, scale, true, digits);
+                Numbers.doubleToDecimal(d, decimal, precision, scale, true);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(d, ColumnType.DOUBLE, type).position(position);
             }
@@ -116,7 +115,6 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
 
     private static class Func256 extends Decimal256Function implements UnaryFunction {
         private final Function arg;
-        private final byte[] digits = new byte[21];
         private final int position;
         private final int precision;
         private final int scale;
@@ -142,7 +140,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
                 return;
             }
             try {
-                Numbers.doubleToDecimal(d, decimal, precision, scale, true, digits);
+                Numbers.doubleToDecimal(d, decimal, precision, scale, true);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(d, ColumnType.DOUBLE, type).position(position);
             }
@@ -160,7 +158,6 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class Func64 extends AbstractCastToDecimal64Function {
-        private final byte[] digits = new byte[21];
 
         public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
@@ -172,7 +169,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
                 return false;
             }
             try {
-                Numbers.doubleToDecimal(d, decimal, precision, scale, true, digits);
+                Numbers.doubleToDecimal(d, decimal, precision, scale, true);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(d, ColumnType.DOUBLE, type).position(position);
             }

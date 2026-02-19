@@ -35,7 +35,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class NumbersDoubleToDecimalTest {
-    private final byte[] digits = new byte[21];
     private final Decimal128 sink128 = new Decimal128();
     private final Decimal256 sink256 = new Decimal256();
     private final Decimal64 sink64 = new Decimal64();
@@ -75,7 +74,7 @@ public class NumbersDoubleToDecimalTest {
 
     @Test
     public void testAutoZero() {
-        int type = Numbers.doubleToDecimal(0.0, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(0.0, sink64, sink128, sink256);
         Assert.assertNotEquals(0, type);
         Assert.assertEquals(1, ColumnType.getDecimalPrecision(type));
         Assert.assertEquals(0, ColumnType.getDecimalScale(type));
@@ -84,7 +83,7 @@ public class NumbersDoubleToDecimalTest {
 
     @Test
     public void testAutoNegativeZero() {
-        int type = Numbers.doubleToDecimal(-0.0, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(-0.0, sink64, sink128, sink256);
         Assert.assertNotEquals(0, type);
         Assert.assertEquals(1, ColumnType.getDecimalPrecision(type));
         Assert.assertEquals(0, ColumnType.getDecimalScale(type));
@@ -95,17 +94,17 @@ public class NumbersDoubleToDecimalTest {
 
     @Test
     public void testAutoNaN() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.NaN, sink64, sink128, sink256, digits));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.NaN, sink64, sink128, sink256));
     }
 
     @Test
     public void testAutoPositiveInfinity() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.POSITIVE_INFINITY, sink64, sink128, sink256, digits));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.POSITIVE_INFINITY, sink64, sink128, sink256));
     }
 
     @Test
     public void testAutoNegativeInfinity() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.NEGATIVE_INFINITY, sink64, sink128, sink256, digits));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.NEGATIVE_INFINITY, sink64, sink128, sink256));
     }
 
     // --- Powers of 2: integers (fast Dragon4 path, tinyBitCount==0) ---
@@ -246,16 +245,16 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testAutoDecimal64Selection() {
         // Single digit → Decimal64
-        int type = Numbers.doubleToDecimal(5.0, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(5.0, sink64, sink128, sink256);
         Assert.assertTrue(ColumnType.tagOf(type) <= ColumnType.DECIMAL64);
 
         // 16 significant digits → still Decimal64
-        type = Numbers.doubleToDecimal(1.234567890123456, sink64, sink128, sink256, digits);
+        type = Numbers.doubleToDecimal(1.234567890123456, sink64, sink128, sink256);
         Assert.assertTrue(ColumnType.tagOf(type) <= ColumnType.DECIMAL64);
         assertAutoRoundTrip(1.234567890123456);
 
         // Large integer with 16 digits → Decimal64
-        type = Numbers.doubleToDecimal(1e15, sink64, sink128, sink256, digits);
+        type = Numbers.doubleToDecimal(1e15, sink64, sink128, sink256);
         Assert.assertTrue(ColumnType.tagOf(type) <= ColumnType.DECIMAL64);
     }
 
@@ -264,7 +263,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testAutoDecimal128Required() {
         // 1e20 → 21 integer digits → precision > 18 → Decimal128
-        int type = Numbers.doubleToDecimal(1e20, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(1e20, sink64, sink128, sink256);
         Assert.assertNotEquals(0, type);
         Assert.assertEquals(ColumnType.DECIMAL128, ColumnType.tagOf(type));
         assertAutoRoundTrip(1e20);
@@ -274,7 +273,7 @@ public class NumbersDoubleToDecimalTest {
     public void testAutoDecimal128RangeOfExponents() {
         for (int exp = 19; exp <= 37; exp++) {
             double v = Math.pow(10, exp);
-            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256, digits);
+            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
             Assert.assertNotEquals("1e" + exp + " should fit", 0, type);
             int tag = ColumnType.tagOf(type);
             Assert.assertTrue(
@@ -288,7 +287,7 @@ public class NumbersDoubleToDecimalTest {
 
     @Test
     public void testAutoDecimal256Required() {
-        int type = Numbers.doubleToDecimal(1e40, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(1e40, sink64, sink128, sink256);
         Assert.assertNotEquals(0, type);
         Assert.assertEquals(ColumnType.DECIMAL256, ColumnType.tagOf(type));
         assertAutoRoundTrip(1e40);
@@ -298,7 +297,7 @@ public class NumbersDoubleToDecimalTest {
     public void testAutoDecimal256RangeOfExponents() {
         for (int exp = 39; exp <= 75; exp++) {
             double v = Math.pow(10, exp);
-            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256, digits);
+            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
             Assert.assertNotEquals("1e" + exp + " should fit", 0, type);
             Assert.assertEquals(
                     "1e" + exp + " should need Decimal256",
@@ -312,7 +311,7 @@ public class NumbersDoubleToDecimalTest {
 
     @Test
     public void testAutoSmallFractionsDecimal128() {
-        int type = Numbers.doubleToDecimal(1e-19, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(1e-19, sink64, sink128, sink256);
         Assert.assertNotEquals(0, type);
         int tag = ColumnType.tagOf(type);
         Assert.assertTrue(tag >= ColumnType.DECIMAL128);
@@ -321,7 +320,7 @@ public class NumbersDoubleToDecimalTest {
 
     @Test
     public void testAutoSmallFractionsDecimal256() {
-        int type = Numbers.doubleToDecimal(1e-50, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(1e-50, sink64, sink128, sink256);
         Assert.assertNotEquals(0, type);
         Assert.assertEquals(ColumnType.DECIMAL256, ColumnType.tagOf(type));
         assertAutoRoundTrip(1e-50);
@@ -331,14 +330,14 @@ public class NumbersDoubleToDecimalTest {
 
     @Test
     public void testAutoMaxDecimal256FitLargePositive() {
-        int type = Numbers.doubleToDecimal(1e75, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(1e75, sink64, sink128, sink256);
         Assert.assertNotEquals("1e75 should fit in Decimal256", 0, type);
         assertAutoRoundTrip(1e75);
     }
 
     @Test
     public void testAutoMaxDecimal256FitSmallPositive() {
-        int type = Numbers.doubleToDecimal(1e-76, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(1e-76, sink64, sink128, sink256);
         Assert.assertNotEquals("1e-76 should fit in Decimal256", 0, type);
         assertAutoRoundTrip(1e-76);
     }
@@ -347,23 +346,23 @@ public class NumbersDoubleToDecimalTest {
 
     @Test
     public void testAutoExceedsDecimal256LargeExponent() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e77, sink64, sink128, sink256, digits));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e100, sink64, sink128, sink256, digits));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e308, sink64, sink128, sink256, digits));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e77, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e100, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e308, sink64, sink128, sink256));
     }
 
     @Test
     public void testAutoExceedsDecimal256SmallExponent() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e-77, sink64, sink128, sink256, digits));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e-200, sink64, sink128, sink256, digits));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e-77, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e-200, sink64, sink128, sink256));
     }
 
     @Test
     public void testAutoExceedsDecimal256DoubleMinMax() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MIN_VALUE, sink64, sink128, sink256, digits));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MIN_NORMAL, sink64, sink128, sink256, digits));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MAX_VALUE, sink64, sink128, sink256, digits));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(-Double.MAX_VALUE, sink64, sink128, sink256, digits));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MIN_VALUE, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MIN_NORMAL, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MAX_VALUE, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(-Double.MAX_VALUE, sink64, sink128, sink256));
     }
 
     // --- FDBigInteger slow path (very small values) ---
@@ -402,7 +401,7 @@ public class NumbersDoubleToDecimalTest {
     public void testAutoRoundTripPowersOfTen() {
         for (int exp = -75; exp <= 75; exp++) {
             double v = Math.pow(10, exp);
-            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256, digits);
+            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
             if (type != 0) {
                 String decStr = decimalToString(type);
                 double parsed = Double.parseDouble(decStr);
@@ -444,7 +443,7 @@ public class NumbersDoubleToDecimalTest {
         };
         StringSink appendSink = new StringSink();
         for (double v : values) {
-            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256, digits);
+            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
             if (type != 0) {
                 String decStr = decimalToString(type);
                 double fromDecimal = Double.parseDouble(decStr);
@@ -465,11 +464,11 @@ public class NumbersDoubleToDecimalTest {
 
     @Test
     public void testAutoNegativeLargeValues() {
-        int type = Numbers.doubleToDecimal(-1e20, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(-1e20, sink64, sink128, sink256);
         Assert.assertNotEquals(0, type);
         assertAutoRoundTrip(-1e20);
 
-        type = Numbers.doubleToDecimal(-1e50, sink64, sink128, sink256, digits);
+        type = Numbers.doubleToDecimal(-1e50, sink64, sink128, sink256);
         Assert.assertNotEquals(0, type);
         assertAutoRoundTrip(-1e50);
     }
@@ -539,7 +538,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetLossyTruncation() throws NumericException {
         Decimal64 d = new Decimal64();
         // 123.456 with target scale=2 → truncate to 123.45
-        Numbers.doubleToDecimal(123.456, d, 5, 2, true, digits);
+        Numbers.doubleToDecimal(123.456, d, 5, 2, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("123.45", ss.toString());
@@ -549,7 +548,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetLossyTruncationNegative() throws NumericException {
         Decimal64 d = new Decimal64();
         // -123.456 with target scale=2 → truncate to -123.45
-        Numbers.doubleToDecimal(-123.456, d, 5, 2, true, digits);
+        Numbers.doubleToDecimal(-123.456, d, 5, 2, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("-123.45", ss.toString());
@@ -559,7 +558,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetLossyTruncateAllFractionalDigits() throws NumericException {
         Decimal64 d = new Decimal64();
         // 123.456 with target scale=0 → truncate to 123
-        Numbers.doubleToDecimal(123.456, d, 3, 0, true, digits);
+        Numbers.doubleToDecimal(123.456, d, 3, 0, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("123", ss.toString());
@@ -569,7 +568,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetLossyTruncateToZero() throws NumericException {
         Decimal64 d = new Decimal64();
         // 0.001 with target scale=0, lossy → all fractional digits removed → 0
-        Numbers.doubleToDecimal(0.001, d, 5, 0, true, digits);
+        Numbers.doubleToDecimal(0.001, d, 5, 0, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("0", ss.toString());
@@ -579,7 +578,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetLossyTruncateSmallFraction() throws NumericException {
         Decimal64 d = new Decimal64();
         // 0.999 with target scale=0, lossy → 0 (truncation, not rounding)
-        Numbers.doubleToDecimal(0.999, d, 5, 0, true, digits);
+        Numbers.doubleToDecimal(0.999, d, 5, 0, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("0", ss.toString());
@@ -589,7 +588,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetLossyTruncatePartialFraction() throws NumericException {
         Decimal64 d = new Decimal64();
         // 0.999 with target scale=1, lossy → truncate to 0.9
-        Numbers.doubleToDecimal(0.999, d, 5, 1, true, digits);
+        Numbers.doubleToDecimal(0.999, d, 5, 1, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("0.9", ss.toString());
@@ -601,7 +600,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetNonLossyExactFit() throws NumericException {
         Decimal64 d = new Decimal64();
         // 123.45 has naturalScale=2, target scale=2 → exact fit
-        Numbers.doubleToDecimal(123.45, d, 5, 2, false, digits);
+        Numbers.doubleToDecimal(123.45, d, 5, 2, false);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("123.45", ss.toString());
@@ -611,7 +610,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetNonLossyIntegerValue() throws NumericException {
         Decimal64 d = new Decimal64();
         // 42.0 has naturalScale=0, target scale=3 → exact fit, trailing zeros
-        Numbers.doubleToDecimal(42.0, d, 5, 3, false, digits);
+        Numbers.doubleToDecimal(42.0, d, 5, 3, false);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("42.000", ss.toString());
@@ -623,14 +622,14 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetNonLossyScaleOverflow() throws NumericException {
         Decimal64 d = new Decimal64();
         // 0.001 has naturalScale=3, target scale=2, lossy=false → throws
-        Numbers.doubleToDecimal(0.001, d, 4, 2, false, digits);
+        Numbers.doubleToDecimal(0.001, d, 4, 2, false);
     }
 
     @Test(expected = NumericException.class)
     public void testTargetNonLossyScaleOverflowManyDigits() throws NumericException {
         Decimal64 d = new Decimal64();
         // 123.456 has naturalScale=3, target scale=2, lossy=false → throws
-        Numbers.doubleToDecimal(123.456, d, 5, 2, false, digits);
+        Numbers.doubleToDecimal(123.456, d, 5, 2, false);
     }
 
     // --- Precision overflow → NumericException ---
@@ -639,21 +638,21 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetPrecisionOverflow() throws NumericException {
         Decimal64 d = new Decimal64();
         // 1000.0 → integerDigits=4, requiredPrecision=4+2=6 > 4 → throws
-        Numbers.doubleToDecimal(1000.0, d, 4, 2, true, digits);
+        Numbers.doubleToDecimal(1000.0, d, 4, 2, true);
     }
 
     @Test(expected = NumericException.class)
     public void testTargetPrecisionOverflowLargeValue() throws NumericException {
         Decimal64 d = new Decimal64();
         // 99999.0 → integerDigits=5, requiredPrecision=5+2=7 > 5 → throws
-        Numbers.doubleToDecimal(99_999.0, d, 5, 2, true, digits);
+        Numbers.doubleToDecimal(99_999.0, d, 5, 2, true);
     }
 
     @Test(expected = NumericException.class)
     public void testTargetPrecisionOverflowNegative() throws NumericException {
         Decimal64 d = new Decimal64();
         // -10000.0 → integerDigits=5, requiredPrecision=5+2=7 > 5 → throws
-        Numbers.doubleToDecimal(-10_000.0, d, 5, 2, true, digits);
+        Numbers.doubleToDecimal(-10_000.0, d, 5, 2, true);
     }
 
     // --- Precision exactly at boundary ---
@@ -662,7 +661,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetPrecisionExactBoundary() throws NumericException {
         Decimal64 d = new Decimal64();
         // 999.0 → integerDigits=3, requiredPrecision=3+2=5 == 5 → success
-        Numbers.doubleToDecimal(999.0, d, 5, 2, true, digits);
+        Numbers.doubleToDecimal(999.0, d, 5, 2, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("999.00", ss.toString());
@@ -673,19 +672,19 @@ public class NumbersDoubleToDecimalTest {
     @Test(expected = NumericException.class)
     public void testTargetNaN() throws NumericException {
         Decimal64 d = new Decimal64();
-        Numbers.doubleToDecimal(Double.NaN, d, 5, 2, true, digits);
+        Numbers.doubleToDecimal(Double.NaN, d, 5, 2, true);
     }
 
     @Test(expected = NumericException.class)
     public void testTargetPositiveInfinity() throws NumericException {
         Decimal64 d = new Decimal64();
-        Numbers.doubleToDecimal(Double.POSITIVE_INFINITY, d, 5, 2, true, digits);
+        Numbers.doubleToDecimal(Double.POSITIVE_INFINITY, d, 5, 2, true);
     }
 
     @Test(expected = NumericException.class)
     public void testTargetNegativeInfinity() throws NumericException {
         Decimal64 d = new Decimal64();
-        Numbers.doubleToDecimal(Double.NEGATIVE_INFINITY, d, 5, 2, true, digits);
+        Numbers.doubleToDecimal(Double.NEGATIVE_INFINITY, d, 5, 2, true);
     }
 
     // --- Target cast with Decimal128 ---
@@ -693,7 +692,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testTargetDecimal128Basic() throws NumericException {
         Decimal128 d = new Decimal128();
-        Numbers.doubleToDecimal(123.45, d, 25, 2, true, digits);
+        Numbers.doubleToDecimal(123.45, d, 25, 2, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("123.45", ss.toString());
@@ -702,7 +701,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testTargetDecimal128Negative() throws NumericException {
         Decimal128 d = new Decimal128();
-        Numbers.doubleToDecimal(-789.012, d, 25, 4, true, digits);
+        Numbers.doubleToDecimal(-789.012, d, 25, 4, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("-789.0120", ss.toString());
@@ -711,7 +710,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testTargetDecimal128TrailingZeros() throws NumericException {
         Decimal128 d = new Decimal128();
-        Numbers.doubleToDecimal(1.0, d, 25, 10, true, digits);
+        Numbers.doubleToDecimal(1.0, d, 25, 10, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("1.0000000000", ss.toString());
@@ -720,7 +719,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testTargetDecimal128Zero() throws NumericException {
         Decimal128 d = new Decimal128();
-        Numbers.doubleToDecimal(0.0, d, 25, 5, true, digits);
+        Numbers.doubleToDecimal(0.0, d, 25, 5, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("0.00000", ss.toString());
@@ -731,7 +730,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testTargetDecimal256Basic() throws NumericException {
         Decimal256 d = new Decimal256();
-        Numbers.doubleToDecimal(123.45, d, 55, 2, true, digits);
+        Numbers.doubleToDecimal(123.45, d, 55, 2, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("123.45", ss.toString());
@@ -740,7 +739,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testTargetDecimal256Negative() throws NumericException {
         Decimal256 d = new Decimal256();
-        Numbers.doubleToDecimal(-999.999, d, 55, 5, true, digits);
+        Numbers.doubleToDecimal(-999.999, d, 55, 5, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("-999.99900", ss.toString());
@@ -749,7 +748,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testTargetDecimal256LargeScale() throws NumericException {
         Decimal256 d = new Decimal256();
-        Numbers.doubleToDecimal(42.0, d, 55, 20, true, digits);
+        Numbers.doubleToDecimal(42.0, d, 55, 20, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("42.00000000000000000000", ss.toString());
@@ -758,7 +757,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testTargetDecimal256Zero() throws NumericException {
         Decimal256 d = new Decimal256();
-        Numbers.doubleToDecimal(0.0, d, 55, 10, true, digits);
+        Numbers.doubleToDecimal(0.0, d, 55, 10, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("0.0000000000", ss.toString());
@@ -778,7 +777,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetScaleZeroLossy() throws NumericException {
         Decimal64 d = new Decimal64();
         // 42.7 → scale=0, lossy → truncate fractional → 42
-        Numbers.doubleToDecimal(42.7, d, 5, 0, true, digits);
+        Numbers.doubleToDecimal(42.7, d, 5, 0, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("42", ss.toString());
@@ -788,7 +787,7 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetScaleZeroNonLossyFraction() throws NumericException {
         Decimal64 d = new Decimal64();
         // 42.7 → scale=0, non-lossy, has fractional part → throws
-        Numbers.doubleToDecimal(42.7, d, 5, 0, false, digits);
+        Numbers.doubleToDecimal(42.7, d, 5, 0, false);
     }
 
     // --- Powers of 2 through target cast ---
@@ -819,7 +818,7 @@ public class NumbersDoubleToDecimalTest {
         Decimal64 d = new Decimal64();
         for (int i = -50; i <= 50; i++) {
             double v = (double) i;
-            Numbers.doubleToDecimal(v, d, 18, 2, true, digits);
+            Numbers.doubleToDecimal(v, d, 18, 2, true);
             ss.clear();
             d.toSink(ss);
             double parsed = Double.parseDouble(ss.toString());
@@ -832,7 +831,7 @@ public class NumbersDoubleToDecimalTest {
         Decimal64 d = new Decimal64();
         for (int i = 1; i <= 99; i++) {
             double v = i / 100.0;
-            Numbers.doubleToDecimal(v, d, 18, 2, true, digits);
+            Numbers.doubleToDecimal(v, d, 18, 2, true);
             ss.clear();
             d.toSink(ss);
             double parsed = Double.parseDouble(ss.toString());
@@ -845,7 +844,7 @@ public class NumbersDoubleToDecimalTest {
     // =====================================================================
 
     private void assertAutoInference(double value, String expected, int expectedPrecision, int expectedScale) {
-        int type = Numbers.doubleToDecimal(value, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(value, sink64, sink128, sink256);
         Assert.assertNotEquals("should succeed for " + value, 0, type);
         Assert.assertEquals("precision for " + value, expectedPrecision, ColumnType.getDecimalPrecision(type));
         Assert.assertEquals("scale for " + value, expectedScale, ColumnType.getDecimalScale(type));
@@ -853,7 +852,7 @@ public class NumbersDoubleToDecimalTest {
     }
 
     private void assertAutoRoundTrip(double value) {
-        int type = Numbers.doubleToDecimal(value, sink64, sink128, sink256, digits);
+        int type = Numbers.doubleToDecimal(value, sink64, sink128, sink256);
         if (type == 0) {
             // Value doesn't fit — not a failure for round-trip, just skip
             return;
@@ -878,7 +877,7 @@ public class NumbersDoubleToDecimalTest {
 
     private void assertTargetCast64(double value, int precision, int scale, String expected) throws NumericException {
         Decimal64 d = new Decimal64();
-        Numbers.doubleToDecimal(value, d, precision, scale, true, digits);
+        Numbers.doubleToDecimal(value, d, precision, scale, true);
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals(expected, ss.toString());
