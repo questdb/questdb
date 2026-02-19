@@ -354,7 +354,7 @@ inline void sort(T *index, int64_t size) {
 }
 
 typedef struct {
-    uint64_t value;
+    int64_t value;
     uint32_t index_index;
 } loser_node_t;
 
