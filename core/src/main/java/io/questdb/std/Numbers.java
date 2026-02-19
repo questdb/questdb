@@ -3344,11 +3344,6 @@ public final class Numbers {
                         digits[digitIndex++] = (char) ('0' + q);
                     }
 
-                    if (estDecExp < -3 || estDecExp >= 8) {
-                        low = false;
-                        high = false;
-                    }
-
                     for (; !low && !high; digits[digitIndex++] = (char) ('0' + q)) {
                         q = b / s;
                         b = 10 * (b % s);
@@ -3386,11 +3381,6 @@ public final class Numbers {
                         digits[digitIndex++] = (char) ('0' + q);
                     }
 
-                    if (estDecExp < -3 || estDecExp >= 8) {
-                        low = false;
-                        high = false;
-                    }
-
                     for (; !low && !high; digits[digitIndex++] = (char) ('0' + q)) {
                         q = (int) (b / s);
                         b = 10L * (b % s);
@@ -3426,11 +3416,6 @@ public final class Numbers {
                     --estDecExp;
                 } else {
                     digits[digitIndex++] = (char) ('0' + q);
-                }
-
-                if (estDecExp < -3 || estDecExp >= 8) {
-                    low = false;
-                    high = false;
                 }
 
                 while (!low && !high) {
