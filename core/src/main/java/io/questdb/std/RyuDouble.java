@@ -525,9 +525,9 @@ class RyuDouble {
                 }
                 long vrDiv10 = vr / 10;
                 boolean vmMod10IsZero = vm - 10 * vmDiv10 == 0;
-                lastRemovedDigit = (int) (vr - 10 * vrDiv10);
                 vmIsTrailingZeros &= vmMod10IsZero;
                 vrIsTrailingZeros &= lastRemovedDigit == 0;
+                lastRemovedDigit = (int) (vr - 10 * vrDiv10);
                 vr = vrDiv10;
                 vp = vpDiv10;
                 vm = vmDiv10;
@@ -542,8 +542,8 @@ class RyuDouble {
                     }
                     long vpDiv10 = vp / 10;
                     long vrDiv10 = vr / 10;
-                    lastRemovedDigit = (int) (vr - 10 * vrDiv10);
                     vrIsTrailingZeros &= lastRemovedDigit == 0;
+                    lastRemovedDigit = (int) (vr - 10 * vrDiv10);
                     vr = vrDiv10;
                     vp = vpDiv10;
                     vm = vmDiv10;

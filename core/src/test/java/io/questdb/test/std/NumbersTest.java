@@ -394,6 +394,17 @@ public class NumbersTest {
     }
 
     @Test
+    public void testFormatDoubleRoundEven() {
+        // Ryu round-half-to-even: when the removed portion is exactly 0.5
+        // and the retained significand is even, don't round up.
+        // 1.3607615367753142E15 has significand 13607615367753142 (even),
+        // last removed digit 5, trailing zeros — must NOT round up to ...3143.
+        sink.clear();
+        Numbers.append(sink, 1.3607615367753142E15);
+        TestUtils.assertEquals("1.3607615367753142E15", sink);
+    }
+
+    @Test
     public void testFormatDoubleAsRandomFloat() {
         Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < 1_000_000; i++) {
@@ -2078,6 +2089,7 @@ public class NumbersTest {
             assertTrue(d + " " + n + " " + (n - d - 1E-8), n - d - 1E-8 < Numbers.TOLERANCE);
         }
     }
+
 
     @Test
     public void testShortBswap() {
