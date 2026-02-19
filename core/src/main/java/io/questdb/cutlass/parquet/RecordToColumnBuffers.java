@@ -93,6 +93,8 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     private int[] baseColumnMap;
     // Per output col: index into buffer lists, or -1 if pass-through
     private int[] computedBufferIdx;
+    // Dense array of output column indices that are computed (not pass-through)
+    private int[] computedColumnIndices;
     private int computedCount;
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
@@ -264,6 +266,7 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         pfMemory.clear();
         baseColumnMap = null;
         computedBufferIdx = null;
+        computedColumnIndices = null;
         functions = null;
         functionRecord = null;
         adjustedMetadata = null;
@@ -319,6 +322,8 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
             baseColumnMap[i] = -1; // all computed in full mode
             addComputedColumn(metadata, i, columnType);
         }
+
+        buildComputedColumnIndices();
 
         int tsIdx = metadata.getTimestampIndex();
         if (tsIdx >= 0) {
@@ -388,6 +393,8 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
             }
         }
 
+        buildComputedColumnIndices();
+
         // Set timestamp index
         int tsIdx = outputMeta.getTimestampIndex();
         if (tsIdx >= 0) {
@@ -446,14 +453,22 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         );
     }
 
+    private void buildComputedColumnIndices() {
+        computedColumnIndices = new int[computedCount];
+        int k = 0;
+        for (int i = 0; i < outputColumnCount; i++) {
+            if (baseColumnMap[i] < 0) {
+                computedColumnIndices[k++] = i;
+            }
+        }
+    }
+
     private void materializeComputedColumns(long frameRowCount) {
         resetBuffers();
         for (long row = 0; row < frameRowCount; row++) {
             pageFrameRecord.setRowIndex(row);
-            for (int i = 0; i < outputColumnCount; i++) {
-                if (baseColumnMap[i] >= 0) {
-                    continue; // this is a pass-through column
-                }
+            for (int k = 0; k < computedColumnIndices.length; k++) {
+                int i = computedColumnIndices[k];
                 int bufIdx = computedBufferIdx[i];
                 MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
                 MemoryCARWImpl auxBuf = auxBuffers.getQuick(bufIdx);
@@ -496,12 +511,11 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
             dataBuffers.clear();
             auxBuffers.clear();
             computedCount = 0;
-            for (int i = 0; i < outputColumnCount; i++) {
-                if (computedBufferIdx[i] >= 0) {
-                    computedBufferIdx[i] = computedCount;
-                    allocateBuffer(adjustedMetadata.getColumnType(i));
-                    computedCount++;
-                }
+            for (int k = 0; k < computedColumnIndices.length; k++) {
+                int i = computedColumnIndices[k];
+                computedBufferIdx[i] = computedCount;
+                allocateBuffer(adjustedMetadata.getColumnType(i));
+                computedCount++;
             }
         } else {
             // First call or empty buffers: truncate in place.
@@ -517,10 +531,10 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         // Write the zero offset of the first string in a STRING data column.
         // StringTypeDriver will then append the offset of the first available byte
         // after each written string (start offset of the next, yet unwritten string).
-        for (int i = 0; i < outputColumnCount; i++) {
-            int bufIdx = computedBufferIdx[i];
-            if (bufIdx >= 0 && ColumnType.tagOf(adjustedMetadata.getColumnType(i)) == ColumnType.STRING) {
-                auxBuffers.getQuick(bufIdx).putLong(0);
+        for (int k = 0; k < computedColumnIndices.length; k++) {
+            int i = computedColumnIndices[k];
+            if (ColumnType.tagOf(adjustedMetadata.getColumnType(i)) == ColumnType.STRING) {
+                auxBuffers.getQuick(computedBufferIdx[i]).putLong(0);
             }
         }
     }
