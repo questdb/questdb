@@ -1083,8 +1083,12 @@ public final class Micros {
 
         long days = year * 365L + (leapYears - DAYS_0000_TO_1970);
         long micros = days * DAY_MICROS;
+        // Check for overflow in both directions
         if (days < 0 & micros > 0) {
             return Long.MIN_VALUE;
+        }
+        if (days > 0 & micros < 0) {
+            return Long.MAX_VALUE;
         }
         return micros;
     }

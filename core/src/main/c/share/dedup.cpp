@@ -63,7 +63,7 @@ inline int64_t branch_free_search(const index_t *array, int64_t count, int64_t v
 
 template<typename LambdaDiff>
 int64_t merge_dedup_long_index_int_keys(
-        const uint64_t *src,
+        const int64_t *src,
         int64_t src_lo,
         const int64_t src_hi_incl,
         const index_t *index,
@@ -90,8 +90,7 @@ int64_t merge_dedup_long_index_int_keys(
             index_pos++;
         } else {
             // index_ts == src_ts
-            // Cast to int64_t for proper signed timestamp comparison
-            const int64_t conflict_ts = static_cast<int64_t>(src[src_pos]);
+            const int64_t conflict_ts = src[src_pos];
             const index_t *conflict_index_start = &index[index_pos];
 
             // Find end of the conflict in index
@@ -887,7 +886,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
         jlong indexHiInclusive,
         jlong pDestIndex
 ) {
-    const uint64_t *src = reinterpret_cast<uint64_t *> (pSrc);
+    const int64_t *src = reinterpret_cast<int64_t *> (pSrc);
     const index_t *index = reinterpret_cast<index_t *> (pIndex);
 
     auto src_pos = __JLONG_REINTERPRET_CAST__(int64_t, srcLo);
@@ -910,8 +909,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
             index_pos++;
         } else {
             // index_ts == src_ts
-            // Cast to int64_t for proper signed timestamp comparison
-            const int64_t conflict_ts = static_cast<int64_t>(src[src_pos]);
+            const int64_t conflict_ts = src[src_pos];
             while (index_pos <= index_hi_inc && index[index_pos].ts == conflict_ts) {
                 index_pos++;
             }
@@ -951,7 +949,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
         jint dedupKeyCount,
         jlong dedupColBuffs
 ) {
-    auto *src = reinterpret_cast<uint64_t *> (srcTimestampAddr);
+    auto *src = reinterpret_cast<int64_t *> (srcTimestampAddr);
     auto data_lo = __JLONG_REINTERPRET_CAST__(int64_t, mergeDataLo);
     auto data_hi = __JLONG_REINTERPRET_CAST__(int64_t, mergeDataHi);
     auto *index = reinterpret_cast<index_t *> (sortedTimestampsAddr);
