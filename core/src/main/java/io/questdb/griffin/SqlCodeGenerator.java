@@ -4853,6 +4853,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 int colType = metadata.getColumnType(colIdx);
                                 final short colTypeTag = ColumnType.tagOf(colType);
                                 if (ColumnType.isFixedSize(colTypeTag)
+                                        && colTypeTag != ColumnType.IPv4
                                         && (ColumnType.sizeOf(colType) <= Long.BYTES
                                         || colTypeTag == ColumnType.DECIMAL128
                                         || colTypeTag == ColumnType.DECIMAL256)

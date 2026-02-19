@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -66,7 +66,7 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
     }
 
     // Function for DECIMAL128 input
-    private static class Decimal128Func extends Decimal8Function implements UnaryFunction {
+    private static class Decimal128Func extends Decimal8Function implements ArithmeticUnaryFunction {
         final Function function;
         private final Decimal128 decimal128 = new Decimal128();
 
@@ -105,7 +105,7 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
     }
 
     // Function for DECIMAL16 input
-    private static class Decimal16Func extends Decimal8Function implements UnaryFunction {
+    private static class Decimal16Func extends Decimal8Function implements ArithmeticUnaryFunction {
         final Function function;
 
         public Decimal16Func(Function function) {
@@ -144,7 +144,7 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
     }
 
     // Function for DECIMAL256 input
-    private static class Decimal256Func extends Decimal8Function implements UnaryFunction {
+    private static class Decimal256Func extends Decimal8Function implements ArithmeticUnaryFunction {
         final Function function;
         private final Decimal256 decimal256 = new Decimal256();
 
@@ -187,7 +187,7 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
     }
 
     // Function for DECIMAL32 input
-    private static class Decimal32Func extends Decimal8Function implements UnaryFunction {
+    private static class Decimal32Func extends Decimal8Function implements ArithmeticUnaryFunction {
         final Function function;
 
         public Decimal32Func(Function function) {
@@ -226,7 +226,7 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
     }
 
     // Function for DECIMAL64 input
-    private static class Decimal64Func extends Decimal8Function implements UnaryFunction {
+    private static class Decimal64Func extends Decimal8Function implements ArithmeticUnaryFunction {
         final Function function;
 
         public Decimal64Func(Function function) {
@@ -265,7 +265,7 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
     }
 
     // Function for DECIMAL8 input
-    private static class Decimal8Func extends Decimal8Function implements UnaryFunction {
+    private static class Decimal8Func extends Decimal8Function implements ArithmeticUnaryFunction {
         final Function function;
 
         public Decimal8Func(Function function) {

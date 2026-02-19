@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -45,7 +45,7 @@ public class ExpDoubleFunctionFactory implements FunctionFactory {
         return new ExpFunction(args.getQuick(0));
     }
 
-    private static class ExpFunction extends DoubleFunction implements UnaryFunction {
+    private static class ExpFunction extends DoubleFunction implements ArithmeticUnaryFunction {
         final Function function;
 
         public ExpFunction(Function function) {

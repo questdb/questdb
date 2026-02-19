@@ -798,7 +798,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (5, 5, 4, 1, '2024-01-01T00:00:03.000000Z'),
                     (4, 15, 2, 3, '2024-01-01T00:00:04.000000Z')
                     """);
-            // (a+b)*(c+d) has complexity 4, above threshold (3)
+            // (a+b)*(c+d) has high complexity (above threshold 3)
             // Two sort keys to avoid radix sort path (single INT key triggers radix sort)
             String query = "SELECT (a + b) * (c + d) AS x, a FROM t ORDER BY x, a";
             assertPlanNoLeakCheck(query, """
@@ -977,7 +977,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (1, 12, 2, 1, '2024-01-01T00:00:01.000000Z'),
                     (2, 30, 1, 3, '2024-01-01T00:00:02.000000Z')
                     """);
-            // x = (a+b)*(c+d) has complexity 4 → materialized; a has complexity 1 → not materialized
+            // x = (a+b)*(c+d) has high complexity → materialized; a has complexity 1 → not materialized
             String query = "SELECT (a + b) * (c + d) AS x, a FROM t ORDER BY x, a";
             assertPlanNoLeakCheck(query, """
                     Sort light
@@ -1011,7 +1011,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (3, 4, 10, 5, '2024-01-01T00:00:02.000000Z'),
                     (3, 4, 3, 4, '2024-01-01T00:00:03.000000Z')
                     """);
-            // Both (a+b)*(c+d) and a*c+b*d have complexity 4 → both materialized
+            // Both (a+b)*(c+d) and a*c+b*d have high complexity → both materialized
             String query = "SELECT (a + b) * (c + d) AS x, a * c + b * d AS y FROM t ORDER BY x, y";
             assertPlanNoLeakCheck(query, """
                     Sort light
@@ -1101,7 +1101,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     ('alpha', 2.0, 3.0, 1.0, 1.0, '2024-01-01T00:00:01.000000Z'),
                     ('gamma', 1.0, 2.0, 4.0, 1.0, '2024-01-01T00:00:02.000000Z')
                     """);
-            // x = (a+b)*(c+d) has complexity 4 → materialized
+            // x = (a+b)*(c+d) has high complexity → materialized
             // s is SYMBOL (not fixed-size) → not materialized, sorted lexicographically via getSym()
             String query = "SELECT (a + b) * (c + d) AS x, s FROM t ORDER BY x, s";
             assertPlanNoLeakCheck(query, """
@@ -1131,15 +1131,15 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testNoMaterializeSimpleExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
-            // a + b has complexity 2, below default threshold (3)
-            // Plan should NOT contain "Materialize sort keys"
+            // a + 1 has complexity ARITHMETIC(2) + COLUMN(1) + NONE(0) = 3,
+            // at the default threshold (3) but not above → no materialization
             assertPlanNoLeakCheck(
-                    "SELECT a + b AS x FROM t ORDER BY x",
+                    "SELECT a + 1 AS x FROM t ORDER BY x",
                     """
                             Sort light
                               keys: [x]
                                 VirtualRecord
-                                  functions: [a+b]
+                                  functions: [a+1]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t
@@ -1507,7 +1507,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     (50.0, 60.0, 20.0, 5.0, 3, '2024-01-01T00:00:02.000000Z')
                     """);
             // make_geohash(lon, lat, 5) returns GEOHASH(1c) = GEOBYTE (1 byte, fixed)
-            // BinaryFunction with computed args: complexity = 2 + 2 = 4 > threshold 3 → materialized
+            // args include computed expressions (a+b, c+d) → high complexity, above threshold → materialized
             String query = "SELECT make_geohash(a + b, c + d, 5) AS x, e FROM t ORDER BY x, e";
             assertPlanNoLeakCheck(query, """
                     Sort light
@@ -1627,7 +1627,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRouteIPv4Materialized() throws Exception {
+    public void testRouteIPv4NotMaterialized() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ip1 IPv4, ip2 IPv4, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
@@ -1636,17 +1636,16 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     ('3.3.3.3', '2.2.2.2', -1, '2024-01-01T00:00:01.000000Z'),
                     ('5.5.5.5', '6.6.6.6', 2, '2024-01-01T00:00:02.000000Z')
                     """);
-            // IPv4 is fixed 4 bytes → materialized
+            // IPv4 is excluded from materialization (no arithmetic on this type)
             String query = "SELECT CASE WHEN e > 0 THEN ip1 ELSE ip2 END AS x, e FROM t ORDER BY x, e";
             assertPlanNoLeakCheck(query, """
                     Sort light
                       keys: [x, e]
-                        Materialize sort keys
-                            VirtualRecord
-                              functions: [case([0<e,ip1,ip2]),e]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
+                        VirtualRecord
+                          functions: [case([0<e,ip1,ip2]),e]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
                     """);
             // e=1→'1.1.1.1', e=-1→'2.2.2.2', e=2→'5.5.5.5'
             assertQueryNoLeakCheck("""

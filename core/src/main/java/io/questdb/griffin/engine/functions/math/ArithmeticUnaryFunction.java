@@ -22,43 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 
-import io.questdb.griffin.engine.functions.VarcharFunction;
-
-/**
- * Abstract base class for functions that cast values to varchar.
- */
-public abstract class AbstractCastToVarcharFunction extends VarcharFunction implements CastFunction {
-    /**
-     * The function argument to cast.
-     */
-    protected final Function arg;
-
-    /**
-     * Constructs a new cast to varchar function.
-     *
-     * @param arg the function argument to cast
-     */
-    protected AbstractCastToVarcharFunction(Function arg) {
-        this.arg = arg;
-    }
-
+public interface ArithmeticUnaryFunction extends UnaryFunction {
     @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public boolean isThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(getArg()).val("::varchar");
+    default int getComplexity() {
+        return Function.addComplexity(COMPLEXITY_ARITHMETIC, getArg().getComplexity());
     }
 }

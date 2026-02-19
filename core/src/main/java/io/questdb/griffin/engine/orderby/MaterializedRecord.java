@@ -206,10 +206,6 @@ class MaterializedRecord implements Record {
 
     @Override
     public int getIPv4(int col) {
-        int idx = colToBufferIndex[col];
-        if (idx >= 0) {
-            return buffers[idx].getIPv4(offset(idx));
-        }
         return baseRecord.getIPv4(col);
     }
 
@@ -259,11 +255,6 @@ class MaterializedRecord implements Record {
     @Override
     public Long256 getLong256B(int col) {
         return baseRecord.getLong256B(col);
-    }
-
-    @Override
-    public long getLongIPv4(int col) {
-        return baseRecord.getLongIPv4(col);
     }
 
     @Override

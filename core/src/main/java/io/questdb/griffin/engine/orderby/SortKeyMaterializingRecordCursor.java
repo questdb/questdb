@@ -181,7 +181,6 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             case ColumnType.SHORT -> buf.putShort(record.getShort(colIndex));
             case ColumnType.CHAR -> buf.putChar(record.getChar(colIndex));
             case ColumnType.INT -> buf.putInt(record.getInt(colIndex));
-            case ColumnType.IPv4 -> buf.putInt(record.getIPv4(colIndex));
             case ColumnType.FLOAT -> buf.putFloat(record.getFloat(colIndex));
             case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE -> buf.putLong(record.getLong(colIndex));
             case ColumnType.DOUBLE -> buf.putDouble(record.getDouble(colIndex));

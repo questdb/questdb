@@ -50,16 +50,23 @@ public class FunctionComplexityTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBinaryFunctionComplexity() throws Exception {
+    public void testCastAddsComplexity() throws Exception {
         assertMemoryLeak(() -> {
-            // a + b where a and b are columns should give complexity 2 (1 + 1)
-            execute("CREATE TABLE t (a INT, b INT)");
-            assertQueryNoLeakCheck(
+            // a::DOUBLE on a column has complexity COMPLEXITY_CAST + COMPLEXITY_COLUMN = 4,
+            // which exceeds default threshold (3) and triggers materialization
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertPlanNoLeakCheck(
+                    "SELECT a::DOUBLE AS x FROM t ORDER BY x",
                     """
-                            complexity
-                            2
-                            """,
-                    "SELECT 2 AS complexity"
+                            Sort light
+                              keys: [x]
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a::double]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """
             );
         });
     }
