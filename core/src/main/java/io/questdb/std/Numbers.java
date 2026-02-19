@@ -83,7 +83,7 @@ public final class Numbers {
     private static final LongHexAppender[] longHexAppenderPad64 = new LongHexAppender[Long.SIZE + 1];
     private static final double[] pow10dNeg =
             new double[]{1, 1E-1, 1E-2, 1E-3, 1E-4, 1E-5, 1E-6, 1E-7, 1E-8, 1E-9, 1E-10, 1E-11, 1E-12, 1E-13, 1E-14, 1E-15, 1E-16, 1E-17, 1E-18, 1E-19, 1E-20, 1E-21, 1E-22, 1E-23, 1E-24, 1E-25, 1E-26, 1E-27, 1E-28, 1E-29, 1E-30, 1E-31, 1E-32, 1E-33, 1E-34, 1E-35, 1E-36, 1E-37, 1E-38, 1E-39, 1E-40, 1E-41, 1E-42, 1E-43, 1E-44, 1E-45, 1E-46, 1E-47, 1E-48, 1E-49, 1E-50, 1E-51, 1E-52, 1E-53, 1E-54, 1E-55, 1E-56, 1E-57, 1E-58, 1E-59, 1E-60, 1E-61, 1E-62, 1E-63, 1E-64, 1E-65, 1E-66, 1E-67, 1E-68, 1E-69, 1E-70, 1E-71, 1E-72, 1E-73, 1E-74, 1E-75, 1E-76, 1E-77, 1E-78, 1E-79, 1E-80, 1E-81, 1E-82, 1E-83, 1E-84, 1E-85, 1E-86, 1E-87, 1E-88, 1E-89, 1E-90, 1E-91, 1E-92, 1E-93, 1E-94, 1E-95, 1E-96, 1E-97, 1E-98, 1E-99, 1E-100, 1E-101, 1E-102, 1E-103, 1E-104, 1E-105, 1E-106, 1E-107, 1E-108, 1E-109, 1E-110, 1E-111, 1E-112, 1E-113, 1E-114, 1E-115, 1E-116, 1E-117, 1E-118, 1E-119, 1E-120, 1E-121, 1E-122, 1E-123, 1E-124, 1E-125, 1E-126, 1E-127, 1E-128, 1E-129, 1E-130, 1E-131, 1E-132, 1E-133, 1E-134, 1E-135, 1E-136, 1E-137, 1E-138, 1E-139, 1E-140, 1E-141, 1E-142, 1E-143, 1E-144, 1E-145, 1E-146, 1E-147, 1E-148, 1E-149, 1E-150, 1E-151, 1E-152, 1E-153, 1E-154, 1E-155, 1E-156, 1E-157, 1E-158, 1E-159, 1E-160, 1E-161, 1E-162, 1E-163, 1E-164, 1E-165, 1E-166, 1E-167, 1E-168, 1E-169, 1E-170, 1E-171, 1E-172, 1E-173, 1E-174, 1E-175, 1E-176, 1E-177, 1E-178, 1E-179, 1E-180, 1E-181, 1E-182, 1E-183, 1E-184, 1E-185, 1E-186, 1E-187, 1E-188, 1E-189, 1E-190, 1E-191, 1E-192, 1E-193, 1E-194, 1E-195, 1E-196, 1E-197, 1E-198, 1E-199, 1E-200, 1E-201, 1E-202, 1E-203, 1E-204, 1E-205, 1E-206, 1E-207, 1E-208, 1E-209, 1E-210, 1E-211, 1E-212, 1E-213, 1E-214, 1E-215, 1E-216, 1E-217, 1E-218, 1E-219, 1E-220, 1E-221, 1E-222, 1E-223, 1E-224, 1E-225, 1E-226, 1E-227, 1E-228, 1E-229, 1E-230, 1E-231, 1E-232, 1E-233, 1E-234, 1E-235, 1E-236, 1E-237, 1E-238, 1E-239, 1E-240, 1E-241, 1E-242, 1E-243, 1E-244, 1E-245, 1E-246, 1E-247, 1E-248, 1E-249, 1E-250, 1E-251, 1E-252, 1E-253, 1E-254, 1E-255, 1E-256, 1E-257, 1E-258, 1E-259, 1E-260, 1E-261, 1E-262, 1E-263, 1E-264, 1E-265, 1E-266, 1E-267, 1E-268, 1E-269, 1E-270, 1E-271, 1E-272, 1E-273, 1E-274, 1E-275, 1E-276, 1E-277, 1E-278, 1E-279, 1E-280, 1E-281, 1E-282, 1E-283, 1E-284, 1E-285, 1E-286, 1E-287, 1E-288, 1E-289, 1E-290, 1E-291, 1E-292, 1E-293, 1E-294, 1E-295, 1E-296, 1E-297, 1E-298, 1E-299, 1E-300, 1E-301, 1E-302, 1E-303, 1E-304, 1E-305, 1E-306, 1E-307, 1E-308};
-    private final static ThreadLocal<char[]> tlDoubleDigitsBuffer = new ThreadLocal<>(() -> new char[21]);
+    private final static ThreadLocal<byte[]> tlDoubleDigitsBuffer = new ThreadLocal<>(() -> new byte[21]);
 
     private Numbers() {
     }
@@ -238,7 +238,7 @@ public final class Numbers {
     }
 
     public static void append(CharSink<?> sink, double value, int scale) {
-        final char[] digits = tlDoubleDigitsBuffer.get();
+        final byte[] digits = tlDoubleDigitsBuffer.get();
         final long doubleBits = Double.doubleToRawLongBits(value);
         boolean negative = (doubleBits & SIGN_BIT_MASK) != 0L;
         long significantBitCount = doubleBits & SIGNIF_BIT_MASK;
@@ -639,7 +639,7 @@ public final class Numbers {
      * @param sink64  the Decimal64 sink (populated when precision <= 18)
      * @param sink128 the Decimal128 sink (populated when precision <= 38)
      * @param sink256 the Decimal256 sink (populated when precision <= 76)
-     * @param digits  caller-provided 21-char buffer
+     * @param digits  caller-provided 21-byte buffer
      * @return the column type int, or 0 on failure
      */
     public static int doubleToDecimal(
@@ -647,7 +647,7 @@ public final class Numbers {
             Decimal64 sink64,
             Decimal128 sink128,
             Decimal256 sink256,
-            char[] digits
+            byte[] digits
     ) {
         final long doubleBits = Double.doubleToRawLongBits(value);
         boolean negative = (doubleBits & SIGN_BIT_MASK) != 0L;
@@ -699,7 +699,7 @@ public final class Numbers {
 
         target.ofZero();
         for (int i = 0; i < nDigits; i++) {
-            int d = digits[firstDigitIndex + i] - '0';
+            int d = digits[firstDigitIndex + i];
             if (d != 0) {
                 target.addPowerOfTenMultiple(decExp - 1 - i + naturalScale, d);
             }
@@ -721,7 +721,7 @@ public final class Numbers {
      * @param precision the target precision (max total digits)
      * @param scale     the target scale (digits after decimal point)
      * @param lossy     if true, truncates (not rounds) extra fractional digits to fit the target scale
-     * @param digits    caller-provided 21-char buffer
+     * @param digits    caller-provided 21-byte buffer
      * @throws NumericException if precision/scale validation fails
      */
     public static void doubleToDecimal(
@@ -730,7 +730,7 @@ public final class Numbers {
             int precision,
             int scale,
             boolean lossy,
-            char[] digits
+            byte[] digits
     ) throws NumericException {
         final long doubleBits = Double.doubleToRawLongBits(value);
         boolean negative = (doubleBits & SIGN_BIT_MASK) != 0L;
@@ -792,7 +792,7 @@ public final class Numbers {
         // Build the decimal
         target.ofZero();
         for (int i = 0; i < nDigits; i++) {
-            int d = digits[firstDigitIndex + i] - '0';
+            int d = digits[firstDigitIndex + i];
             if (d != 0) {
                 target.addPowerOfTenMultiple(decExp - 1 - i + scale, d);
             }
@@ -2328,7 +2328,7 @@ public final class Numbers {
             long fractionBits,
             int significantBitCount,
             boolean negative,
-            char[] digits,
+            byte[] digits,
             CharSink<?> out,
             int outScale
     ) {
@@ -2340,7 +2340,7 @@ public final class Numbers {
     }
 
     private static void appendDouble00(
-            char[] digits,
+            byte[] digits,
             int firstDigitIndex,
             int nDigits,
             boolean isNegative,
@@ -2356,7 +2356,7 @@ public final class Numbers {
         int exp;
         if (decExp > 0 && decExp < 8) {
             exp = Math.min(nDigits, decExp);
-            sink.putAscii(digits, firstDigitIndex, exp);
+            putAsciiDigits(sink, digits, firstDigitIndex, exp);
             if (exp < decExp) {
                 exp = decExp - exp;
                 sink.fillAscii('0', exp);
@@ -2365,7 +2365,7 @@ public final class Numbers {
             } else {
                 sink.putAscii('.');
                 if (exp < nDigits) {
-                    sink.putAscii(digits, firstDigitIndex + exp, Math.min(nDigits - exp, outScale));
+                    putAsciiDigits(sink, digits, firstDigitIndex + exp, Math.min(nDigits - exp, outScale));
                 } else {
                     sink.putAscii('0');
                 }
@@ -2376,12 +2376,12 @@ public final class Numbers {
                 sink.fillAscii('0', -decExp);
             }
 
-            sink.putAscii(digits, firstDigitIndex, Math.min(nDigits, outScale));
+            putAsciiDigits(sink, digits, firstDigitIndex, Math.min(nDigits, outScale));
         } else {
-            sink.putAscii(digits[firstDigitIndex]);
+            sink.putAscii((char) (digits[firstDigitIndex] + '0'));
             sink.putAscii('.');
             if (nDigits > 1) {
-                sink.putAscii(digits, firstDigitIndex + 1, nDigits - 1);
+                putAsciiDigits(sink, digits, firstDigitIndex + 1, nDigits - 1);
             } else {
                 sink.putAscii('0');
             }
@@ -2405,6 +2405,12 @@ public final class Numbers {
                 sink.putAscii((char) (exp / 10 + '0'));
                 sink.putAscii((char) (exp % 10 + '0'));
             }
+        }
+    }
+
+    private static void putAsciiDigits(CharSink<?> sink, byte[] digits, int start, int len) {
+        for (int i = 0; i < len; i++) {
+            sink.putAscii((char) (digits[start + i] + '0'));
         }
     }
 
@@ -3178,26 +3184,26 @@ public final class Numbers {
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00NegScale(absValue, scale)) | signMask);
     }
 
-    private static boolean roundupDouble(int firstDigitIndex, char[] digits, int nDigits) {
+    private static boolean roundupDouble(int firstDigitIndex, byte[] digits, int nDigits) {
         int charIndex = firstDigitIndex + nDigits - 1;
-        char c = digits[charIndex];
-        if (c == '9') {
+        byte c = digits[charIndex];
+        if (c == 9) {
             while (true) {
-                if (c != '9' || charIndex <= firstDigitIndex) {
-                    if (c == '9') {
-                        digits[firstDigitIndex] = '1';
+                if (c != 9 || charIndex <= firstDigitIndex) {
+                    if (c == 9) {
+                        digits[firstDigitIndex] = 1;
                         return true;
                     }
                     break;
                 }
 
-                digits[charIndex] = '0';
+                digits[charIndex] = 0;
                 --charIndex;
                 c = digits[charIndex];
             }
         }
 
-        digits[charIndex] = (char) (c + 1);
+        digits[charIndex] = (byte) (c + 1);
         return false;
     }
 
@@ -3215,7 +3221,7 @@ public final class Numbers {
      * nDigits         = (int)((result >>> 16) & 0xFFFF)
      * decExp          = (int)(result & 0xFFFF) - DECEXP_OFFSET
      */
-    static long extractDoubleDigits(int binExp, long fractionBits, int significantBitCount, char[] digits) {
+    static long extractDoubleDigits(int binExp, long fractionBits, int significantBitCount, byte[] digits) {
         assert digits.length >= 21 : digits.length;
         assert fractionBits > 0L;
         assert (fractionBits & FRACT_HOB) != 0L;
@@ -3266,7 +3272,7 @@ public final class Numbers {
                 }
 
                 while (fractRemaining != 0) {
-                    digits[digitIndex--] = (char) (digit + '0');
+                    digits[digitIndex--] = (byte) digit;
                     ++binExp2;
                     digit = fractRemaining % 10;
                     fractRemaining /= 10;
@@ -3281,14 +3287,14 @@ public final class Numbers {
                 }
 
                 while (fractionBits != 0L) {
-                    digits[digitIndex--] = (char) (digit + '0');
+                    digits[digitIndex--] = (byte) digit;
                     ++binExp2;
                     digit = (int) (fractionBits % 10L);
                     fractionBits /= 10L;
                 }
 
             }
-            digits[digitIndex] = (char) (digit + '0');
+            digits[digitIndex] = (byte) digit;
 
             decExp = binExp2 + 1;
             firstDigitIndex = digitIndex;
@@ -3341,10 +3347,10 @@ public final class Numbers {
                     if (q == 0 && !high) {
                         --estDecExp;
                     } else {
-                        digits[digitIndex++] = (char) ('0' + q);
+                        digits[digitIndex++] = (byte) q;
                     }
 
-                    for (; !low && !high; digits[digitIndex++] = (char) ('0' + q)) {
+                    for (; !low && !high; digits[digitIndex++] = (byte) q) {
                         q = b / s;
                         b = 10 * (b % s);
                         m *= 10;
@@ -3378,10 +3384,10 @@ public final class Numbers {
                     if (q == 0 && !high) {
                         --estDecExp;
                     } else {
-                        digits[digitIndex++] = (char) ('0' + q);
+                        digits[digitIndex++] = (byte) q;
                     }
 
-                    for (; !low && !high; digits[digitIndex++] = (char) ('0' + q)) {
+                    for (; !low && !high; digits[digitIndex++] = (byte) q) {
                         q = (int) (b / s);
                         b = 10L * (b % s);
                         m *= 10L;
@@ -3415,7 +3421,7 @@ public final class Numbers {
                 if (q == 0 && !high) {
                     --estDecExp;
                 } else {
-                    digits[digitIndex++] = (char) ('0' + q);
+                    digits[digitIndex++] = (byte) q;
                 }
 
                 while (!low && !high) {
@@ -3426,7 +3432,7 @@ public final class Numbers {
                     mVal = mVal.multBy10();
                     low = bVal.cmp(mVal) < 0;
                     high = tensVal.addAndCmp(bVal, mVal) <= 0;
-                    digits[digitIndex++] = (char) ('0' + q);
+                    digits[digitIndex++] = (byte) q;
                 }
 
                 if (high && low) {

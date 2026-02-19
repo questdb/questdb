@@ -35,7 +35,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class NumbersDoubleToDecimalTest {
-    private final char[] digits = new char[21];
+    private final byte[] digits = new byte[21];
     private final Decimal128 sink128 = new Decimal128();
     private final Decimal256 sink256 = new Decimal256();
     private final Decimal64 sink64 = new Decimal64();

@@ -71,7 +71,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
 
     private static class Func128 extends Decimal128Function implements UnaryFunction {
         private final Function arg;
-        private final char[] digits = new char[21];
+        private final byte[] digits = new byte[21];
         private final int position;
         private final int precision;
         private final int scale;
@@ -116,7 +116,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
 
     private static class Func256 extends Decimal256Function implements UnaryFunction {
         private final Function arg;
-        private final char[] digits = new char[21];
+        private final byte[] digits = new byte[21];
         private final int position;
         private final int precision;
         private final int scale;
@@ -160,7 +160,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class Func64 extends AbstractCastToDecimal64Function {
-        private final char[] digits = new char[21];
+        private final byte[] digits = new byte[21];
 
         public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
