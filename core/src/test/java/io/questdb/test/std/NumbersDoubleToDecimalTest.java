@@ -40,11 +40,15 @@ public class NumbersDoubleToDecimalTest {
     private final Decimal64 sink64 = new Decimal64();
     private final StringSink ss = new StringSink();
 
-    // =====================================================================
-    // Auto-inference: doubleToDecimal(double, Decimal64, Decimal128, Decimal256, char[])
-    // =====================================================================
-
-    // --- Basic positive values ---
+    @Test
+    public void testAutoBasicNegativeValues() {
+        assertAutoInference(-1.0, "-1", 1, 0);
+        assertAutoInference(-0.5, "-0.5", 1, 1);
+        assertAutoInference(-67.89, "-67.89", 4, 2);
+        assertAutoInference(-100.0, "-100", 3, 0);
+        assertAutoInference(-999.999, "-999.999", 6, 3);
+        assertAutoInference(-0.001, "-0.001", 3, 3);
+    }
 
     @Test
     public void testAutoBasicPositiveValues() {
@@ -58,94 +62,6 @@ public class NumbersDoubleToDecimalTest {
         assertAutoInference(999.0, "999", 3, 0);
     }
 
-    // --- Basic negative values ---
-
-    @Test
-    public void testAutoBasicNegativeValues() {
-        assertAutoInference(-1.0, "-1", 1, 0);
-        assertAutoInference(-0.5, "-0.5", 1, 1);
-        assertAutoInference(-67.89, "-67.89", 4, 2);
-        assertAutoInference(-100.0, "-100", 3, 0);
-        assertAutoInference(-999.999, "-999.999", 6, 3);
-        assertAutoInference(-0.001, "-0.001", 3, 3);
-    }
-
-    // --- Zero ---
-
-    @Test
-    public void testAutoZero() {
-        int type = Numbers.doubleToDecimal(0.0, sink64, sink128, sink256);
-        Assert.assertNotEquals(0, type);
-        Assert.assertEquals(1, ColumnType.getDecimalPrecision(type));
-        Assert.assertEquals(0, ColumnType.getDecimalScale(type));
-        assertDecimalString(type, "0");
-    }
-
-    @Test
-    public void testAutoNegativeZero() {
-        int type = Numbers.doubleToDecimal(-0.0, sink64, sink128, sink256);
-        Assert.assertNotEquals(0, type);
-        Assert.assertEquals(1, ColumnType.getDecimalPrecision(type));
-        Assert.assertEquals(0, ColumnType.getDecimalScale(type));
-        assertDecimalString(type, "0");
-    }
-
-    // --- NaN and Infinity ---
-
-    @Test
-    public void testAutoNaN() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.NaN, sink64, sink128, sink256));
-    }
-
-    @Test
-    public void testAutoPositiveInfinity() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.POSITIVE_INFINITY, sink64, sink128, sink256));
-    }
-
-    @Test
-    public void testAutoNegativeInfinity() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.NEGATIVE_INFINITY, sink64, sink128, sink256));
-    }
-
-    // --- Powers of 2: integers (Ryu fast path, exact binary integers) ---
-
-    @Test
-    public void testAutoPowersOfTwoIntegers() {
-        assertAutoInference(2.0, "2", 1, 0);
-        assertAutoInference(4.0, "4", 1, 0);
-        assertAutoInference(8.0, "8", 1, 0);
-        assertAutoInference(16.0, "16", 2, 0);
-        assertAutoInference(32.0, "32", 2, 0);
-        assertAutoInference(64.0, "64", 2, 0);
-        assertAutoInference(128.0, "128", 3, 0);
-        assertAutoInference(256.0, "256", 3, 0);
-        assertAutoInference(512.0, "512", 3, 0);
-        assertAutoInference(1024.0, "1024", 4, 0);
-        assertAutoInference(4096.0, "4096", 4, 0);
-        assertAutoInference(65_536.0, "65536", 5, 0);
-    }
-
-    // --- Powers of 2: fractions (non-integer binary values) ---
-
-    @Test
-    public void testAutoPowersOfTwoFractions() {
-        assertAutoInference(0.5, "0.5", 1, 1);
-        assertAutoInference(0.25, "0.25", 2, 2);
-        assertAutoInference(0.125, "0.125", 3, 3);
-        assertAutoInference(0.0625, "0.0625", 4, 4);
-        assertAutoInference(0.03125, "0.03125", 5, 5);
-    }
-
-    @Test
-    public void testAutoNegativePowersOfTwo() {
-        assertAutoInference(-0.5, "-0.5", 1, 1);
-        assertAutoInference(-0.25, "-0.25", 2, 2);
-        assertAutoInference(-2.0, "-2", 1, 0);
-        assertAutoInference(-1024.0, "-1024", 4, 0);
-    }
-
-    // --- Common decimal fractions (non-exact binary representations) ---
-
     @Test
     public void testAutoCommonDecimalFractions() {
         assertAutoInference(0.1, "0.1", 1, 1);
@@ -157,282 +73,6 @@ public class NumbersDoubleToDecimalTest {
         assertAutoInference(0.001, "0.001", 3, 3);
         assertAutoInference(0.0001, "0.0001", 4, 4);
     }
-
-    // --- Mathematical constants ---
-
-    @Test
-    public void testAutoMathPi() {
-        assertAutoRoundTrip(Math.PI);
-    }
-
-    @Test
-    public void testAutoMathE() {
-        assertAutoRoundTrip(Math.E);
-    }
-
-    @Test
-    public void testAutoMathSqrt2() {
-        assertAutoRoundTrip(Math.sqrt(2));
-    }
-
-    // --- Small integers (Ryu fast path) ---
-
-    @Test
-    public void testAutoSmallIntegers1Through20() {
-        for (int i = 1; i <= 20; i++) {
-            assertAutoInference((double) i, String.valueOf(i), String.valueOf(i).length(), 0);
-        }
-    }
-
-    @Test
-    public void testAutoSmallNegativeIntegers() {
-        for (int i = -20; i <= -1; i++) {
-            String expected = String.valueOf(i);
-            // Precision does not count the sign
-            assertAutoInference((double) i, expected, String.valueOf(-i).length(), 0);
-        }
-    }
-
-    // --- Large integers (Ryu fast path) ---
-
-    @Test
-    public void testAutoLargeIntegers() {
-        assertAutoInference(1000.0, "1000", 4, 0);
-        assertAutoInference(10_000.0, "10000", 5, 0);
-        assertAutoInference(100_000.0, "100000", 6, 0);
-        assertAutoInference(1_000_000.0, "1000000", 7, 0);
-        assertAutoInference(1e15, "1000000000000000", 16, 0);
-        assertAutoRoundTrip(3_000_000_000.0);
-        assertAutoRoundTrip(4_294_967_296.0); // 2^32
-        assertAutoRoundTrip(1_000_000_000_000.0);
-    }
-
-    // --- 2^53 boundary: largest exact integer double ---
-
-    @Test
-    public void testAutoExactIntegerBoundary() {
-        assertAutoInference(9_007_199_254_740_992.0, "9007199254740992", 16, 0);
-        assertAutoInference(9_007_199_254_740_991.0, "9007199254740991", 16, 0);
-    }
-
-    // --- Values near 10^n boundaries ---
-
-    @Test
-    public void testAutoNearPowerOf10Boundaries() {
-        assertAutoRoundTrip(0.9999999999999998);
-        assertAutoRoundTrip(1.0000000000000002);
-        assertAutoRoundTrip(9.999999999999998);
-        assertAutoRoundTrip(10.000000000000002);
-        assertAutoRoundTrip(99.99999999999999);
-        assertAutoRoundTrip(100.00000000000001);
-        assertAutoRoundTrip(999.9999999999999);
-        assertAutoRoundTrip(1000.0000000000001);
-    }
-
-    // --- Mixed integer + fraction values ---
-
-    @Test
-    public void testAutoMixedValues() {
-        assertAutoInference(1.5, "1.5", 2, 1);
-        assertAutoInference(2.5, "2.5", 2, 1);
-        assertAutoInference(10.1, "10.1", 3, 1);
-        assertAutoInference(100.001, "100.001", 6, 3);
-        assertAutoInference(1234.5678, "1234.5678", 8, 4);
-    }
-
-    // --- Decimal64 type selection (precision ≤ 18) ---
-
-    @Test
-    public void testAutoDecimal64Selection() {
-        // Single digit → Decimal64
-        int type = Numbers.doubleToDecimal(5.0, sink64, sink128, sink256);
-        Assert.assertTrue(ColumnType.tagOf(type) <= ColumnType.DECIMAL64);
-
-        // 16 significant digits → still Decimal64
-        type = Numbers.doubleToDecimal(1.234567890123456, sink64, sink128, sink256);
-        Assert.assertTrue(ColumnType.tagOf(type) <= ColumnType.DECIMAL64);
-        assertAutoRoundTrip(1.234567890123456);
-
-        // Large integer with 16 digits → Decimal64
-        type = Numbers.doubleToDecimal(1e15, sink64, sink128, sink256);
-        Assert.assertTrue(ColumnType.tagOf(type) <= ColumnType.DECIMAL64);
-    }
-
-    // --- Decimal128 type selection (precision 19-38) ---
-
-    @Test
-    public void testAutoDecimal128Required() {
-        // 1e20 → 21 integer digits → precision > 18 → Decimal128
-        int type = Numbers.doubleToDecimal(1e20, sink64, sink128, sink256);
-        Assert.assertNotEquals(0, type);
-        Assert.assertEquals(ColumnType.DECIMAL128, ColumnType.tagOf(type));
-        assertAutoRoundTrip(1e20);
-    }
-
-    @Test
-    public void testAutoDecimal128RangeOfExponents() {
-        for (int exp = 19; exp <= 37; exp++) {
-            double v = Math.pow(10, exp);
-            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
-            Assert.assertNotEquals("1e" + exp + " should fit", 0, type);
-            int tag = ColumnType.tagOf(type);
-            Assert.assertTrue(
-                    "1e" + exp + " should need at least Decimal128, got tag=" + tag,
-                    tag >= ColumnType.DECIMAL128
-            );
-        }
-    }
-
-    // --- Decimal256 type selection (precision 39-76) ---
-
-    @Test
-    public void testAutoDecimal256Required() {
-        int type = Numbers.doubleToDecimal(1e40, sink64, sink128, sink256);
-        Assert.assertNotEquals(0, type);
-        Assert.assertEquals(ColumnType.DECIMAL256, ColumnType.tagOf(type));
-        assertAutoRoundTrip(1e40);
-    }
-
-    @Test
-    public void testAutoDecimal256RangeOfExponents() {
-        for (int exp = 39; exp <= 75; exp++) {
-            double v = Math.pow(10, exp);
-            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
-            Assert.assertNotEquals("1e" + exp + " should fit", 0, type);
-            Assert.assertEquals(
-                    "1e" + exp + " should need Decimal256",
-                    ColumnType.DECIMAL256,
-                    ColumnType.tagOf(type)
-            );
-        }
-    }
-
-    // --- Small fractions needing higher-width decimals ---
-
-    @Test
-    public void testAutoSmallFractionsDecimal128() {
-        int type = Numbers.doubleToDecimal(1e-19, sink64, sink128, sink256);
-        Assert.assertNotEquals(0, type);
-        int tag = ColumnType.tagOf(type);
-        Assert.assertTrue(tag >= ColumnType.DECIMAL128);
-        assertAutoRoundTrip(1e-19);
-    }
-
-    @Test
-    public void testAutoSmallFractionsDecimal256() {
-        int type = Numbers.doubleToDecimal(1e-50, sink64, sink128, sink256);
-        Assert.assertNotEquals(0, type);
-        Assert.assertEquals(ColumnType.DECIMAL256, ColumnType.tagOf(type));
-        assertAutoRoundTrip(1e-50);
-    }
-
-    // --- Boundary: largest/smallest values that fit ---
-
-    @Test
-    public void testAutoMaxDecimal256FitLargePositive() {
-        int type = Numbers.doubleToDecimal(1e75, sink64, sink128, sink256);
-        Assert.assertNotEquals("1e75 should fit in Decimal256", 0, type);
-        assertAutoRoundTrip(1e75);
-    }
-
-    @Test
-    public void testAutoMaxDecimal256FitSmallPositive() {
-        int type = Numbers.doubleToDecimal(1e-76, sink64, sink128, sink256);
-        Assert.assertNotEquals("1e-76 should fit in Decimal256", 0, type);
-        assertAutoRoundTrip(1e-76);
-    }
-
-    // --- Values that exceed Decimal256 capacity ---
-
-    @Test
-    public void testAutoExceedsDecimal256LargeExponent() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e77, sink64, sink128, sink256));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e100, sink64, sink128, sink256));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e308, sink64, sink128, sink256));
-    }
-
-    @Test
-    public void testAutoExceedsDecimal256SmallExponent() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e-77, sink64, sink128, sink256));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(1e-200, sink64, sink128, sink256));
-    }
-
-    @Test
-    public void testAutoExceedsDecimal256DoubleMinMax() {
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MIN_VALUE, sink64, sink128, sink256));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MIN_NORMAL, sink64, sink128, sink256));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MAX_VALUE, sink64, sink128, sink256));
-        Assert.assertEquals(0, Numbers.doubleToDecimal(-Double.MAX_VALUE, sink64, sink128, sink256));
-    }
-
-    // --- FDBigInteger slow path (very small values) ---
-
-    @Test
-    public void testAutoSlowPathFDBigInteger() {
-        assertAutoRoundTrip(1e-20);
-        assertAutoRoundTrip(1e-30);
-        assertAutoRoundTrip(1e-50);
-        assertAutoRoundTrip(1e-70);
-        assertAutoRoundTrip(-1e-20);
-        assertAutoRoundTrip(-1e-50);
-    }
-
-    // --- Bulk round-trip: small integers ---
-
-    @Test
-    public void testAutoRoundTripSmallIntegers() {
-        for (int i = -100; i <= 100; i++) {
-            assertAutoRoundTrip((double) i);
-        }
-    }
-
-    // --- Bulk round-trip: powers of 2 ---
-
-    @Test
-    public void testAutoRoundTripPowersOfTwo() {
-        for (int exp = -50; exp <= 50; exp++) {
-            assertAutoRoundTrip(Math.pow(2, exp));
-        }
-    }
-
-    // --- Bulk round-trip: powers of 10 that fit ---
-
-    @Test
-    public void testAutoRoundTripPowersOfTen() {
-        for (int exp = -75; exp <= 75; exp++) {
-            double v = Math.pow(10, exp);
-            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
-            if (type != 0) {
-                String decStr = decimalToString(type);
-                double parsed = Double.parseDouble(decStr);
-                Assert.assertEquals("round-trip for 1e" + exp, v, parsed, 0.0);
-            }
-        }
-    }
-
-    // --- Bulk round-trip: various interesting doubles ---
-
-    @Test
-    public void testAutoRoundTripInterestingValues() {
-        double[] values = {
-                1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9,
-                1.23, 12.3, 0.123,
-                1.234567890123456,
-                9.999999999999998,
-                1.7976931348623157E10,
-                2.2250738585072014E-10,
-                -3.14159, -2.71828,
-                0.333333333333333, 0.666666666666666,
-                1.0 / 3.0, 2.0 / 3.0, 1.0 / 7.0, 1.0 / 11.0, 1.0 / 13.0,
-                Math.sqrt(2), Math.sqrt(3), Math.sqrt(5),
-                42.0, 137.036, 6.022e23,
-        };
-        for (double v : values) {
-            assertAutoRoundTrip(v);
-        }
-    }
-
-    // --- Consistency: decimal result matches Numbers.append round-trip ---
 
     @Test
     public void testAutoConsistentWithNumbersAppend() {
@@ -460,7 +100,165 @@ public class NumbersDoubleToDecimalTest {
         }
     }
 
-    // --- Negative large/small values ---
+    @Test
+    public void testAutoDecimal128RangeOfExponents() {
+        for (int exp = 19; exp <= 37; exp++) {
+            double v = Math.pow(10, exp);
+            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
+            Assert.assertNotEquals("1e" + exp + " should fit", 0, type);
+            int tag = ColumnType.tagOf(type);
+            Assert.assertTrue(
+                    "1e" + exp + " should need at least Decimal128, got tag=" + tag,
+                    tag >= ColumnType.DECIMAL128
+            );
+        }
+    }
+
+    @Test
+    public void testAutoDecimal128Required() {
+        // 1e20 → 21 integer digits → precision > 18 → Decimal128
+        int type = Numbers.doubleToDecimal(1e20, sink64, sink128, sink256);
+        Assert.assertNotEquals(0, type);
+        Assert.assertEquals(ColumnType.DECIMAL128, ColumnType.tagOf(type));
+        assertAutoRoundTrip(1e20);
+    }
+
+    @Test
+    public void testAutoDecimal256RangeOfExponents() {
+        for (int exp = 39; exp <= 75; exp++) {
+            double v = Math.pow(10, exp);
+            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
+            Assert.assertNotEquals("1e" + exp + " should fit", 0, type);
+            Assert.assertEquals(
+                    "1e" + exp + " should need Decimal256",
+                    ColumnType.DECIMAL256,
+                    ColumnType.tagOf(type)
+            );
+        }
+    }
+
+    @Test
+    public void testAutoDecimal256Required() {
+        int type = Numbers.doubleToDecimal(1e40, sink64, sink128, sink256);
+        Assert.assertNotEquals(0, type);
+        Assert.assertEquals(ColumnType.DECIMAL256, ColumnType.tagOf(type));
+        assertAutoRoundTrip(1e40);
+    }
+
+    @Test
+    public void testAutoDecimal64Selection() {
+        // Single digit → Decimal64
+        int type = Numbers.doubleToDecimal(5.0, sink64, sink128, sink256);
+        Assert.assertTrue(ColumnType.tagOf(type) <= ColumnType.DECIMAL64);
+
+        // 16 significant digits → still Decimal64
+        type = Numbers.doubleToDecimal(1.234567890123456, sink64, sink128, sink256);
+        Assert.assertTrue(ColumnType.tagOf(type) <= ColumnType.DECIMAL64);
+        assertAutoRoundTrip(1.234567890123456);
+
+        // Large integer with 16 digits → Decimal64
+        type = Numbers.doubleToDecimal(1e15, sink64, sink128, sink256);
+        Assert.assertTrue(ColumnType.tagOf(type) <= ColumnType.DECIMAL64);
+    }
+
+    @Test
+    public void testAutoExactIntegerBoundary() {
+        assertAutoInference(9_007_199_254_740_992.0, "9007199254740992", 16, 0);
+        assertAutoInference(9_007_199_254_740_991.0, "9007199254740991", 16, 0);
+    }
+
+    @Test
+    public void testAutoExceedsDecimal256DoubleMinMax() {
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MIN_VALUE, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MIN_NORMAL, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.MAX_VALUE, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(-Double.MAX_VALUE, sink64, sink128, sink256));
+    }
+
+    @Test
+    public void testAutoExceedsDecimal256LargeExponent() {
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e77, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e100, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e308, sink64, sink128, sink256));
+    }
+
+    @Test
+    public void testAutoExceedsDecimal256SmallExponent() {
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e-77, sink64, sink128, sink256));
+        Assert.assertEquals(0, Numbers.doubleToDecimal(1e-200, sink64, sink128, sink256));
+    }
+
+    @Test
+    public void testAutoLargeIntegers() {
+        assertAutoInference(1000.0, "1000", 4, 0);
+        assertAutoInference(10_000.0, "10000", 5, 0);
+        assertAutoInference(100_000.0, "100000", 6, 0);
+        assertAutoInference(1_000_000.0, "1000000", 7, 0);
+        assertAutoInference(1e15, "1000000000000000", 16, 0);
+        assertAutoRoundTrip(3_000_000_000.0);
+        assertAutoRoundTrip(4_294_967_296.0); // 2^32
+        assertAutoRoundTrip(1_000_000_000_000.0);
+    }
+
+    @Test
+    public void testAutoMathE() {
+        assertAutoRoundTrip(Math.E);
+    }
+
+    @Test
+    public void testAutoMathPi() {
+        assertAutoRoundTrip(Math.PI);
+    }
+
+    @Test
+    public void testAutoMathSqrt2() {
+        assertAutoRoundTrip(Math.sqrt(2));
+    }
+
+    @Test
+    public void testAutoMaxDecimal256FitLargePositive() {
+        int type = Numbers.doubleToDecimal(1e75, sink64, sink128, sink256);
+        Assert.assertNotEquals("1e75 should fit in Decimal256", 0, type);
+        assertAutoRoundTrip(1e75);
+    }
+
+    @Test
+    public void testAutoMaxDecimal256FitSmallPositive() {
+        int type = Numbers.doubleToDecimal(1e-76, sink64, sink128, sink256);
+        Assert.assertNotEquals("1e-76 should fit in Decimal256", 0, type);
+        assertAutoRoundTrip(1e-76);
+    }
+
+    @Test
+    public void testAutoMixedValues() {
+        assertAutoInference(1.5, "1.5", 2, 1);
+        assertAutoInference(2.5, "2.5", 2, 1);
+        assertAutoInference(10.1, "10.1", 3, 1);
+        assertAutoInference(100.001, "100.001", 6, 3);
+        assertAutoInference(1234.5678, "1234.5678", 8, 4);
+    }
+
+    @Test
+    public void testAutoNaN() {
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.NaN, sink64, sink128, sink256));
+    }
+
+    @Test
+    public void testAutoNearPowerOf10Boundaries() {
+        assertAutoRoundTrip(0.9999999999999998);
+        assertAutoRoundTrip(1.0000000000000002);
+        assertAutoRoundTrip(9.999999999999998);
+        assertAutoRoundTrip(10.000000000000002);
+        assertAutoRoundTrip(99.99999999999999);
+        assertAutoRoundTrip(100.00000000000001);
+        assertAutoRoundTrip(999.9999999999999);
+        assertAutoRoundTrip(1000.0000000000001);
+    }
+
+    @Test
+    public void testAutoNegativeInfinity() {
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.NEGATIVE_INFINITY, sink64, sink128, sink256));
+    }
 
     @Test
     public void testAutoNegativeLargeValues() {
@@ -474,17 +272,166 @@ public class NumbersDoubleToDecimalTest {
     }
 
     @Test
+    public void testAutoNegativePowersOfTwo() {
+        assertAutoInference(-0.5, "-0.5", 1, 1);
+        assertAutoInference(-0.25, "-0.25", 2, 2);
+        assertAutoInference(-2.0, "-2", 1, 0);
+        assertAutoInference(-1024.0, "-1024", 4, 0);
+    }
+
+    @Test
     public void testAutoNegativeSmallValues() {
         assertAutoRoundTrip(-0.001);
         assertAutoRoundTrip(-1e-10);
         assertAutoRoundTrip(-1e-50);
     }
 
-    // =====================================================================
-    // Target cast: doubleToDecimal(double, Decimal, int, int, boolean, char[])
-    // =====================================================================
+    @Test
+    public void testAutoNegativeZero() {
+        int type = Numbers.doubleToDecimal(-0.0, sink64, sink128, sink256);
+        Assert.assertNotEquals(0, type);
+        Assert.assertEquals(1, ColumnType.getDecimalPrecision(type));
+        Assert.assertEquals(0, ColumnType.getDecimalScale(type));
+        assertDecimalString(type, "0");
+    }
 
-    // --- Basic positive values ---
+    @Test
+    public void testAutoPositiveInfinity() {
+        Assert.assertEquals(0, Numbers.doubleToDecimal(Double.POSITIVE_INFINITY, sink64, sink128, sink256));
+    }
+
+    @Test
+    public void testAutoPowersOfTwoFractions() {
+        assertAutoInference(0.5, "0.5", 1, 1);
+        assertAutoInference(0.25, "0.25", 2, 2);
+        assertAutoInference(0.125, "0.125", 3, 3);
+        assertAutoInference(0.0625, "0.0625", 4, 4);
+        assertAutoInference(0.03125, "0.03125", 5, 5);
+    }
+
+    @Test
+    public void testAutoPowersOfTwoIntegers() {
+        assertAutoInference(2.0, "2", 1, 0);
+        assertAutoInference(4.0, "4", 1, 0);
+        assertAutoInference(8.0, "8", 1, 0);
+        assertAutoInference(16.0, "16", 2, 0);
+        assertAutoInference(32.0, "32", 2, 0);
+        assertAutoInference(64.0, "64", 2, 0);
+        assertAutoInference(128.0, "128", 3, 0);
+        assertAutoInference(256.0, "256", 3, 0);
+        assertAutoInference(512.0, "512", 3, 0);
+        assertAutoInference(1024.0, "1024", 4, 0);
+        assertAutoInference(4096.0, "4096", 4, 0);
+        assertAutoInference(65_536.0, "65536", 5, 0);
+    }
+
+    @Test
+    public void testAutoRoundTripInterestingValues() {
+        double[] values = {
+                1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9,
+                1.23, 12.3, 0.123,
+                1.234567890123456,
+                9.999999999999998,
+                1.7976931348623157E10,
+                2.2250738585072014E-10,
+                -3.14159, -2.71828,
+                0.333333333333333, 0.666666666666666,
+                1.0 / 3.0, 2.0 / 3.0, 1.0 / 7.0, 1.0 / 11.0, 1.0 / 13.0,
+                Math.sqrt(2), Math.sqrt(3), Math.sqrt(5),
+                42.0, 137.036, 6.022e23,
+        };
+        for (double v : values) {
+            assertAutoRoundTrip(v);
+        }
+    }
+
+    @Test
+    public void testAutoRoundTripPowersOfTen() {
+        for (int exp = -75; exp <= 75; exp++) {
+            double v = Math.pow(10, exp);
+            int type = Numbers.doubleToDecimal(v, sink64, sink128, sink256);
+            if (type != 0) {
+                String decStr = decimalToString(type);
+                double parsed = Double.parseDouble(decStr);
+                Assert.assertEquals("round-trip for 1e" + exp, v, parsed, 0.0);
+            }
+        }
+    }
+
+    @Test
+    public void testAutoRoundTripPowersOfTwo() {
+        for (int exp = -50; exp <= 50; exp++) {
+            assertAutoRoundTrip(Math.pow(2, exp));
+        }
+    }
+
+    @Test
+    public void testAutoRoundTripSmallIntegers() {
+        for (int i = -100; i <= 100; i++) {
+            assertAutoRoundTrip((double) i);
+        }
+    }
+
+    @Test
+    public void testAutoSmallExponentValues() {
+        assertAutoRoundTrip(1e-20);
+        assertAutoRoundTrip(1e-30);
+        assertAutoRoundTrip(1e-50);
+        assertAutoRoundTrip(1e-70);
+        assertAutoRoundTrip(-1e-20);
+        assertAutoRoundTrip(-1e-50);
+    }
+
+    @Test
+    public void testAutoSmallFractionsDecimal128() {
+        int type = Numbers.doubleToDecimal(1e-19, sink64, sink128, sink256);
+        Assert.assertNotEquals(0, type);
+        int tag = ColumnType.tagOf(type);
+        Assert.assertTrue(tag >= ColumnType.DECIMAL128);
+        assertAutoRoundTrip(1e-19);
+    }
+
+    @Test
+    public void testAutoSmallFractionsDecimal256() {
+        int type = Numbers.doubleToDecimal(1e-50, sink64, sink128, sink256);
+        Assert.assertNotEquals(0, type);
+        Assert.assertEquals(ColumnType.DECIMAL256, ColumnType.tagOf(type));
+        assertAutoRoundTrip(1e-50);
+    }
+
+    @Test
+    public void testAutoSmallIntegers1Through20() {
+        for (int i = 1; i <= 20; i++) {
+            assertAutoInference((double) i, String.valueOf(i), String.valueOf(i).length(), 0);
+        }
+    }
+
+    @Test
+    public void testAutoSmallNegativeIntegers() {
+        for (int i = -20; i <= -1; i++) {
+            String expected = String.valueOf(i);
+            // Precision does not count the sign
+            assertAutoInference((double) i, expected, String.valueOf(-i).length(), 0);
+        }
+    }
+
+    @Test
+    public void testAutoZero() {
+        int type = Numbers.doubleToDecimal(0.0, sink64, sink128, sink256);
+        Assert.assertNotEquals(0, type);
+        Assert.assertEquals(1, ColumnType.getDecimalPrecision(type));
+        Assert.assertEquals(0, ColumnType.getDecimalScale(type));
+        assertDecimalString(type, "0");
+    }
+
+    @Test
+    public void testTargetBasicNegativeValues() throws NumericException {
+        assertTargetCast64(-67.89, 5, 2, "-67.89");
+        assertTargetCast64(-1.0, 3, 2, "-1.00");
+        assertTargetCast64(-0.5, 3, 2, "-0.50");
+        assertTargetCast64(-100.0, 5, 2, "-100.00");
+        assertTargetCast64(-42.42, 4, 2, "-42.42");
+    }
 
     @Test
     public void testTargetBasicPositiveValues() throws NumericException {
@@ -496,198 +443,38 @@ public class NumbersDoubleToDecimalTest {
         assertTargetCast64(0.5, 3, 2, "0.50");
     }
 
-    // --- Basic negative values ---
-
     @Test
-    public void testTargetBasicNegativeValues() throws NumericException {
-        assertTargetCast64(-67.89, 5, 2, "-67.89");
-        assertTargetCast64(-1.0, 3, 2, "-1.00");
-        assertTargetCast64(-0.5, 3, 2, "-0.50");
-        assertTargetCast64(-100.0, 5, 2, "-100.00");
-        assertTargetCast64(-42.42, 4, 2, "-42.42");
-    }
-
-    // --- Zero ---
-
-    @Test
-    public void testTargetZero() throws NumericException {
-        assertTargetCast64(0.0, 5, 2, "0.00");
-        assertTargetCast64(0.0, 5, 0, "0");
-        assertTargetCast64(0.0, 10, 5, "0.00000");
+    public void testTargetBulkPositiveFractions() throws NumericException {
+        Decimal64 d = new Decimal64();
+        for (int i = 1; i <= 99; i++) {
+            double v = i / 100.0;
+            Numbers.doubleToDecimal(v, d, 18, 2, true);
+            ss.clear();
+            d.toSink(ss);
+            double parsed = Double.parseDouble(ss.toString());
+            Assert.assertEquals("round-trip for " + v, v, parsed, 0.0);
+        }
     }
 
     @Test
-    public void testTargetNegativeZero() throws NumericException {
-        assertTargetCast64(-0.0, 5, 2, "0.00");
-        assertTargetCast64(-0.0, 5, 0, "0");
-    }
-
-    // --- Trailing zeros when target scale > natural scale ---
-
-    @Test
-    public void testTargetTrailingZeros() throws NumericException {
-        assertTargetCast64(123.45, 8, 5, "123.45000");
-        assertTargetCast64(1.0, 10, 8, "1.00000000");
-        assertTargetCast64(42.0, 8, 5, "42.00000");
-        assertTargetCast64(0.5, 5, 4, "0.5000");
-    }
-
-    // --- Lossy truncation (lossy=true, naturalScale > target scale) ---
-
-    @Test
-    public void testTargetLossyTruncation() throws NumericException {
+    public void testTargetBulkRoundTrip() throws NumericException {
         Decimal64 d = new Decimal64();
-        // 123.456 with target scale=2 → truncate to 123.45
-        Numbers.doubleToDecimal(123.456, d, 5, 2, true);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("123.45", ss.toString());
+        for (int i = -50; i <= 50; i++) {
+            double v = (double) i;
+            Numbers.doubleToDecimal(v, d, 18, 2, true);
+            ss.clear();
+            d.toSink(ss);
+            double parsed = Double.parseDouble(ss.toString());
+            Assert.assertEquals("round-trip for " + v, v, parsed, 0.0);
+        }
     }
 
     @Test
-    public void testTargetLossyTruncationNegative() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // -123.456 with target scale=2 → truncate to -123.45
-        Numbers.doubleToDecimal(-123.456, d, 5, 2, true);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("-123.45", ss.toString());
+    public void testTargetCommonFractions() throws NumericException {
+        assertTargetCast64(0.1, 3, 2, "0.10");
+        assertTargetCast64(0.2, 3, 2, "0.20");
+        assertTargetCast64(0.3, 3, 2, "0.30");
     }
-
-    @Test
-    public void testTargetLossyTruncateAllFractionalDigits() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 123.456 with target scale=0 → truncate to 123
-        Numbers.doubleToDecimal(123.456, d, 3, 0, true);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("123", ss.toString());
-    }
-
-    @Test
-    public void testTargetLossyTruncateToZero() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 0.001 with target scale=0, lossy → all fractional digits removed → 0
-        Numbers.doubleToDecimal(0.001, d, 5, 0, true);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("0", ss.toString());
-    }
-
-    @Test
-    public void testTargetLossyTruncateSmallFraction() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 0.999 with target scale=0, lossy → 0 (truncation, not rounding)
-        Numbers.doubleToDecimal(0.999, d, 5, 0, true);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("0", ss.toString());
-    }
-
-    @Test
-    public void testTargetLossyTruncatePartialFraction() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 0.999 with target scale=1, lossy → truncate to 0.9
-        Numbers.doubleToDecimal(0.999, d, 5, 1, true);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("0.9", ss.toString());
-    }
-
-    // --- Non-lossy: exact fit ---
-
-    @Test
-    public void testTargetNonLossyExactFit() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 123.45 has naturalScale=2, target scale=2 → exact fit
-        Numbers.doubleToDecimal(123.45, d, 5, 2, false);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("123.45", ss.toString());
-    }
-
-    @Test
-    public void testTargetNonLossyIntegerValue() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 42.0 has naturalScale=0, target scale=3 → exact fit, trailing zeros
-        Numbers.doubleToDecimal(42.0, d, 5, 3, false);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("42.000", ss.toString());
-    }
-
-    // --- Non-lossy: scale overflow → NumericException ---
-
-    @Test(expected = NumericException.class)
-    public void testTargetNonLossyScaleOverflow() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 0.001 has naturalScale=3, target scale=2, lossy=false → throws
-        Numbers.doubleToDecimal(0.001, d, 4, 2, false);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testTargetNonLossyScaleOverflowManyDigits() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 123.456 has naturalScale=3, target scale=2, lossy=false → throws
-        Numbers.doubleToDecimal(123.456, d, 5, 2, false);
-    }
-
-    // --- Precision overflow → NumericException ---
-
-    @Test(expected = NumericException.class)
-    public void testTargetPrecisionOverflow() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 1000.0 → integerDigits=4, requiredPrecision=4+2=6 > 4 → throws
-        Numbers.doubleToDecimal(1000.0, d, 4, 2, true);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testTargetPrecisionOverflowLargeValue() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 99999.0 → integerDigits=5, requiredPrecision=5+2=7 > 5 → throws
-        Numbers.doubleToDecimal(99_999.0, d, 5, 2, true);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testTargetPrecisionOverflowNegative() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // -10000.0 → integerDigits=5, requiredPrecision=5+2=7 > 5 → throws
-        Numbers.doubleToDecimal(-10_000.0, d, 5, 2, true);
-    }
-
-    // --- Precision exactly at boundary ---
-
-    @Test
-    public void testTargetPrecisionExactBoundary() throws NumericException {
-        Decimal64 d = new Decimal64();
-        // 999.0 → integerDigits=3, requiredPrecision=3+2=5 == 5 → success
-        Numbers.doubleToDecimal(999.0, d, 5, 2, true);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("999.00", ss.toString());
-    }
-
-    // --- NaN and Infinity → NumericException ---
-
-    @Test(expected = NumericException.class)
-    public void testTargetNaN() throws NumericException {
-        Decimal64 d = new Decimal64();
-        Numbers.doubleToDecimal(Double.NaN, d, 5, 2, true);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testTargetPositiveInfinity() throws NumericException {
-        Decimal64 d = new Decimal64();
-        Numbers.doubleToDecimal(Double.POSITIVE_INFINITY, d, 5, 2, true);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testTargetNegativeInfinity() throws NumericException {
-        Decimal64 d = new Decimal64();
-        Numbers.doubleToDecimal(Double.NEGATIVE_INFINITY, d, 5, 2, true);
-    }
-
-    // --- Target cast with Decimal128 ---
 
     @Test
     public void testTargetDecimal128Basic() throws NumericException {
@@ -725,8 +512,6 @@ public class NumbersDoubleToDecimalTest {
         Assert.assertEquals("0.00000", ss.toString());
     }
 
-    // --- Target cast with Decimal256 ---
-
     @Test
     public void testTargetDecimal256Basic() throws NumericException {
         Decimal256 d = new Decimal256();
@@ -734,15 +519,6 @@ public class NumbersDoubleToDecimalTest {
         ss.clear();
         d.toSink(ss);
         Assert.assertEquals("123.45", ss.toString());
-    }
-
-    @Test
-    public void testTargetDecimal256Negative() throws NumericException {
-        Decimal256 d = new Decimal256();
-        Numbers.doubleToDecimal(-999.999, d, 55, 5, true);
-        ss.clear();
-        d.toSink(ss);
-        Assert.assertEquals("-999.99900", ss.toString());
     }
 
     @Test
@@ -755,6 +531,15 @@ public class NumbersDoubleToDecimalTest {
     }
 
     @Test
+    public void testTargetDecimal256Negative() throws NumericException {
+        Decimal256 d = new Decimal256();
+        Numbers.doubleToDecimal(-999.999, d, 55, 5, true);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("-999.99900", ss.toString());
+    }
+
+    @Test
     public void testTargetDecimal256Zero() throws NumericException {
         Decimal256 d = new Decimal256();
         Numbers.doubleToDecimal(0.0, d, 55, 10, true);
@@ -763,7 +548,164 @@ public class NumbersDoubleToDecimalTest {
         Assert.assertEquals("0.0000000000", ss.toString());
     }
 
-    // --- Scale=0: integer-only target ---
+    @Test
+    public void testTargetLossyTruncateAllFractionalDigits() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 123.456 with target scale=0 → truncate to 123
+        Numbers.doubleToDecimal(123.456, d, 3, 0, true);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("123", ss.toString());
+    }
+
+    @Test
+    public void testTargetLossyTruncatePartialFraction() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 0.999 with target scale=1, lossy → truncate to 0.9
+        Numbers.doubleToDecimal(0.999, d, 5, 1, true);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("0.9", ss.toString());
+    }
+
+    @Test
+    public void testTargetLossyTruncateSmallFraction() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 0.999 with target scale=0, lossy → 0 (truncation, not rounding)
+        Numbers.doubleToDecimal(0.999, d, 5, 0, true);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("0", ss.toString());
+    }
+
+    @Test
+    public void testTargetLossyTruncateToZero() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 0.001 with target scale=0, lossy → all fractional digits removed → 0
+        Numbers.doubleToDecimal(0.001, d, 5, 0, true);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("0", ss.toString());
+    }
+
+    @Test
+    public void testTargetLossyTruncation() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 123.456 with target scale=2 → truncate to 123.45
+        Numbers.doubleToDecimal(123.456, d, 5, 2, true);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("123.45", ss.toString());
+    }
+
+    @Test
+    public void testTargetLossyTruncationNegative() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // -123.456 with target scale=2 → truncate to -123.45
+        Numbers.doubleToDecimal(-123.456, d, 5, 2, true);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("-123.45", ss.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testTargetNaN() throws NumericException {
+        Decimal64 d = new Decimal64();
+        Numbers.doubleToDecimal(Double.NaN, d, 5, 2, true);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testTargetNegativeInfinity() throws NumericException {
+        Decimal64 d = new Decimal64();
+        Numbers.doubleToDecimal(Double.NEGATIVE_INFINITY, d, 5, 2, true);
+    }
+
+    @Test
+    public void testTargetNegativeZero() throws NumericException {
+        assertTargetCast64(-0.0, 5, 2, "0.00");
+        assertTargetCast64(-0.0, 5, 0, "0");
+    }
+
+    @Test
+    public void testTargetNonLossyExactFit() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 123.45 has naturalScale=2, target scale=2 → exact fit
+        Numbers.doubleToDecimal(123.45, d, 5, 2, false);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("123.45", ss.toString());
+    }
+
+    @Test
+    public void testTargetNonLossyIntegerValue() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 42.0 has naturalScale=0, target scale=3 → exact fit, trailing zeros
+        Numbers.doubleToDecimal(42.0, d, 5, 3, false);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("42.000", ss.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testTargetNonLossyScaleOverflow() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 0.001 has naturalScale=3, target scale=2, lossy=false → throws
+        Numbers.doubleToDecimal(0.001, d, 4, 2, false);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testTargetNonLossyScaleOverflowManyDigits() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 123.456 has naturalScale=3, target scale=2, lossy=false → throws
+        Numbers.doubleToDecimal(123.456, d, 5, 2, false);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testTargetPositiveInfinity() throws NumericException {
+        Decimal64 d = new Decimal64();
+        Numbers.doubleToDecimal(Double.POSITIVE_INFINITY, d, 5, 2, true);
+    }
+
+    @Test
+    public void testTargetPowersOfTwo() throws NumericException {
+        assertTargetCast64(0.5, 3, 2, "0.50");
+        assertTargetCast64(0.25, 4, 3, "0.250");
+        assertTargetCast64(0.125, 4, 3, "0.125");
+        assertTargetCast64(2.0, 3, 1, "2.0");
+        assertTargetCast64(4.0, 3, 1, "4.0");
+        assertTargetCast64(8.0, 3, 1, "8.0");
+    }
+
+    @Test
+    public void testTargetPrecisionExactBoundary() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 999.0 → integerDigits=3, requiredPrecision=3+2=5 == 5 → success
+        Numbers.doubleToDecimal(999.0, d, 5, 2, true);
+        ss.clear();
+        d.toSink(ss);
+        Assert.assertEquals("999.00", ss.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testTargetPrecisionOverflow() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 1000.0 → integerDigits=4, requiredPrecision=4+2=6 > 4 → throws
+        Numbers.doubleToDecimal(1000.0, d, 4, 2, true);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testTargetPrecisionOverflowLargeValue() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // 99999.0 → integerDigits=5, requiredPrecision=5+2=7 > 5 → throws
+        Numbers.doubleToDecimal(99_999.0, d, 5, 2, true);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testTargetPrecisionOverflowNegative() throws NumericException {
+        Decimal64 d = new Decimal64();
+        // -10000.0 → integerDigits=5, requiredPrecision=5+2=7 > 5 → throws
+        Numbers.doubleToDecimal(-10_000.0, d, 5, 2, true);
+    }
 
     @Test
     public void testTargetScaleZero() throws NumericException {
@@ -790,58 +732,20 @@ public class NumbersDoubleToDecimalTest {
         Numbers.doubleToDecimal(42.7, d, 5, 0, false);
     }
 
-    // --- Powers of 2 through target cast ---
-
     @Test
-    public void testTargetPowersOfTwo() throws NumericException {
-        assertTargetCast64(0.5, 3, 2, "0.50");
-        assertTargetCast64(0.25, 4, 3, "0.250");
-        assertTargetCast64(0.125, 4, 3, "0.125");
-        assertTargetCast64(2.0, 3, 1, "2.0");
-        assertTargetCast64(4.0, 3, 1, "4.0");
-        assertTargetCast64(8.0, 3, 1, "8.0");
-    }
-
-    // --- Common decimal fractions through target cast ---
-
-    @Test
-    public void testTargetCommonFractions() throws NumericException {
-        assertTargetCast64(0.1, 3, 2, "0.10");
-        assertTargetCast64(0.2, 3, 2, "0.20");
-        assertTargetCast64(0.3, 3, 2, "0.30");
-    }
-
-    // --- Bulk target cast round-trip ---
-
-    @Test
-    public void testTargetBulkRoundTrip() throws NumericException {
-        Decimal64 d = new Decimal64();
-        for (int i = -50; i <= 50; i++) {
-            double v = (double) i;
-            Numbers.doubleToDecimal(v, d, 18, 2, true);
-            ss.clear();
-            d.toSink(ss);
-            double parsed = Double.parseDouble(ss.toString());
-            Assert.assertEquals("round-trip for " + v, v, parsed, 0.0);
-        }
+    public void testTargetTrailingZeros() throws NumericException {
+        assertTargetCast64(123.45, 8, 5, "123.45000");
+        assertTargetCast64(1.0, 10, 8, "1.00000000");
+        assertTargetCast64(42.0, 8, 5, "42.00000");
+        assertTargetCast64(0.5, 5, 4, "0.5000");
     }
 
     @Test
-    public void testTargetBulkPositiveFractions() throws NumericException {
-        Decimal64 d = new Decimal64();
-        for (int i = 1; i <= 99; i++) {
-            double v = i / 100.0;
-            Numbers.doubleToDecimal(v, d, 18, 2, true);
-            ss.clear();
-            d.toSink(ss);
-            double parsed = Double.parseDouble(ss.toString());
-            Assert.assertEquals("round-trip for " + v, v, parsed, 0.0);
-        }
+    public void testTargetZero() throws NumericException {
+        assertTargetCast64(0.0, 5, 2, "0.00");
+        assertTargetCast64(0.0, 5, 0, "0");
+        assertTargetCast64(0.0, 10, 5, "0.00000");
     }
-
-    // =====================================================================
-    // Helpers
-    // =====================================================================
 
     private void assertAutoInference(double value, String expected, int expectedPrecision, int expectedScale) {
         int type = Numbers.doubleToDecimal(value, sink64, sink128, sink256);
