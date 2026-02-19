@@ -5108,9 +5108,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsetFunc,
                         offsetFuncPos,
                         sampleFromFunc,
-                        sampleFromFuncPos,
-                        sampleToFunc,
-                        sampleToFuncPos
+                        sampleToFunc
                 );
             }
 

@@ -105,9 +105,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             Function offsetFunc,
             int offsetFuncPos,
             Function sampleFromFunc,
-            int sampleFromFuncPos,
-            Function sampleToFunc,
-            int sampleToFuncPos
+            Function sampleToFunc
     ) throws SqlException {
         super(metadata);
         try {
@@ -179,7 +177,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             entityColumnFilter.of(keyTypes.getColumnCount());
             this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, configuration);
 
-            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
+            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleToFunc);
         } catch (Throwable th) {
             close();
             throw th;
@@ -263,10 +261,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final Function offsetFunc;
         private final int offsetFuncPos;
         private final Function sampleFromFunc;
-        private final int sampleFromFuncPos;
         private final int sampleFromFuncType;
         private final Function sampleToFunc;
-        private final int sampleToFuncPos;
         private final TimestampDriver timestampDriver;
         private final Function timezoneNameFunc;
         private final int timezoneNameFuncPos;
@@ -297,9 +293,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Function offsetFunc,
                 int offsetFuncPos,
                 Function sampleFromFunc,
-                int sampleFromFuncPos,
-                Function sampleToFunc,
-                int sampleToFuncPos
+                Function sampleToFunc
         ) {
             super(functions);
             try {
@@ -317,9 +311,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 this.offsetFunc = offsetFunc;
                 this.offsetFuncPos = offsetFuncPos;
                 this.sampleFromFunc = sampleFromFunc;
-                this.sampleFromFuncPos = sampleFromFuncPos;
                 this.sampleToFunc = sampleToFunc;
-                this.sampleToFuncPos = sampleToFuncPos;
                 this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
                 this.sampleFromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
             } catch (Throwable th) {
