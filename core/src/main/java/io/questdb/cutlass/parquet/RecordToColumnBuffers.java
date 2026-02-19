@@ -96,6 +96,12 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     // Dense array of output column indices that are computed (not pass-through)
     private int[] computedColumnIndices;
     private int computedCount;
+    // Pre-computed per-column: Function instances (page-frame path only)
+    private Function[] computedFunctions;
+    // Pre-computed per-column: isSymbol(srcType) && outputType == STRING (page-frame path only)
+    private boolean[] computedIsSymbolToString;
+    // Pre-computed per-column: adjustedMetadata.getColumnType(computedColumnIndices[k])
+    private int[] computedOutputTypes;
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
     private int outputColumnCount;
@@ -168,12 +174,11 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         long rowCount = 0;
 
         while (rowCount < batchSize && cursor.hasNext()) {
-            for (int i = 0; i < outputColumnCount; i++) {
-                int bufIdx = computedBufferIdx[i];
+            for (int k = 0; k < computedCount; k++) {
+                int bufIdx = computedBufferIdx[computedColumnIndices[k]];
                 MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
                 MemoryCARWImpl auxBuf = auxBuffers.getQuick(bufIdx);
-                int columnType = adjustedMetadata.getColumnType(i);
-                writeColumnValue(record, i, columnType, dataBuf, auxBuf);
+                writeColumnValue(record, computedColumnIndices[k], computedOutputTypes[k], dataBuf, auxBuf);
             }
             rowCount++;
         }
@@ -183,12 +188,11 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         }
 
         columnData.clear();
-        for (int i = 0; i < outputColumnCount; i++) {
-            int bufIdx = computedBufferIdx[i];
+        for (int k = 0; k < computedCount; k++) {
+            int bufIdx = computedBufferIdx[computedColumnIndices[k]];
             MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
             MemoryCARWImpl auxBuf = auxBuffers.getQuick(bufIdx);
-            int columnType = adjustedMetadata.getColumnType(i);
-            addColumnData(columnData, dataBuf, auxBuf, columnType);
+            addColumnData(columnData, dataBuf, auxBuf, computedOutputTypes[k]);
         }
         return rowCount;
     }
@@ -267,6 +271,9 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         baseColumnMap = null;
         computedBufferIdx = null;
         computedColumnIndices = null;
+        computedFunctions = null;
+        computedIsSymbolToString = null;
+        computedOutputTypes = null;
         functions = null;
         functionRecord = null;
         adjustedMetadata = null;
@@ -395,6 +402,17 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
 
         buildComputedColumnIndices();
 
+        // Pre-compute function references and symbol-to-string flags
+        computedFunctions = new Function[computedCount];
+        computedIsSymbolToString = new boolean[computedCount];
+        for (int k = 0; k < computedCount; k++) {
+            int i = computedColumnIndices[k];
+            Function func = functions.getQuick(i);
+            computedFunctions[k] = func;
+            computedIsSymbolToString[k] = ColumnType.isSymbol(func.getType())
+                    && computedOutputTypes[k] == ColumnType.STRING;
+        }
+
         // Set timestamp index
         int tsIdx = outputMeta.getTimestampIndex();
         if (tsIdx >= 0) {
@@ -455,10 +473,13 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
 
     private void buildComputedColumnIndices() {
         computedColumnIndices = new int[computedCount];
+        computedOutputTypes = new int[computedCount];
         int k = 0;
         for (int i = 0; i < outputColumnCount; i++) {
             if (baseColumnMap[i] < 0) {
-                computedColumnIndices[k++] = i;
+                computedColumnIndices[k] = i;
+                computedOutputTypes[k] = adjustedMetadata.getColumnType(i);
+                k++;
             }
         }
     }
@@ -467,19 +488,15 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         resetBuffers();
         for (long row = 0; row < frameRowCount; row++) {
             pageFrameRecord.setRowIndex(row);
-            for (int k = 0; k < computedColumnIndices.length; k++) {
-                int i = computedColumnIndices[k];
-                int bufIdx = computedBufferIdx[i];
+            for (int k = 0; k < computedCount; k++) {
+                int bufIdx = computedBufferIdx[computedColumnIndices[k]];
                 MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
                 MemoryCARWImpl auxBuf = auxBuffers.getQuick(bufIdx);
-                int outputType = adjustedMetadata.getColumnType(i);
-                Function func = functions.getQuick(i);
-                int srcType = func.getType();
-                if (ColumnType.isSymbol(srcType) && outputType == ColumnType.STRING) {
-                    CharSequence sym = func.getSymbol(functionRecord.getInternalJoinRecord());
+                if (computedIsSymbolToString[k]) {
+                    CharSequence sym = computedFunctions[k].getSymbol(functionRecord.getInternalJoinRecord());
                     StringTypeDriver.appendValue(auxBuf, dataBuf, sym);
                 } else {
-                    writeComputedValue(func, functionRecord.getInternalJoinRecord(), outputType, dataBuf, auxBuf);
+                    writeComputedValue(computedFunctions[k], functionRecord.getInternalJoinRecord(), computedOutputTypes[k], dataBuf, auxBuf);
                 }
             }
         }
@@ -512,9 +529,8 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
             auxBuffers.clear();
             computedCount = 0;
             for (int k = 0; k < computedColumnIndices.length; k++) {
-                int i = computedColumnIndices[k];
-                computedBufferIdx[i] = computedCount;
-                allocateBuffer(adjustedMetadata.getColumnType(i));
+                computedBufferIdx[computedColumnIndices[k]] = computedCount;
+                allocateBuffer(computedOutputTypes[k]);
                 computedCount++;
             }
         } else {
@@ -532,9 +548,8 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         // StringTypeDriver will then append the offset of the first available byte
         // after each written string (start offset of the next, yet unwritten string).
         for (int k = 0; k < computedColumnIndices.length; k++) {
-            int i = computedColumnIndices[k];
-            if (ColumnType.tagOf(adjustedMetadata.getColumnType(i)) == ColumnType.STRING) {
-                auxBuffers.getQuick(computedBufferIdx[i]).putLong(0);
+            if (ColumnType.tagOf(computedOutputTypes[k]) == ColumnType.STRING) {
+                auxBuffers.getQuick(computedBufferIdx[computedColumnIndices[k]]).putLong(0);
             }
         }
     }
