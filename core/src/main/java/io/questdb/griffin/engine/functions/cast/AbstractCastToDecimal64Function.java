@@ -72,11 +72,6 @@ public abstract class AbstractCastToDecimal64Function extends ToDecimal64Functio
         return arg;
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        return false;
-    }
-
     public boolean store(Record rec) {
         return cast(rec);
     }

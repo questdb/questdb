@@ -41,7 +41,7 @@ class MaterializedRecord implements Record {
     private MemoryCARW[] buffers;
     private int[] colSizes;
     private int[] colToBufferIndex;
-    private int ordinal;
+    private long ordinal;
 
     @Override
     public ArrayView getArray(int col, int columnType) {
@@ -344,11 +344,11 @@ class MaterializedRecord implements Record {
         this.buffers = buffers;
     }
 
-    void setOrdinal(int ordinal) {
+    void setOrdinal(long ordinal) {
         this.ordinal = ordinal;
     }
 
     private long offset(int bufferIdx) {
-        return (long) ordinal * colSizes[bufferIdx];
+        return ordinal * colSizes[bufferIdx];
     }
 }

@@ -53,7 +53,8 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     private final DirectLongLongHashMap rowIdToOrdinal;
     private RecordCursor baseCursor;
     private boolean isOpen;
-    private int nextOrdinal;
+    private boolean materialized;
+    private long nextOrdinal;
 
     SortKeyMaterializingRecordCursor(
             int columnCount,
@@ -125,14 +126,20 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         if (baseCursor.hasNext()) {
             final Record baseRecord = recordA.getBaseRecord();
             final long rowId = baseRecord.getRowId();
-            final int ordinal = nextOrdinal++;
-            rowIdToOrdinal.put(rowId, ordinal);
-            for (int i = 0, n = buffers.length; i < n; i++) {
-                appendValue(baseRecord, i);
+            long ordinal;
+            if (materialized) {
+                ordinal = rowIdToOrdinal.get(rowId);
+            } else {
+                ordinal = nextOrdinal++;
+                rowIdToOrdinal.put(rowId, ordinal);
+                for (int i = 0, n = buffers.length; i < n; i++) {
+                    appendValue(baseRecord, i);
+                }
             }
             recordA.setOrdinal(ordinal);
             return true;
         }
+        materialized = true;
         return false;
     }
 
@@ -150,6 +157,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         }
         rowIdToOrdinal.reopen();
         rowIdToOrdinal.clear();
+        materialized = false;
         nextOrdinal = 0;
         recordA.of(baseCursor.getRecord(), colToBufferIndex, colSizes, buffers);
         recordB.of(baseCursor.getRecordB(), colToBufferIndex, colSizes, buffers);
@@ -167,7 +175,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(((MaterializedRecord) record).getBaseRecord(), atRowId);
-        final int ordinal = (int) rowIdToOrdinal.get(atRowId);
+        final long ordinal = rowIdToOrdinal.get(atRowId);
         ((MaterializedRecord) record).setOrdinal(ordinal);
     }
 
@@ -179,6 +187,14 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     @Override
     public void toTop() {
         baseCursor.toTop();
+        if (!materialized) {
+            // Interrupted first pass — reset partial materialization
+            for (int i = 0, n = buffers.length; i < n; i++) {
+                buffers[i].truncate();
+            }
+            rowIdToOrdinal.clear();
+            nextOrdinal = 0;
+        }
     }
 
     private void appendValue(Record record, int bufferIndex) {

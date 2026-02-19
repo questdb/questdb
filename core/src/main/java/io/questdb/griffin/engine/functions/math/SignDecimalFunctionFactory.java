@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-
 import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -49,20 +48,14 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
         var arg = args.getQuick(0);
         final int type = arg.getType();
         // All functions return DECIMAL8 (precision=1, scale=0) but read different input types
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.DECIMAL8:
-                return new Decimal8Func(arg);
-            case ColumnType.DECIMAL16:
-                return new Decimal16Func(arg);
-            case ColumnType.DECIMAL32:
-                return new Decimal32Func(arg);
-            case ColumnType.DECIMAL64:
-                return new Decimal64Func(arg);
-            case ColumnType.DECIMAL128:
-                return new Decimal128Func(arg);
-            default:
-                return new Decimal256Func(arg);
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> new Decimal8Func(arg);
+            case ColumnType.DECIMAL16 -> new Decimal16Func(arg);
+            case ColumnType.DECIMAL32 -> new Decimal32Func(arg);
+            case ColumnType.DECIMAL64 -> new Decimal64Func(arg);
+            case ColumnType.DECIMAL128 -> new Decimal128Func(arg);
+            default -> new Decimal256Func(arg);
+        };
     }
 
     // Function for DECIMAL128 input
