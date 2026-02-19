@@ -226,6 +226,9 @@ pub fn optional_byte_array_schema(col_name: &str, logical: Option<LogicalType>) 
     let mut builder =
         parquet::schema::types::Type::primitive_type_builder(col_name, PhysicalType::BYTE_ARRAY);
     if let Some(lt) = logical {
+        if let LogicalType::Decimal { scale, precision } = lt {
+            builder = builder.with_precision(precision).with_scale(scale);
+        }
         builder = builder.with_logical_type(Some(lt));
     }
     Type::group_type_builder("schema")
@@ -240,6 +243,9 @@ pub fn required_byte_array_schema(col_name: &str, logical: Option<LogicalType>) 
         parquet::schema::types::Type::primitive_type_builder(col_name, PhysicalType::BYTE_ARRAY)
             .with_repetition(Repetition::REQUIRED);
     if let Some(lt) = logical {
+        if let LogicalType::Decimal { scale, precision } = lt {
+            builder = builder.with_precision(precision).with_scale(scale);
+        }
         builder = builder.with_logical_type(Some(lt));
     }
     Type::group_type_builder("schema")
