@@ -158,6 +158,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         pageFrameCursor = Misc.free(pageFrameCursor);
         materializer = Misc.free(materializer);
         materializerColumnData = Misc.free(materializerColumnData);
+        createParquetOp = Misc.free(createParquetOp);
         task = Misc.free(task);
         writeCallback.of(null, null);
     }

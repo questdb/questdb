@@ -261,9 +261,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         }
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
                         RecordToColumnBuffers buffers = new RecordToColumnBuffers();
-                        buffers.setUp(state.recordCursorFactory.getMetadata());
-                        state.materializer = buffers;
-                        state.materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+                        try {
+                            buffers.setUp(state.recordCursorFactory.getMetadata());
+                            state.materializer = buffers;
+                            state.materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+                        } catch (Throwable th) {
+                            Misc.free(buffers);
+                            throw th;
+                        }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);

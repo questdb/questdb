@@ -112,8 +112,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         );
         long copyID = entry.getId();
         RecordCursorFactory selectFactory = null;
+        CreateTableOperation createOp = null;
         try {
-            CreateTableOperation createOp = null;
             if (this.tableName != null) {
                 TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
                 if (tableToken == null) {
@@ -249,6 +249,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 );
                 task.setSelectFactory(selectFactory);
                 selectFactory = null;
+                createOp = null; // ownership transferred to queue task
             } finally {
                 copyRequestPubSeq.done(processingCursor);
             }
@@ -268,6 +269,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             throw ex;
         } finally {
             Misc.free(selectFactory);
+            Misc.free(createOp);
             if (entry != null) {
                 copyContext.releaseEntry(entry);
             }

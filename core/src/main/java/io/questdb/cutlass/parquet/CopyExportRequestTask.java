@@ -108,6 +108,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     @Override
     public void close() {
         selectFactory = Misc.free(selectFactory);
+        createOp = Misc.free(createOp);
+        if (tempTableFactory != null) {
+            tempTableFactory = Misc.free(tempTableFactory);
+            pageFrameCursor = Misc.free(pageFrameCursor);
+        }
         Misc.free(streamPartitionParquetExporter);
     }
 
@@ -247,6 +252,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.nowTimestampType = nowTimestampType;
         this.exportMode = exportMode;
         this.selectText = selectText;
+    }
+
+    public void setCreateOp(@Nullable CreateTableOperation createOp) {
+        this.createOp = createOp;
     }
 
     public void setSelectFactory(RecordCursorFactory selectFactory) {

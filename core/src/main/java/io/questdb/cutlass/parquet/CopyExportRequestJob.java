@@ -27,6 +27,7 @@ package io.questdb.cutlass.parquet;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -80,11 +81,16 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         try {
             CopyExportRequestTask task = queue.get(cursor);
+            // Transfer ownership of selectFactory and createOp out of the
+            // queue task before calling task.clear(), so clear() does not
+            // free objects that localTaskCopy will use.
             RecordCursorFactory selectFactory = task.getSelectFactory();
             task.setSelectFactory(null);
+            CreateTableOperation createOp = task.getCreateOp();
+            task.setCreateOp(null);
             localTaskCopy.of(
                     task.getEntry(),
-                    task.getCreateOp(),
+                    createOp,
                     task.getTableName(),
                     // we are copying CharSequence from the queue, and releasing it
                     Chars.toString(task.getFileName()),
