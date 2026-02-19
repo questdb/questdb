@@ -262,7 +262,7 @@ public class HTTPSerialParquetExporter {
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
         if (exporter.onResume()) {
-            LOG.info().$("cursor stream export progress (resume) [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("cursor stream export progress (resume) [id=").$hexPadded(task.getCopyID())
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
         } else {
@@ -291,7 +291,7 @@ public class HTTPSerialParquetExporter {
                 previousRowsWritten = currentRowsWritten;
             }
 
-            LOG.info().$("cursor stream export progress [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("cursor stream export progress [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInBatch=").$(rowCount)
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
@@ -312,7 +312,7 @@ public class HTTPSerialParquetExporter {
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
         if (exporter.onResume()) {
-            LOG.info().$("page frame stream export progress (resume) [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("page frame stream export progress (resume) [id=").$hexPadded(task.getCopyID())
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
         } else {
@@ -342,7 +342,7 @@ public class HTTPSerialParquetExporter {
                 previousRowsWritten = currentRowsWritten;
             }
 
-            LOG.info().$("page frame stream export progress [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("page frame stream export progress [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInFrame=").$(rowCount)
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
@@ -365,7 +365,7 @@ public class HTTPSerialParquetExporter {
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
         if (exporter.onResume()) {
-            LOG.info().$("stream export progress (resume) [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("stream export progress (resume) [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInFrame=").$(exporter.getCurrentFrameRowCount())
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(", partitionIndex=").$(exporter.getCurrentPartitionIndex())
@@ -397,7 +397,7 @@ public class HTTPSerialParquetExporter {
                 previousRowsWritten = currentRowsWritten;
             }
 
-            LOG.info().$("stream export progress [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("stream export progress [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInFrame=").$(rowsInFrame)
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(", partitionIndex=").$(partitionIndex)
