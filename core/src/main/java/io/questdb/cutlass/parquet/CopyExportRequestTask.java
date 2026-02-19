@@ -40,6 +40,7 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -485,7 +486,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             setUp(adjustedMetadata, null, null);
         }
 
-        public void setUp(RecordMetadata adjustedMetadata, PageFrameCursor pfc, int[] baseColumnMap) {
+        public void setUp(RecordMetadata adjustedMetadata, PageFrameCursor pfc, IntList baseColumnMap) {
             metadata = adjustedMetadata;
             pageFrameCursor = pfc;
             columnNames.reopen();
@@ -499,9 +500,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 columnMetadata.add(columnNames.size() - startSize);
                 final int columnType = adjustedMetadata.getColumnType(i);
 
-                if (baseColumnMap != null && ColumnType.isSymbol(columnType) && baseColumnMap[i] >= 0) {
+                if (baseColumnMap != null && ColumnType.isSymbol(columnType) && baseColumnMap.getQuick(i) >= 0) {
                     // Pass-through SYMBOL: use symbol table from page frame cursor
-                    StaticSymbolTable symbolTable = pfc.getSymbolTable(baseColumnMap[i]);
+                    StaticSymbolTable symbolTable = pfc.getSymbolTable(baseColumnMap.getQuick(i));
                     assert symbolTable != null;
                     int symbolColumnType = columnType;
                     if (!symbolTable.containsNullValue()) {

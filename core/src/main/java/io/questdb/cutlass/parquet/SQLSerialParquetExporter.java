@@ -50,6 +50,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -70,6 +71,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
     private final FilesFacade ff;
     private final Path fromParquet;
     private final Utf8StringSink nameSink = new Utf8StringSink();
+    private final IntList identityColumnMap = new IntList();
     private final DirectLongList streamColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final RecordToColumnBuffers streamBuffers = new RecordToColumnBuffers();
     private final Path tempPath;
@@ -371,11 +373,11 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                         pfc.setStreamingMode(true);
                         RecordMetadata meta = baseFactory.getMetadata();
                         int colCount = meta.getColumnCount();
-                        int[] identityMap = new int[colCount];
+                        identityColumnMap.setPos(colCount);
                         for (int i = 0; i < colCount; i++) {
-                            identityMap[i] = i;
+                            identityColumnMap.setQuick(i, i);
                         }
-                        exporter.setUp(meta, pfc, identityMap);
+                        exporter.setUp(meta, pfc, identityColumnMap);
 
                         PageFrame frame;
                         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
