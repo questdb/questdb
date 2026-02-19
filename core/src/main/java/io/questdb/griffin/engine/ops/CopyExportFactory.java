@@ -128,7 +128,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 }
             }
 
-            ParquetExportMode exportMode = null;
+            ParquetExportMode exportMode = ParquetExportMode.TABLE_READER;
             String resolvedSelectText = this.selectText;
             if (resolvedSelectText != null) {
                 // Determine export mode before creating CreateTableOperation.

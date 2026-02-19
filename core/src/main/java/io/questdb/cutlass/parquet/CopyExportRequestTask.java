@@ -59,7 +59,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private int dataPageSize;
     private boolean descending;
     private CopyExportContext.ExportTaskEntry entry;
-    private @Nullable ParquetExportMode exportMode;
+    private ParquetExportMode exportMode;
     private RecordCursorFactory factory;
     private CharSequence fileName;
     private RecordMetadata metadata;
@@ -134,7 +134,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         return entry;
     }
 
-    public @Nullable ParquetExportMode getExportMode() {
+    public ParquetExportMode getExportMode() {
         return exportMode;
     }
 
@@ -216,7 +216,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             PageFrameCursor pageFrameCursor, // for streaming export
             RecordMetadata metadata,
             StreamWriteParquetCallBack writeCallback,
-            @Nullable ParquetExportMode exportMode,
+            ParquetExportMode exportMode,
             @Nullable String selectText
     ) {
         this.entry = entry;

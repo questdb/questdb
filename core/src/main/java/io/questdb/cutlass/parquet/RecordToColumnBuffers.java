@@ -93,7 +93,6 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     private int computedCount;
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
-    private boolean isPageFrameBacked;
     private int outputColumnCount;
 
     /**
@@ -266,7 +265,6 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         adjustedMetadata = null;
         computedCount = 0;
         outputColumnCount = 0;
-        isPageFrameBacked = false;
     }
 
     @Override
@@ -284,10 +282,6 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         return baseColumnMap;
     }
 
-    public boolean isPageFrameBacked() {
-        return isPageFrameBacked;
-    }
-
     /**
      * Sets up for cursor-based export: all columns materialized from a RecordCursor
      * (no page frame backing).
@@ -296,7 +290,6 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         this.outputColumnCount = metadata.getColumnCount();
         this.baseColumnMap = new int[outputColumnCount];
         this.computedBufferIdx = new int[outputColumnCount];
-        this.isPageFrameBacked = false;
         this.functions = null;
 
         adjustedMetadata = new GenericRecordMetadata();
@@ -331,7 +324,6 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         this.outputColumnCount = outputMeta.getColumnCount();
         this.baseColumnMap = new int[outputColumnCount];
         this.computedBufferIdx = new int[outputColumnCount];
-        this.isPageFrameBacked = true;
         this.adjustedMetadata = new GenericRecordMetadata();
         this.computedCount = 0;
 

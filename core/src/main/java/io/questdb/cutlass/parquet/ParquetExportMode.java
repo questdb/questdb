@@ -28,5 +28,6 @@ public enum ParquetExportMode {
     CURSOR_BASED,
     DIRECT_PAGE_FRAME,
     PAGE_FRAME_BACKED,
+    TABLE_READER,
     TEMP_TABLE
 }

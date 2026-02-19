@@ -118,12 +118,17 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
 
         try {
             ParquetExportMode exportMode = task.getExportMode();
-            if (exportMode != null && exportMode != ParquetExportMode.TEMP_TABLE) {
-                // Streaming export: the mode was determined upstream in
-                // CopyExportFactory so we avoid an extra query compilation.
-                processStreamingExport(task.getSelectText(), exportMode, entry, cairoEngine);
-                success = true;
-                return CopyExportRequestTask.Phase.SUCCESS;
+            switch (exportMode) {
+                case DIRECT_PAGE_FRAME, PAGE_FRAME_BACKED, CURSOR_BASED -> {
+                    // Streaming export: the mode was determined upstream in
+                    // CopyExportFactory so we avoid an extra query compilation.
+                    processStreamingExport(task.getSelectText(), exportMode, entry, cairoEngine);
+                    success = true;
+                    return CopyExportRequestTask.Phase.SUCCESS;
+                }
+                case TEMP_TABLE, TABLE_READER -> {
+                    // Fall through to partition-by-partition export below.
+                }
             }
 
             if (createOp != null) {

@@ -674,6 +674,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 HTTPSerialParquetExporter exporter = state.getOrCreateSerialParquetExporter(engine);
                 if (state.serialExporterInit) {
                     exporter.of(state.task);
+                    exporter.setExportMode(state.parquetExportMode);
                     exporter.process();
                     return;
                 }
@@ -699,10 +700,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         exportMode == ParquetExportMode.DIRECT_PAGE_FRAME ? state.pageFrameCursor : null,
                         state.metadata,
                         state.getWriteCallback(),
-                        null,
+                        exportMode,
                         null
                 );
                 exporter.of(state.task);
+                exporter.setExportMode(exportMode);
                 switch (exportMode) {
                     case DIRECT_PAGE_FRAME -> state.task.setUpStreamPartitionParquetExporter();
                     case PAGE_FRAME_BACKED -> {

@@ -61,6 +61,7 @@ public class HTTPSerialParquetExporter {
     protected CopyExportRequestTask task;
     // Streaming export state (persists across PeerIsSlowToReadException resumes).
     // Ownership is transferred from ExportQueryProcessorState via setup methods.
+    private ParquetExportMode exportMode;
     private RecordCursor fullCursor;
     private RecordToColumnBuffers materializer;
     private DirectLongList materializerColumnData;
@@ -76,6 +77,7 @@ public class HTTPSerialParquetExporter {
      * Must be called when the connection drops or the state is cleared.
      */
     public void clearExportResources() {
+        exportMode = null;
         fullCursor = Misc.free(fullCursor);
         streamingPfc = Misc.free(streamingPfc);
         materializer = Misc.free(materializer);
@@ -86,6 +88,10 @@ public class HTTPSerialParquetExporter {
         this.task = task;
         this.circuitBreaker = task.getCircuitBreaker();
         sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);
+    }
+
+    public void setExportMode(ParquetExportMode exportMode) {
+        this.exportMode = exportMode;
     }
 
     public CopyExportRequestTask.Phase process() throws Exception {
@@ -142,12 +148,11 @@ public class HTTPSerialParquetExporter {
             // start streaming export
             phase = CopyExportRequestTask.Phase.STREAM_SENDING_DATA;
             entry.setPhase(phase);
-            if (materializer != null && materializer.isPageFrameBacked()) {
-                processPageFrameStreamExport();
-            } else if (materializer != null && !materializer.isPageFrameBacked()) {
-                processCursorStreamExport();
-            } else {
-                processStreamExport();
+            assert exportMode != null;
+            switch (exportMode) {
+                case PAGE_FRAME_BACKED -> processPageFrameStreamExport();
+                case CURSOR_BASED -> processCursorStreamExport();
+                case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> processStreamExport();
             }
         } catch (PeerIsSlowToReadException e) {
             createOp = null;
