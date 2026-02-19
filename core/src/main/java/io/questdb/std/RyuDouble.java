@@ -36,8 +36,8 @@ package io.questdb.std;
  * satisfies: {@code value = output * 10^e10}.
  */
 class RyuDouble {
-    static final int DOUBLE_POW5_BITCOUNT = 125;
-    static final int DOUBLE_POW5_INV_BITCOUNT = 125;
+    private static final int DOUBLE_POW5_BITCOUNT = 125;
+    private static final int DOUBLE_POW5_INV_BITCOUNT = 125;
 
     // Upper 128 bits of 5^i for i in [0, 325], stored as (hi64, lo64) pairs.
     private static final long[] DOUBLE_POW5_SPLIT = {
@@ -599,15 +599,15 @@ class RyuDouble {
         return (high << (64 - s)) | (mid >>> s);
     }
 
-    static int pow5bits(int e) {
+    private static int pow5bits(int e) {
         return ((e * 1217359) >>> 19) + 1;
     }
 
-    static boolean multipleOfPowerOf5(long value, int p) {
+    private static boolean multipleOfPowerOf5(long value, int p) {
         return pow5Factor(value) >= p;
     }
 
-    static boolean multipleOfPowerOf2(long value, int p) {
+    private static boolean multipleOfPowerOf2(long value, int p) {
         return (value & ((1L << p) - 1)) == 0;
     }
 

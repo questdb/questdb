@@ -107,7 +107,7 @@ public class NumbersDoubleToDecimalTest {
         Assert.assertEquals(0, Numbers.doubleToDecimal(Double.NEGATIVE_INFINITY, sink64, sink128, sink256));
     }
 
-    // --- Powers of 2: integers (fast Dragon4 path, tinyBitCount==0) ---
+    // --- Powers of 2: integers (Ryu fast path, exact binary integers) ---
 
     @Test
     public void testAutoPowersOfTwoIntegers() {
@@ -125,7 +125,7 @@ public class NumbersDoubleToDecimalTest {
         assertAutoInference(65_536.0, "65536", 5, 0);
     }
 
-    // --- Powers of 2: fractions (slow Dragon4 path, tinyBitCount > 0) ---
+    // --- Powers of 2: fractions (non-integer binary values) ---
 
     @Test
     public void testAutoPowersOfTwoFractions() {
@@ -144,7 +144,7 @@ public class NumbersDoubleToDecimalTest {
         assertAutoInference(-1024.0, "-1024", 4, 0);
     }
 
-    // --- Common decimal fractions (Dragon4 slow path, non-exact binary) ---
+    // --- Common decimal fractions (non-exact binary representations) ---
 
     @Test
     public void testAutoCommonDecimalFractions() {
@@ -175,7 +175,7 @@ public class NumbersDoubleToDecimalTest {
         assertAutoRoundTrip(Math.sqrt(2));
     }
 
-    // --- Small integers (Dragon4 fast path, int32 arithmetic) ---
+    // --- Small integers (Ryu fast path) ---
 
     @Test
     public void testAutoSmallIntegers1Through20() {
@@ -193,7 +193,7 @@ public class NumbersDoubleToDecimalTest {
         }
     }
 
-    // --- Large integers (Dragon4 fast path, int64 arithmetic) ---
+    // --- Large integers (Ryu fast path) ---
 
     @Test
     public void testAutoLargeIntegers() {
