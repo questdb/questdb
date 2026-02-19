@@ -711,25 +711,29 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         PageFrameCursor pfc = state.pageFrameCursor;
                         RecordToColumnBuffers mat = state.materializer;
                         DirectLongList matData = state.materializerColumnData;
-                        state.pageFrameCursor = null;
-                        state.materializer = null;
-                        state.materializerColumnData = null;
                         RecordMetadata adjustedMeta = mat.getAdjustedMetadata();
                         state.task.getStreamPartitionParquetExporter().setUp(
                                 adjustedMeta, pfc, mat.getBaseColumnMap()
                         );
                         exporter.setupPageFrameBackedExport(pfc, mat, matData);
+                        // Transfer ownership only after setup succeeds,
+                        // so state can still free them if setUp() throws.
+                        state.pageFrameCursor = null;
+                        state.materializer = null;
+                        state.materializerColumnData = null;
                     }
                     case CURSOR_BASED -> {
                         RecordCursor cur = state.cursor;
                         RecordToColumnBuffers mat = state.materializer;
                         DirectLongList matData = state.materializerColumnData;
-                        state.cursor = null;
-                        state.materializer = null;
-                        state.materializerColumnData = null;
                         RecordMetadata adjustedMeta = mat.getAdjustedMetadata();
                         state.task.getStreamPartitionParquetExporter().setUp(adjustedMeta);
                         exporter.setupCursorBasedExport(cur, mat, matData);
+                        // Transfer ownership only after setup succeeds,
+                        // so state can still free them if setUp() throws.
+                        state.cursor = null;
+                        state.materializer = null;
+                        state.materializerColumnData = null;
                     }
                     case TEMP_TABLE -> {
                         // Stream partition parquet exporter set up in process() after temp table is created
