@@ -749,7 +749,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             // Notify checkpoint listener with checkpoint timestamp and collected seqTxns
             // Skip for backup checkpoints - backups use manifest-based cleanup, not checkpoint history
             if (!isBackupCheckpoint) {
-                engine.getCheckpointListener().onCheckpointReleased(startedAtTimestamp.get(), checkpointSeqTxns);
+                try {
+                    engine.getCheckpointListener().onCheckpointReleased(startedAtTimestamp.get(), checkpointSeqTxns);
+                } catch (Throwable th) {
+                    LOG.error().$("checkpoint listener failed on release [error=").$(th).I$();
+                }
             }
 
             // Delete checkpoint's "db" directory.

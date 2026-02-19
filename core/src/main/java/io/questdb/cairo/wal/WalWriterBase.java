@@ -162,8 +162,10 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     void notifyWalClosure() {
-        sequencer.notifyWalClosed(tableToken, lastSeqTxn, walId);
-        LOG.debug().$("notified WAL closed [walId=").$(walId).$(", txn=").$(lastSeqTxn).I$();
+        if (lastSeqTxn != NO_TXN) {
+            sequencer.notifyWalClosed(tableToken, lastSeqTxn, walId);
+            LOG.debug().$("notified WAL closed [walId=").$(walId).$(", txn=").$(lastSeqTxn).I$();
+        }
     }
 
     void releaseWalLock() {
