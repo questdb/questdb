@@ -2160,11 +2160,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public int getTtlHoursOrMonths() {
-        return metadata.getTtlHoursOrMonths();
-    }
-
-    @Override
     public int getTimestampType() {
         return timestampType;
     }
@@ -2175,6 +2170,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getTruncateVersion() {
         return txWriter.getTruncateVersion();
+    }
+
+    @Override
+    public int getTtlHoursOrMonths() {
+        return metadata.getTtlHoursOrMonths();
     }
 
     @TestOnly
@@ -2272,48 +2272,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void markDistressed() {
         this.distressed = true;
-    }
-
-    public long preparePartitionForParquetConversion(long partitionTimestamp) {
-        assert metadata.getTimestampIndex() > -1;
-        assert PartitionBy.isPartitioned(partitionBy);
-
-        if (inTransaction()) {
-            assert !tableToken.isWal();
-            LOG.info()
-                    .$("committing open transaction before producing parquet for native partition [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            commit();
-        }
-
-        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            // The partition is active; conversion is currently unsupported.
-            LOG.info()
-                    .$("skipping active partition as it cannot be converted to parquet format [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            return -1L;
-        }
-
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0) {
-            formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
-                    .put(", partition=").put(utf8Sink).put(']');
-        }
-
-        if (txWriter.isPartitionParquetGenerated(partitionIndex) || txWriter.isPartitionParquet(partitionIndex)) {
-            // parquet has been generated for the partition
-            return -1L;
-        }
-
-        squashPartitionForce(partitionIndex);
-
-        return partitionTimestamp;
     }
 
     public boolean markPartitionParquetReady(long partitionTimestamp) {
@@ -2439,6 +2397,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             freeColumns(false);
             throw e;
         }
+    }
+
+    public long preparePartitionForParquetConversion(long partitionTimestamp) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            LOG.info()
+                    .$("committing open transaction before producing parquet for native partition [table=")
+                    .$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            // The partition is active; conversion is currently unsupported.
+            LOG.info()
+                    .$("skipping active partition as it cannot be converted to parquet format [table=")
+                    .$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
+            return -1L;
+        }
+
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical()
+                    .put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink).put(']');
+        }
+
+        if (txWriter.isPartitionParquetGenerated(partitionIndex) || txWriter.isPartitionParquet(partitionIndex)) {
+            // parquet has been generated for the partition
+            return -1L;
+        }
+
+        squashPartitionForce(partitionIndex);
+
+        return partitionTimestamp;
     }
 
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean contextAllowsAnyStructureChanges) {
