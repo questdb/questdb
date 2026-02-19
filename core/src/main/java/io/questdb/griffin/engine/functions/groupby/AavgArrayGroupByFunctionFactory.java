@@ -135,8 +135,7 @@ public class AavgArrayGroupByFunctionFactory implements FunctionFactory {
             } else {
                 long countPtr = allocator.malloc((long) n * Long.BYTES);
                 for (int i = 0; i < n; i++) {
-                    double val = Unsafe.getUnsafe().getDouble(dataPtr + (long) i * Double.BYTES);
-                    Unsafe.getUnsafe().putLong(countPtr + (long) i * Long.BYTES, Numbers.isFinite(val) ? 1 : 0);
+                    Unsafe.getUnsafe().putLong(countPtr + (long) i * Long.BYTES, Numbers.isFinite(array.getDouble(i)) ? 1 : 0);
                 }
                 mapValue.putLong(valueIndex + 2, VARIABLE_MODE);
                 mapValue.putLong(valueIndex + 3, countPtr);

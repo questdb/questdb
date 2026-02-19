@@ -143,12 +143,7 @@ public abstract class AbstractArrayAggGroupByFunction extends ArrayFunction impl
 
     @Override
     public ArrayView getArray(Record rec) {
-        long ptr = rec.getLong(valueIndex + 1);
-        if (ptr == 0) {
-            ptr = rec.getLong(valueIndex);
-        } else {
-            ptr = rec.getLong(valueIndex);
-        }
+        long ptr = rec.getLong(valueIndex);
         if (ptr == 0) {
             return ArrayConstant.NULL;
         }
