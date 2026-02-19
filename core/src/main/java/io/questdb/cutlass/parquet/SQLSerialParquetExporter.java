@@ -70,6 +70,8 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
     private final FilesFacade ff;
     private final Path fromParquet;
     private final Utf8StringSink nameSink = new Utf8StringSink();
+    private final DirectLongList streamColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+    private final RecordToColumnBuffers streamBuffers = new RecordToColumnBuffers();
     private final Path tempPath;
     private final Path toParquet;
     private CharSequence copyExportRoot;
@@ -86,9 +88,11 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
 
     @Override
     public void close() {
-        Misc.free(toParquet);
         Misc.free(fromParquet);
+        Misc.free(streamBuffers);
+        Misc.free(streamColumnData);
         Misc.free(tempPath);
+        Misc.free(toParquet);
     }
 
     @Override
@@ -348,10 +352,9 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         LOG.info().$("starting streaming parquet export [id=").$hexPadded(task.getCopyID())
                 .$(", selectText=").$(task.getSelectText()).$(", mode=").$(mode).$(']').$();
 
-        try (
-                RecordToColumnBuffers buffers = new RecordToColumnBuffers();
-                DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER)
-        ) {
+        streamBuffers.clear();
+        streamColumnData.clear();
+        try {
             // Unwrap QueryProgress so that its register/unregister lifecycle
             // does not null the circuit breaker's cancelledFlag when cursors close.
             // The outer COPY command handles query registration and cancellation.
@@ -404,9 +407,9 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                     VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) baseFactory;
                     try (PageFrameCursor pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                         pfc.setStreamingMode(true);
-                        buffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
-                        RecordMetadata adjustedMeta = buffers.getAdjustedMetadata();
-                        exporter.setUp(adjustedMeta, pfc, buffers.getBaseColumnMap());
+                        streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
+                        RecordMetadata adjustedMeta = streamBuffers.getAdjustedMetadata();
+                        exporter.setUp(adjustedMeta, pfc, streamBuffers.getBaseColumnMap());
 
                         PageFrame frame;
                         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
@@ -415,14 +418,14 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                             if (circuitBreaker.checkIfTripped()) {
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
-                            long rowCount = buffers.buildColumnDataFromPageFrame(pfc, frame, columnData);
-                            exporter.writeHybridFrame(columnData, rowCount);
+                            long rowCount = streamBuffers.buildColumnDataFromPageFrame(pfc, frame, streamColumnData);
+                            exporter.writeHybridFrame(streamColumnData, rowCount);
                             inFlightRows += rowCount;
                             long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
                             if (currentRowsWritten > previousRowsWritten) {
                                 inFlightRows -= (currentRowsWritten - previousRowsWritten);
                                 if (inFlightRows <= rowCount) {
-                                    buffers.releasePinnedBuffers();
+                                    streamBuffers.releasePinnedBuffers();
                                 }
                                 pfc.releaseOpenPartitions();
                                 previousRowsWritten = currentRowsWritten;
@@ -433,7 +436,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                         numOfFiles = 1;
                     }
                 }
-                case CURSOR_BASED -> processCursorExport(baseFactory, buffers, columnData, exporter, phase);
+                case CURSOR_BASED -> processCursorExport(baseFactory, exporter, phase);
                 default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
             }
         } catch (CopyExportException e) {
@@ -467,30 +470,28 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
 
     private void processCursorExport(
             RecordCursorFactory factory,
-            RecordToColumnBuffers buffers,
-            DirectLongList columnData,
             CopyExportRequestTask.StreamPartitionParquetExporter exporter,
             CopyExportRequestTask.Phase phase
     ) throws Exception {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            buffers.setUp(factory.getMetadata());
-            exporter.setUp(buffers.getAdjustedMetadata());
+            streamBuffers.setUp(factory.getMetadata());
+            exporter.setUp(streamBuffers.getAdjustedMetadata());
 
             long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
             long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
             long inFlightRows = 0;
             long rowCount;
-            while ((rowCount = buffers.buildColumnDataFromCursor(cursor, columnData, batchSize)) > 0) {
+            while ((rowCount = streamBuffers.buildColumnDataFromCursor(cursor, streamColumnData, batchSize)) > 0) {
                 if (circuitBreaker.checkIfTripped()) {
                     throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                 }
-                exporter.writeHybridFrame(columnData, rowCount);
+                exporter.writeHybridFrame(streamColumnData, rowCount);
                 inFlightRows += rowCount;
                 long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
                 if (currentRowsWritten > previousRowsWritten) {
                     inFlightRows -= (currentRowsWritten - previousRowsWritten);
                     if (inFlightRows <= rowCount) {
-                        buffers.releasePinnedBuffers();
+                        streamBuffers.releasePinnedBuffers();
                     }
                     previousRowsWritten = currentRowsWritten;
                 }

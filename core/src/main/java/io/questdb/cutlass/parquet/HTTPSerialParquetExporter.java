@@ -60,7 +60,7 @@ public class HTTPSerialParquetExporter {
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected CopyExportRequestTask task;
     // Streaming export state (persists across PeerIsSlowToReadException resumes).
-    // Ownership is transferred from ExportQueryProcessorState via setup methods.
+    // Borrowed from ExportQueryProcessorState via setup methods; not owned.
     private ParquetExportMode exportMode;
     private RecordCursor fullCursor;
     private RecordToColumnBuffers materializer;
@@ -80,8 +80,8 @@ public class HTTPSerialParquetExporter {
         exportMode = null;
         fullCursor = Misc.free(fullCursor);
         streamingPfc = Misc.free(streamingPfc);
-        materializer = Misc.free(materializer);
-        materializerColumnData = Misc.free(materializerColumnData);
+        materializer = null;
+        materializerColumnData = null;
     }
 
     public void of(CopyExportRequestTask task) {

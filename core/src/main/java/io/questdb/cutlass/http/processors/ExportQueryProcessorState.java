@@ -43,6 +43,7 @@ import io.questdb.griffin.model.ExportModel;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
@@ -69,8 +70,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean descending;
     boolean firstParquetWriteCall = true;
     boolean hasNext;
-    DirectLongList materializerColumnData;
-    RecordToColumnBuffers materializer;
+    final DirectLongList materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+    final RecordToColumnBuffers materializer = new RecordToColumnBuffers();
     RecordMetadata metadata;
     boolean noMeta = false;
     PageFrameCursor pageFrameCursor;
@@ -110,8 +111,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         }
         cursor = Misc.free(cursor);
         pageFrameCursor = Misc.free(pageFrameCursor);
-        materializer = Misc.free(materializer);
-        materializerColumnData = Misc.free(materializerColumnData);
+        materializer.clear();
+        materializerColumnData.clear();
         firstParquetWriteCall = true;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
@@ -156,8 +157,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
         pageFrameCursor = Misc.free(pageFrameCursor);
-        materializer = Misc.free(materializer);
-        materializerColumnData = Misc.free(materializerColumnData);
+        Misc.free(materializer);
+        Misc.free(materializerColumnData);
         createParquetOp = Misc.free(createParquetOp);
         task = Misc.free(task);
         writeCallback.of(null, null);

@@ -75,7 +75,6 @@ import io.questdb.std.Decimals;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -250,25 +249,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         RecordCursorFactory unwrapped = RecordToColumnBuffers.unwrapFactory(state.recordCursorFactory);
                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
                         state.pageFrameCursor.setStreamingMode(true);
-                        RecordToColumnBuffers buffers = new RecordToColumnBuffers();
-                        try {
-                            buffers.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
-                            state.materializer = buffers;
-                            state.materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-                        } catch (Throwable th) {
-                            Misc.free(buffers);
-                            throw th;
-                        }
+                        state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
-                        RecordToColumnBuffers buffers = new RecordToColumnBuffers();
-                        try {
-                            buffers.setUp(state.recordCursorFactory.getMetadata());
-                            state.materializer = buffers;
-                            state.materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-                        } catch (Throwable th) {
-                            Misc.free(buffers);
-                            throw th;
-                        }
+                        state.materializer.setUp(state.recordCursorFactory.getMetadata());
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
@@ -700,11 +683,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 adjustedMeta, pfc, mat.getBaseColumnMap()
                         );
                         exporter.setupPageFrameBackedExport(pfc, mat, matData);
-                        // Transfer ownership only after setup succeeds,
-                        // so state can still free them if setUp() throws.
                         state.pageFrameCursor = null;
-                        state.materializer = null;
-                        state.materializerColumnData = null;
                     }
                     case CURSOR_BASED -> {
                         RecordCursor cur = state.cursor;
@@ -713,11 +692,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         RecordMetadata adjustedMeta = mat.getAdjustedMetadata();
                         state.task.getStreamPartitionParquetExporter().setUp(adjustedMeta);
                         exporter.setupCursorBasedExport(cur, mat, matData);
-                        // Transfer ownership only after setup succeeds,
-                        // so state can still free them if setUp() throws.
                         state.cursor = null;
-                        state.materializer = null;
-                        state.materializerColumnData = null;
                     }
                     case TEMP_TABLE -> {
                         // Stream partition parquet exporter set up in process() after temp table is created
