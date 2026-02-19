@@ -2933,7 +2933,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
 
             LOG.info().$("switching native partition to parquet [path=").$substr(pathRootSize, path).I$();
-            ff.copy(path.$(), other.$());
+            if (ff.copy(path.$(), other.$()) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not copy parquet file [table=")
+                        .put(tableToken.getTableName())
+                        .put(", from=").put(path)
+                        .put(", to=").put(other)
+                        .put(']');
+            }
             final long parquetFileLength = ff.length(other.$());
 
             LOG.info().$("copying index files to parquet [path=").$substr(pathRootSize, path).I$();
