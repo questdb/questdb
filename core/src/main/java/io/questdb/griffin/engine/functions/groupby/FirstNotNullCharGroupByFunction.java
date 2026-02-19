@@ -54,8 +54,12 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null)) {
-            computeFirst(mapValue, record, rowId);
+        char val = arg.getChar(record);
+        if (val != CharConstant.ZERO.getChar(null)) {
+            if (mapValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null) || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putChar(valueIndex + 1, val);
+            }
         }
     }
 
@@ -73,7 +77,7 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putChar(valueIndex + 1, srcVal);
         }

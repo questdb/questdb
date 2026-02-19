@@ -4677,72 +4677,6 @@ public class SqlParser {
         return tok;
     }
 
-    static void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (tok == null || tok.isEmpty()) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
-        }
-
-        if (Chars.isQuoted(tok)) {
-            if (tok.length() == 2) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
-            }
-            return;
-        }
-
-        char c = tok.charAt(0);
-
-        if (!(Character.isLetter(c) || c == '_')) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("identifier should start with a letter or '_'");
-        }
-
-        for (int i = 1, n = tok.length(); i < n; i++) {
-            c = tok.charAt(i);
-            if (!(Character.isLetter(c) ||
-                    Character.isDigit(c) ||
-                    c == '_' ||
-                    c == '$')) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
-            }
-        }
-    }
-
-    private void validateNamedWindowReferences(QueryModel model) throws SqlException {
-        LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
-        ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QueryColumn qc = columns.getQuick(i);
-            if (qc.isWindowExpression()) {
-                WindowExpression wc = (WindowExpression) qc;
-                if (wc.isNamedWindowReference() && namedWindows.keyIndex(wc.getWindowName()) > -1) {
-                    throw SqlException.$(wc.getWindowNamePosition(), "window '").put(wc.getWindowName()).put("' is not defined");
-                }
-            }
-            // Check nested expression trees for all columns, not just window expressions,
-            // to catch cases like: row_number() OVER w + 1 (where top-level column is +)
-            validateNamedWindowReferencesInExpr(qc.getAst(), namedWindows);
-        }
-    }
-
-    private void validateNamedWindowReferencesInExpr(ExpressionNode node, LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows) throws SqlException {
-        if (node == null) {
-            return;
-        }
-        if (node.windowExpression != null && node.windowExpression.isNamedWindowReference()) {
-            CharSequence name = node.windowExpression.getWindowName();
-            if (namedWindows.keyIndex(name) > -1) {
-                throw SqlException.$(node.windowExpression.getWindowNamePosition(), "window '").put(name).put("' is not defined");
-            }
-        }
-        if (node.paramCount < 3) {
-            validateNamedWindowReferencesInExpr(node.lhs, namedWindows);
-            validateNamedWindowReferencesInExpr(node.rhs, namedWindows);
-        } else {
-            for (int i = 0, n = node.paramCount; i < n; i++) {
-                validateNamedWindowReferencesInExpr(node.args.getQuick(i), namedWindows);
-            }
-        }
-    }
-
     private void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
         for (QueryModel m = model; m != null; m = m.getNestedModel()) {
             tableNames.clear();
@@ -4813,6 +4747,72 @@ public class SqlParser {
                             .put("union on base table is not supported for materialized views: ").put(baseTableName);
                 }
                 validateMatViewQuery(unionModel, baseTableName);
+            }
+        }
+    }
+
+    private void validateNamedWindowReferences(QueryModel model) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                WindowExpression wc = (WindowExpression) qc;
+                if (wc.isNamedWindowReference() && namedWindows.keyIndex(wc.getWindowName()) > -1) {
+                    throw SqlException.$(wc.getWindowNamePosition(), "window '").put(wc.getWindowName()).put("' is not defined");
+                }
+            }
+            // Check nested expression trees for all columns, not just window expressions,
+            // to catch cases like: row_number() OVER w + 1 (where top-level column is +)
+            validateNamedWindowReferencesInExpr(qc.getAst(), namedWindows);
+        }
+    }
+
+    private void validateNamedWindowReferencesInExpr(ExpressionNode node, LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null && node.windowExpression.isNamedWindowReference()) {
+            CharSequence name = node.windowExpression.getWindowName();
+            if (namedWindows.keyIndex(name) > -1) {
+                throw SqlException.$(node.windowExpression.getWindowNamePosition(), "window '").put(name).put("' is not defined");
+            }
+        }
+        if (node.paramCount < 3) {
+            validateNamedWindowReferencesInExpr(node.lhs, namedWindows);
+            validateNamedWindowReferencesInExpr(node.rhs, namedWindows);
+        } else {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                validateNamedWindowReferencesInExpr(node.args.getQuick(i), namedWindows);
+            }
+        }
+    }
+
+    static void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
+        if (tok == null || tok.isEmpty()) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
+        }
+
+        if (Chars.isQuoted(tok)) {
+            if (tok.length() == 2) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
+            }
+            return;
+        }
+
+        char c = tok.charAt(0);
+
+        if (!(Character.isLetter(c) || c == '_')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("identifier should start with a letter or '_'");
+        }
+
+        for (int i = 1, n = tok.length(); i < n; i++) {
+            c = tok.charAt(i);
+            if (!(Character.isLetter(c) ||
+                    Character.isDigit(c) ||
+                    c == '_' ||
+                    c == '$')) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("identifier can contain letters, digits, '_' or '$'");
             }
         }
     }

@@ -53,8 +53,12 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Numbers.isNull(mapValue.getFloat(valueIndex + 1))) {
-            computeFirst(mapValue, record, rowId);
+        float val = arg.getFloat(record);
+        if (!Numbers.isNull(val)) {
+            if (Numbers.isNull(mapValue.getFloat(valueIndex + 1)) || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putFloat(valueIndex + 1, val);
+            }
         }
     }
 
@@ -72,7 +76,7 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || Numbers.isNull(destValue.getFloat(valueIndex + 1))) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putFloat(valueIndex + 1, srcVal);
         }
