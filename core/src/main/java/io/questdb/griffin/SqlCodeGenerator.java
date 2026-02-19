@@ -4851,8 +4851,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 int encoded = listColumnFilterA.getQuick(i);
                                 int colIdx = (encoded > 0 ? encoded : -encoded) - 1;
                                 int colType = metadata.getColumnType(colIdx);
-                                if (ColumnType.isFixedSize(ColumnType.tagOf(colType))
-                                        && ColumnType.sizeOf(colType) <= Long.BYTES
+                                final short colTypeTag = ColumnType.tagOf(colType);
+                                if (ColumnType.isFixedSize(colTypeTag)
+                                        && (ColumnType.sizeOf(colType) <= Long.BYTES
+                                        || colTypeTag == ColumnType.DECIMAL128
+                                        || colTypeTag == ColumnType.DECIMAL256)
                                         && virtualFactory.getColumnComplexity(colIdx) > threshold) {
                                     if (materializedColIndices == null) {
                                         materializedColIndices = new IntList();

@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -39,42 +41,41 @@ import io.questdb.std.Misc;
 
 class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     private static final long INITIAL_PAGE_SIZE = 8192;
-    private final MemoryCARW buffer;
     private final int[] bufferToColIndex;
-    private final int[] colOffsets;
+    private final MemoryCARW[] buffers;
+    private final int[] colSizes;
+    private final Decimal128 decimal128A = new Decimal128();
+    private final Decimal256 decimal256A = new Decimal256();
     private final int[] colToBufferIndex;
     private final int[] colTypes;
     private final MaterializedRecord recordA = new MaterializedRecord();
     private final MaterializedRecord recordB = new MaterializedRecord();
     private final LongIntHashMap rowIdToOrdinal = new LongIntHashMap();
-    private final int stride;
     private RecordCursor baseCursor;
     private boolean isOpen;
     private int nextOrdinal;
 
     SortKeyMaterializingRecordCursor(int columnCount, IntList materializedColIndices, IntList materializedColTypes) {
         final int bufferCount = materializedColIndices.size();
+        this.buffers = new MemoryCARW[bufferCount];
         this.colToBufferIndex = new int[columnCount];
         this.bufferToColIndex = new int[bufferCount];
         this.colTypes = new int[bufferCount];
-        this.colOffsets = new int[bufferCount];
+        this.colSizes = new int[bufferCount];
 
         for (int i = 0; i < columnCount; i++) {
             colToBufferIndex[i] = -1;
         }
 
-        int offset = 0;
         for (int i = 0; i < bufferCount; i++) {
             final int colIndex = materializedColIndices.getQuick(i);
             final int colType = materializedColTypes.getQuick(i);
+            buffers[i] = Vm.getCARWInstance(INITIAL_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_TREE_CHAIN);
             colToBufferIndex[colIndex] = i;
             bufferToColIndex[i] = colIndex;
             colTypes[i] = colType;
-            colOffsets[i] = offset;
-            offset += ColumnType.sizeOf(colType);
+            colSizes[i] = ColumnType.sizeOf(colType);
         }
-        this.stride = offset;
-        this.buffer = Vm.getCARWInstance(INITIAL_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_TREE_CHAIN);
         this.isOpen = true;
     }
 
@@ -82,14 +83,18 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            buffer.truncate();
+            for (int i = 0, n = buffers.length; i < n; i++) {
+                buffers[i].truncate();
+            }
             baseCursor = Misc.free(baseCursor);
         }
     }
 
     void freeBuffers() {
         close();
-        Misc.free(buffer);
+        for (int i = 0, n = buffers.length; i < n; i++) {
+            buffers[i] = Misc.free(buffers[i]);
+        }
     }
 
     @Override
@@ -114,8 +119,8 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             final long rowId = baseRecord.getRowId();
             final int ordinal = nextOrdinal++;
             rowIdToOrdinal.put(rowId, ordinal);
-            for (int i = 0, n = colTypes.length; i < n; i++) {
-                appendValue(baseRecord, bufferToColIndex[i], colTypes[i]);
+            for (int i = 0, n = buffers.length; i < n; i++) {
+                appendValue(baseRecord, i);
             }
             recordA.setOrdinal(ordinal);
             return true;
@@ -132,16 +137,22 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         this.baseCursor = baseCursor;
         isOpen = true;
-        buffer.truncate();
+        for (int i = 0, n = buffers.length; i < n; i++) {
+            buffers[i].truncate();
+        }
         rowIdToOrdinal.clear();
         nextOrdinal = 0;
-        recordA.of(baseCursor.getRecord(), colToBufferIndex, colOffsets, stride, buffer);
-        recordB.of(baseCursor.getRecordB(), colToBufferIndex, colOffsets, stride, buffer);
+        recordA.of(baseCursor.getRecord(), colToBufferIndex, colSizes, buffers);
+        recordB.of(baseCursor.getRecordB(), colToBufferIndex, colSizes, buffers);
     }
 
     @Override
     public long preComputedStateSize() {
-        return buffer.getAppendOffset();
+        long size = 0;
+        for (int i = 0, n = buffers.length; i < n; i++) {
+            size += buffers[i].getAppendOffset();
+        }
+        return size;
     }
 
     @Override
@@ -161,22 +172,38 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         baseCursor.toTop();
     }
 
-    private void appendValue(Record record, int colIndex, int colType) {
-        switch (ColumnType.tagOf(colType)) {
-            case ColumnType.BOOLEAN -> buffer.putBool(record.getBool(colIndex));
-            case ColumnType.BYTE -> buffer.putByte(record.getByte(colIndex));
-            case ColumnType.SHORT -> buffer.putShort(record.getShort(colIndex));
-            case ColumnType.CHAR -> buffer.putChar(record.getChar(colIndex));
-            case ColumnType.INT -> buffer.putInt(record.getInt(colIndex));
-            case ColumnType.IPv4 -> buffer.putInt(record.getIPv4(colIndex));
-            case ColumnType.FLOAT -> buffer.putFloat(record.getFloat(colIndex));
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE -> buffer.putLong(record.getLong(colIndex));
-            case ColumnType.DOUBLE -> buffer.putDouble(record.getDouble(colIndex));
-            case ColumnType.GEOBYTE -> buffer.putByte(record.getGeoByte(colIndex));
-            case ColumnType.GEOSHORT -> buffer.putShort(record.getGeoShort(colIndex));
-            case ColumnType.GEOINT -> buffer.putInt(record.getGeoInt(colIndex));
-            case ColumnType.GEOLONG -> buffer.putLong(record.getGeoLong(colIndex));
-            default -> throw new UnsupportedOperationException("unsupported column type for materialization: " + ColumnType.nameOf(colType));
+    private void appendValue(Record record, int bufferIndex) {
+        final int colIndex = bufferToColIndex[bufferIndex];
+        final MemoryCARW buf = buffers[bufferIndex];
+        switch (ColumnType.tagOf(colTypes[bufferIndex])) {
+            case ColumnType.BOOLEAN -> buf.putBool(record.getBool(colIndex));
+            case ColumnType.BYTE -> buf.putByte(record.getByte(colIndex));
+            case ColumnType.SHORT -> buf.putShort(record.getShort(colIndex));
+            case ColumnType.CHAR -> buf.putChar(record.getChar(colIndex));
+            case ColumnType.INT -> buf.putInt(record.getInt(colIndex));
+            case ColumnType.IPv4 -> buf.putInt(record.getIPv4(colIndex));
+            case ColumnType.FLOAT -> buf.putFloat(record.getFloat(colIndex));
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE -> buf.putLong(record.getLong(colIndex));
+            case ColumnType.DOUBLE -> buf.putDouble(record.getDouble(colIndex));
+            case ColumnType.DECIMAL8 -> buf.putByte(record.getDecimal8(colIndex));
+            case ColumnType.DECIMAL16 -> buf.putShort(record.getDecimal16(colIndex));
+            case ColumnType.DECIMAL32 -> buf.putInt(record.getDecimal32(colIndex));
+            case ColumnType.DECIMAL64 -> buf.putLong(record.getDecimal64(colIndex));
+            case ColumnType.DECIMAL128 -> {
+                record.getDecimal128(colIndex, decimal128A);
+                buf.putDecimal128(decimal128A.getHigh(), decimal128A.getLow());
+            }
+            case ColumnType.DECIMAL256 -> {
+                record.getDecimal256(colIndex, decimal256A);
+                buf.putDecimal256(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
+            }
+            case ColumnType.GEOBYTE -> buf.putByte(record.getGeoByte(colIndex));
+            case ColumnType.GEOSHORT -> buf.putShort(record.getGeoShort(colIndex));
+            case ColumnType.GEOINT -> buf.putInt(record.getGeoInt(colIndex));
+            case ColumnType.GEOLONG -> buf.putLong(record.getGeoLong(colIndex));
+            default -> throw new UnsupportedOperationException(
+                    "unsupported column type for materialization: " + ColumnType.nameOf(colTypes[bufferIndex])
+            );
         }
     }
 }

@@ -30,6 +30,283 @@ import org.junit.Test;
 public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
 
     @Test
+    public void testDelegateDecimal128() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL(30,2) uses DECIMAL128 storage (16 bytes, precision 19-38)
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(30,2), ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, '1.23', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, '4.56', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, '7.89', '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t1.23
+                    15.0\t4.56
+                    20.0\t7.89
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateBool() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, true, '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, false, '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, true, '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\ttrue
+                    15.0\tfalse
+                    20.0\ttrue
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateByte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v BYTE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, 10, '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, 20, '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, 30, '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t10
+                    15.0\t20
+                    20.0\t30
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateChar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v CHAR, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, 'B', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, 'C', '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\tA
+                    15.0\tB
+                    20.0\tC
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateDate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DATE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, '2024-06-15T00:00:00.000Z', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, '2024-12-31T00:00:00.000Z', '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t2024-01-01T00:00:00.000Z
+                    15.0\t2024-06-15T00:00:00.000Z
+                    20.0\t2024-12-31T00:00:00.000Z
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v IPv4, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, '192.168.1.1', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, '10.0.0.1', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, '172.16.0.1', '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t192.168.1.1
+                    15.0\t10.0.0.1
+                    20.0\t172.16.0.1
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v SHORT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, 100, '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, 200, '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, 300, '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t100
+                    15.0\t200
+                    20.0\t300
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateDecimal16() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL(4,2) uses DECIMAL16 storage (2 bytes, precision 3-4)
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(4,2), ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, '12.34', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, '56.78', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, '90.12', '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertPlanNoLeakCheck(query, """
+                    Sort light
+                      keys: [x]
+                        Materialize sort keys
+                            VirtualRecord
+                              functions: [a+b*c+d,v]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t12.34
+                    15.0\t56.78
+                    20.0\t90.12
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateDecimal256() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL(50,2) uses DECIMAL256 storage (32 bytes, precision 39-76)
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(50,2), ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, '1.23', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, '4.56', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, '7.89', '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t1.23
+                    15.0\t4.56
+                    20.0\t7.89
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateDecimal32() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL(8,2) uses DECIMAL32 storage (4 bytes, precision 5-9)
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(8,2), ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, '1234.56', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, '7890.12', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, '3456.78', '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t1234.56
+                    15.0\t7890.12
+                    20.0\t3456.78
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateDecimal64() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL(15,2) uses DECIMAL64 storage (8 bytes, precision 10-18)
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, '1234567890.12', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, '9876543210.34', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, '5555555555.56', '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t1234567890.12
+                    15.0\t9876543210.34
+                    20.0\t5555555555.56
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateDecimal8() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL(2,1) uses DECIMAL8 storage (1 byte, precision 1-2)
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, '1.2', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, '3.4', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, '5.6', '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\t1.2
+                    15.0\t3.4
+                    20.0\t5.6
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testDelegateVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (2.0, 3.0, 1.0, 1.0, 'hello', '2024-01-01T00:00:00.000000Z'),
+                    (1.0, 2.0, 4.0, 1.0, 'world', '2024-01-01T00:00:01.000000Z'),
+                    (3.0, 1.0, 2.0, 3.0, 'foo', '2024-01-01T00:00:02.000000Z')
+                    """);
+            // v is VARCHAR → delegated to baseRecord (getVarcharA/getVarcharB)
+            String query = "SELECT (a + b) * (c + d) AS x, v FROM t ORDER BY x";
+            assertQueryNoLeakCheck("""
+                    x\tv
+                    10.0\thello
+                    15.0\tworld
+                    20.0\tfoo
+                    """, query);
+        });
+    }
+
+    @Test
     public void testMaterializeComplexIntExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, c INT, d INT, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -368,6 +645,8 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
         });
     }
 
+    // --- Type routing tests: verify which types go through materialization ---
+
     @Test
     public void testNoMaterializeSimpleExpression() throws Exception {
         assertMemoryLeak(() -> {
@@ -420,7 +699,101 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
         });
     }
 
-    // --- Type routing tests: verify which types go through materialization ---
+    @Test
+    public void testRouteDecimal128Materialized() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL(30,2) uses DECIMAL128 storage (16 bytes)
+            execute("CREATE TABLE t (a DECIMAL(30,2), b DECIMAL(30,2), e INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('10.00', '20.00', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('30.00', '5.00', -1, '2024-01-01T00:00:01.000000Z'),
+                    ('15.00', '25.00', 2, '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
+            assertPlanNoLeakCheck(query, """
+                    Sort light
+                      keys: [x, e]
+                        Materialize sort keys
+                            VirtualRecord
+                              functions: [case([0<e,a,b]),e]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+            // e=1→a=10.00, e=-1→b=5.00, e=2→a=15.00
+            assertQueryNoLeakCheck("""
+                    x\te
+                    5.00\t-1
+                    10.00\t1
+                    15.00\t2
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testRouteDecimal256Materialized() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL(50,2) uses DECIMAL256 storage (32 bytes)
+            execute("CREATE TABLE t (a DECIMAL(50,2), b DECIMAL(50,2), e INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('10.00', '20.00', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('30.00', '5.00', -1, '2024-01-01T00:00:01.000000Z'),
+                    ('15.00', '25.00', 2, '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
+            assertPlanNoLeakCheck(query, """
+                    Sort light
+                      keys: [x, e]
+                        Materialize sort keys
+                            VirtualRecord
+                              functions: [case([0<e,a,b]),e]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+            // e=1→a=10.00, e=-1→b=5.00, e=2→a=15.00
+            assertQueryNoLeakCheck("""
+                    x\te
+                    5.00\t-1
+                    10.00\t1
+                    15.00\t2
+                    """, query);
+        });
+    }
+
+    @Test
+    public void testRouteDecimal64Materialized() throws Exception {
+        assertMemoryLeak(() -> {
+            // DECIMAL(15,2) uses DECIMAL64 storage (8 bytes)
+            execute("CREATE TABLE t (a DECIMAL(15,2), b DECIMAL(15,2), e INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('10.00', '20.00', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('30.00', '5.00', -1, '2024-01-01T00:00:01.000000Z'),
+                    ('15.00', '25.00', 2, '2024-01-01T00:00:02.000000Z')
+                    """);
+            String query = "SELECT CASE WHEN e > 0 THEN a ELSE b END AS x, e FROM t ORDER BY x, e";
+            assertPlanNoLeakCheck(query, """
+                    Sort light
+                      keys: [x, e]
+                        Materialize sort keys
+                            VirtualRecord
+                              functions: [case([0<e,a,b]),e]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+            // e=1→a=10.00, e=-1→b=5.00, e=2→a=15.00
+            assertQueryNoLeakCheck("""
+                    x\te
+                    5.00\t-1
+                    10.00\t1
+                    15.00\t2
+                    """, query);
+        });
+    }
 
     @Test
     public void testRouteBooleanMaterialized() throws Exception {
@@ -774,6 +1147,8 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """, query);
         });
     }
+
+    // --- Delegation tests: non-materialized columns read through MaterializedRecord ---
 
     @Test
     public void testRouteTimestampMaterialized() throws Exception {

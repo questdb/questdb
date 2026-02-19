@@ -39,11 +39,10 @@ import org.jetbrains.annotations.Nullable;
 
 class MaterializedRecord implements Record {
     private Record baseRecord;
-    private MemoryCARW buffer;
-    private int[] colOffsets;
+    private MemoryCARW[] buffers;
+    private int[] colSizes;
     private int[] colToBufferIndex;
     private int ordinal;
-    private int stride;
 
     @Override
     public ArrayView getArray(int col, int columnType) {
@@ -64,7 +63,7 @@ class MaterializedRecord implements Record {
     public boolean getBool(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getBool(rowOffset(idx));
+            return buffers[idx].getBool(offset(idx));
         }
         return baseRecord.getBool(col);
     }
@@ -73,7 +72,7 @@ class MaterializedRecord implements Record {
     public byte getByte(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getByte(rowOffset(idx));
+            return buffers[idx].getByte(offset(idx));
         }
         return baseRecord.getByte(col);
     }
@@ -82,7 +81,7 @@ class MaterializedRecord implements Record {
     public char getChar(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getChar(rowOffset(idx));
+            return buffers[idx].getChar(offset(idx));
         }
         return baseRecord.getChar(col);
     }
@@ -91,38 +90,64 @@ class MaterializedRecord implements Record {
     public long getDate(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getLong(rowOffset(idx));
+            return buffers[idx].getLong(offset(idx));
         }
         return baseRecord.getDate(col);
     }
 
     @Override
     public void getDecimal128(int col, Decimal128 sink) {
+        int idx = colToBufferIndex[col];
+        if (idx >= 0) {
+            buffers[idx].getDecimal128(offset(idx), sink);
+            return;
+        }
         baseRecord.getDecimal128(col, sink);
     }
 
     @Override
     public short getDecimal16(int col) {
+        int idx = colToBufferIndex[col];
+        if (idx >= 0) {
+            return buffers[idx].getShort(offset(idx));
+        }
         return baseRecord.getDecimal16(col);
     }
 
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
+        int idx = colToBufferIndex[col];
+        if (idx >= 0) {
+            buffers[idx].getDecimal256(offset(idx), sink);
+            return;
+        }
         baseRecord.getDecimal256(col, sink);
     }
 
     @Override
     public int getDecimal32(int col) {
+        int idx = colToBufferIndex[col];
+        if (idx >= 0) {
+            return buffers[idx].getInt(offset(idx));
+        }
         return baseRecord.getDecimal32(col);
     }
 
     @Override
     public long getDecimal64(int col) {
+        int idx = colToBufferIndex[col];
+        if (idx >= 0) {
+            return buffers[idx].getLong(offset(idx));
+        }
         return baseRecord.getDecimal64(col);
     }
 
     @Override
     public byte getDecimal8(int col) {
+        int idx = colToBufferIndex[col];
+        if (idx >= 0) {
+            return buffers[idx].getByte(offset(idx));
+        }
         return baseRecord.getDecimal8(col);
     }
 
@@ -130,7 +155,7 @@ class MaterializedRecord implements Record {
     public double getDouble(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getDouble(rowOffset(idx));
+            return buffers[idx].getDouble(offset(idx));
         }
         return baseRecord.getDouble(col);
     }
@@ -139,7 +164,7 @@ class MaterializedRecord implements Record {
     public float getFloat(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getFloat(rowOffset(idx));
+            return buffers[idx].getFloat(offset(idx));
         }
         return baseRecord.getFloat(col);
     }
@@ -148,7 +173,7 @@ class MaterializedRecord implements Record {
     public byte getGeoByte(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getByte(rowOffset(idx));
+            return buffers[idx].getByte(offset(idx));
         }
         return baseRecord.getGeoByte(col);
     }
@@ -157,7 +182,7 @@ class MaterializedRecord implements Record {
     public int getGeoInt(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getInt(rowOffset(idx));
+            return buffers[idx].getInt(offset(idx));
         }
         return baseRecord.getGeoInt(col);
     }
@@ -166,7 +191,7 @@ class MaterializedRecord implements Record {
     public long getGeoLong(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getLong(rowOffset(idx));
+            return buffers[idx].getLong(offset(idx));
         }
         return baseRecord.getGeoLong(col);
     }
@@ -175,7 +200,7 @@ class MaterializedRecord implements Record {
     public short getGeoShort(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getShort(rowOffset(idx));
+            return buffers[idx].getShort(offset(idx));
         }
         return baseRecord.getGeoShort(col);
     }
@@ -184,7 +209,7 @@ class MaterializedRecord implements Record {
     public int getIPv4(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getIPv4(rowOffset(idx));
+            return buffers[idx].getIPv4(offset(idx));
         }
         return baseRecord.getIPv4(col);
     }
@@ -193,7 +218,7 @@ class MaterializedRecord implements Record {
     public int getInt(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getInt(rowOffset(idx));
+            return buffers[idx].getInt(offset(idx));
         }
         return baseRecord.getInt(col);
     }
@@ -207,7 +232,7 @@ class MaterializedRecord implements Record {
     public long getLong(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getLong(rowOffset(idx));
+            return buffers[idx].getLong(offset(idx));
         }
         return baseRecord.getLong(col);
     }
@@ -256,7 +281,7 @@ class MaterializedRecord implements Record {
     public short getShort(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getShort(rowOffset(idx));
+            return buffers[idx].getShort(offset(idx));
         }
         return baseRecord.getShort(col);
     }
@@ -291,7 +316,7 @@ class MaterializedRecord implements Record {
     public long getTimestamp(int col) {
         int idx = colToBufferIndex[col];
         if (idx >= 0) {
-            return buffer.getLong(rowOffset(idx));
+            return buffers[idx].getLong(offset(idx));
         }
         return baseRecord.getTimestamp(col);
     }
@@ -327,19 +352,18 @@ class MaterializedRecord implements Record {
         return baseRecord;
     }
 
-    void of(Record baseRecord, int[] colToBufferIndex, int[] colOffsets, int stride, MemoryCARW buffer) {
+    void of(Record baseRecord, int[] colToBufferIndex, int[] colSizes, MemoryCARW[] buffers) {
         this.baseRecord = baseRecord;
         this.colToBufferIndex = colToBufferIndex;
-        this.colOffsets = colOffsets;
-        this.stride = stride;
-        this.buffer = buffer;
+        this.colSizes = colSizes;
+        this.buffers = buffers;
     }
 
     void setOrdinal(int ordinal) {
         this.ordinal = ordinal;
     }
 
-    private long rowOffset(int bufferIdx) {
-        return (long) ordinal * stride + colOffsets[bufferIdx];
+    private long offset(int bufferIdx) {
+        return (long) ordinal * colSizes[bufferIdx];
     }
 }
