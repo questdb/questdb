@@ -225,33 +225,93 @@ public final class Numbers {
     }
 
     public static void append(CharSink<?> sink, double value, int scale) {
-        String s = Double.toString(value);
-        int len = s.length();
+        final long doubleBits = Double.doubleToRawLongBits(value);
+        long ieeeMantissa = doubleBits & SIGNIF_BIT_MASK;
+        int ieeeExponent = (int) ((doubleBits & EXP_BIT_MASK) >> EXP_SHIFT);
 
-        // Find decimal point and 'E' marker positions
-        int dot = -1;
-        int ePos = -1;
-        for (int i = 0; i < len; i++) {
-            char c = s.charAt(i);
-            if (c == '.') {
-                dot = i;
-            } else if (c == 'E') {
-                ePos = i;
-                break;
+        // NaN or Infinity
+        if (ieeeExponent == 2047) {
+            if (ieeeMantissa != 0) {
+                sink.putAscii("NaN");
+            } else if ((doubleBits & SIGN_BIT_MASK) != 0) {
+                sink.putAscii("-Infinity");
+            } else {
+                sink.putAscii("Infinity");
             }
+            return;
         }
 
-        // Determine how many characters to output
-        int end = len;
-        if (dot >= 0 && ePos < 0 && scale < MAX_DOUBLE_SCALE) {
-            // Fixed-point format with potential truncation
-            int fracLen = len - dot - 1;
-            if (fracLen > scale) {
-                end = dot + 1 + Math.max(scale, 1);
-            }
+        // Negative sign (including -0.0)
+        if ((doubleBits & SIGN_BIT_MASK) != 0) {
+            sink.putAscii('-');
         }
 
-        sink.putAscii(s, 0, end);
+        // Zero
+        if (ieeeExponent == 0 && ieeeMantissa == 0) {
+            sink.putAscii("0.0");
+            return;
+        }
+
+        // Decompose via Ryu
+        int[] e10 = tlE10.get();
+        long output = RyuDouble.d2d(ieeeMantissa, ieeeExponent, e10);
+        int olength = RyuDouble.decimalLength17(output);
+        int decExp = e10[0] + olength;
+
+        if (decExp > 0 && decExp < 8) {
+            // Fixed-point with integer part: e.g. "1234.567" or "1234000.0"
+            if (olength <= decExp) {
+                for (int i = 0; i < olength; i++) {
+                    sink.putAscii((char) ('0' + (int) (output / pow10[olength - 1 - i] % 10)));
+                }
+                for (int i = olength; i < decExp; i++) {
+                    sink.putAscii('0');
+                }
+                sink.putAscii(".0");
+            } else {
+                int fracDigits = olength - decExp;
+                if (scale < MAX_DOUBLE_SCALE && fracDigits > scale) {
+                    fracDigits = Math.max(scale, 1);
+                }
+                for (int i = 0; i < decExp; i++) {
+                    sink.putAscii((char) ('0' + (int) (output / pow10[olength - 1 - i] % 10)));
+                }
+                sink.putAscii('.');
+                for (int i = 0; i < fracDigits; i++) {
+                    sink.putAscii((char) ('0' + (int) (output / pow10[olength - 1 - decExp - i] % 10)));
+                }
+            }
+        } else if (decExp <= 0 && decExp > -3) {
+            // Leading-zero fixed-point: e.g. "0.00123"
+            int leadingZeros = -decExp;
+            int totalFrac = leadingZeros + olength;
+            int digitsFromOutput = olength;
+            if (scale < MAX_DOUBLE_SCALE && totalFrac > scale) {
+                totalFrac = Math.max(scale, 1);
+                digitsFromOutput = Math.max(totalFrac - leadingZeros, 0);
+            }
+            int zerosToWrite = Math.min(leadingZeros, totalFrac);
+            sink.putAscii("0.");
+            for (int i = 0; i < zerosToWrite; i++) {
+                sink.putAscii('0');
+            }
+            for (int i = 0; i < digitsFromOutput; i++) {
+                sink.putAscii((char) ('0' + (int) (output / pow10[olength - 1 - i] % 10)));
+            }
+        } else {
+            // Scientific notation: e.g. "1.23E8" or "1.0E-4"
+            sink.putAscii((char) ('0' + (int) (output / pow10[olength - 1] % 10)));
+            sink.putAscii('.');
+            if (olength > 1) {
+                for (int i = 1; i < olength; i++) {
+                    sink.putAscii((char) ('0' + (int) (output / pow10[olength - 1 - i] % 10)));
+                }
+            } else {
+                sink.putAscii('0');
+            }
+            sink.putAscii('E');
+            append(sink, decExp - 1);
+        }
     }
 
     public static void appendHex(CharSink<?> sink, final int value) {

@@ -402,15 +402,15 @@ public class NumbersTest {
             float d3 = rnd.nextFloat() * Float.MAX_VALUE;
             sink.clear();
             Numbers.append(sink, (double) d1);
-            TestUtils.assertEquals(Double.toString(d1), sink);
+            Assert.assertEquals((double) d1, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
             Numbers.append(sink, (double) d2);
-            TestUtils.assertEquals(Double.toString(d2), sink);
+            Assert.assertEquals((double) d2, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
             Numbers.append(sink, (double) d3);
-            TestUtils.assertEquals(Double.toString(d3), sink);
+            Assert.assertEquals((double) d3, Double.parseDouble(sink.toString()), 0);
         }
     }
 
@@ -446,7 +446,7 @@ public class NumbersTest {
     public void testFormatDoubleFast() {
         sink.clear();
         Numbers.append(sink, -5.9522650387500933e18);
-        TestUtils.assertEquals("-5.9522650387500933E18", sink);
+        TestUtils.assertEquals("-5.952265038750093E18", sink);
     }
 
     @Test
@@ -507,15 +507,15 @@ public class NumbersTest {
             double d3 = rnd.nextDouble() * Double.MAX_VALUE;
             sink.clear();
             Numbers.append(sink, d1);
-            TestUtils.assertEquals(Double.toString(d1), sink);
+            Assert.assertEquals(d1, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
             Numbers.append(sink, d2);
-            TestUtils.assertEquals(Double.toString(d2), sink);
+            Assert.assertEquals(d2, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
             Numbers.append(sink, d3);
-            TestUtils.assertEquals(Double.toString(d3), sink);
+            Assert.assertEquals(d3, Double.parseDouble(sink.toString()), 0);
 
         }
     }
