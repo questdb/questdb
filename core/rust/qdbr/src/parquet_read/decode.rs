@@ -21,7 +21,8 @@ use crate::parquet_read::decoders::{
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
 use crate::parquet_read::slicer::{
-    DataPageFixedSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer, PlainVarSlicer,
+    DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer,
+    PlainVarSlicer,
 };
 use crate::parquet_read::{ColumnChunkBuffers, ColumnChunkStats, RowGroupStatBuffers};
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
@@ -114,6 +115,266 @@ const LONG256_NULL: [u8; 32] = [
 ];
 const DOUBLE_NULL: [u8; 8] = [0, 0, 0, 0, 0, 0, 248, 127];
 
+#[derive(Clone, Copy)]
+struct FilterDecodeContext<'a> {
+    page_row_start: usize,
+    page_row_count: usize,
+    row_group_lo: usize,
+    rows_filter: &'a [i64],
+}
+
+#[derive(Clone, Copy)]
+struct DecodeModeContext<'a> {
+    row_lo: usize,
+    row_hi: usize,
+    filter: Option<FilterDecodeContext<'a>>,
+}
+
+impl<'a> DecodeModeContext<'a> {
+    #[inline]
+    fn unfiltered(row_lo: usize, row_hi: usize) -> Self {
+        Self { row_lo, row_hi, filter: None }
+    }
+
+    #[inline]
+    fn filtered(row_lo: usize, row_hi: usize, filter: FilterDecodeContext<'a>) -> Self {
+        Self { row_lo, row_hi, filter: Some(filter) }
+    }
+
+    #[inline]
+    fn output_row_count(self) -> usize {
+        self.row_hi - self.row_lo
+    }
+
+    #[inline]
+    fn source_row_count(self) -> usize {
+        match self.filter {
+            Some(filter) => filter.page_row_count,
+            None => self.row_hi,
+        }
+    }
+
+    #[inline]
+    fn sliced_row_count(self) -> usize {
+        match self.filter {
+            Some(filter) => filter.page_row_count,
+            None => self.output_row_count(),
+        }
+    }
+
+    #[inline]
+    fn filtered_context(self) -> FilterDecodeContext<'a> {
+        self.filter
+            .expect("filtered decode context missing for filtered mode")
+    }
+}
+
+#[inline(always)]
+fn clear_aux_buffers(bufs: &mut ColumnChunkBuffers) {
+    bufs.aux_vec.clear();
+    bufs.aux_ptr = ptr::null_mut();
+}
+
+#[inline(always)]
+fn decode_page0_mode<T: Pushable, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    mode: DecodeModeContext<'_>,
+    sink: &mut T,
+) -> ParquetResult<()> {
+    if FILTERED {
+        let filter = mode.filtered_context();
+        decode_page0_filtered::<_, FILL_NULLS>(
+            page,
+            filter.page_row_start,
+            filter.page_row_count,
+            filter.row_group_lo,
+            mode.row_lo,
+            mode.row_hi,
+            filter.rows_filter,
+            sink,
+        )
+    } else {
+        decode_page0(page, mode.row_lo, mode.row_hi, sink)
+    }
+}
+
+#[inline(always)]
+fn decode_array_page_mode<T: DataPageSlicer, const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    mode: DecodeModeContext<'_>,
+    slicer: &mut T,
+    bufs: &mut ColumnChunkBuffers,
+) -> ParquetResult<()> {
+    if FILTERED {
+        let filter = mode.filtered_context();
+        decode_array_page_filtered::<_, FILL_NULLS>(
+            page,
+            filter.page_row_start,
+            filter.page_row_count,
+            filter.row_group_lo,
+            mode.row_lo,
+            mode.row_hi,
+            filter.rows_filter,
+            slicer,
+            bufs,
+        )
+    } else {
+        decode_array_page(page, mode.row_lo, mode.row_hi, slicer, bufs)
+    }
+}
+
+#[inline(always)]
+fn decode_fixed_decimal_mode<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    bufs: &mut ColumnChunkBuffers,
+    values_buffer: &[u8],
+    mode: DecodeModeContext<'_>,
+    src_len: usize,
+    target_tag: ColumnTypeTag,
+) -> ParquetResult<()> {
+    if FILTERED {
+        let filter = mode.filtered_context();
+        decode_fixed_decimal_filtered::<FILL_NULLS>(
+            page,
+            bufs,
+            values_buffer,
+            filter.page_row_start,
+            filter.page_row_count,
+            filter.row_group_lo,
+            mode.row_lo,
+            mode.row_hi,
+            filter.rows_filter,
+            src_len,
+            target_tag,
+        )
+    } else {
+        decode_fixed_decimal(
+            page,
+            bufs,
+            values_buffer,
+            mode.row_lo,
+            mode.row_hi,
+            mode.output_row_count(),
+            src_len,
+            target_tag,
+        )
+    }
+}
+
+#[inline(always)]
+fn decode_fixed_decimal_dict_mode<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict_page: &DictPage,
+    bufs: &mut ColumnChunkBuffers,
+    values_buffer: &[u8],
+    mode: DecodeModeContext<'_>,
+    src_len: usize,
+    target_tag: ColumnTypeTag,
+) -> ParquetResult<()> {
+    if FILTERED {
+        let filter = mode.filtered_context();
+        decode_fixed_decimal_filtered_dict::<FILL_NULLS>(
+            page,
+            dict_page,
+            bufs,
+            values_buffer,
+            filter.page_row_start,
+            filter.page_row_count,
+            filter.row_group_lo,
+            mode.row_lo,
+            mode.row_hi,
+            filter.rows_filter,
+            src_len,
+            target_tag,
+        )
+    } else {
+        decode_fixed_decimal_dict(
+            page,
+            dict_page,
+            bufs,
+            values_buffer,
+            mode.row_lo,
+            mode.row_hi,
+            mode.output_row_count(),
+            src_len,
+            target_tag,
+        )
+    }
+}
+
+#[inline(always)]
+fn decode_byte_array_decimal_mode<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    bufs: &mut ColumnChunkBuffers,
+    values_buffer: &[u8],
+    mode: DecodeModeContext<'_>,
+    target_tag: ColumnTypeTag,
+) -> ParquetResult<()> {
+    if FILTERED {
+        let filter = mode.filtered_context();
+        decode_byte_array_decimal_filtered::<FILL_NULLS>(
+            page,
+            bufs,
+            values_buffer,
+            filter.page_row_start,
+            filter.page_row_count,
+            filter.row_group_lo,
+            mode.row_lo,
+            mode.row_hi,
+            filter.rows_filter,
+            target_tag,
+        )
+    } else {
+        decode_byte_array_decimal(
+            page,
+            bufs,
+            values_buffer,
+            mode.row_lo,
+            mode.row_hi,
+            mode.output_row_count(),
+            target_tag,
+        )
+    }
+}
+
+#[inline(always)]
+fn decode_byte_array_decimal_dict_mode<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict_page: &DictPage,
+    bufs: &mut ColumnChunkBuffers,
+    values_buffer: &[u8],
+    mode: DecodeModeContext<'_>,
+    target_tag: ColumnTypeTag,
+) -> ParquetResult<()> {
+    if FILTERED {
+        let filter = mode.filtered_context();
+        decode_byte_array_decimal_filtered_dict::<FILL_NULLS>(
+            page,
+            dict_page,
+            bufs,
+            values_buffer,
+            filter.page_row_start,
+            filter.page_row_count,
+            filter.row_group_lo,
+            mode.row_lo,
+            mode.row_hi,
+            filter.rows_filter,
+            target_tag,
+        )
+    } else {
+        decode_byte_array_decimal_dict(
+            page,
+            dict_page,
+            bufs,
+            values_buffer,
+            mode.row_lo,
+            mode.row_hi,
+            mode.output_row_count(),
+            target_tag,
+        )
+    }
+}
+
 /// Decode a filtered data page.
 /// - `FILL_NULLS = false`: skip rows not in filter
 /// - `FILL_NULLS = true`: fill nulls for rows not in filter
@@ -134,1498 +395,116 @@ pub(super) fn decode_page_filtered<const FILL_NULLS: bool>(
         return Ok(());
     }
 
+    let mode = DecodeModeContext::filtered(
+        row_lo,
+        row_hi,
+        FilterDecodeContext {
+            page_row_start,
+            page_row_count,
+            row_group_lo,
+            rows_filter,
+        },
+    );
+    decode_page_dispatch::<true, FILL_NULLS>(page, dict, bufs, col_info, mode)
+}
+
+pub fn decode_page(
+    page: &DataPage,
+    dict: Option<&DictPage>,
+    bufs: &mut ColumnChunkBuffers,
+    col_info: QdbMetaCol,
+    row_lo: usize,
+    row_hi: usize,
+) -> ParquetResult<()> {
+    let mode = DecodeModeContext::unfiltered(row_lo, row_hi);
+    decode_page_dispatch::<false, false>(page, dict, bufs, col_info, mode)
+}
+
+fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict: Option<&DictPage>,
+    bufs: &mut ColumnChunkBuffers,
+    col_info: QdbMetaCol,
+    mode: DecodeModeContext<'_>,
+) -> ParquetResult<()> {
     let (_rep_levels, _, values_buffer) = split_buffer(page)?;
     let column_type = col_info.column_type;
 
-    let encoding_error = true;
-    let decoding_result = match (
-        page.descriptor.primitive_type.physical_type,
-        page.descriptor.primitive_type.logical_type,
-        page.descriptor.primitive_type.converted_type,
-    ) {
-        (PhysicalType::Int32, logical_type, converted_type) => {
-            match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::BYTE,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::GeoByte) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_BYTE,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Decimal8) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL8,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::BYTE,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoByte) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_BYTE,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Byte,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::BYTE,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::GeoByte,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::GEOHASH_BYTE,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Decimal8,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::DECIMAL8,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::SHORT,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::GeoShort) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_SHORT,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Decimal16) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL16,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::SHORT,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoShort) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_SHORT,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Short | ColumnTypeTag::Char,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::SHORT,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::GeoShort,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::GEOHASH_SHORT,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Decimal16,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::DECIMAL16,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Int) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::GeoInt) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_INT,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Decimal32) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL32,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::INT,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::IPV4,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoInt) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_INT,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Int,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::INT,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::IPv4,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::IPV4,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::GeoInt,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::GEOHASH_INT,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Decimal32,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::DECIMAL32,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i32, i64, DayToMillisConverter>::new_with(
-                            values_buffer,
-                            bufs,
-                            nulls::TIMESTAMP,
-                            DayToMillisConverter::new(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (encoding, dict, logical_type, ColumnTypeTag::Double) => {
-                    let scale = match logical_type {
-                        Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
-                        _ => match converted_type {
-                            Some(PrimitiveConvertedType::Decimal(_, scale)) => scale,
-                            _ => 0,
-                        },
-                    };
+    let primitive_type = &page.descriptor.primitive_type;
+    let supported = match primitive_type.physical_type {
+        PhysicalType::Int32 => decode_int32_dispatch::<FILTERED, FILL_NULLS>(
+            page,
+            dict,
+            values_buffer,
+            bufs,
+            column_type,
+            primitive_type.logical_type,
+            primitive_type.converted_type,
+            mode,
+        ),
+        PhysicalType::Int64 => decode_int64_dispatch::<FILTERED, FILL_NULLS>(
+            page,
+            dict,
+            values_buffer,
+            bufs,
+            column_type,
+            primitive_type.logical_type,
+            mode,
+        ),
+        PhysicalType::FixedLenByteArray(len) => decode_fixed_len_dispatch::<FILTERED, FILL_NULLS>(
+            page,
+            dict,
+            values_buffer,
+            bufs,
+            column_type,
+            primitive_type.logical_type,
+            primitive_type.converted_type,
+            len,
+            mode,
+        ),
+        PhysicalType::ByteArray => decode_byte_array_dispatch::<FILTERED, FILL_NULLS>(
+            page,
+            dict,
+            values_buffer,
+            bufs,
+            col_info,
+            column_type,
+            primitive_type.logical_type,
+            primitive_type.converted_type,
+            mode,
+        ),
+        PhysicalType::Int96 => decode_int96_dispatch::<FILTERED, FILL_NULLS>(
+            page,
+            dict,
+            values_buffer,
+            bufs,
+            column_type,
+            primitive_type.logical_type,
+            mode,
+        ),
+        PhysicalType::Double => decode_double_dispatch::<FILTERED, FILL_NULLS>(
+            page,
+            dict,
+            values_buffer,
+            bufs,
+            column_type,
+            mode,
+        ),
+        typ => decode_other_fixed_dispatch::<FILTERED, FILL_NULLS>(
+            page,
+            dict,
+            values_buffer,
+            bufs,
+            column_type,
+            typ,
+            mode,
+        ),
+    }?;
 
-                    match (encoding, dict) {
-                        (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                            let dict_decoder = ConvertablePrimitiveDictDecoder::new(
-                                dict_page,
-                                Int32ToDoubleConverter::new(scale),
-                            );
-                            decode_page0_filtered::<_, FILL_NULLS>(
-                                page,
-                                page_row_start,
-                                page_row_count,
-                                row_group_lo,
-                                row_lo,
-                                row_hi,
-                                rows_filter,
-                                &mut RleDictionaryDecoder::try_new(
-                                    values_buffer,
-                                    dict_decoder,
-                                    page_row_count,
-                                    nulls::DOUBLE,
-                                    bufs,
-                                )?,
-                            )?;
-                            Ok(())
-                        }
-                        (Encoding::Plain, _) => {
-                            decode_page0_filtered::<_, FILL_NULLS>(
-                                page,
-                                page_row_start,
-                                page_row_count,
-                                row_group_lo,
-                                row_lo,
-                                row_hi,
-                                rows_filter,
-                                &mut PlainPrimitiveDecoder::new_with(
-                                    values_buffer,
-                                    bufs,
-                                    nulls::DOUBLE,
-                                    Int32ToDoubleConverter::new(scale),
-                                ),
-                            )?;
-                            Ok(())
-                        }
-                        _ => Err(encoding_error),
-                    }
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::Int64, logical_type, _) => {
-            match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (Encoding::Plain, _, _, ColumnTypeTag::Decimal64) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i64>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL64,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::Plain,
-                    _,
-                    _,
-                    ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-                ) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::LONG),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::GeoLong) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<i64>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_LONG,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Decimal64) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL64,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::DeltaBinaryPacked,
-                    _,
-                    _,
-                    ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
-                ) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::LONG,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoLong) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_LONG,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Decimal64,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::LONG,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::LONG,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::GeoLong,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::GEOHASH_LONG,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::FixedLenByteArray(16), Some(PrimitiveLogicalType::Uuid), _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Uuid) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<u128, u128, Int128ToUuidConverter>::new_with(
-                            values_buffer,
-                            bufs,
-                            nulls::UUID,
-                            Int128ToUuidConverter::new(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (
-            PhysicalType::FixedLenByteArray(src_len),
-            Some(PrimitiveLogicalType::Decimal(_, _)),
-            _,
-        )
-        | (
-            PhysicalType::FixedLenByteArray(src_len),
-            _,
-            Some(PrimitiveConvertedType::Decimal(_, _)),
-        ) => {
-            match (page.encoding(), dict) {
-                (Encoding::Plain, _) => decode_fixed_decimal_filtered::<FILL_NULLS>(
-                    page,
-                    bufs,
-                    values_buffer,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    src_len,
-                    column_type.tag(),
-                )?,
-                (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                    decode_fixed_decimal_filtered_dict::<FILL_NULLS>(
-                        page,
-                        dict_page,
-                        bufs,
-                        values_buffer,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        src_len,
-                        column_type.tag(),
-                    )?
-                }
-                _ => {
-                    return Err(fmt_err!(
-                        Unsupported,
-                        "only Plain and dictionary encodings supported for FixedLenByteArray decimals, got {:?}",
-                        page.encoding()
-                    ))
-                }
-            }
-            Ok(())
-        }
-        (PhysicalType::FixedLenByteArray(16), _, _) => match (page.encoding(), column_type.tag()) {
-            (Encoding::Plain, ColumnTypeTag::Long128) => {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut PlainPrimitiveDecoder::<Long128, Long128>::new(
-                        values_buffer,
-                        bufs,
-                        Long128::NULL,
-                    ),
-                )?;
-                Ok(())
-            }
-            _ => Err(encoding_error),
-        },
-        (PhysicalType::FixedLenByteArray(32), _, _) => match (page.encoding(), column_type.tag()) {
-            (Encoding::Plain, ColumnTypeTag::Long256) => {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut PlainPrimitiveDecoder::<Long256, Long256>::new(
-                        values_buffer,
-                        bufs,
-                        Long256::NULL,
-                    ),
-                )?;
-                Ok(())
-            }
-            _ => Err(encoding_error),
-        },
-        (PhysicalType::FixedLenByteArray(len), _, _) => {
-            match (page.encoding(), len, column_type.tag()) {
-                (
-                    Encoding::Plain,
-                    _len,
-                    ColumnTypeTag::Decimal8
-                    | ColumnTypeTag::Decimal16
-                    | ColumnTypeTag::Decimal32
-                    | ColumnTypeTag::Decimal64
-                    | ColumnTypeTag::Decimal128
-                    | ColumnTypeTag::Decimal256,
-                ) => {
-                    decode_fixed_decimal_filtered::<FILL_NULLS>(
-                        page,
-                        bufs,
-                        values_buffer,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        len,
-                        column_type.tag(),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::Decimal(_, _)), _)
-        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
-            match (page.encoding(), dict) {
-                (Encoding::Plain, _) => decode_byte_array_decimal_filtered::<FILL_NULLS>(
-                    page,
-                    bufs,
-                    values_buffer,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    column_type.tag(),
-                )?,
-                (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                    decode_byte_array_decimal_filtered_dict::<FILL_NULLS>(
-                        page,
-                        dict_page,
-                        bufs,
-                        values_buffer,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        column_type.tag(),
-                    )?
-                }
-                _ => {
-                    return Err(fmt_err!(
-                        Unsupported,
-                        "only Plain and dictionary encodings supported for ByteArray decimals, got {:?}",
-                        page.encoding()
-                    ))
-                }
-            }
-            Ok(())
-        }
-        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
-        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
-            let encoding = page.encoding();
-            match (encoding, dict, column_type.tag()) {
-                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::String) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(
-                        values_buffer,
-                        page_row_count,
-                        page_row_count,
-                    )?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut StringColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(
-                        values_buffer,
-                        page_row_count,
-                        page_row_count,
-                    )?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut VarcharColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    ColumnTypeTag::Varchar,
-                ) => {
-                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        page_row_count,
-                        &LONG256_NULL,
-                    )?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut VarcharColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, ColumnTypeTag::String) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, page_row_count);
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut StringColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, page_row_count);
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut VarcharColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaByteArray, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer = DeltaBytesArraySlicer::try_new(
-                        values_buffer,
-                        page_row_count,
-                        page_row_count,
-                    )?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut VarcharColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
-                    if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
-                        return Err(fmt_err!(
-                            Unsupported,
-                            "only special LocalKeyIsGlobal-encoded symbol columns are supported",
-                        ));
-                    }
-                    let dict_decoder = RleLocalIsGlobalSymbolDictDecoder::new(dict_page);
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::SYMBOL,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::ByteArray, _, _) => {
-            let encoding = page.encoding();
-            match (encoding, dict, column_type.tag()) {
-                (
-                    Encoding::Plain,
-                    _,
-                    ColumnTypeTag::Decimal8
-                    | ColumnTypeTag::Decimal16
-                    | ColumnTypeTag::Decimal32
-                    | ColumnTypeTag::Decimal64
-                    | ColumnTypeTag::Decimal128
-                    | ColumnTypeTag::Decimal256,
-                ) => {
-                    decode_byte_array_decimal_filtered::<FILL_NULLS>(
-                        page,
-                        bufs,
-                        values_buffer,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        column_type.tag(),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    ColumnTypeTag::Decimal8
-                    | ColumnTypeTag::Decimal16
-                    | ColumnTypeTag::Decimal32
-                    | ColumnTypeTag::Decimal64
-                    | ColumnTypeTag::Decimal128
-                    | ColumnTypeTag::Decimal256,
-                ) => {
-                    decode_byte_array_decimal_filtered_dict::<FILL_NULLS>(
-                        page,
-                        dict_page,
-                        bufs,
-                        values_buffer,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        column_type.tag(),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, ColumnTypeTag::Binary) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, page_row_count);
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut BinaryColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Binary) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(
-                        values_buffer,
-                        page_row_count,
-                        page_row_count,
-                    )?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut BinaryColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    ColumnTypeTag::Binary,
-                ) => {
-                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        page_row_count,
-                        &[],
-                    )?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut BinaryColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, ColumnTypeTag::Array) => {
-                    // raw array encoding
-                    let mut slicer = PlainVarSlicer::new(values_buffer, page_row_count);
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RawArrayColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Array) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(
-                        values_buffer,
-                        page_row_count,
-                        page_row_count,
-                    )?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RawArrayColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::Int96, logical_type, _) => {
-            // Int96 is used for nano timestamps
-            match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (Encoding::Plain, _, _, ColumnTypeTag::Timestamp) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::new_with(
-                            values_buffer,
-                            bufs,
-                            nulls::TIMESTAMP,
-                            Int96ToTimestampConverter::new(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::PlainDictionary | Encoding::RleDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Timestamp,
-                ) => {
-                    let dict_decoder =
-                        ConvertablePrimitiveDictDecoder::<
-                            Int96Timestamp,
-                            i64,
-                            Int96ToTimestampConverter,
-                        >::new(dict_page, Int96ToTimestampConverter::new());
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            nulls::TIMESTAMP,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::Double, _, _) => match (page.encoding(), dict, column_type.tag()) {
-            (Encoding::Plain, _, ColumnTypeTag::Double) => {
-                bufs.aux_vec.clear();
-                bufs.aux_ptr = ptr::null_mut();
-
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
-                )?;
-                Ok(())
-            }
-            (
-                Encoding::RleDictionary | Encoding::PlainDictionary,
-                Some(dict_page),
-                ColumnTypeTag::Double,
-            ) => {
-                bufs.aux_vec.clear();
-                bufs.aux_ptr = ptr::null_mut();
-
-                let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut RleDictionaryDecoder::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        page_row_count,
-                        f64::NAN,
-                        bufs,
-                    )?,
-                )?;
-                Ok(())
-            }
-            (Encoding::Plain, _, ColumnTypeTag::Array) => {
-                let mut slicer = DataPageFixedSlicer::<8>::new(values_buffer, page_row_count);
-                decode_array_page_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut slicer,
-                    bufs,
-                )?;
-                Ok(())
-            }
-            (
-                Encoding::RleDictionary | Encoding::PlainDictionary,
-                Some(dict_page),
-                ColumnTypeTag::Array,
-            ) => {
-                let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-                let mut slicer = RleDictionarySlicer::try_new(
-                    values_buffer,
-                    dict_decoder,
-                    page_row_count,
-                    page_row_count,
-                    &DOUBLE_NULL,
-                )?;
-                decode_array_page_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut slicer,
-                    bufs,
-                )?;
-                Ok(())
-            }
-            _ => Err(encoding_error),
-        },
-        // check remaining fixed-size types
-        (typ, _, _) => {
-            bufs.aux_vec.clear();
-            bufs.aux_ptr = ptr::null_mut();
-
-            match (page.encoding(), dict, typ, column_type.tag()) {
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    PhysicalType::Float,
-                    ColumnTypeTag::Float,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            page_row_count,
-                            f32::NAN,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Float) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut PlainBooleanDecoder::new(values_buffer, page_row_count, bufs, 0),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Rle, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-                    decode_page0_filtered::<_, FILL_NULLS>(
-                        page,
-                        page_row_start,
-                        page_row_count,
-                        row_group_lo,
-                        row_lo,
-                        row_hi,
-                        rows_filter,
-                        &mut RleBooleanDecoder::try_new(values_buffer, page_row_count, bufs, 0)?,
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-    };
-
-    match decoding_result {
-        Ok(()) => Ok(()),
-        Err(_) => Err(fmt_err!(
+    if supported {
+        Ok(())
+    } else if FILTERED {
+        Err(fmt_err!(
             Unsupported,
             "encoding not supported for filtered decode, physical type: {:?}, \
                 encoding {:?}, \
@@ -1637,845 +516,791 @@ pub(super) fn decode_page_filtered<const FILL_NULLS: bool>(
             page.descriptor.primitive_type.logical_type,
             page.descriptor.primitive_type.converted_type,
             column_type,
-        )),
+        ))
+    } else {
+        Err(fmt_err!(
+            Unsupported,
+            "encoding not supported, physical type: {:?}, \
+                encoding {:?}, \
+                logical type {:?}, \
+                converted type: {:?}, \
+                column type {:?}",
+            page.descriptor.primitive_type.physical_type,
+            page.encoding(),
+            page.descriptor.primitive_type.logical_type,
+            page.descriptor.primitive_type.converted_type,
+            column_type,
+        ))
     }
 }
 
-pub fn decode_page(
+fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
+    values_buffer: &[u8],
+    bufs: &mut ColumnChunkBuffers,
+    column_type: ColumnType,
+    logical_type: Option<PrimitiveLogicalType>,
+    converted_type: Option<PrimitiveConvertedType>,
+    mode: DecodeModeContext<'_>,
+) -> ParquetResult<bool> {
+    let row_hi = mode.source_row_count();
+    match (page.encoding(), dict, logical_type, column_type.tag()) {
+        (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, nulls::BYTE),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::GeoByte) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i8>::new(
+                    values_buffer,
+                    bufs,
+                    nulls::GEOHASH_BYTE,
+                ),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::Decimal8) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, nulls::DECIMAL8),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::BYTE,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoByte) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::GEOHASH_BYTE,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Byte,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::BYTE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::GeoByte,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::GEOHASH_BYTE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Decimal8,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::DECIMAL8,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i16>::new(values_buffer, bufs, nulls::SHORT),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::GeoShort) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i16>::new(
+                    values_buffer,
+                    bufs,
+                    nulls::GEOHASH_SHORT,
+                ),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::Decimal16) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i16>::new(values_buffer, bufs, nulls::DECIMAL16),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::SHORT,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoShort) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::GEOHASH_SHORT,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Short | ColumnTypeTag::Char,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::SHORT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::GeoShort,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::GEOHASH_SHORT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Decimal16,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::DECIMAL16,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::Int) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::GeoInt) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::GEOHASH_INT),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::Decimal32) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::DECIMAL32),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::INT,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::IPV4,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoInt) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::GEOHASH_INT,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Int,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::INT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::IPv4,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::IPV4,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::GeoInt,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::GEOHASH_INT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Decimal32,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::DECIMAL32,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i64, DayToMillisConverter>::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::TIMESTAMP,
+                    DayToMillisConverter::new(),
+                ),
+            )?;
+            Ok(true)
+        }
+        (encoding, dict, logical_type, ColumnTypeTag::Double) => {
+            let scale = match logical_type {
+                Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
+                _ => match converted_type {
+                    Some(PrimitiveConvertedType::Decimal(_, scale)) => scale,
+                    _ => 0,
+                },
+            };
+
+            match (encoding, dict) {
+                (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
+                    let dict_decoder = ConvertablePrimitiveDictDecoder::new(
+                        dict_page,
+                        Int32ToDoubleConverter::new(scale),
+                    );
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::DOUBLE,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(true)
+                }
+                (Encoding::Plain, _) => {
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut PlainPrimitiveDecoder::new_with(
+                            values_buffer,
+                            bufs,
+                            nulls::DOUBLE,
+                            Int32ToDoubleConverter::new(scale),
+                        ),
+                    )?;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        }
+        _ => Ok(false),
+    }
+}
+
+fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict: Option<&DictPage>,
+    values_buffer: &[u8],
+    bufs: &mut ColumnChunkBuffers,
+    column_type: ColumnType,
+    logical_type: Option<PrimitiveLogicalType>,
+    mode: DecodeModeContext<'_>,
+) -> ParquetResult<bool> {
+    let row_hi = mode.source_row_count();
+    match (page.encoding(), dict, logical_type, column_type.tag()) {
+        (Encoding::Plain, _, _, ColumnTypeTag::Decimal64) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::DECIMAL64),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::Plain,
+            _,
+            _,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::LONG),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, _, ColumnTypeTag::GeoLong) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::GEOHASH_LONG),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Decimal64) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::DECIMAL64,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::DeltaBinaryPacked,
+            _,
+            _,
+            ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
+        ) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::LONG,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoLong) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::GEOHASH_LONG,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Decimal64,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::DECIMAL64,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::GeoLong,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::GEOHASH_LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict: Option<&DictPage>,
+    values_buffer: &[u8],
+    bufs: &mut ColumnChunkBuffers,
+    column_type: ColumnType,
+    logical_type: Option<PrimitiveLogicalType>,
+    converted_type: Option<PrimitiveConvertedType>,
+    len: usize,
+    mode: DecodeModeContext<'_>,
+) -> ParquetResult<bool> {
+    match (len, logical_type, converted_type) {
+        (16, Some(PrimitiveLogicalType::Uuid), _) => match (page.encoding(), column_type.tag()) {
+            (Encoding::Plain, ColumnTypeTag::Uuid) => {
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut PlainPrimitiveDecoder::<u128, u128, Int128ToUuidConverter>::new_with(
+                        values_buffer,
+                        bufs,
+                        nulls::UUID,
+                        Int128ToUuidConverter::new(),
+                    ),
+                )?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        },
+        (src_len, Some(PrimitiveLogicalType::Decimal(_, _)), _)
+        | (src_len, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
+            match (page.encoding(), dict) {
+    (Encoding::Plain, _) => decode_fixed_decimal_mode::<FILTERED, FILL_NULLS>(
+        page,
+        bufs,
+        values_buffer,
+        mode,
+        src_len,
+        column_type.tag(),
+    )?,
+    (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
+        decode_fixed_decimal_dict_mode::<FILTERED, FILL_NULLS>(
+            page,
+            dict_page,
+            bufs,
+            values_buffer,
+            mode,
+            src_len,
+            column_type.tag(),
+        )?
+    }
+    _ => {
+        return Err(fmt_err!(
+            Unsupported,
+            "only Plain and dictionary encodings supported for FixedLenByteArray decimals, got {:?}",
+            page.encoding()
+        ))
+    }
+}
+            Ok(true)
+        }
+        (len, _, _) => match (page.encoding(), len, column_type.tag()) {
+            (Encoding::Plain, 16, ColumnTypeTag::Long128) => {
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut PlainPrimitiveDecoder::<Long128, Long128>::new(
+                        values_buffer,
+                        bufs,
+                        Long128::NULL,
+                    ),
+                )?;
+                Ok(true)
+            }
+            (Encoding::Plain, 32, ColumnTypeTag::Long256) => {
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut PlainPrimitiveDecoder::<Long256, Long256>::new(
+                        values_buffer,
+                        bufs,
+                        Long256::NULL,
+                    ),
+                )?;
+                Ok(true)
+            }
+            (
+                Encoding::Plain,
+                _len,
+                ColumnTypeTag::Decimal8
+                | ColumnTypeTag::Decimal16
+                | ColumnTypeTag::Decimal32
+                | ColumnTypeTag::Decimal64
+                | ColumnTypeTag::Decimal128
+                | ColumnTypeTag::Decimal256,
+            ) => {
+                decode_fixed_decimal_mode::<FILTERED, FILL_NULLS>(
+                    page,
+                    bufs,
+                    values_buffer,
+                    mode,
+                    len,
+                    column_type.tag(),
+                )?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        },
+    }
+}
+
+fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict: Option<&DictPage>,
+    values_buffer: &[u8],
     bufs: &mut ColumnChunkBuffers,
     col_info: QdbMetaCol,
-    row_lo: usize,
-    row_hi: usize,
-) -> ParquetResult<()> {
-    let (_rep_levels, _, values_buffer) = split_buffer(page)?;
-    let column_type = col_info.column_type;
-    let row_count = row_hi - row_lo;
+    column_type: ColumnType,
+    logical_type: Option<PrimitiveLogicalType>,
+    converted_type: Option<PrimitiveConvertedType>,
+    mode: DecodeModeContext<'_>,
+) -> ParquetResult<bool> {
+    let row_hi = mode.source_row_count();
+    let row_count = mode.sliced_row_count();
 
-    let encoding_error = true;
-    let decoding_result = match (
-        page.descriptor.primitive_type.physical_type,
-        page.descriptor.primitive_type.logical_type,
-        page.descriptor.primitive_type.converted_type,
-    ) {
-        (PhysicalType::Int32, logical_type, converted_type) => {
-            match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::BYTE,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::GeoByte) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_BYTE,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Decimal8) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i8>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL8,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::BYTE,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoByte) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_BYTE,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Byte,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::BYTE,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::GeoByte,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::GEOHASH_BYTE,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Decimal8,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::DECIMAL8,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::SHORT,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::GeoShort) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_SHORT,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Decimal16) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i16>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL16,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::SHORT,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoShort) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i16, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_SHORT,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Short | ColumnTypeTag::Char,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::SHORT,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::GeoShort,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::GEOHASH_SHORT,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Decimal16,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::DECIMAL16,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Int) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::INT),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32>::new(values_buffer, bufs, nulls::IPV4),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::GeoInt) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_INT,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Decimal32) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL32,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::INT,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::IPV4,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoInt) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i32, i32>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_INT,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Int,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::INT,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::IPv4,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::IPV4,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::GeoInt,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::GEOHASH_INT,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Decimal32,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::DECIMAL32,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i32, i64, DayToMillisConverter>::new_with(
-                            values_buffer,
-                            bufs,
-                            nulls::TIMESTAMP,
-                            DayToMillisConverter::new(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (encoding, dict, logical_type, ColumnTypeTag::Double) => {
-                    let scale = match logical_type {
-                        Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
-                        _ => match converted_type {
-                            Some(PrimitiveConvertedType::Decimal(_, scale)) => scale,
-                            _ => 0,
-                        },
-                    };
-
-                    match (encoding, dict) {
-                        (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                            let dict_decoder = ConvertablePrimitiveDictDecoder::new(
-                                dict_page,
-                                Int32ToDoubleConverter::new(scale),
-                            );
-                            decode_page0(
-                                page,
-                                row_lo,
-                                row_hi,
-                                &mut RleDictionaryDecoder::try_new(
-                                    values_buffer,
-                                    dict_decoder,
-                                    row_hi,
-                                    nulls::DOUBLE,
-                                    bufs,
-                                )?,
-                            )?;
-                            Ok(())
-                        }
-                        (Encoding::Plain, _) => {
-                            decode_page0(
-                                page,
-                                row_lo,
-                                row_hi,
-                                &mut PlainPrimitiveDecoder::new_with(
-                                    values_buffer,
-                                    bufs,
-                                    nulls::DOUBLE,
-                                    Int32ToDoubleConverter::new(scale),
-                                ),
-                            )?;
-                            Ok(())
-                        }
-                        _ => Err(encoding_error),
-                    }
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::Int64, logical_type, _) => {
-            match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (Encoding::Plain, _, _, ColumnTypeTag::Decimal64) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i64>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL64,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::Plain,
-                    _,
-                    _,
-                    ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-                ) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i64>::new(values_buffer, bufs, nulls::LONG),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, _, ColumnTypeTag::GeoLong) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<i64>::new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_LONG,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Decimal64) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::DECIMAL64,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::DeltaBinaryPacked,
-                    _,
-                    _,
-                    ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
-                ) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::LONG,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoLong) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut DeltaBinaryPackedDecoder::<i64, i64>::try_new(
-                            values_buffer,
-                            bufs,
-                            nulls::GEOHASH_LONG,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Decimal64,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::DECIMAL64,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::LONG,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::GeoLong,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::GEOHASH_LONG,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::FixedLenByteArray(16), Some(PrimitiveLogicalType::Uuid), _) => {
-            match (page.encoding(), column_type.tag()) {
-                (Encoding::Plain, ColumnTypeTag::Uuid) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<u128, u128, Int128ToUuidConverter>::new_with(
-                            values_buffer,
-                            bufs,
-                            nulls::UUID,
-                            Int128ToUuidConverter::new(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        // Handle FixedLenByteArray with Decimal logical type
-        // This supports all source sizes 1-32 and all decimal target types
-        (
-            PhysicalType::FixedLenByteArray(src_len),
-            Some(PrimitiveLogicalType::Decimal(_, _)),
-            _,
-        )
-        | (
-            PhysicalType::FixedLenByteArray(src_len),
-            _,
-            Some(PrimitiveConvertedType::Decimal(_, _)),
-        ) => {
+    match (logical_type, converted_type) {
+        (Some(PrimitiveLogicalType::Decimal(_, _)), _)
+        | (_, Some(PrimitiveConvertedType::Decimal(_, _))) => {
             match (page.encoding(), dict) {
-                (Encoding::Plain, _) => decode_fixed_decimal(
+                (Encoding::Plain, _) => decode_byte_array_decimal_mode::<FILTERED, FILL_NULLS>(
                     page,
                     bufs,
                     values_buffer,
-                    row_lo,
-                    row_hi,
-                    row_count,
-                    src_len,
+                    mode,
                     column_type.tag(),
                 )?,
                 (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                    decode_fixed_decimal_dict(
+                    decode_byte_array_decimal_dict_mode::<FILTERED, FILL_NULLS>(
                         page,
                         dict_page,
                         bufs,
                         values_buffer,
-                        row_lo,
-                        row_hi,
-                        row_count,
-                        src_len,
+                        mode,
                         column_type.tag(),
                     )?
                 }
                 _ => {
                     return Err(fmt_err!(
-                        Unsupported,
-                        "only Plain and dictionary encodings supported for FixedLenByteArray decimals, got {:?}",
-                        page.encoding()
-                    ))
+            Unsupported,
+            "only Plain and dictionary encodings supported for ByteArray decimals, got {:?}",
+            page.encoding()
+        ))
                 }
             }
-            Ok(())
+            Ok(true)
         }
-        (PhysicalType::FixedLenByteArray(len), _, _) => {
-            match (page.encoding(), len, column_type.tag()) {
-                (Encoding::Plain, 16, ColumnTypeTag::Long128) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<Long128, Long128>::new(
-                            values_buffer,
-                            bufs,
-                            Long128::NULL,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, 32, ColumnTypeTag::Long256) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<Long256, Long256>::new(
-                            values_buffer,
-                            bufs,
-                            Long256::NULL,
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::Plain,
-                    _len,
-                    ColumnTypeTag::Decimal8
-                    | ColumnTypeTag::Decimal16
-                    | ColumnTypeTag::Decimal32
-                    | ColumnTypeTag::Decimal64
-                    | ColumnTypeTag::Decimal128
-                    | ColumnTypeTag::Decimal256,
-                ) => {
-                    decode_fixed_decimal(
-                        page,
-                        bufs,
-                        values_buffer,
-                        row_lo,
-                        row_hi,
-                        row_count,
-                        len,
-                        column_type.tag(),
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
-        }
-        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::Decimal(_, _)), _)
-        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
-            match (page.encoding(), dict) {
-                (Encoding::Plain, _) => decode_byte_array_decimal(
-                    page,
-                    bufs,
-                    values_buffer,
-                    row_lo,
-                    row_hi,
-                    row_count,
-                    column_type.tag(),
-                )?,
-                (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                    decode_byte_array_decimal_dict(
-                        page,
-                        dict_page,
-                        bufs,
-                        values_buffer,
-                        row_lo,
-                        row_hi,
-                        row_count,
-                        column_type.tag(),
-                    )?
-                }
-                _ => {
-                    return Err(fmt_err!(
-                        Unsupported,
-                        "only Plain and dictionary encodings supported for ByteArray decimals, got {:?}",
-                        page.encoding()
-                    ))
-                }
-            }
-            Ok(())
-        }
-        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
-        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
+        (Some(PrimitiveLogicalType::String), _) | (_, Some(PrimitiveConvertedType::Utf8)) => {
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::String) => {
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Varchar) => {
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -2490,44 +1315,40 @@ pub fn decode_page(
                         row_count,
                         &LONG256_NULL,
                     )?;
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (Encoding::Plain, _, ColumnTypeTag::String) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Varchar) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (Encoding::DeltaByteArray, _, ColumnTypeTag::Varchar) => {
                     let mut slicer =
                         DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
                     if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
@@ -2537,10 +1358,9 @@ pub fn decode_page(
                         ));
                     }
                     let dict_decoder = RleLocalIsGlobalSymbolDictDecoder::new(dict_page);
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut RleDictionaryDecoder::try_new(
                             values_buffer,
                             dict_decoder,
@@ -2549,12 +1369,12 @@ pub fn decode_page(
                             bufs,
                         )?,
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
-                _ => Err(encoding_error),
+                _ => Ok(false),
             }
         }
-        (PhysicalType::ByteArray, _, _) => {
+        _ => {
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (
@@ -2567,16 +1387,14 @@ pub fn decode_page(
                     | ColumnTypeTag::Decimal128
                     | ColumnTypeTag::Decimal256,
                 ) => {
-                    decode_byte_array_decimal(
+                    decode_byte_array_decimal_mode::<FILTERED, FILL_NULLS>(
                         page,
                         bufs,
                         values_buffer,
-                        row_lo,
-                        row_hi,
-                        row_count,
+                        mode,
                         column_type.tag(),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -2588,38 +1406,34 @@ pub fn decode_page(
                     | ColumnTypeTag::Decimal128
                     | ColumnTypeTag::Decimal256,
                 ) => {
-                    decode_byte_array_decimal_dict(
+                    decode_byte_array_decimal_dict_mode::<FILTERED, FILL_NULLS>(
                         page,
                         dict_page,
                         bufs,
                         values_buffer,
-                        row_lo,
-                        row_hi,
-                        row_count,
+                        mode,
                         column_type.tag(),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Binary) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Binary) => {
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
@@ -2634,218 +1448,216 @@ pub fn decode_page(
                         row_count,
                         &[],
                     )?;
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Array) => {
                     // raw array encoding
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::Array) => {
                     let mut slicer =
                         DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
-                    decode_page0(
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
-                        row_lo,
-                        row_hi,
+                        mode,
                         &mut RawArrayColumnSink::new(&mut slicer, bufs),
                     )?;
-                    Ok(())
+                    Ok(true)
                 }
-                _ => Err(encoding_error),
+                _ => Ok(false),
             }
         }
-        (PhysicalType::Int96, logical_type, _) => {
-            // Int96 is used for nano timestamps
-            match (page.encoding(), dict, logical_type, column_type.tag()) {
-                (Encoding::Plain, _, _, ColumnTypeTag::Timestamp) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::new_with(
-                            values_buffer,
-                            bufs,
-                            nulls::TIMESTAMP,
-                            Int96ToTimestampConverter::new(),
-                        ),
-                    )?;
-                    Ok(())
-                }
-                (
-                    Encoding::PlainDictionary | Encoding::RleDictionary,
-                    Some(dict_page),
-                    _,
-                    ColumnTypeTag::Timestamp,
-                ) => {
-                    let dict_decoder =
-                        ConvertablePrimitiveDictDecoder::<
-                            Int96Timestamp,
-                            i64,
-                            Int96ToTimestampConverter,
-                        >::new(dict_page, Int96ToTimestampConverter::new());
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::TIMESTAMP,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
+    }
+}
+
+fn decode_int96_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict: Option<&DictPage>,
+    values_buffer: &[u8],
+    bufs: &mut ColumnChunkBuffers,
+    column_type: ColumnType,
+    logical_type: Option<PrimitiveLogicalType>,
+    mode: DecodeModeContext<'_>,
+) -> ParquetResult<bool> {
+    let row_hi = mode.source_row_count();
+    match (page.encoding(), dict, logical_type, column_type.tag()) {
+        (Encoding::Plain, _, _, ColumnTypeTag::Timestamp) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::TIMESTAMP,
+                    Int96ToTimestampConverter::new(),
+                ),
+            )?;
+            Ok(true)
         }
-        (PhysicalType::Double, _, _) => match (page.encoding(), dict, column_type.tag()) {
-            (Encoding::Plain, _, ColumnTypeTag::Double) => {
-                bufs.aux_vec.clear();
-                bufs.aux_ptr = ptr::null_mut();
-
-                decode_page0(
-                    page,
-                    row_lo,
-                    row_hi,
-                    &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
-                )?;
-                Ok(())
-            }
-            (
-                Encoding::RleDictionary | Encoding::PlainDictionary,
-                Some(dict_page),
-                ColumnTypeTag::Double,
-            ) => {
-                bufs.aux_vec.clear();
-                bufs.aux_ptr = ptr::null_mut();
-
-                let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
-                decode_page0(
-                    page,
-                    row_lo,
-                    row_hi,
-                    &mut RleDictionaryDecoder::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        f64::NAN,
-                        bufs,
-                    )?,
-                )?;
-                Ok(())
-            }
-            (Encoding::Plain, _, ColumnTypeTag::Array) => {
-                let mut slicer = DataPageFixedSlicer::<8>::new(values_buffer, row_count);
-                decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
-                Ok(())
-            }
-            (
-                Encoding::RleDictionary | Encoding::PlainDictionary,
-                Some(dict_page),
-                ColumnTypeTag::Array,
-            ) => {
-                let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-                let mut slicer = RleDictionarySlicer::try_new(
+        (
+            Encoding::PlainDictionary | Encoding::RleDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Timestamp,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<
+                Int96Timestamp,
+                i64,
+                Int96ToTimestampConverter,
+            >::new(dict_page, Int96ToTimestampConverter::new());
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
                     values_buffer,
                     dict_decoder,
                     row_hi,
-                    row_count,
-                    &DOUBLE_NULL,
-                )?;
-                decode_array_page(page, row_lo, row_hi, &mut slicer, bufs)?;
-                Ok(())
-            }
-            _ => Err(encoding_error),
-        },
-        // check remaining fixed-size types
-        (typ, _, _) => {
-            bufs.aux_vec.clear();
-            bufs.aux_ptr = ptr::null_mut();
-
-            match (page.encoding(), dict, typ, column_type.tag()) {
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    PhysicalType::Float,
-                    ColumnTypeTag::Float,
-                ) => {
-                    let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            f32::NAN,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Float) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Plain, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut PlainBooleanDecoder::new(values_buffer, row_hi, bufs, 0),
-                    )?;
-                    Ok(())
-                }
-                (Encoding::Rle, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
-                    decode_page0(
-                        page,
-                        row_lo,
-                        row_hi,
-                        &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
-                    )?;
-                    Ok(())
-                }
-                _ => Err(encoding_error),
-            }
+                    nulls::TIMESTAMP,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
         }
-    };
+        _ => Ok(false),
+    }
+}
 
-    match decoding_result {
-        Ok(row_count) => Ok(row_count),
-        Err(_) => Err(fmt_err!(
-            Unsupported,
-            "encoding not supported, physical type: {:?}, \
-                encoding {:?}, \
-                logical type {:?}, \
-                converted type: {:?}, \
-                column type {:?}",
-            page.descriptor.primitive_type.physical_type,
-            page.encoding(),
-            page.descriptor.primitive_type.logical_type,
-            page.descriptor.primitive_type.converted_type,
-            column_type,
-        )),
+fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict: Option<&DictPage>,
+    values_buffer: &[u8],
+    bufs: &mut ColumnChunkBuffers,
+    column_type: ColumnType,
+    mode: DecodeModeContext<'_>,
+) -> ParquetResult<bool> {
+    let row_hi = mode.source_row_count();
+    let row_count = mode.sliced_row_count();
+
+    match (page.encoding(), dict, column_type.tag()) {
+        (Encoding::Plain, _, ColumnTypeTag::Double) => {
+            clear_aux_buffers(bufs);
+
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<f64>::new(values_buffer, bufs, f64::NAN),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Double,
+        ) => {
+            clear_aux_buffers(bufs);
+
+            let dict_decoder = BasePrimitiveDictDecoder::<f64, f64>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    f64::NAN,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Array) => {
+            let mut slicer = DataPageFixedSlicer::<8>::new(values_buffer, row_count);
+            decode_array_page_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut slicer, bufs)?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Array,
+        ) => {
+            let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
+            let mut slicer = RleDictionarySlicer::try_new(
+                values_buffer,
+                dict_decoder,
+                row_hi,
+                row_count,
+                &DOUBLE_NULL,
+            )?;
+            decode_array_page_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut slicer, bufs)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage,
+    dict: Option<&DictPage>,
+    values_buffer: &[u8],
+    bufs: &mut ColumnChunkBuffers,
+    column_type: ColumnType,
+    typ: PhysicalType,
+    mode: DecodeModeContext<'_>,
+) -> ParquetResult<bool> {
+    let row_hi = mode.source_row_count();
+    clear_aux_buffers(bufs);
+    match (page.encoding(), dict, typ, column_type.tag()) {
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Float,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<f32, f32>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    f32::NAN,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Float) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<f32>::new(values_buffer, bufs, f32::NAN),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainBooleanDecoder::new(values_buffer, row_hi, bufs, 0),
+            )?;
+            Ok(true)
+        }
+        (Encoding::Rle, _, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
+            )?;
+            Ok(true)
+        }
+        _ => Ok(false),
     }
 }
 
@@ -5133,7 +3945,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_flba_decimal_rejects_non_sign_extended() {
+    fn test_decode_flba_decimal_truncates_non_sign_extended() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
 
@@ -5159,8 +3971,10 @@ mod tests {
             format: None,
         };
 
-        let err = decode_page(&page, None, &mut bufs, col_info, 0, 1).unwrap_err();
-        assert!(format!("{err}").contains("FixedLenByteArray(16) decimal cannot be decoded"));
+        decode_page(&page, None, &mut bufs, col_info, 0, 1).unwrap();
+
+        let expected = be_to_le_truncate(&bad_value, 8);
+        assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
     }
 
     #[test]
@@ -5356,7 +4170,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_ba_decimal_rejects_non_sign_extended() {
+    fn test_decode_ba_decimal_truncates_non_sign_extended() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
 
@@ -5375,8 +4189,13 @@ mod tests {
             format: None,
         };
 
-        let err = decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap_err();
-        assert!(format!("{err}").contains("ByteArray(9) decimal cannot be decoded"));
+        decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
+
+        let mut expected = Vec::new();
+        for value in &values {
+            expected.extend_from_slice(&be_to_le_truncate(value, 8));
+        }
+        assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
     }
 
     #[test]

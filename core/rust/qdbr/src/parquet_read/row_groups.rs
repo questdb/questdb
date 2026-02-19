@@ -5,9 +5,7 @@ use crate::parquet_read::decode::{
     decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
     long_stat_value, page_row_count, sliced_page_row_count,
 };
-use crate::parquet_read::{
-    ColumnChunkBuffers, ColumnMeta, DecodeContext, RowGroupStatBuffers,
-};
+use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, DecodeContext, RowGroupStatBuffers};
 use nonmax::NonMaxU32;
 use parquet2::metadata::FileMetaData;
 use parquet2::read::{SlicePageReader, SlicedPage};
