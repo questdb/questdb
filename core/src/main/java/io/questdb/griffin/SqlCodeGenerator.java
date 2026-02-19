@@ -4868,6 +4868,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                             if (materializedColIndices != null) {
                                 sortBase = new SortKeyMaterializingRecordCursorFactory(
+                                        configuration,
                                         orderedMetadata,
                                         recordCursorFactory,
                                         materializedColIndices,

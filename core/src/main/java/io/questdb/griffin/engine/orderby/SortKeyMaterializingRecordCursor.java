@@ -34,28 +34,33 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DirectLongLongHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.LongIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
 class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
-    private static final long INITIAL_PAGE_SIZE = 8192;
+    private static final long PAGE_SIZE = 8192;
     private final int[] bufferToColIndex;
     private final MemoryCARW[] buffers;
     private final int[] colSizes;
-    private final Decimal128 decimal128A = new Decimal128();
-    private final Decimal256 decimal256A = new Decimal256();
     private final int[] colToBufferIndex;
     private final int[] colTypes;
+    private final Decimal128 decimal128A = new Decimal128();
+    private final Decimal256 decimal256A = new Decimal256();
     private final MaterializedRecord recordA = new MaterializedRecord();
     private final MaterializedRecord recordB = new MaterializedRecord();
-    private final LongIntHashMap rowIdToOrdinal = new LongIntHashMap();
+    private final DirectLongLongHashMap rowIdToOrdinal;
     private RecordCursor baseCursor;
     private boolean isOpen;
     private int nextOrdinal;
 
-    SortKeyMaterializingRecordCursor(int columnCount, IntList materializedColIndices, IntList materializedColTypes) {
+    SortKeyMaterializingRecordCursor(
+            int columnCount,
+            IntList materializedColIndices,
+            IntList materializedColTypes,
+            int maxPages
+    ) {
         final int bufferCount = materializedColIndices.size();
         this.buffers = new MemoryCARW[bufferCount];
         this.colToBufferIndex = new int[columnCount];
@@ -70,12 +75,13 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         for (int i = 0; i < bufferCount; i++) {
             final int colIndex = materializedColIndices.getQuick(i);
             final int colType = materializedColTypes.getQuick(i);
-            buffers[i] = Vm.getCARWInstance(INITIAL_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_TREE_CHAIN);
+            buffers[i] = Vm.getCARWInstance(PAGE_SIZE, maxPages, MemoryTag.NATIVE_TREE_CHAIN);
             colToBufferIndex[colIndex] = i;
             bufferToColIndex[i] = colIndex;
             colTypes[i] = colType;
             colSizes[i] = ColumnType.sizeOf(colType);
         }
+        this.rowIdToOrdinal = new DirectLongLongHashMap(64, 0.5, Long.MIN_VALUE, -1L, MemoryTag.NATIVE_TREE_CHAIN);
         this.isOpen = true;
     }
 
@@ -86,6 +92,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             for (int i = 0, n = buffers.length; i < n; i++) {
                 buffers[i].truncate();
             }
+            rowIdToOrdinal.restoreInitialCapacity();
             baseCursor = Misc.free(baseCursor);
         }
     }
@@ -95,6 +102,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         for (int i = 0, n = buffers.length; i < n; i++) {
             buffers[i] = Misc.free(buffers[i]);
         }
+        rowIdToOrdinal.close();
     }
 
     @Override
@@ -140,6 +148,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         for (int i = 0, n = buffers.length; i < n; i++) {
             buffers[i].truncate();
         }
+        rowIdToOrdinal.reopen();
         rowIdToOrdinal.clear();
         nextOrdinal = 0;
         recordA.of(baseCursor.getRecord(), colToBufferIndex, colSizes, buffers);
@@ -158,7 +167,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(((MaterializedRecord) record).getBaseRecord(), atRowId);
-        final int ordinal = rowIdToOrdinal.get(atRowId);
+        final int ordinal = (int) rowIdToOrdinal.get(atRowId);
         ((MaterializedRecord) record).setOrdinal(ordinal);
     }
 

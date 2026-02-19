@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -39,6 +40,7 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
     private final SortKeyMaterializingRecordCursor cursor;
 
     public SortKeyMaterializingRecordCursorFactory(
+            CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
             IntList materializedColIndices,
@@ -49,7 +51,8 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
         this.cursor = new SortKeyMaterializingRecordCursor(
                 metadata.getColumnCount(),
                 materializedColIndices,
-                materializedColTypes
+                materializedColTypes,
+                configuration.getSqlSortKeyMaxPages()
         );
     }
 
