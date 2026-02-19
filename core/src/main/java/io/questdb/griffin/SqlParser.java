@@ -497,18 +497,6 @@ public class SqlParser {
         return sqlParserCallback.parseCreateViewExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
     }
 
-    @Nullable
-    private static CharSequence parseTtlSettings(
-            GenericLexer lexer,
-            SqlParserCallback sqlParserCallback,
-            CharSequence tok,
-            int partitionBy,
-            CreateTableOperationBuilderImpl builder,
-            boolean isMatView
-    ) throws SqlException {
-        return sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, builder, isMatView);
-    }
-
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && isIsolationKeyword(tok)) {
@@ -1490,7 +1478,7 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
-        tok = parseTtlSettings(lexer, sqlParserCallback, tok, partitionBy, tableOpBuilder, true);
+        tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, tableOpBuilder, true);
 
         if (tok != null && isInKeyword(tok)) {
             parseInVolume(lexer, tableOpBuilder);
@@ -1642,7 +1630,7 @@ public class SqlParser {
             builder.setPartitionByExpr(partitionByExpr);
             tok = optTok(lexer);
 
-            tok = parseTtlSettings(lexer, sqlParserCallback, tok, partitionBy, builder, false);
+            tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, builder, false);
 
             if (tok != null) {
                 if (isWalKeyword(tok)) {
