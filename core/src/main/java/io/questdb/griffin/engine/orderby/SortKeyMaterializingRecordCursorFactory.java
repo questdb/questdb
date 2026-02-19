@@ -99,6 +99,6 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
     @Override
     protected void _close() {
         Misc.free(base);
-        Misc.free(cursor);
+        cursor.freeBuffers();
     }
 }

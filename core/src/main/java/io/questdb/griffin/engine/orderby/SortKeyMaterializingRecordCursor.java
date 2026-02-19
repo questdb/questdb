@@ -61,6 +61,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
 
         for (int i = 0; i < bufferCount; i++) {
             final int colIndex = materializedColIndices.getQuick(i);
+            //noinspection resource
             buffers[i] = new DirectLongList(INITIAL_BUFFER_CAPACITY, MemoryTag.NATIVE_TREE_CHAIN);
             colToBufferIndex[colIndex] = i;
             bufferToColIndex[i] = colIndex;
@@ -74,9 +75,16 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
         if (isOpen) {
             isOpen = false;
             for (int i = 0, n = buffers.length; i < n; i++) {
-                buffers[i] = Misc.free(buffers[i]);
+                buffers[i].shrink(INITIAL_BUFFER_CAPACITY);
             }
             baseCursor = Misc.free(baseCursor);
+        }
+    }
+
+    void freeBuffers() {
+        close();
+        for (int i = 0, n = buffers.length; i < n; i++) {
+            buffers[i] = Misc.free(buffers[i]);
         }
     }
 
@@ -119,12 +127,7 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         this.baseCursor = baseCursor;
-        if (!isOpen) {
-            isOpen = true;
-            for (int i = 0, n = buffers.length; i < n; i++) {
-                buffers[i].reopen();
-            }
-        }
+        isOpen = true;
         for (int i = 0, n = buffers.length; i < n; i++) {
             buffers[i].clear();
         }
