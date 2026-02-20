@@ -112,7 +112,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         );
         long copyID = entry.getId();
         RecordCursorFactory selectFactory = null;
-        CreateTableOperation createOp = null;
+        CreateTableOperationImpl createOp = null;
         try {
             if (this.tableName != null) {
                 TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
@@ -157,7 +157,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                             exportMode = ParquetExportMode.TEMP_TABLE;
                         }
                         if (exportMode == ParquetExportMode.TEMP_TABLE) {
-                            CreateTableOperationImpl impl = new CreateTableOperationImpl(
+                            createOp = new CreateTableOperationImpl(
                                     Chars.toString(resolvedSelectText),
                                     tableName,
                                     resolvedPartitionBy,
@@ -166,10 +166,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                                     sqlText.toString(),
                                     false
                             );
-                            createOp = impl; // assign early so catch blocks can free on error
-                            impl.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
-                            impl.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
-                            impl.validateAndUpdateMetadataFromSelect(
+                            createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
+                            createOp.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
+                            createOp.validateAndUpdateMetadataFromSelect(
                                     rcf.getMetadata(), rcf.getScanDirection()
                             );
                         } else {
@@ -181,17 +180,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     }
                 } catch (SqlException ex) {
                     ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
-                    Misc.free(createOp);
-                    Misc.free(selectFactory);
                     throw ex;
                 } catch (CairoException ex) {
                     ex.position(tableOrSelectTextPos + ex.getPosition());
-                    Misc.free(createOp);
-                    Misc.free(selectFactory);
-                    throw ex;
-                } catch (Throwable ex) {
-                    Misc.free(createOp);
-                    Misc.free(selectFactory);
                     throw ex;
                 }
             }
