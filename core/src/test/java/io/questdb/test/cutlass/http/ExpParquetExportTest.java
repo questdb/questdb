@@ -1419,10 +1419,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("timeout", "1");
                     // With a very short timeout the circuit breaker should trip
-                    // during PAGE_FRAME_BACKED export. Depending on timing, the
-                    // server may return an error or simply disconnect.
+                    // during PAGE_FRAME_BACKED export.  Depending on which code
+                    // path checks first, the error is either "timeout, query
+                    // aborted" (from the page-frame factory) or "cancelled by
+                    // user" (from the HTTP exporter).  The server may also just
+                    // disconnect.
                     try {
                         testHttpClient.assertGetContains("/exp", "timeout, query aborted", params);
+                    } catch (AssertionError ae) {
+                        TestUtils.assertContains(ae.getMessage(), "cancelled by user");
                     } catch (HttpClientException e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
                     }
