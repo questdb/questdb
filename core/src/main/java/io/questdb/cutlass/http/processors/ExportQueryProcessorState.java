@@ -111,6 +111,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         }
         cursor = Misc.free(cursor);
         pageFrameCursor = Misc.free(pageFrameCursor);
+        // Close the Rust streaming writer before freeing materializer buffers,
+        // since the writer may still reference pinned native buffers.
+        task.clear();
         materializer.clear();
         materializerColumnData.clear();
         firstParquetWriteCall = true;
@@ -144,7 +147,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         errorMessage.clear();
         errorPosition = 0;
         serialExporterInit = false;
-        task.clear();
         writeCallback.of(null, null);
     }
 
@@ -157,10 +159,11 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
         pageFrameCursor = Misc.free(pageFrameCursor);
+        // Close the Rust streaming writer before freeing materializer buffers.
+        task = Misc.free(task);
         Misc.free(materializer);
         Misc.free(materializerColumnData);
         createParquetOp = Misc.free(createParquetOp);
-        task = Misc.free(task);
         writeCallback.of(null, null);
     }
 
