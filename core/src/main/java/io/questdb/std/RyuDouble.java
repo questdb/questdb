@@ -39,7 +39,12 @@ class RyuDouble {
     private static final int DOUBLE_POW5_BITCOUNT = 125;
     private static final int DOUBLE_POW5_INV_BITCOUNT = 125;
     // ceil(2^(pow5bits(q) - 1 + 125) / 5^q) for q in [0, 291], stored as (hi64, lo64) pairs.
-    private static final long[] DOUBLE_POW5_INV_SPLIT = {
+    private static final long[] DOUBLE_POW5_INV_SPLIT = initPow5InvSplit();
+    // Upper 128 bits of 5^i for i in [0, 325], stored as (hi64, lo64) pairs.
+    private static final long[] DOUBLE_POW5_SPLIT = initPow5Split();
+
+    private static long[] initPow5InvSplit() {
+        return new long[]{
             0x2000000000000000L, 0x0000000000000001L, 0x1999999999999999L, 0x999999999999999AL,
             0x147AE147AE147AE1L, 0x47AE147AE147AE15L, 0x10624DD2F1A9FBE7L, 0x6C8B4395810624DEL,
             0x1A36E2EB1C432CA5L, 0x7A786C226809D496L, 0x14F8B588E368F084L, 0x61F9F01B866E43ABL,
@@ -186,9 +191,11 @@ class RyuDouble {
             0x1E74404F3DAADA91L, 0x4D686A4EAF182222L, 0x185D003F6488AEDAL, 0xA453883EF279B4E8L,
             0x137D99CC506D58AEL, 0xE9DC6CFF28615D87L, 0x1F2F5C7A1A488DE4L, 0xA960AE650D6895A4L,
             0x18F2B061AEA07183L, 0xBAB3BEB73DED4483L, 0x13F559E7BEE6C136L, 0x2EF6322C318A9D36L
-    };
-    // Upper 128 bits of 5^i for i in [0, 325], stored as (hi64, lo64) pairs.
-    private static final long[] DOUBLE_POW5_SPLIT = {
+        };
+    }
+
+    private static long[] initPow5Split() {
+        return new long[]{
             0x1000000000000000L, 0x0000000000000000L, 0x1400000000000000L, 0x0000000000000000L,
             0x1900000000000000L, 0x0000000000000000L, 0x1F40000000000000L, 0x0000000000000000L,
             0x1388000000000000L, 0x0000000000000000L, 0x186A000000000000L, 0x0000000000000000L,
@@ -352,8 +359,8 @@ class RyuDouble {
             0x103085E53E599C6EL, 0xBCD422B0601A8CC9L, 0x143CA75E8DF0038AL, 0x6C092B5C78212FFBL,
             0x194BD136316C046DL, 0x070B763396297BF9L, 0x1F9EC583BDC70588L, 0x48CE53C07BB3DAF7L,
             0x13C33B72569C6375L, 0x2D80F4584D5068DBL, 0x18B40A4EEC437C52L, 0x78E1316E60A48311L,
-
-    };
+        };
+    }
 
     /**
      * Computes (m * (mul0:mul1)) >> shift, where mul0 is the high 64 bits and
