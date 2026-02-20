@@ -215,6 +215,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    public void ofAlterStoragePolicy() {
+        of(ALTER_STORAGE_POLICY);
+        this.isExecutedAtParseTime = true;
+    }
+
     @SuppressWarnings("unused")
     public void ofAlterUser() {
         of(ALTER_USER);
