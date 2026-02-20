@@ -1266,6 +1266,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getUnorderedPageFrameReduceQueueCapacity() {
+        return 4096;
+    }
+
+    @Override
     public int getVectorAggregateQueueCapacity() {
         return 1024;
     }
