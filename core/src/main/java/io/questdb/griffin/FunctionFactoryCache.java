@@ -43,11 +43,11 @@ public class FunctionFactoryCache {
     static final IntHashSet invalidFunctionNameChars = new IntHashSet();
     static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
     private static final Log LOG = LogFactory.getLog(FunctionFactoryCache.class);
-    private final LowerCaseCharSequenceHashSet cursorFunctionNames = new LowerCaseCharSequenceHashSet();
+    protected final LowerCaseCharSequenceHashSet cursorFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new LowerCaseCharSequenceObjHashMap<>();
-    private final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();
-    private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
-    private final LowerCaseCharSequenceHashSet windowFunctionNames = new LowerCaseCharSequenceHashSet();
+    protected final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();
+    protected final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
+    protected final LowerCaseCharSequenceHashSet windowFunctionNames = new LowerCaseCharSequenceHashSet();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         boolean enableTestFactories = configuration.enableTestFactories();
@@ -136,11 +136,6 @@ public class FunctionFactoryCache {
         return name != null && groupByFunctionNames.contains(name);
     }
 
-    /**
-     * Returns true if the function is a pure window function (like row_number, rank)
-     * that cannot be used as an aggregate. Functions like sum, count, avg that can
-     * be both aggregate and window functions return false.
-     */
     public boolean isPureWindowFunction(CharSequence name) {
         return isWindow(name) && !isGroupBy(name);
     }
@@ -169,11 +164,24 @@ public class FunctionFactoryCache {
         return name != null && windowFunctionNames.contains(name);
     }
 
-    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
-        addFactoryToList(list, new FunctionFactoryDescriptor(factory));
+    protected void replaceFactory(FunctionFactory replacement) {
+        try {
+            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(replacement);
+            final String name = descriptor.getName();
+            final int index = factories.keyIndex(name);
+            if (index < 0) {
+                ObjList<FunctionFactoryDescriptor> overloads = factories.valueAtQuick(index);
+                overloads.clear();
+                overloads.add(descriptor);
+            } else {
+                addFactoryToList(factories, descriptor);
+            }
+        } catch (SqlException e) {
+            LOG.error().$("Failed to replace factory: ").$((Sinkable) e).$();
+        }
     }
 
-    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {
+    protected static void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {
         String name = descriptor.getName();
         int index = list.keyIndex(name);
         ObjList<FunctionFactoryDescriptor> overload;
@@ -184,6 +192,10 @@ public class FunctionFactoryCache {
             list.putAt(index, name, overload);
         }
         overload.add(descriptor);
+    }
+
+    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
+        addFactoryToList(list, new FunctionFactoryDescriptor(factory));
     }
 
     private FunctionFactory createNegatingFactory(String name, FunctionFactory factory) throws SqlException {
