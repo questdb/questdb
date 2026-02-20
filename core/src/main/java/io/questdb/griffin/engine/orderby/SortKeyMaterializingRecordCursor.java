@@ -73,16 +73,21 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             colToBufferIndex[i] = -1;
         }
 
-        for (int i = 0; i < bufferCount; i++) {
-            final int colIndex = materializedColIndices.getQuick(i);
-            final int colType = materializedColTypes.getQuick(i);
-            buffers[i] = Vm.getCARWInstance(PAGE_SIZE, maxPages, MemoryTag.NATIVE_TREE_CHAIN);
-            colToBufferIndex[colIndex] = i;
-            bufferToColIndex[i] = colIndex;
-            colTypes[i] = colType;
-            colSizes[i] = ColumnType.sizeOf(colType);
-        }
         this.rowIdToOrdinal = new DirectLongLongHashMap(64, 0.5, Long.MIN_VALUE, -1L, MemoryTag.NATIVE_TREE_CHAIN);
+        try {
+            for (int i = 0; i < bufferCount; i++) {
+                final int colIndex = materializedColIndices.getQuick(i);
+                final int colType = materializedColTypes.getQuick(i);
+                buffers[i] = Vm.getCARWInstance(PAGE_SIZE, maxPages, MemoryTag.NATIVE_TREE_CHAIN);
+                colToBufferIndex[colIndex] = i;
+                bufferToColIndex[i] = colIndex;
+                colTypes[i] = colType;
+                colSizes[i] = ColumnType.sizeOf(colType);
+            }
+        } catch (Throwable th) {
+            freeBuffers();
+            throw th;
+        }
         this.isOpen = true;
     }
 
@@ -96,14 +101,6 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             rowIdToOrdinal.restoreInitialCapacity();
             baseCursor = Misc.free(baseCursor);
         }
-    }
-
-    void freeBuffers() {
-        close();
-        for (int i = 0, n = buffers.length; i < n; i++) {
-            buffers[i] = Misc.free(buffers[i]);
-        }
-        rowIdToOrdinal.close();
     }
 
     @Override
@@ -229,5 +226,13 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
                     "unsupported column type for materialization: " + ColumnType.nameOf(colTypes[bufferIndex])
             );
         }
+    }
+
+    void freeBuffers() {
+        close();
+        for (int i = 0, n = buffers.length; i < n; i++) {
+            buffers[i] = Misc.free(buffers[i]);
+        }
+        rowIdToOrdinal.close();
     }
 }

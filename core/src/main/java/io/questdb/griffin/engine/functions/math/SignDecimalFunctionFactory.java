@@ -95,6 +95,11 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
         public String getName() {
             return "sign";
         }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
     }
 
     // Function for DECIMAL16 input
@@ -203,13 +208,7 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
             }
 
             // Return sign: -1, 0, or 1
-            if (value == 0) {
-                return 0;
-            } else if (value < 0) {
-                return -1;
-            } else {
-                return 1;
-            }
+            return (byte) Integer.compare(value, 0);
         }
 
         @Override

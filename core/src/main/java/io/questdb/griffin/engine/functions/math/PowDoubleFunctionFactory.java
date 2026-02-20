@@ -55,6 +55,11 @@ public class PowDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getComplexity() {
+            return Function.addComplexity(4, Function.addComplexity(getLeft().getComplexity(), getRight().getComplexity()));
+        }
+
+        @Override
         public double getDouble(Record rec) {
             double l = left.getDouble(rec);
             double r = right.getDouble(rec);

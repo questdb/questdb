@@ -47,6 +47,8 @@ public class SortKeyMaterializingRecordCursorFactory extends AbstractRecordCurso
             IntList materializedColTypes
     ) {
         super(metadata);
+        assert base.recordCursorSupportsRandomAccess()
+                : "SortKeyMaterializingRecordCursorFactory requires a base factory that supports random access";
         this.base = base;
         this.cursor = new SortKeyMaterializingRecordCursor(
                 metadata.getColumnCount(),

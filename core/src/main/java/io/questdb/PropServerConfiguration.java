@@ -487,8 +487,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlSmallMapPageSize;
     private final int sqlSmallPageFrameMaxRows;
     private final int sqlSmallPageFrameMinRows;
-    private final int sqlSortKeyMaxPages;
     private final int sqlSortKeyMaterializationThreshold;
+    private final int sqlSortKeyMaxPages;
     private final long sqlSortKeyPageSize;
     private final int sqlSortLightValueMaxPages;
     private final long sqlSortLightValuePageSize;
@@ -4206,13 +4206,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSortKeyMaxPages() {
-            return sqlSortKeyMaxPages;
+        public int getSqlSortKeyMaterializationThreshold() {
+            return sqlSortKeyMaterializationThreshold;
         }
 
         @Override
-        public int getSqlSortKeyMaterializationThreshold() {
-            return sqlSortKeyMaterializationThreshold;
+        public int getSqlSortKeyMaxPages() {
+            return sqlSortKeyMaxPages;
         }
 
         @Override

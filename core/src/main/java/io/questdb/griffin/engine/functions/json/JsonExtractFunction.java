@@ -147,6 +147,11 @@ public class JsonExtractFunction implements Function {
     }
 
     @Override
+    public int getComplexity() {
+        return COMPLEXITY_JSON;
+    }
+
+    @Override
     public long getDate(Record rec) {
         final Utf8Sequence jsonInput = json.getVarcharA(rec);
         if ((jsonInput == null) || (pointer == null)) {
@@ -220,11 +225,6 @@ public class JsonExtractFunction implements Function {
     @Override
     public float getFloat(Record rec) {
         return (float) getDouble(rec);
-    }
-
-    @Override
-    public int getComplexity() {
-        return COMPLEXITY_JSON;
     }
 
     @Override

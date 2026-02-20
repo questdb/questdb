@@ -1121,13 +1121,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortKeyMaxPages() {
-        return 1024;
+    public int getSqlSortKeyMaterializationThreshold() {
+        return 3;
     }
 
     @Override
-    public int getSqlSortKeyMaterializationThreshold() {
-        return 3;
+    public int getSqlSortKeyMaxPages() {
+        return 1024;
     }
 
     @Override

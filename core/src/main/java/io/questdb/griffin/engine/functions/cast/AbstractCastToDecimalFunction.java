@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-
 import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
 
 /**
@@ -70,6 +69,11 @@ public abstract class AbstractCastToDecimalFunction extends ToDecimalFunction im
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return false;
     }
 
     public boolean store(Record rec) {
