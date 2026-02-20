@@ -222,6 +222,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                     case TEMP_TABLE -> {
                                         // No cursor needed; createOp will re-execute the query
                                     }
+                                    default ->
+                                            throw CairoException.nonCritical().put("unsupported parquet export mode: ").put(state.parquetExportMode.name());
                                 }
                             } else {
                                 state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
