@@ -92,7 +92,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     task.getEntry(),
                     createOp,
                     task.getTableName(),
-                    // we are copying CharSequence from the queue, and releasing it
+                    // we are copying CharSequence from the queue and releasing it
                     Chars.toString(task.getFileName()),
                     task.getCompressionCodec(),
                     task.getCompressionLevel(),
