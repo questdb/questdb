@@ -934,7 +934,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             try {
                 engine.getCheckpointListener().onCheckpointRestoreComplete();
             } catch (RuntimeException ex) {
-                LOG.error().$("checkpoint listener failed on restore complete [error=").$(ex).I$();
+                LOG.critical().$("checkpoint listener failed on restore complete [error=").$(ex).I$();
             }
 
             // Delete the checkpoint directory to avoid recovery on the next restart.
