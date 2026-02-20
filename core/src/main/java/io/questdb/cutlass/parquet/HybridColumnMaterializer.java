@@ -172,11 +172,14 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      * @return number of rows materialized (0 when cursor exhausted)
      */
     public long buildColumnDataFromCursor(RecordCursor cursor, DirectLongList columnData, long batchSize) {
-        resetBuffers();
         Record record = cursor.getRecord();
-        long rowCount = 0;
+        if (!cursor.hasNext()) {
+            return 0;
+        }
 
-        while (rowCount < batchSize && cursor.hasNext()) {
+        resetBuffers();
+        long rowCount = 0;
+        do {
             for (int k = 0; k < computedCount; k++) {
                 int bufIdx = computedBufferIdx.getQuick(computedColumnIndices.getQuick(k));
                 MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
@@ -184,11 +187,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 writeColumnValue(record, computedColumnIndices.getQuick(k), computedOutputTypes.getQuick(k), dataBuf, auxBuf);
             }
             rowCount++;
-        }
-
-        if (rowCount == 0) {
-            return 0;
-        }
+        } while (rowCount < batchSize && cursor.hasNext());
 
         columnData.clear();
         for (int k = 0; k < computedCount; k++) {
