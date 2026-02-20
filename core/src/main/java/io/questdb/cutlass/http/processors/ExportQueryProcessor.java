@@ -274,6 +274,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
         } catch (SqlException | ImplicitCastException e) {
             syntaxError(context.getChunkedResponse(), state, e);
+            state.clear();
             readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
             internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
