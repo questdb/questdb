@@ -57,6 +57,9 @@ public class HorizonJoinTimeFrameHelper {
     // Bookmark position: where to start the next findAsOfRow search (optimization for sequential access)
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
+    // Cached findAsOfRow result: valid while target timestamp < cachedNextRowTs
+    private long cachedAsOfRowId = Long.MIN_VALUE;
+    private long cachedNextRowTs = Long.MIN_VALUE;
     // Forward watermark: highest rowId we've forward-scanned (inclusive)
     private long forwardWatermark = Long.MIN_VALUE;
     private Record record;
@@ -100,6 +103,11 @@ public class HorizonJoinTimeFrameHelper {
             return Long.MIN_VALUE;
         }
 
+        // Fast path: skip backward scan for keys with non-existent slave symbols
+        if (symbolTranslatingRecord != null && symbolTranslatingRecord.hasNonExistentKey()) {
+            return Long.MIN_VALUE;
+        }
+
         long effectiveStart;
         if (backwardWatermark != Long.MAX_VALUE) {
             // We've done backward scanning before. Check the cache first —
@@ -122,11 +130,6 @@ public class HorizonJoinTimeFrameHelper {
             effectiveStart = backwardWatermark;
         } else {
             effectiveStart = startRowId;
-        }
-
-        // Fast path: skip backward scan for keys with non-existent slave symbols
-        if (symbolTranslatingRecord != null && symbolTranslatingRecord.hasNonExistentKey()) {
-            return Long.MIN_VALUE;
         }
 
         int frameIndex = Rows.toPartitionIndex(effectiveStart);
@@ -215,6 +218,12 @@ public class HorizonJoinTimeFrameHelper {
      * @return rowId if found, Long.MIN_VALUE otherwise
      */
     public long findAsOfRow(long targetTimestamp) {
+        // Ultra-fast path: cached result is still valid (no frame navigation needed)
+        if (cachedAsOfRowId != Long.MIN_VALUE && targetTimestamp < cachedNextRowTs) {
+            return cachedAsOfRowId;
+        }
+        cachedAsOfRowId = Long.MIN_VALUE;
+
         // Start from bookmarked position if available
         long rowLo = Long.MIN_VALUE;
 
@@ -244,8 +253,12 @@ public class HorizonJoinTimeFrameHelper {
                             final long nextRowIndex = bookmarkedRowIndex + 1;
                             if (nextRowIndex < timeFrame.getRowHi()) {
                                 timeFrameCursor.recordAtRowIndex(record, nextRowIndex);
-                                if (scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale) > targetTimestamp) {
-                                    return Rows.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
+                                final long nextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+                                if (nextRowTs > targetTimestamp) {
+                                    final long result = Rows.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
+                                    cachedAsOfRowId = result;
+                                    cachedNextRowTs = nextRowTs;
+                                    return result;
                                 }
                             }
                             // Slow path: bookmark is the last row in this frame or its ts <= target.
@@ -569,6 +582,8 @@ public class HorizonJoinTimeFrameHelper {
         // They help findAsOfRow() start closer to the target when processing subsequent frames.
         forwardWatermark = Long.MIN_VALUE;
         backwardWatermark = Long.MAX_VALUE;
+        cachedAsOfRowId = Long.MIN_VALUE;
+        cachedNextRowTs = Long.MIN_VALUE;
     }
 
     /**
