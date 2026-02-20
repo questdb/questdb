@@ -930,10 +930,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     .$(", symbolFilesCount=").$(symbolFilesCount.get())
                     .I$();
 
-            // Notify checkpoint listener that restore is complete
-            engine.getCheckpointListener().onCheckpointRestoreComplete();
+            // Notify the checkpoint listener that restore is complete
+            try {
+                engine.getCheckpointListener().onCheckpointRestoreComplete();
+            } catch (RuntimeException ex) {
+                LOG.error().$("checkpoint listener failed on restore complete [error=").$(ex).I$();
+            }
 
-            // Delete checkpoint directory to avoid recovery on next restart.
+            // Delete the checkpoint directory to avoid recovery on the next restart.
             srcPath.trimTo(checkpointRootLen).$();
             memFile.close();
             if (!ff.rmdir(srcPath)) {

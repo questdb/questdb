@@ -53,6 +53,8 @@ public interface CheckpointListener {
      * This callback is invoked during database recovery when a checkpoint is restored.
      * Implementations can use this to reset any state that should not persist
      * across restores.
+     * <p>
+     * Any exceptions thrown by this method will be logged and ignored.
      */
     void onCheckpointRestoreComplete();
 }
