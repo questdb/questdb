@@ -131,10 +131,6 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         return compressionLevel;
     }
 
-    public RecordCursorFactory getSelectFactory() {
-        return selectFactory;
-    }
-
     public long getCopyID() {
         return entry.getId();
     }
@@ -183,12 +179,16 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         return rowGroupSize;
     }
 
-    public @Nullable String getSelectText() {
-        return selectText;
-    }
-
     public SecurityContext getSecurityContext() {
         return entry.getSecurityContext();
+    }
+
+    public RecordCursorFactory getSelectFactory() {
+        return selectFactory;
+    }
+
+    public @Nullable String getSelectText() {
+        return selectText;
     }
 
     public StreamPartitionParquetExporter getStreamPartitionParquetExporter() {
@@ -265,10 +265,6 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.selectFactory = selectFactory;
     }
 
-    public void setWriteCallback(StreamWriteParquetCallBack writeCallback) {
-        this.writeCallback = writeCallback;
-    }
-
     public void setUpStreamPartitionParquetExporter() {
         if (pageFrameCursor != null) {
             // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
@@ -286,6 +282,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
         pageFrameCursor.setStreamingMode(true);
         streamPartitionParquetExporter.setUp();
+    }
+
+    public void setWriteCallback(StreamWriteParquetCallBack writeCallback) {
+        this.writeCallback = writeCallback;
     }
 
     public enum Phase {

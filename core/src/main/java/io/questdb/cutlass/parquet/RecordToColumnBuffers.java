@@ -37,9 +37,9 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -65,7 +65,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
@@ -81,8 +80,20 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
     // Per computed col: aux memory (for var-size) or null (for fixed-size)
     private final ObjList<MemoryCARWImpl> auxBuffers = new ObjList<>();
+    // Per output col: base col index, or -1 if computed
+    private final IntList baseColumnMap = new IntList();
     // Reuse pool for MemoryCARWImpl instances released by releasePinnedBuffers()
     private final ObjList<MemoryCARWImpl> bufferPool = new ObjList<>();
+    // Per output col: index into buffer lists, or -1 if pass-through
+    private final IntList computedBufferIdx = new IntList();
+    // Dense array of output column indices that are computed (not pass-through)
+    private final IntList computedColumnIndices = new IntList();
+    // Pre-computed per-column: Function instances (page-frame path only)
+    private final ObjList<Function> computedFunctions = new ObjList<>();
+    // Pre-computed per-column: isSymbol(srcType) && outputType == STRING (page-frame path only)
+    private final BoolList computedIsSymbolToString = new BoolList();
+    // Pre-computed per-column: adjustedMetadata.getColumnType(computedColumnIndices[k])
+    private final IntList computedOutputTypes = new IntList();
     // Per computed col: data memory
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
     private final Decimal128 decimal128A = new Decimal128();
@@ -93,19 +104,7 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
     private final ObjList<MemoryCARWImpl> pinnedAuxBuffers = new ObjList<>();
     private final ObjList<MemoryCARWImpl> pinnedDataBuffers = new ObjList<>();
     private GenericRecordMetadata adjustedMetadata;
-    // Per output col: base col index, or -1 if computed
-    private final IntList baseColumnMap = new IntList();
-    // Per output col: index into buffer lists, or -1 if pass-through
-    private final IntList computedBufferIdx = new IntList();
-    // Dense array of output column indices that are computed (not pass-through)
-    private final IntList computedColumnIndices = new IntList();
     private int computedCount;
-    // Pre-computed per-column: Function instances (page-frame path only)
-    private final ObjList<Function> computedFunctions = new ObjList<>();
-    // Pre-computed per-column: isSymbol(srcType) && outputType == STRING (page-frame path only)
-    private final BoolList computedIsSymbolToString = new BoolList();
-    // Pre-computed per-column: adjustedMetadata.getColumnType(computedColumnIndices[k])
-    private final IntList computedOutputTypes = new IntList();
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
     private int outputColumnCount;
@@ -492,18 +491,6 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
         }
     }
 
-    private MemoryCARWImpl obtainBuffer() {
-        int n = bufferPool.size();
-        if (n > 0) {
-            MemoryCARWImpl buf = bufferPool.getQuick(n - 1);
-            bufferPool.setQuick(n - 1, null);
-            bufferPool.setPos(n - 1);
-            buf.truncate();
-            return buf;
-        }
-        return new MemoryCARWImpl(DEFAULT_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_PARQUET_EXPORTER);
-    }
-
     private void materializeComputedColumns(long frameRowCount) {
         resetBuffers();
         for (long row = 0; row < frameRowCount; row++) {
@@ -520,6 +507,18 @@ public class RecordToColumnBuffers implements Mutable, QuietCloseable {
                 }
             }
         }
+    }
+
+    private MemoryCARWImpl obtainBuffer() {
+        int n = bufferPool.size();
+        if (n > 0) {
+            MemoryCARWImpl buf = bufferPool.getQuick(n - 1);
+            bufferPool.setQuick(n - 1, null);
+            bufferPool.setPos(n - 1);
+            buf.truncate();
+            return buf;
+        }
+        return new MemoryCARWImpl(DEFAULT_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_PARQUET_EXPORTER);
     }
 
     private void populatePageFrameRecord(PageFrame frame) {
