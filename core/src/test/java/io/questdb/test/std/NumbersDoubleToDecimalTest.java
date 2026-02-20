@@ -368,7 +368,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testAutoRoundTripSmallIntegers() {
         for (int i = -100; i <= 100; i++) {
-            assertAutoRoundTrip((double) i);
+            assertAutoRoundTrip(i);
         }
     }
 
@@ -402,7 +402,7 @@ public class NumbersDoubleToDecimalTest {
     @Test
     public void testAutoSmallIntegers1Through20() {
         for (int i = 1; i <= 20; i++) {
-            assertAutoInference((double) i, String.valueOf(i), String.valueOf(i).length(), 0);
+            assertAutoInference(i, String.valueOf(i), String.valueOf(i).length(), 0);
         }
     }
 
@@ -411,7 +411,7 @@ public class NumbersDoubleToDecimalTest {
         for (int i = -20; i <= -1; i++) {
             String expected = String.valueOf(i);
             // Precision does not count the sign
-            assertAutoInference((double) i, expected, String.valueOf(-i).length(), 0);
+            assertAutoInference(i, expected, String.valueOf(-i).length(), 0);
         }
     }
 
@@ -460,12 +460,11 @@ public class NumbersDoubleToDecimalTest {
     public void testTargetBulkRoundTrip() throws NumericException {
         Decimal64 d = new Decimal64();
         for (int i = -50; i <= 50; i++) {
-            double v = (double) i;
-            Numbers.doubleToDecimal(v, d, 18, 2, true);
+            Numbers.doubleToDecimal(i, d, 18, 2, true);
             ss.clear();
             d.toSink(ss);
             double parsed = Double.parseDouble(ss.toString());
-            Assert.assertEquals("round-trip for " + v, v, parsed, 0.0);
+            Assert.assertEquals("round-trip for " + i, i, parsed, 0.0);
         }
     }
 

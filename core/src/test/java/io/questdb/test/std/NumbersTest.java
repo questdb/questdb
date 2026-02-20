@@ -440,16 +440,16 @@ public class NumbersTest {
             float d2 = rnd.nextFloat();
             float d3 = rnd.nextFloat() * Float.MAX_VALUE;
             sink.clear();
-            Numbers.append(sink, (double) d1);
-            Assert.assertEquals((double) d1, Double.parseDouble(sink.toString()), 0);
+            Numbers.append(sink, d1);
+            Assert.assertEquals(d1, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
-            Numbers.append(sink, (double) d2);
-            Assert.assertEquals((double) d2, Double.parseDouble(sink.toString()), 0);
+            Numbers.append(sink, d2);
+            Assert.assertEquals(d2, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
-            Numbers.append(sink, (double) d3);
-            Assert.assertEquals((double) d3, Double.parseDouble(sink.toString()), 0);
+            Numbers.append(sink, d3);
+            Assert.assertEquals(d3, Double.parseDouble(sink.toString()), 0);
         }
     }
 
