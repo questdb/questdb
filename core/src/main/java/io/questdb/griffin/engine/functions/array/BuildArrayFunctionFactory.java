@@ -62,28 +62,29 @@ public class BuildArrayFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         int argCount = args == null ? 0 : args.size();
         if (argCount < 3) {
-            throw SqlException.$(position, "array_build requires at least 3 arguments: nDims, size, filler(s)");
+            throw SqlException.$(position, "array_build requires at least 3 arguments: nArrays, size, filler(s)");
         }
 
-        // arg 0: nDims (constant long)
-        Function nDimsFunc = args.getQuick(0);
-        int nDimsPos = argPositions.getQuick(0);
-        if (!ColumnType.isSameOrBuiltInWideningCast(nDimsFunc.getType(), ColumnType.LONG)) {
-            throw SqlException.$(nDimsPos, "nDims must be an integer");
+        // arg 0: nArrays (constant long)
+        Function nArraysFunc = args.getQuick(0);
+        int nArraysPos = argPositions.getQuick(0);
+        if (!ColumnType.isSameOrBuiltInWideningCast(nArraysFunc.getType(), ColumnType.LONG)) {
+            throw SqlException.$(nArraysPos, "nArrays must be an integer");
         }
-        if (!nDimsFunc.isConstant()) {
-            throw SqlException.$(nDimsPos, "nDims must be a constant");
+        if (!nArraysFunc.isConstant()) {
+            throw SqlException.$(nArraysPos, "nArrays must be a constant");
         }
-        long nDimsLong = nDimsFunc.getLong(null);
-        if (nDimsLong < 1 || nDimsLong > 2) {
-            throw SqlException.$(nDimsPos, "nDims must be 1 or 2 [nDims=").put(nDimsLong).put(']');
+        long nArraysLong = nArraysFunc.getLong(null);
+        if (nArraysLong < 1 || nArraysLong > ArrayView.DIM_MAX_LEN) {
+            throw SqlException.$(nArraysPos, "nArrays out of range [nArrays=").put(nArraysLong)
+                    .put(", max=").put(ArrayView.DIM_MAX_LEN).put(']');
         }
-        int nDims = (int) nDimsLong;
+        int nArrays = (int) nArraysLong;
 
-        // validate arg count: 1 (nDims) + 1 (size) + nDims (fillers) = 2 + nDims
-        int expectedArgCount = 2 + nDims;
+        // validate arg count: 1 (nArrays) + 1 (size) + nArrays (fillers) = 2 + nArrays
+        int expectedArgCount = 2 + nArrays;
         if (argCount != expectedArgCount) {
-            throw SqlException.$(position, "array_build with nDims=").put(nDims)
+            throw SqlException.$(position, "array_build with nArrays=").put(nArrays)
                     .put(" requires ").put(expectedArgCount)
                     .put(" arguments, got ").put(argCount);
         }
@@ -102,12 +103,12 @@ public class BuildArrayFunctionFactory implements FunctionFactory {
             throw SqlException.$(sizePos, "size must be an integer or a DOUBLE[] array");
         }
 
-        // args 2..2+nDims-1: fillers
+        // args 2..2+nArrays-1: fillers
         ObjList<Function> allArgs = new ObjList<>(args);
         IntList allArgPositions = new IntList(argPositions);
 
-        boolean[] fillerIsArray = new boolean[nDims];
-        for (int i = 0; i < nDims; i++) {
+        boolean[] fillerIsArray = new boolean[nArrays];
+        for (int i = 0; i < nArrays; i++) {
             int argIndex = 2 + i;
             Function fillerFunc = args.getQuick(argIndex);
             int fillerPos = argPositions.getQuick(argIndex);
@@ -123,12 +124,12 @@ public class BuildArrayFunctionFactory implements FunctionFactory {
             }
         }
 
-        int returnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+        int returnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nArrays == 1 ? 1 : 2);
         return new BuildArrayFunc(
                 configuration,
                 allArgs,
                 allArgPositions,
-                nDims,
+                nArrays,
                 sizeIsArray,
                 fillerIsArray,
                 returnType,
@@ -141,7 +142,7 @@ public class BuildArrayFunctionFactory implements FunctionFactory {
         private final @NotNull ObjList<Function> args;
         private DirectArray array;
         private final boolean[] fillerIsArray;
-        private final int nDims;
+        private final int nArrays;
         private final int position;
         private final boolean sizeIsArray;
 
@@ -149,7 +150,7 @@ public class BuildArrayFunctionFactory implements FunctionFactory {
                 CairoConfiguration configuration,
                 @NotNull ObjList<Function> args,
                 @NotNull IntList argPositions,
-                int nDims,
+                int nArrays,
                 boolean sizeIsArray,
                 boolean[] fillerIsArray,
                 int returnType,
@@ -158,7 +159,7 @@ public class BuildArrayFunctionFactory implements FunctionFactory {
             try {
                 this.args = args;
                 this.argPositions = argPositions;
-                this.nDims = nDims;
+                this.nArrays = nArrays;
                 this.sizeIsArray = sizeIsArray;
                 this.fillerIsArray = fillerIsArray;
                 this.type = returnType;
@@ -196,6 +197,11 @@ public class BuildArrayFunctionFactory implements FunctionFactory {
                     return array;
                 }
                 size = sizeArr.getCardinality();
+                if (size > ArrayView.DIM_MAX_LEN) {
+                    throw CairoException.nonCritical().position(sizePos)
+                            .put("size exceeds maximum [size=").put(size)
+                            .put(", max=").put(ArrayView.DIM_MAX_LEN).put(']');
+                }
             } else {
                 long sizeLong = sizeFunc.getLong(rec);
                 if (sizeLong == Numbers.LONG_NULL) {
@@ -216,17 +222,17 @@ public class BuildArrayFunctionFactory implements FunctionFactory {
 
             // set up shape (setType reinitializes the shape list after a prior ofNull)
             array.setType(type);
-            if (nDims == 1) {
+            if (nArrays == 1) {
                 array.setDimLen(0, size);
             } else {
-                array.setDimLen(0, nDims);
+                array.setDimLen(0, nArrays);
                 array.setDimLen(1, size);
             }
             array.applyShape(position);
 
             // populate data
             MemoryA mem = array.startMemoryA();
-            for (int i = 0; i < nDims; i++) {
+            for (int i = 0; i < nArrays; i++) {
                 Function fillerFunc = args.getQuick(2 + i);
                 if (fillerIsArray[i]) {
                     ArrayView src = fillerFunc.getArray(rec);

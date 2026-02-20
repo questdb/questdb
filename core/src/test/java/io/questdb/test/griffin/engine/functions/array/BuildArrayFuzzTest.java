@@ -167,4 +167,54 @@ public class BuildArrayFuzzTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testScalarFillNd() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x AS id FROM long_sequence(1))");
+
+            StringSink buildArraySql = new StringSink();
+            StringSink referenceSql = new StringSink();
+            for (int i = 0; i < ITERATIONS; i++) {
+                int nArrays = rnd.nextInt(5) + 2; // 2..6
+                int size = rnd.nextInt(8);
+                double[] fills = new double[nArrays];
+                for (int k = 0; k < nArrays; k++) {
+                    fills[k] = rnd.nextDouble() * 100;
+                }
+
+                // array_build(nArrays, size, fill0, fill1, ..., fillN-1)
+                buildArraySql.clear();
+                buildArraySql.put("SELECT array_build(").put(nArrays).put(", ").put(size);
+                for (int k = 0; k < nArrays; k++) {
+                    buildArraySql.put(", ").put(fills[k]);
+                }
+                buildArraySql.put(") AS v FROM t");
+
+                // equivalent: ARRAY[ARRAY[fill0 x size], ARRAY[fill1 x size], ...]
+                referenceSql.clear();
+                referenceSql.put("SELECT ARRAY[");
+                for (int k = 0; k < nArrays; k++) {
+                    if (k > 0) {
+                        referenceSql.put(", ");
+                    }
+                    referenceSql.put("ARRAY[");
+                    for (int j = 0; j < size; j++) {
+                        if (j > 0) {
+                            referenceSql.put(", ");
+                        }
+                        referenceSql.put(fills[k]);
+                    }
+                    referenceSql.put(']');
+                }
+                referenceSql.put("] AS v FROM t");
+
+                printSql(referenceSql);
+                String expected = sink.toString();
+                printSql(buildArraySql);
+                String actual = sink.toString();
+                TestUtils.assertEquals("iteration " + i + " nArrays=" + nArrays + " size=" + size, expected, actual);
+            }
+        });
+    }
 }

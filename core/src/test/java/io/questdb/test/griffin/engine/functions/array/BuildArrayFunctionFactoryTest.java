@@ -150,6 +150,34 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void test2dArrayFillerNaNPad() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0, 3.0] AS arr FROM long_sequence(1))");
+            assertSqlWithTypes(
+                    """
+                            array_build
+                            [[1.0,2.0,3.0,null,null],[4.0,4.0,4.0,4.0,4.0]]:DOUBLE[][]
+                            """,
+                    "SELECT array_build(2, 5, arr, 4.0) FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void test2dArrayFillerTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0, 3.0, 4.0, 5.0] AS arr FROM long_sequence(1))");
+            assertSqlWithTypes(
+                    """
+                            array_build
+                            [[1.0,2.0],[7.0,7.0]]:DOUBLE[][]
+                            """,
+                    "SELECT array_build(2, 2, arr, 7.0) FROM t"
+            );
+        });
+    }
+
+    @Test
     public void test2dArrayFillers() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0, 3.0] AS a, ARRAY[4.0, 5.0, 6.0] AS b FROM long_sequence(1))");
@@ -228,6 +256,18 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testError2dElementCountExceedsMax() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertSqlWithTypes("ignored\n", "SELECT array_build(2, 5_500_000, 1.0, 2.0)");
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "array element count exceeds max");
+            }
+        });
+    }
+
+    @Test
     public void testErrorMultiDimArrayFiller() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT rnd_double_array(2, 0, 0, 3, 3) AS arr2d FROM long_sequence(1))");
@@ -254,38 +294,49 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testErrorNDimsNegative() throws Exception {
+    public void testErrorNArraysNegative() throws Exception {
         assertException(
                 "SELECT array_build(-1, 3, 0)",
                 19,
-                "nDims must be 1 or 2"
+                "nArrays out of range"
         );
     }
 
     @Test
-    public void testErrorNDimsThree() throws Exception {
+    public void testNArraysThreeScalarFillers() throws Exception {
+        assertMemoryLeak(() -> assertSqlWithTypes(
+                """
+                        array_build
+                        [[1.0,1.0,1.0],[2.0,2.0,2.0],[3.0,3.0,3.0]]:DOUBLE[][]
+                        """,
+                "SELECT array_build(3, 3, 1.0, 2.0, 3.0)"
+        ));
+    }
+
+    @Test
+    public void testErrorNArraysOverflow() throws Exception {
         assertException(
-                "SELECT array_build(3, 3, 0, 0, 0)",
+                "SELECT array_build(3_000_000_000, 3, 0)",
                 19,
-                "nDims must be 1 or 2"
+                "nArrays out of range"
         );
     }
 
     @Test
-    public void testErrorNDimsTooHigh() throws Exception {
+    public void testErrorNArraysTooManyForArgCount() throws Exception {
         assertException(
                 "SELECT array_build(33, 3, 0)",
-                19,
-                "nDims must be 1 or 2"
+                7,
+                "array_build with nArrays=33 requires 35 arguments, got 3"
         );
     }
 
     @Test
-    public void testErrorNDimsZero() throws Exception {
+    public void testErrorNArraysZero() throws Exception {
         assertException(
                 "SELECT array_build(0, 3, 0)",
                 19,
-                "nDims must be 1 or 2"
+                "nArrays out of range"
         );
     }
 
@@ -302,13 +353,13 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testErrorNonConstantNDims() throws Exception {
+    public void testErrorNonConstantNArrays() throws Exception {
         // bind variables are rejected by the function resolver before reaching our factory
         assertMemoryLeak(() -> {
             sqlExecutionContext.getBindVariableService().setLong(0, 1);
             try {
                 assertSqlWithTypes("ignored\n", "SELECT array_build($1, 3, 0)");
-                Assert.fail("expected SqlException for non-constant nDims");
+                Assert.fail("expected SqlException for non-constant nArrays");
             } catch (SqlException ignored) {
             }
         });
@@ -319,7 +370,7 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
         assertException(
                 "SELECT array_build(2, 3, 1.0)",
                 7,
-                "array_build with nDims=2 requires 4 arguments, got 3"
+                "array_build with nArrays=2 requires 4 arguments, got 3"
         );
     }
 
@@ -349,7 +400,7 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
         assertException(
                 "SELECT array_build(1, 3, 1.0, 2.0)",
                 7,
-                "array_build with nDims=1 requires 3 arguments, got 4"
+                "array_build with nArrays=1 requires 3 arguments, got 4"
         );
     }
 
@@ -415,6 +466,29 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullArrayFillerFromColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT CASE WHEN x = 2 THEN null::DOUBLE[]
+                                    ELSE ARRAY[x::DOUBLE, (x * 10)::DOUBLE, (x * 100)::DOUBLE]
+                               END AS arr
+                        FROM long_sequence(3)
+                    )
+                    """);
+            assertSql(
+                    """
+                            array_build
+                            [1.0,10.0,100.0]
+                            [null,null,null]
+                            [3.0,30.0,300.0]
+                            """,
+                    "SELECT array_build(1, 3, arr) FROM t"
+            );
+        });
+    }
+
+    @Test
     public void testNullArraySize() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT null::DOUBLE[] AS arr FROM long_sequence(1))");
@@ -458,5 +532,27 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
                         """,
                 "SELECT array_build(1, null::INT, 0)"
         ));
+    }
+
+    @Test
+    public void testOrderBookStyle() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE book AS (
+                        SELECT ARRAY[100.0, 101.0, 102.0] AS ask_price,
+                               ARRAY[10.0, 20.0, 30.0] AS ask_size,
+                               ARRAY[99.0, 98.0, 97.0] AS bid_price,
+                               ARRAY[15.0, 25.0, 35.0] AS bid_size
+                        FROM long_sequence(1)
+                    )
+                    """);
+            assertSqlWithTypes(
+                    """
+                            array_build
+                            [[100.0,101.0,102.0],[10.0,20.0,30.0],[99.0,98.0,97.0],[15.0,25.0,35.0]]:DOUBLE[][]
+                            """,
+                    "SELECT array_build(4, ask_price, ask_price, ask_size, bid_price, bid_size) FROM book"
+            );
+        });
     }
 }
