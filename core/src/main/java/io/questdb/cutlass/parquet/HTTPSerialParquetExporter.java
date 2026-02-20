@@ -151,7 +151,6 @@ public class HTTPSerialParquetExporter {
             }
         } catch (PeerIsSlowToReadException e) {
             createOp = null;
-            Misc.free(factory);
             throw e;
         } catch (SqlException e) {
             LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();

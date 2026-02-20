@@ -166,12 +166,12 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                                     sqlText.toString(),
                                     false
                             );
+                            createOp = impl; // assign early so catch blocks can free on error
                             impl.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
                             impl.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
                             impl.validateAndUpdateMetadataFromSelect(
                                     rcf.getMetadata(), rcf.getScanDirection()
                             );
-                            createOp = impl;
                         } else {
                             selectFactory = rcf;
                             rcf = null;
@@ -182,16 +182,16 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 } catch (SqlException ex) {
                     ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
                     Misc.free(createOp);
-                    selectFactory = Misc.free(selectFactory);
+                    Misc.free(selectFactory);
                     throw ex;
                 } catch (CairoException ex) {
                     ex.position(tableOrSelectTextPos + ex.getPosition());
                     Misc.free(createOp);
-                    selectFactory = Misc.free(selectFactory);
+                    Misc.free(selectFactory);
                     throw ex;
                 } catch (Throwable ex) {
                     Misc.free(createOp);
-                    selectFactory = Misc.free(selectFactory);
+                    Misc.free(selectFactory);
                     throw ex;
                 }
             }

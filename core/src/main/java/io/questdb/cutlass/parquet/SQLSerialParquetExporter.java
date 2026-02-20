@@ -451,7 +451,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             RecordCursorFactory selectFactory,
             ParquetExportMode mode,
             CopyExportContext.ExportTaskEntry entry
-    ) throws SqlException {
+    ) {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.STREAM_SENDING_DATA;
         entry.setPhase(phase);
         copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());

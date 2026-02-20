@@ -284,7 +284,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         streamPartitionParquetExporter.setUp();
     }
 
-    public void setWriteCallback(StreamWriteParquetCallBack writeCallback) {
+    public void setWriteCallback(@Nullable StreamWriteParquetCallBack writeCallback) {
         this.writeCallback = writeCallback;
     }
 
