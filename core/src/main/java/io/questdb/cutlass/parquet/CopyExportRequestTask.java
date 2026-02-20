@@ -534,6 +534,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
         public void writeHybridFrame(DirectLongList prebuiltColumnData, long frameRowCount) throws Exception {
             assert streamWriter != -1 && writeCallback != null;
+            currentFrameRowCount = frameRowCount;
             long buffer = writeStreamingParquetChunk(streamWriter, prebuiltColumnData.getAddress(), frameRowCount);
             while (buffer != 0) {
                 streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
