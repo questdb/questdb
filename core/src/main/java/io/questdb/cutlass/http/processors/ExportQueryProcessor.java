@@ -247,6 +247,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             }
                             if (isParquet) {
                                 state.parquetExportMode = HybridColumnMaterializer.determineExportMode(state.recordCursorFactory);
+                                if (state.descending && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
+                                    state.parquetExportMode = ParquetExportMode.CURSOR_BASED;
+                                }
                             }
                         }
                     }
