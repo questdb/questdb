@@ -1430,6 +1430,46 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFrameColumnTop() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // Create a WAL table with data across multiple partitions
+                    engine.execute(
+                            "CREATE TABLE coltop_test (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                            sqlExecutionContext
+                    );
+                    engine.execute("""
+                            INSERT INTO coltop_test VALUES
+                                (1, '2024-01-01T00:00:00.000000Z'),
+                                (2, '2024-01-01T12:00:00.000000Z'),
+                                (3, '2024-01-02T00:00:00.000000Z'),
+                                (4, '2024-01-02T12:00:00.000000Z')""", sqlExecutionContext);
+                    drainWalQueue(engine);
+
+                    // Add a new column — older partitions will have column tops (page address == 0)
+                    engine.execute("ALTER TABLE coltop_test ADD COLUMN y INT", sqlExecutionContext);
+                    drainWalQueue(engine);
+
+                    // Insert rows with the new column populated in a new partition
+                    engine.execute("""
+                            INSERT INTO coltop_test VALUES
+                                (5, '2024-01-03T00:00:00.000000Z', 100),
+                                (6, '2024-01-03T12:00:00.000000Z', 101)""", sqlExecutionContext);
+                    drainWalQueue(engine);
+
+                    // Query with a computed column to force PAGE_FRAME_BACKED mode.
+                    // The pass-through column y has a column top (zero page address)
+                    // in the 2024-01-01 and 2024-01-02 partitions.
+                    String[] queries = {
+                            "SELECT x + 1 AS cx, y, ts FROM coltop_test",
+                            "SELECT x * 2 AS doubled, y::LONG AS y_long, ts FROM coltop_test",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameComputedColumns() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
