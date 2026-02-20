@@ -150,8 +150,7 @@ public class HTTPSerialParquetExporter {
             entry.setPhase(phase);
             assert exportMode != null;
             switch (exportMode) {
-                case PAGE_FRAME_BACKED -> processPageFrameStreamExport();
-                case CURSOR_BASED -> processCursorStreamExport();
+                case PAGE_FRAME_BACKED, CURSOR_BASED -> processHybridStreamExport();
                 case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> processStreamExport();
             }
         } catch (PeerIsSlowToReadException e) {
@@ -255,14 +254,15 @@ public class HTTPSerialParquetExporter {
         this.materializerColumnData = materializerColumnData;
     }
 
-    private void processCursorStreamExport() throws Exception {
+    private void processHybridStreamExport() throws Exception {
+        boolean isPageFrameBacked = exportMode == ParquetExportMode.PAGE_FRAME_BACKED;
         CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
         if (circuitBreaker.checkIfTripped()) {
             LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
         if (exporter.onResume()) {
-            LOG.debug().$("cursor stream export progress (resume) [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("hybrid stream export progress (resume) [id=").$hexPadded(task.getCopyID())
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
         } else {
@@ -272,8 +272,17 @@ public class HTTPSerialParquetExporter {
         long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
         long inFlightRows = 0;
-        long rowCount;
-        while ((rowCount = materializer.buildColumnDataFromCursor(fullCursor, materializerColumnData, batchSize)) > 0) {
+        for (;;) {
+            long rowCount;
+            if (isPageFrameBacked) {
+                PageFrame frame = streamingPfc.next();
+                if (frame == null) break;
+                rowCount = materializer.buildColumnDataFromPageFrame(streamingPfc, frame, materializerColumnData);
+            } else {
+                rowCount = materializer.buildColumnDataFromCursor(fullCursor, materializerColumnData, batchSize);
+                if (rowCount == 0) break;
+            }
+
             if (circuitBreaker.checkIfTripped()) {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
@@ -281,17 +290,19 @@ public class HTTPSerialParquetExporter {
             exporter.writeHybridFrame(materializerColumnData, rowCount);
             inFlightRows += rowCount;
 
-            // Release pinned buffers after Rust has written a row group
             long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
             if (currentRowsWritten > previousRowsWritten) {
                 inFlightRows -= (currentRowsWritten - previousRowsWritten);
                 if (inFlightRows <= rowCount) {
                     materializer.releasePinnedBuffers();
                 }
+                if (isPageFrameBacked) {
+                    streamingPfc.releaseOpenPartitions();
+                }
                 previousRowsWritten = currentRowsWritten;
             }
 
-            LOG.debug().$("cursor stream export progress [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("hybrid stream export progress [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInBatch=").$(rowCount)
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
@@ -300,58 +311,7 @@ public class HTTPSerialParquetExporter {
         long totalRows = exporter.getTotalRows();
         exporter.finishExport();
         copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-        LOG.info().$("cursor stream export completed [id=").$hexPadded(task.getCopyID())
-                .$(", totalRows=").$(totalRows)
-                .$(']').$();
-    }
-
-    private void processPageFrameStreamExport() throws Exception {
-        CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
-        if (circuitBreaker.checkIfTripped()) {
-            LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
-            throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-        }
-        if (exporter.onResume()) {
-            LOG.debug().$("page frame stream export progress (resume) [id=").$hexPadded(task.getCopyID())
-                    .$(", exported totalRows=").$(exporter.getTotalRows())
-                    .$(']').$();
-        } else {
-            copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-        }
-
-        PageFrame frame;
-        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
-        long inFlightRows = 0;
-        while ((frame = streamingPfc.next()) != null) {
-            if (circuitBreaker.checkIfTripped()) {
-                LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
-                throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-            }
-            long rowCount = materializer.buildColumnDataFromPageFrame(streamingPfc, frame, materializerColumnData);
-            exporter.writeHybridFrame(materializerColumnData, rowCount);
-            inFlightRows += rowCount;
-
-            // Release partitions and pinned buffers after Rust has written a row group
-            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
-            if (currentRowsWritten > previousRowsWritten) {
-                inFlightRows -= (currentRowsWritten - previousRowsWritten);
-                if (inFlightRows <= rowCount) {
-                    materializer.releasePinnedBuffers();
-                }
-                streamingPfc.releaseOpenPartitions();
-                previousRowsWritten = currentRowsWritten;
-            }
-
-            LOG.debug().$("page frame stream export progress [id=").$hexPadded(task.getCopyID())
-                    .$(", rowsInFrame=").$(rowCount)
-                    .$(", exported totalRows=").$(exporter.getTotalRows())
-                    .$(']').$();
-        }
-
-        long totalRows = exporter.getTotalRows();
-        exporter.finishExport();
-        copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-        LOG.info().$("page frame stream export completed [id=").$hexPadded(task.getCopyID())
+        LOG.info().$("hybrid stream export completed [id=").$hexPadded(task.getCopyID())
                 .$(", totalRows=").$(totalRows)
                 .$(']').$();
     }

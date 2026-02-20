@@ -397,40 +397,8 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                         numOfFiles = 1;
                     }
                 }
-                case PAGE_FRAME_BACKED -> {
-                    VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) baseFactory;
-                    try (PageFrameCursor pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
-                        pfc.setStreamingMode(true);
-                        streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
-                        RecordMetadata adjustedMeta = streamBuffers.getAdjustedMetadata();
-                        exporter.setUp(adjustedMeta, pfc, streamBuffers.getBaseColumnMap());
-
-                        PageFrame frame;
-                        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
-                        long inFlightRows = 0;
-                        while ((frame = pfc.next()) != null) {
-                            if (circuitBreaker.checkIfTripped()) {
-                                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-                            }
-                            long rowCount = streamBuffers.buildColumnDataFromPageFrame(pfc, frame, streamColumnData);
-                            exporter.writeHybridFrame(streamColumnData, rowCount);
-                            inFlightRows += rowCount;
-                            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
-                            if (currentRowsWritten > previousRowsWritten) {
-                                inFlightRows -= (currentRowsWritten - previousRowsWritten);
-                                if (inFlightRows <= rowCount) {
-                                    streamBuffers.releasePinnedBuffers();
-                                }
-                                pfc.releaseOpenPartitions();
-                                previousRowsWritten = currentRowsWritten;
-                            }
-                        }
-
-                        exporter.finishExport();
-                        numOfFiles = 1;
-                    }
-                }
-                case CURSOR_BASED -> processCursorExport(baseFactory, exporter, phase);
+                case PAGE_FRAME_BACKED, CURSOR_BASED ->
+                        processHybridExport(baseFactory, mode, exporter, phase);
                 default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
             }
         } catch (CopyExportException e) {
@@ -462,30 +430,56 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                 .$(", totalRows=").$(task.getStreamPartitionParquetExporter().getTotalRows()).$(']').$();
     }
 
-    private void processCursorExport(
+    private void processHybridExport(
             RecordCursorFactory factory,
+            ParquetExportMode mode,
             CopyExportRequestTask.StreamPartitionParquetExporter exporter,
             CopyExportRequestTask.Phase phase
     ) throws Exception {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            streamBuffers.setUp(factory.getMetadata());
-            exporter.setUp(streamBuffers.getAdjustedMetadata());
+        boolean isPageFrameBacked = mode == ParquetExportMode.PAGE_FRAME_BACKED;
+        PageFrameCursor pfc = null;
+        RecordCursor cursor = null;
+        try {
+            if (isPageFrameBacked) {
+                VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
+                pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                pfc.setStreamingMode(true);
+                streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
+                exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
+            } else {
+                cursor = factory.getCursor(sqlExecutionContext);
+                streamBuffers.setUp(factory.getMetadata());
+                exporter.setUp(streamBuffers.getAdjustedMetadata());
+            }
 
             long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
             long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
             long inFlightRows = 0;
-            long rowCount;
-            while ((rowCount = streamBuffers.buildColumnDataFromCursor(cursor, streamColumnData, batchSize)) > 0) {
+            for (;;) {
+                long rowCount;
+                if (isPageFrameBacked) {
+                    PageFrame frame = pfc.next();
+                    if (frame == null) break;
+                    rowCount = streamBuffers.buildColumnDataFromPageFrame(pfc, frame, streamColumnData);
+                } else {
+                    rowCount = streamBuffers.buildColumnDataFromCursor(cursor, streamColumnData, batchSize);
+                    if (rowCount == 0) break;
+                }
+
                 if (circuitBreaker.checkIfTripped()) {
                     throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                 }
                 exporter.writeHybridFrame(streamColumnData, rowCount);
                 inFlightRows += rowCount;
+
                 long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
                 if (currentRowsWritten > previousRowsWritten) {
                     inFlightRows -= (currentRowsWritten - previousRowsWritten);
                     if (inFlightRows <= rowCount) {
                         streamBuffers.releasePinnedBuffers();
+                    }
+                    if (isPageFrameBacked) {
+                        pfc.releaseOpenPartitions();
                     }
                     previousRowsWritten = currentRowsWritten;
                 }
@@ -493,6 +487,9 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
 
             exporter.finishExport();
             numOfFiles = 1;
+        } finally {
+            Misc.free(pfc);
+            Misc.free(cursor);
         }
     }
 
