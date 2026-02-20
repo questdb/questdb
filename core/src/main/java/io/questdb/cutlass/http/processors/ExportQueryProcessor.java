@@ -196,8 +196,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     state.descending = order == ORDER_DESC;
                     if (isParquet) {
                         state.parquetExportMode = HybridColumnMaterializer.determineExportMode(state.recordCursorFactory);
-                        // Page frame cursors cannot reverse row order within partitions,
-                        // so descending queries must fall back to cursor-based export.
+                        // The hybrid path (PAGE_FRAME_BACKED) uses zero-copy pointers for
+                        // pass-through columns, so data within each page frame is always in
+                        // storage (ascending) order. Descending queries must fall back to
+                        // cursor-based export to produce fully reversed row order.
                         if (state.descending && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
                             state.parquetExportMode = ParquetExportMode.CURSOR_BASED;
                         }
