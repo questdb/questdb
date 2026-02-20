@@ -35,6 +35,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1568,6 +1569,53 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable stmt = () ->
                     runAndFetchCopyExportID(
                             "COPY (SELECT * FROM test_table) TO 'fail_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                """
+                                        status
+                                        failed
+                                        """,
+                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+
+                        // Verify no tmp_ directories remain in export root
+                        File exportDir = new File(exportRoot);
+                        File[] tmpDirs = exportDir.listFiles(f -> f.isDirectory() && f.getName().startsWith("tmp_"));
+                        Assert.assertTrue(
+                                "temp directory should have been cleaned up, but found: "
+                                        + (tmpDirs != null ? tmpDirs.length : 0) + " tmp_ dir(s)",
+                                tmpDirs == null || tmpDirs.length == 0
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyStreamingExportMoveFailureCleansUpTempDir() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                // Fail the final rename from the temp file to the export destination
+                if (Utf8s.containsAscii(from, "tmp_") && Utf8s.endsWithAscii(to, ".parquet")) {
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE test_table (x INT, y LONG, z STRING)");
+            execute("INSERT INTO test_table VALUES (1, 100, 'hello'), (2, 200, 'world')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM test_table) TO 'move_fail_output' WITH FORMAT parquet",
                             sqlExecutionContext
                     );
 

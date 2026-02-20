@@ -547,11 +547,17 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         phase = CopyExportRequestTask.Phase.MOVE_FILES;
         entry.setPhase(phase);
         copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-        tempPath.trimTo(tempFilePathLen);
-        moveFile(fileName);
-        // Clean up the now-empty temp directory
-        tempPath.trimTo(tempBaseDirLen);
-        ff.rmdir(tempPath.slash());
+        try {
+            tempPath.trimTo(tempFilePathLen);
+            moveFile(fileName);
+            // Clean up the now-empty temp directory
+            tempPath.trimTo(tempBaseDirLen);
+            ff.rmdir(tempPath.slash());
+        } catch (Throwable e) {
+            tempPath.trimTo(tempBaseDirLen);
+            TableUtils.cleanupDirQuiet(ff, tempPath, LOG);
+            throw e;
+        }
         copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
 
         LOG.info().$("streaming parquet export completed [id=").$hexPadded(task.getCopyID())
