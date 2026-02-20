@@ -668,9 +668,9 @@ public final class Numbers {
      * NaN / Infinity / value doesn't fit in any DECIMAL type.
      *
      * @param value   the double value to convert
-     * @param sink64  the Decimal64 sink (populated when precision <= 18)
-     * @param sink128 the Decimal128 sink (populated when precision <= 38)
-     * @param sink256 the Decimal256 sink (populated when precision <= 76)
+     * @param sink64  the Decimal64 sink (populated when precision &lt;= 18)
+     * @param sink128 the Decimal128 sink (populated when precision &lt;= 38)
+     * @param sink256 the Decimal256 sink (populated when precision &lt;= 76)
      * @return the column type int, or 0 on failure
      */
     public static int doubleToDecimal(
