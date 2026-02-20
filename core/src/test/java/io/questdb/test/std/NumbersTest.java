@@ -397,20 +397,20 @@ public class NumbersTest {
     public void testFormatDoubleAsRandomFloat() {
         Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < 1_000_000; i++) {
-            float d1 = rnd.nextFloat();
-            float d2 = rnd.nextFloat();
-            float d3 = rnd.nextFloat() * Float.MAX_VALUE;
+            float f1 = rnd.nextFloat();
+            float f2 = rnd.nextFloat();
+            float f3 = rnd.nextFloat() * Float.MAX_VALUE;
             sink.clear();
-            Numbers.append(sink, d1);
-            Assert.assertEquals(d1, Double.parseDouble(sink.toString()), 0);
+            Numbers.append(sink, (double) f1);
+            Assert.assertEquals(f1, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
-            Numbers.append(sink, d2);
-            Assert.assertEquals(d2, Double.parseDouble(sink.toString()), 0);
+            Numbers.append(sink, (double) f2);
+            Assert.assertEquals(f2, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
-            Numbers.append(sink, d3);
-            Assert.assertEquals(d3, Double.parseDouble(sink.toString()), 0);
+            Numbers.append(sink, (double) f3);
+            Assert.assertEquals(f3, Double.parseDouble(sink.toString()), 0);
         }
     }
 
