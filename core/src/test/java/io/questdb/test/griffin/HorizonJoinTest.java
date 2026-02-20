@@ -832,6 +832,23 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinListNotMonotonicallyIncreasing() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT h.offset, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "LIST (0s, 2s, 1s) AS h",
+                    105,
+                    "LIST offsets must be monotonically increasing"
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinListTooManyOffsets() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 4);
@@ -845,6 +862,23 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "LIST (0s, 1s, 2s, 3s, 4s) AS h",
                     120,
                     "LIST has too many offsets [count=5, max=4]"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM trades_nots AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "LIST (0s) AS h",
+                    42,
+                    "left side of time series join has no timestamp"
             );
         });
     }
@@ -1528,6 +1562,41 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinSampleByNotAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "LIST (0s, 1s) AS h " +
+                            "SAMPLE BY 1s",
+                    110,
+                    "SAMPLE BY cannot be used with HORIZON JOIN"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSlaveNoDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            execute("CREATE TABLE prices_nots (ts TIMESTAMP, sym SYMBOL, price DOUBLE)");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices_nots AS p ON (t.sym = p.sym) " +
+                            "LIST (0s) AS h",
+                    37,
+                    "right side of time series join has no timestamp"
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinSlaveNoTimeFrameWithFilter() throws Exception {
         // Slave subquery doesn't support time frames, error after filter stealing — verifies no resource leak
         assertMemoryLeak(() -> {
@@ -1743,6 +1812,40 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     null,
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinUnsupportedTimeUnit() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "LIST (0s, 1w) AS h",
+                    91,
+                    "unsupported HORIZON time unit"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWindowFunctionNotAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT row_number() OVER (), avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "LIST (0s, 1s) AS h",
+                    7,
+                    "WINDOW functions are not allowed in HORIZON JOIN queries"
             );
         });
     }
@@ -2416,6 +2519,51 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinWithMicrosecondUnit() throws Exception {
+        // Test HORIZON JOIN with microsecond (U suffix) offset unit
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            // Offsets in microseconds: 0U and 1_000_000U (= 1 second)
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0U, 1000000U) AS h " +
+                    "GROUP BY h.offset " +
+                    "ORDER BY h.offset";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg
+                            0\t20.0
+                            1\t30.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinWithMixedTimestampKey() throws Exception {
         // Test HORIZON JOIN with TIMESTAMP_NS key on master and TIMESTAMP key on slave.
         // The coercion logic should convert both to TIMESTAMP_NANO for comparison.
@@ -2673,6 +2821,51 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             sec_offs\tavg\tsum
                             0\t127.75\t750
                             1\t132.75\t750
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithNanosecondUnit() throws Exception {
+        // Test HORIZON JOIN with nanosecond (n suffix) offset unit
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:00.000000Z', 'AX', 10),
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 20),
+                                ('1970-01-01T00:00:02.000000Z', 'AX', 30)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            // Offsets in nanoseconds: 0n and 1_000_000_000n (= 1 second)
+            String sql = "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0n, 1000000000n) AS h " +
+                    "GROUP BY h.offset " +
+                    "ORDER BY h.offset";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg
+                            0\t20.0
+                            1\t30.0
                             """,
                     sql,
                     null,

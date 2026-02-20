@@ -6002,6 +6002,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testHorizonJoinListBadSeparator() throws Exception {
+        assertSyntaxError(
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (0s 1s) AS h",
+                90,
+                "',' or ')' expected",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
     public void testHorizonJoinListEmpty() throws Exception {
         assertSyntaxError(
                 "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST () AS h",
@@ -6047,6 +6058,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (100T, 1s, 1m, 1h, 1d) as h) t",
                 "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (100T, 1s, 1m, 1h, 1d) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinListWithNanoAndMicroUnits() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(p.price) avg from (select [sym] from trades t timestamp (timestamp) horizon join select [price, sym] from prices p timestamp (timestamp) on p.sym = t.sym cross join  h list (0n, 500n, 1U, 100U) as h) t",
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) LIST (0n, 500n, 1U, 100U) AS h",
                 modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
                 modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
         );
