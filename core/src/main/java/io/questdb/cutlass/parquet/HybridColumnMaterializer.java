@@ -100,7 +100,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     // Buffers that Rust still references (pending_partitions). Freed after row group flush.
     private final ObjList<MemoryCARWImpl> pinnedAuxBuffers = new ObjList<>();
     private final ObjList<MemoryCARWImpl> pinnedDataBuffers = new ObjList<>();
-    private GenericRecordMetadata adjustedMetadata;
+    private final GenericRecordMetadata adjustedMetadata = new GenericRecordMetadata();
+    private final HybridSymbolTableSource hybridSymbolTableSource = new HybridSymbolTableSource();
     private int computedCount;
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
@@ -279,7 +280,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         computedOutputTypes.clear();
         functions = null;
         functionRecord = null;
-        adjustedMetadata = null;
+        adjustedMetadata.clear();
         computedCount = 0;
         outputColumnCount = 0;
     }
@@ -327,7 +328,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         this.computedBufferIdx.setPos(outputColumnCount);
         this.functions = null;
 
-        adjustedMetadata = new GenericRecordMetadata();
+        adjustedMetadata.clear();
         computedCount = 0;
 
         for (int i = 0; i < outputColumnCount; i++) {
@@ -361,7 +362,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         this.outputColumnCount = outputMeta.getColumnCount();
         this.baseColumnMap.setPos(outputColumnCount);
         this.computedBufferIdx.setPos(outputColumnCount);
-        this.adjustedMetadata = new GenericRecordMetadata();
+        this.adjustedMetadata.clear();
         this.computedCount = 0;
 
         for (int i = 0; i < outputColumnCount; i++) {
@@ -428,11 +429,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         // Set up function evaluation record
         int virtualColumnReservedSlots = priorityMetadata.getVirtualColumnReservedSlots();
         functionRecord = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
-        HybridSymbolTableSource hybridSource = new HybridSymbolTableSource(pfc, virtualColumnReservedSlots);
-        pageFrameRecord.of(hybridSource);
+        hybridSymbolTableSource.of(pfc, virtualColumnReservedSlots);
+        pageFrameRecord.of(hybridSymbolTableSource);
 
         // Init functions with symbol table source
-        Function.init(functions, hybridSource, ctx, null);
+        Function.init(functions, hybridSymbolTableSource, ctx, null);
         functionRecord.of(pageFrameRecord);
     }
 
@@ -678,10 +679,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     /**
      * Routes symbol table lookups: virtual columns → null, base columns → page frame cursor.
      */
-    private record HybridSymbolTableSource(
-            PageFrameCursor pageFrameCursor,
-            int virtualColumnReservedSlots
-    ) implements SymbolTableSource {
+    private static class HybridSymbolTableSource implements SymbolTableSource {
+        private PageFrameCursor pageFrameCursor;
+        private int virtualColumnReservedSlots;
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
@@ -697,6 +697,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 return null;
             }
             return pageFrameCursor.newSymbolTable(columnIndex - virtualColumnReservedSlots);
+        }
+
+        void of(PageFrameCursor pageFrameCursor, int virtualColumnReservedSlots) {
+            this.pageFrameCursor = pageFrameCursor;
+            this.virtualColumnReservedSlots = virtualColumnReservedSlots;
         }
     }
 
