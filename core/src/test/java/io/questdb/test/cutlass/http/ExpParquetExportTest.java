@@ -1511,6 +1511,56 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFrameDescendingAfterRecompile() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE recomp_desc AS (
+                                SELECT x, x * 2.0 AS dbl_col,
+                                timestamp_sequence('2024-01-01', 1_000_000L) AS ts
+                                FROM long_sequence(200)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+
+                    // Descending query with expressions → PAGE_FRAME_BACKED mode initially.
+                    // The descending override should downgrade it to CURSOR_BASED.
+                    String query = "SELECT x + 1 AS computed_x, dbl_col, ts FROM recomp_desc ORDER BY ts DESC";
+
+                    try (TestHttpClient httpClient = new TestHttpClient();
+                         var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        httpClient.setKeepConnection(true);
+
+                        // First request: succeeds and caches the factory in the connection's select cache.
+                        HttpClient.Request req = httpClient.getHttpClient().newRequest("localhost", 9001);
+                        req.GET().url("/exp");
+                        req.query("query", query);
+                        req.query("fmt", "parquet");
+                        req.query("row_group_size", "50");
+                        sink.clear();
+                        httpClient.reqToSink(req, sink, null, null, null, null);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recomp_first.parquet");
+
+                        // ALTER TABLE to change the schema version, making the cached factory stale.
+                        engine.execute("ALTER TABLE recomp_desc ADD COLUMN extra_col INT", sqlExecutionContext);
+
+                        // Second request: the stale cached factory triggers
+                        // TableReferenceOutOfDateException, causing recompilation.
+                        // Without the fix, the descending-to-CURSOR_BASED override is not
+                        // re-applied after recompile, so PAGE_FRAME_BACKED produces rows
+                        // in storage (ascending) order for pass-through columns.
+                        req = httpClient.getHttpClient().newRequest("localhost", 9001);
+                        req.GET().url("/exp");
+                        req.query("query", query);
+                        req.query("fmt", "parquet");
+                        req.query("row_group_size", "50");
+                        sink.clear();
+                        httpClient.reqToSink(req, sink, null, null, null, null);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recomp_second.parquet");
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameFullMaterialization() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1883,6 +1933,34 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             }
         }
         return req.send();
+    }
+
+    private void assertParquetMatchesQuery(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            DirectUtf8Sink parquetData,
+            String query,
+            String filename
+    ) throws Exception {
+        int bytesReceived = parquetData.size();
+        Path path = Path.getThreadLocal(root);
+        path.concat("export").concat(filename).$();
+        Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
+        long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
+        try {
+            Files.truncate(fd, bytesReceived);
+            long bytesWritten = Files.write(fd, parquetData.ptr(), bytesReceived, 0);
+            Assert.assertEquals(bytesReceived, bytesWritten);
+        } finally {
+            Files.close(fd);
+        }
+
+        String selectFromParquet = "read_parquet('" + filename + "')";
+        var expectedSink = new StringSink();
+        var actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
+        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     private void assertParquetExportDataCorrectness(
