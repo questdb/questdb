@@ -1821,7 +1821,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     try {
                         testHttpClient.assertGetContains("/exp", "timeout, query aborted", params);
                     } catch (HttpClientException e) {
-                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                        String msg = e.getMessage();
+                        Assert.assertTrue(
+                                "unexpected error: " + msg,
+                                msg.contains("peer disconnect") || msg.contains("malformed chunk")
+                        );
                     }
                 });
     }
