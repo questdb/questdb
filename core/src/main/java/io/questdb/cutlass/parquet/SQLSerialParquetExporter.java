@@ -467,18 +467,20 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         tempPath.concat("export.parquet");
         int tempFilePathLen = tempPath.size();
 
-        long fd = ff.openRW(tempPath.$(), configuration.getWriterFileOpenOpts());
-        if (fd < 0) {
-            throw CopyExportException.instance(phase, ff.errno())
-                    .put("could not create temp parquet file [path=").put(tempPath).put(']');
-        }
-
-        LOG.info().$("starting streaming parquet export [id=").$hexPadded(task.getCopyID())
-                .$(", selectText=").$(task.getSelectText()).$(", mode=").$(mode).$(']').$();
-
         streamBuffers.clear();
         streamColumnData.clear();
+        boolean streamSuccess = false;
+        long fd = -1;
         try {
+            fd = ff.openRW(tempPath.$(), configuration.getWriterFileOpenOpts());
+            if (fd < 0) {
+                throw CopyExportException.instance(phase, ff.errno())
+                        .put("could not create temp parquet file [path=").put(tempPath).put(']');
+            }
+
+            LOG.info().$("starting streaming parquet export [id=").$hexPadded(task.getCopyID())
+                    .$(", selectText=").$(task.getSelectText()).$(", mode=").$(mode).$(']').$();
+
             // Unwrap QueryProgress so that its register/unregister lifecycle
             // does not null the circuit breaker's cancelledFlag when cursors close.
             // The outer COPY command handles query registration and cancellation.
@@ -521,6 +523,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                 case PAGE_FRAME_BACKED, CURSOR_BASED -> processHybridExport(baseFactory, mode, exporter, phase);
                 default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
             }
+            streamSuccess = true;
         } catch (CopyExportException e) {
             throw e;
         } catch (SqlException e) {
@@ -530,7 +533,13 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         } catch (Throwable e) {
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
-            ff.close(fd);
+            if (fd > -1) {
+                ff.close(fd);
+            }
+            if (!streamSuccess) {
+                tempPath.trimTo(tempBaseDirLen);
+                TableUtils.cleanupDirQuiet(ff, tempPath, LOG);
+            }
         }
 
         copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());

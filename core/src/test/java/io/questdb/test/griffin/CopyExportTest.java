@@ -1539,6 +1539,63 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyStreamingExportFailureCleansUpTempDir() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            private volatile long failFd = -1;
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, "tmp_") && Utf8s.endsWithAscii(name, "export.parquet")) {
+                    failFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long write(long fd, long address, long len, long offset) {
+                if (fd == failFd && fd != -1) {
+                    return -1;
+                }
+                return super.write(fd, address, len, offset);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE test_table (x INT, y LONG, z STRING)");
+            execute("INSERT INTO test_table VALUES (1, 100, 'hello'), (2, 200, 'world')");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM test_table) TO 'fail_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                """
+                                        status
+                                        failed
+                                        """,
+                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+
+                        // Verify no tmp_ directories remain in export root
+                        File exportDir = new File(exportRoot);
+                        File[] tmpDirs = exportDir.listFiles(f -> f.isDirectory() && f.getName().startsWith("tmp_"));
+                        Assert.assertTrue(
+                                "temp directory should have been cleaned up, but found: "
+                                        + (tmpDirs != null ? tmpDirs.length : 0) + " tmp_ dir(s)",
+                                tmpDirs == null || tmpDirs.length == 0
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyTableToParquetBasicSyntax() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y long, z string)");
