@@ -30,11 +30,15 @@ to distinguish NULL as a sentinel value for "not initialized yet" vs. an actual
 NULL value.
 
 When choosing a name for a boolean variable, field or method, always use the
-is... prefix.
+is... or has... prefix, as appropriate.
 
 ### Tests
 
-- write all tests using assertMemoryLeak()
+- write all tests using assertMemoryLeak(). This isn't needed for narrow unit
+  tests that provably don't allocate any native memory.
+- resource leaks are a pain point in QuestDB. Always think carefully about all
+  possible code paths, especially error paths, and write tests that ensure
+  correct resource cleanup on each path.
 - use assertQueryNoLeakCheck() to assert the results of queries
 - use execute() to run non-queries (DDL)
 - use UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
