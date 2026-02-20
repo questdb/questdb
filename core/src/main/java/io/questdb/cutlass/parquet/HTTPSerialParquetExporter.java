@@ -63,7 +63,7 @@ public class HTTPSerialParquetExporter {
     // Borrowed from ExportQueryProcessorState via setup methods; not owned.
     private ParquetExportMode exportMode;
     private RecordCursor fullCursor;
-    private RecordToColumnBuffers materializer;
+    private HybridColumnMaterializer materializer;
     private DirectLongList materializerColumnData;
     private PageFrameCursor streamingPfc;
 
@@ -242,13 +242,13 @@ public class HTTPSerialParquetExporter {
         return phase;
     }
 
-    public void setupCursorBasedExport(RecordCursor cursor, RecordToColumnBuffers materializer, DirectLongList materializerColumnData) {
+    public void setupCursorBasedExport(RecordCursor cursor, HybridColumnMaterializer materializer, DirectLongList materializerColumnData) {
         this.fullCursor = cursor;
         this.materializer = materializer;
         this.materializerColumnData = materializerColumnData;
     }
 
-    public void setupPageFrameBackedExport(PageFrameCursor pfc, RecordToColumnBuffers materializer, DirectLongList materializerColumnData) {
+    public void setupPageFrameBackedExport(PageFrameCursor pfc, HybridColumnMaterializer materializer, DirectLongList materializerColumnData) {
         this.streamingPfc = pfc;
         this.materializer = materializer;
         this.materializerColumnData = materializerColumnData;

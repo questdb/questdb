@@ -36,7 +36,7 @@ import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.parquet.ParquetExportMode;
-import io.questdb.cutlass.parquet.RecordToColumnBuffers;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
@@ -71,7 +71,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean firstParquetWriteCall = true;
     boolean hasNext;
     final DirectLongList materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-    final RecordToColumnBuffers materializer = new RecordToColumnBuffers();
+    final HybridColumnMaterializer materializer = new HybridColumnMaterializer();
     RecordMetadata metadata;
     boolean noMeta = false;
     PageFrameCursor pageFrameCursor;

@@ -73,7 +73,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
     private final Utf8StringSink nameSink = new Utf8StringSink();
     private final IntList identityColumnMap = new IntList();
     private final DirectLongList streamColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
-    private final RecordToColumnBuffers streamBuffers = new RecordToColumnBuffers();
+    private final HybridColumnMaterializer streamBuffers = new HybridColumnMaterializer();
     private final Path tempPath;
     private final Path toParquet;
     private final FileWriteCallback writeCallback = new FileWriteCallback();
@@ -361,7 +361,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             // Unwrap QueryProgress so that its register/unregister lifecycle
             // does not null the circuit breaker's cancelledFlag when cursors close.
             // The outer COPY command handles query registration and cancellation.
-            RecordCursorFactory baseFactory = RecordToColumnBuffers.unwrapFactory(selectFactory);
+            RecordCursorFactory baseFactory = HybridColumnMaterializer.unwrapFactory(selectFactory);
             CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
             // File-write callback
             writeCallback.of(ff, fd);

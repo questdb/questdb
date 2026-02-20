@@ -40,7 +40,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.ParquetExportMode;
-import io.questdb.cutlass.parquet.RecordToColumnBuffers;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
@@ -151,7 +151,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     try {
                         int resolvedPartitionBy = partitionBy == -1 ? PartitionBy.NONE : partitionBy;
                         if (resolvedPartitionBy == PartitionBy.NONE) {
-                            exportMode = RecordToColumnBuffers.determineExportMode(rcf);
+                            exportMode = HybridColumnMaterializer.determineExportMode(rcf);
                         } else {
                             // Re-partitioning always requires a temp table
                             exportMode = ParquetExportMode.TEMP_TABLE;

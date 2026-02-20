@@ -76,7 +76,7 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
  * Also supports cursor-based mode (no page frame backing) where all columns are materialized
  * from a RecordCursor.
  */
-public class RecordToColumnBuffers implements Mutable, QuietCloseable {
+public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
     // Per computed col: aux memory (for var-size) or null (for fixed-size)
     private final ObjList<MemoryCARWImpl> auxBuffers = new ObjList<>();

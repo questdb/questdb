@@ -27,7 +27,7 @@ package io.questdb.cutlass.parquet;
 /**
  * Determines how a query's result set is fed into the Parquet writer.
  *
- * @see RecordToColumnBuffers#determineExportMode(io.questdb.cairo.sql.RecordCursorFactory)
+ * @see HybridColumnMaterializer#determineExportMode(io.questdb.cairo.sql.RecordCursorFactory)
  */
 public enum ParquetExportMode {
     // All columns materialized row-by-row from a RecordCursor (e.g. CROSS JOIN).

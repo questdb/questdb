@@ -52,7 +52,7 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.parquet.ParquetExportMode;
-import io.questdb.cutlass.parquet.RecordToColumnBuffers;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -195,7 +195,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     final int order = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
                     state.descending = order == ORDER_DESC;
                     if (isParquet) {
-                        state.parquetExportMode = RecordToColumnBuffers.determineExportMode(state.recordCursorFactory);
+                        state.parquetExportMode = HybridColumnMaterializer.determineExportMode(state.recordCursorFactory);
                         // Page frame cursors cannot reverse row order within partitions,
                         // so descending queries must fall back to cursor-based export.
                         if (state.descending && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
@@ -211,7 +211,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                     case PAGE_FRAME_BACKED -> {
                                         // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
                                         // when unwrapped instanceof VirtualRecordCursorFactory.
-                                        RecordCursorFactory unwrapped = RecordToColumnBuffers.unwrapFactory(state.recordCursorFactory);
+                                        RecordCursorFactory unwrapped = HybridColumnMaterializer.unwrapFactory(state.recordCursorFactory);
                                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
                                         state.pageFrameCursor = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                                     }
@@ -242,7 +242,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
                             if (isParquet) {
-                                state.parquetExportMode = RecordToColumnBuffers.determineExportMode(state.recordCursorFactory);
+                                state.parquetExportMode = HybridColumnMaterializer.determineExportMode(state.recordCursorFactory);
                             }
                         }
                     }
@@ -250,7 +250,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     if (isParquet && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
                         // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
                         // when unwrapped instanceof VirtualRecordCursorFactory.
-                        RecordCursorFactory unwrapped = RecordToColumnBuffers.unwrapFactory(state.recordCursorFactory);
+                        RecordCursorFactory unwrapped = HybridColumnMaterializer.unwrapFactory(state.recordCursorFactory);
                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
                         state.pageFrameCursor.setStreamingMode(true);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
@@ -680,7 +680,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     case DIRECT_PAGE_FRAME -> state.task.setUpStreamPartitionParquetExporter();
                     case PAGE_FRAME_BACKED -> {
                         PageFrameCursor pfc = state.pageFrameCursor;
-                        RecordToColumnBuffers mat = state.materializer;
+                        HybridColumnMaterializer mat = state.materializer;
                         DirectLongList matData = state.materializerColumnData;
                         RecordMetadata adjustedMeta = mat.getAdjustedMetadata();
                         state.task.getStreamPartitionParquetExporter().setUp(
@@ -691,7 +691,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     }
                     case CURSOR_BASED -> {
                         RecordCursor cur = state.cursor;
-                        RecordToColumnBuffers mat = state.materializer;
+                        HybridColumnMaterializer mat = state.materializer;
                         DirectLongList matData = state.materializerColumnData;
                         RecordMetadata adjustedMeta = mat.getAdjustedMetadata();
                         state.task.getStreamPartitionParquetExporter().setUp(adjustedMeta);
