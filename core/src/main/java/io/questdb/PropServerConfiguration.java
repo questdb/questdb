@@ -922,7 +922,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             tmpRoot = new File(installRoot, TMP_DIRECTORY).getAbsolutePath();
         }
 
-
         String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
         if (!Chars.empty(configuredCairoSqlCopyRoot)) {
             if (new File(configuredCairoSqlCopyRoot).isAbsolute()) {

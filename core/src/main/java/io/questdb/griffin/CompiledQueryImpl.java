@@ -388,6 +388,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    public void ofPluginOperation(Operation op) {
+        this.operation = op;
+        this.type = PLUGIN_OPERATION;
+        this.isExecutedAtParseTime = false;
+    }
+
     public void ofVacuum() {
         of(VACUUM);
         this.isExecutedAtParseTime = true;
