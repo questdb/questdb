@@ -90,10 +90,6 @@ public class HTTPSerialParquetExporter {
         sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);
     }
 
-    public void setExportMode(ParquetExportMode exportMode) {
-        this.exportMode = exportMode;
-    }
-
     public CopyExportRequestTask.Phase process() throws Exception {
         TableToken tableToken = null;
         CopyExportContext.ExportTaskEntry entry = task.getEntry();
@@ -242,6 +238,10 @@ public class HTTPSerialParquetExporter {
         return phase;
     }
 
+    public void setExportMode(ParquetExportMode exportMode) {
+        this.exportMode = exportMode;
+    }
+
     public void setupCursorBasedExport(RecordCursor cursor, HybridColumnMaterializer materializer, DirectLongList materializerColumnData) {
         this.fullCursor = cursor;
         this.materializer = materializer;
@@ -270,46 +270,14 @@ public class HTTPSerialParquetExporter {
         }
 
         long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
-        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
-        long inFlightRows = 0;
-        for (;;) {
-            long rowCount;
-            if (isPageFrameBacked) {
-                PageFrame frame = streamingPfc.next();
-                if (frame == null) break;
-                rowCount = materializer.buildColumnDataFromPageFrame(streamingPfc, frame, materializerColumnData);
-            } else {
-                rowCount = materializer.buildColumnDataFromCursor(fullCursor, materializerColumnData, batchSize);
-                if (rowCount == 0) break;
-            }
-
-            if (circuitBreaker.checkIfTripped()) {
-                LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
-                throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-            }
-            exporter.writeHybridFrame(materializerColumnData, rowCount);
-            inFlightRows += rowCount;
-
-            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
-            if (currentRowsWritten > previousRowsWritten) {
-                inFlightRows -= (currentRowsWritten - previousRowsWritten);
-                if (inFlightRows <= rowCount) {
-                    materializer.releasePinnedBuffers();
-                }
-                if (isPageFrameBacked) {
-                    streamingPfc.releaseOpenPartitions();
-                }
-                previousRowsWritten = currentRowsWritten;
-            }
-
-            LOG.debug().$("hybrid stream export progress [id=").$hexPadded(task.getCopyID())
-                    .$(", rowsInBatch=").$(rowCount)
-                    .$(", exported totalRows=").$(exporter.getTotalRows())
-                    .$(']').$();
-        }
+        drainHybridFrames(
+                exporter, materializer, materializerColumnData,
+                isPageFrameBacked ? streamingPfc : null,
+                isPageFrameBacked ? null : fullCursor,
+                batchSize, CopyExportRequestTask.Phase.STREAM_SENDING_DATA
+        );
 
         long totalRows = exporter.getTotalRows();
-        exporter.finishExport();
         copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
         LOG.info().$("hybrid stream export completed [id=").$hexPadded(task.getCopyID())
                 .$(", totalRows=").$(totalRows)
@@ -370,6 +338,62 @@ public class HTTPSerialParquetExporter {
         LOG.info().$("stream export completed [id=").$hexPadded(task.getCopyID())
                 .$(", totalRows=").$(totalRows)
                 .$(']').$();
+    }
+
+    /**
+     * Core hybrid export loop shared by HTTP and SQL paths.  Drains frames
+     * from either a page-frame cursor or a record cursor, materializes
+     * computed columns, and streams the result through the Parquet writer.
+     *
+     * @param pfc    page frame cursor (non-null for PAGE_FRAME_BACKED)
+     * @param cursor record cursor (non-null for CURSOR_BASED)
+     */
+    protected void drainHybridFrames(
+            CopyExportRequestTask.StreamPartitionParquetExporter exporter,
+            HybridColumnMaterializer mat,
+            DirectLongList columnData,
+            PageFrameCursor pfc,
+            RecordCursor cursor,
+            long batchSize,
+            CopyExportRequestTask.Phase phase
+    ) throws Exception {
+        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
+        long inFlightRows = 0;
+        for (; ; ) {
+            long rowCount;
+            if (pfc != null) {
+                PageFrame frame = pfc.next();
+                if (frame == null) break;
+                rowCount = mat.buildColumnDataFromPageFrame(pfc, frame, columnData);
+            } else {
+                rowCount = mat.buildColumnDataFromCursor(cursor, columnData, batchSize);
+                if (rowCount == 0) break;
+            }
+
+            if (circuitBreaker.checkIfTripped()) {
+                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+            }
+            exporter.writeHybridFrame(columnData, rowCount);
+            inFlightRows += rowCount;
+
+            // A row group flush drains Rust's pending_partitions for the
+            // flushed rows, so the Java-side pinned buffers backing those
+            // partitions are no longer referenced.  We can recycle them once
+            // at most one batch of rows remains in-flight (the batch we just
+            // wrote, whose buffers are still live in pending_partitions).
+            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
+            if (currentRowsWritten > previousRowsWritten) {
+                inFlightRows -= (currentRowsWritten - previousRowsWritten);
+                if (inFlightRows <= rowCount) {
+                    mat.releasePinnedBuffers();
+                }
+                if (pfc != null) {
+                    pfc.releaseOpenPartitions();
+                }
+                previousRowsWritten = currentRowsWritten;
+            }
+        }
+        exporter.finishExport();
     }
 
 }

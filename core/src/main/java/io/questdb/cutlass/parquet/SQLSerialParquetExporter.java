@@ -70,10 +70,10 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
     private final Path fromParquet;
-    private final Utf8StringSink nameSink = new Utf8StringSink();
     private final IntList identityColumnMap = new IntList();
-    private final DirectLongList streamColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
+    private final Utf8StringSink nameSink = new Utf8StringSink();
     private final HybridColumnMaterializer streamBuffers = new HybridColumnMaterializer();
+    private final DirectLongList streamColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     private final Path tempPath;
     private final Path toParquet;
     private final FileWriteCallback writeCallback = new FileWriteCallback();
@@ -326,173 +326,6 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         }
     }
 
-    private void processStreamingExport(
-            RecordCursorFactory selectFactory,
-            ParquetExportMode mode,
-            CopyExportContext.ExportTaskEntry entry,
-            CairoEngine cairoEngine
-    ) throws SqlException {
-        CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.STREAM_SENDING_DATA;
-        entry.setPhase(phase);
-        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-
-        final CharSequence fileName = task.getFileName() != null ? task.getFileName() : task.getTableName();
-
-        // Set up temp file path
-        tempPath.trimTo(0).concat(copyExportRoot).concat("tmp_");
-        Numbers.appendHex(tempPath, task.getCopyID(), true);
-        createDirsOrFail(ff, tempPath.slash(), configuration.getMkDirMode());
-        int tempBaseDirLen = tempPath.size();
-        tempPath.concat("export.parquet");
-        int tempFilePathLen = tempPath.size();
-
-        long fd = ff.openRW(tempPath.$(), configuration.getWriterFileOpenOpts());
-        if (fd < 0) {
-            throw CopyExportException.instance(phase, ff.errno())
-                    .put("could not create temp parquet file [path=").put(tempPath).put(']');
-        }
-
-        LOG.info().$("starting streaming parquet export [id=").$hexPadded(task.getCopyID())
-                .$(", selectText=").$(task.getSelectText()).$(", mode=").$(mode).$(']').$();
-
-        streamBuffers.clear();
-        streamColumnData.clear();
-        try {
-            // Unwrap QueryProgress so that its register/unregister lifecycle
-            // does not null the circuit breaker's cancelledFlag when cursors close.
-            // The outer COPY command handles query registration and cancellation.
-            RecordCursorFactory baseFactory = HybridColumnMaterializer.unwrapFactory(selectFactory);
-            CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
-            // File-write callback
-            writeCallback.of(ff, fd);
-            task.setWriteCallback(writeCallback);
-
-            switch (mode) {
-                case DIRECT_PAGE_FRAME -> {
-                    try (PageFrameCursor pfc = baseFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
-                        pfc.setStreamingMode(true);
-                        RecordMetadata meta = baseFactory.getMetadata();
-                        int colCount = meta.getColumnCount();
-                        identityColumnMap.setPos(colCount);
-                        for (int i = 0; i < colCount; i++) {
-                            identityColumnMap.setQuick(i, i);
-                        }
-                        exporter.setUp(meta, pfc, identityColumnMap);
-
-                        PageFrame frame;
-                        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
-                        while ((frame = pfc.next()) != null) {
-                            if (circuitBreaker.checkIfTripped()) {
-                                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-                            }
-                            exporter.writePageFrame(pfc, frame);
-                            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
-                            if (currentRowsWritten > previousRowsWritten) {
-                                pfc.releaseOpenPartitions();
-                                previousRowsWritten = currentRowsWritten;
-                            }
-                        }
-
-                        exporter.finishExport();
-                        numOfFiles = 1;
-                    }
-                }
-                case PAGE_FRAME_BACKED, CURSOR_BASED ->
-                        processHybridExport(baseFactory, mode, exporter, phase);
-                default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
-            }
-        } catch (CopyExportException e) {
-            throw e;
-        } catch (SqlException e) {
-            throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrorCode());
-        } catch (CairoException e) {
-            throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrno());
-        } catch (Throwable e) {
-            throw CopyExportException.instance(phase, e.getMessage(), -1);
-        } finally {
-            ff.close(fd);
-        }
-
-        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-
-        // Move temp file to export location
-        phase = CopyExportRequestTask.Phase.MOVE_FILES;
-        entry.setPhase(phase);
-        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-        tempPath.trimTo(tempFilePathLen);
-        moveFile(fileName);
-        // Clean up the now-empty temp directory
-        tempPath.trimTo(tempBaseDirLen);
-        ff.rmdir(tempPath.slash());
-        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-
-        LOG.info().$("streaming parquet export completed [id=").$hexPadded(task.getCopyID())
-                .$(", totalRows=").$(task.getStreamPartitionParquetExporter().getTotalRows()).$(']').$();
-    }
-
-    private void processHybridExport(
-            RecordCursorFactory factory,
-            ParquetExportMode mode,
-            CopyExportRequestTask.StreamPartitionParquetExporter exporter,
-            CopyExportRequestTask.Phase phase
-    ) throws Exception {
-        boolean isPageFrameBacked = mode == ParquetExportMode.PAGE_FRAME_BACKED;
-        PageFrameCursor pfc = null;
-        RecordCursor cursor = null;
-        try {
-            if (isPageFrameBacked) {
-                VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
-                pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
-                pfc.setStreamingMode(true);
-                streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
-                exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
-            } else {
-                cursor = factory.getCursor(sqlExecutionContext);
-                streamBuffers.setUp(factory.getMetadata());
-                exporter.setUp(streamBuffers.getAdjustedMetadata());
-            }
-
-            long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
-            long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
-            long inFlightRows = 0;
-            for (;;) {
-                long rowCount;
-                if (isPageFrameBacked) {
-                    PageFrame frame = pfc.next();
-                    if (frame == null) break;
-                    rowCount = streamBuffers.buildColumnDataFromPageFrame(pfc, frame, streamColumnData);
-                } else {
-                    rowCount = streamBuffers.buildColumnDataFromCursor(cursor, streamColumnData, batchSize);
-                    if (rowCount == 0) break;
-                }
-
-                if (circuitBreaker.checkIfTripped()) {
-                    throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-                }
-                exporter.writeHybridFrame(streamColumnData, rowCount);
-                inFlightRows += rowCount;
-
-                long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
-                if (currentRowsWritten > previousRowsWritten) {
-                    inFlightRows -= (currentRowsWritten - previousRowsWritten);
-                    if (inFlightRows <= rowCount) {
-                        streamBuffers.releasePinnedBuffers();
-                    }
-                    if (isPageFrameBacked) {
-                        pfc.releaseOpenPartitions();
-                    }
-                    previousRowsWritten = currentRowsWritten;
-                }
-            }
-
-            exporter.finishExport();
-            numOfFiles = 1;
-        } finally {
-            Misc.free(pfc);
-            Misc.free(cursor);
-        }
-    }
-
     private void moveAndOverwriteFiles() {
         int srcPlen = tempPath.size();
         int dstPlen = toParquet.size();
@@ -581,6 +414,140 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                     .put(toParquet)
                     .put(", errno=").put(ff.errno()).put(']');
         }
+    }
+
+    private void processHybridExport(
+            RecordCursorFactory factory,
+            ParquetExportMode mode,
+            CopyExportRequestTask.StreamPartitionParquetExporter exporter,
+            CopyExportRequestTask.Phase phase
+    ) throws Exception {
+        boolean isPageFrameBacked = mode == ParquetExportMode.PAGE_FRAME_BACKED;
+        PageFrameCursor pfc = null;
+        RecordCursor cursor = null;
+        try {
+            if (isPageFrameBacked) {
+                VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
+                pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                pfc.setStreamingMode(true);
+                streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
+                exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
+            } else {
+                cursor = factory.getCursor(sqlExecutionContext);
+                streamBuffers.setUp(factory.getMetadata());
+                exporter.setUp(streamBuffers.getAdjustedMetadata());
+            }
+
+            long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
+            drainHybridFrames(exporter, streamBuffers, streamColumnData, pfc, cursor, batchSize, phase);
+            numOfFiles = 1;
+        } finally {
+            Misc.free(pfc);
+            Misc.free(cursor);
+        }
+    }
+
+    private void processStreamingExport(
+            RecordCursorFactory selectFactory,
+            ParquetExportMode mode,
+            CopyExportContext.ExportTaskEntry entry,
+            CairoEngine cairoEngine
+    ) throws SqlException {
+        CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.STREAM_SENDING_DATA;
+        entry.setPhase(phase);
+        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+
+        final CharSequence fileName = task.getFileName() != null ? task.getFileName() : task.getTableName();
+
+        // Set up temp file path
+        tempPath.trimTo(0).concat(copyExportRoot).concat("tmp_");
+        Numbers.appendHex(tempPath, task.getCopyID(), true);
+        createDirsOrFail(ff, tempPath.slash(), configuration.getMkDirMode());
+        int tempBaseDirLen = tempPath.size();
+        tempPath.concat("export.parquet");
+        int tempFilePathLen = tempPath.size();
+
+        long fd = ff.openRW(tempPath.$(), configuration.getWriterFileOpenOpts());
+        if (fd < 0) {
+            throw CopyExportException.instance(phase, ff.errno())
+                    .put("could not create temp parquet file [path=").put(tempPath).put(']');
+        }
+
+        LOG.info().$("starting streaming parquet export [id=").$hexPadded(task.getCopyID())
+                .$(", selectText=").$(task.getSelectText()).$(", mode=").$(mode).$(']').$();
+
+        streamBuffers.clear();
+        streamColumnData.clear();
+        try {
+            // Unwrap QueryProgress so that its register/unregister lifecycle
+            // does not null the circuit breaker's cancelledFlag when cursors close.
+            // The outer COPY command handles query registration and cancellation.
+            RecordCursorFactory baseFactory = HybridColumnMaterializer.unwrapFactory(selectFactory);
+            CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
+            // File-write callback
+            writeCallback.of(ff, fd);
+            task.setWriteCallback(writeCallback);
+
+            switch (mode) {
+                case DIRECT_PAGE_FRAME -> {
+                    try (PageFrameCursor pfc = baseFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                        pfc.setStreamingMode(true);
+                        RecordMetadata meta = baseFactory.getMetadata();
+                        int colCount = meta.getColumnCount();
+                        identityColumnMap.setPos(colCount);
+                        for (int i = 0; i < colCount; i++) {
+                            identityColumnMap.setQuick(i, i);
+                        }
+                        exporter.setUp(meta, pfc, identityColumnMap);
+
+                        PageFrame frame;
+                        long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
+                        while ((frame = pfc.next()) != null) {
+                            if (circuitBreaker.checkIfTripped()) {
+                                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                            }
+                            exporter.writePageFrame(pfc, frame);
+                            long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
+                            if (currentRowsWritten > previousRowsWritten) {
+                                pfc.releaseOpenPartitions();
+                                previousRowsWritten = currentRowsWritten;
+                            }
+                        }
+
+                        exporter.finishExport();
+                        numOfFiles = 1;
+                    }
+                }
+                case PAGE_FRAME_BACKED, CURSOR_BASED -> processHybridExport(baseFactory, mode, exporter, phase);
+                default -> throw new UnsupportedOperationException("unexpected mode: " + mode);
+            }
+        } catch (CopyExportException e) {
+            throw e;
+        } catch (SqlException e) {
+            throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrorCode());
+        } catch (CairoException e) {
+            throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrno());
+        } catch (Throwable e) {
+            throw CopyExportException.instance(phase, e.getMessage(), -1);
+        } finally {
+            ff.close(fd);
+        }
+
+        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+
+        // Move temp file to export location
+        phase = CopyExportRequestTask.Phase.MOVE_FILES;
+        entry.setPhase(phase);
+        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        tempPath.trimTo(tempFilePathLen);
+        moveFile(fileName);
+        // Clean up the now-empty temp directory
+        tempPath.trimTo(tempBaseDirLen);
+        ff.rmdir(tempPath.slash());
+        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+
+        LOG.info().$("streaming parquet export completed [id=").$hexPadded(task.getCopyID())
+                .$(", totalRows=").$(task.getStreamPartitionParquetExporter().getTotalRows()).$(']').$();
     }
 
     CharSequence getExportPath() {
