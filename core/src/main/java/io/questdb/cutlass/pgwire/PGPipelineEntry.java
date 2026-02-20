@@ -657,6 +657,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.CREATE_MAT_VIEW:
                     // fall-through
                 case CompiledQuery.DROP:
+                    // fall-through
+                case CompiledQuery.PLUGIN_OPERATION:
                     engine.getMetrics().pgWireMetrics().markStart();
                     try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
                         fut.await();
@@ -3192,6 +3194,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.CREATE_MAT_VIEW:
                 // fall-through
             case CompiledQuery.CREATE_TABLE:
+                // fall-through
+            case CompiledQuery.PLUGIN_OPERATION:
                 operation = cq.getOperation();
                 sqlTag = TAG_OK;
                 break;

@@ -230,7 +230,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker) {
         try {
             this.walLocker = walLocker;
-            this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
+            this.ffCache = createFunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyImportContext = new CopyImportContext(this, configuration);
@@ -306,6 +306,7 @@ public class CairoEngine implements Closeable, WriterSource {
             case CREATE_MAT_VIEW:
             case CREATE_VIEW:
             case DROP:
+            case PLUGIN_OPERATION:
                 assert sqlExecutionContext.getCairoEngine() == compiler.getEngine();
                 try (Operation op = cq.getOperation()) {
                     assert op != null;
@@ -2200,6 +2201,13 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected FunctionFactoryCache createFunctionFactoryCache(
+            CairoConfiguration configuration,
+            Iterable<FunctionFactory> functionFactories
+    ) {
+        return new FunctionFactoryCache(configuration, functionFactories);
     }
 
     protected @NotNull MatViewGraph createMatViewGraph() {

@@ -422,17 +422,6 @@ public class SqlKeywords {
                 && (tok.charAt(7) | 32) == 'e';
     }
 
-    public static boolean isDateaddKeyword(CharSequence tok) {
-        return tok.length() == 7
-                && (tok.charAt(0) | 32) == 'd'
-                && (tok.charAt(1) | 32) == 'a'
-                && (tok.charAt(2) | 32) == 't'
-                && (tok.charAt(3) | 32) == 'e'
-                && (tok.charAt(4) | 32) == 'a'
-                && (tok.charAt(5) | 32) == 'd'
-                && (tok.charAt(6) | 32) == 'd';
-    }
-
     public static boolean isDateStyleKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'd'
@@ -444,6 +433,17 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'y'
                 && (tok.charAt(7) | 32) == 'l'
                 && (tok.charAt(8) | 32) == 'e';
+    }
+
+    public static boolean isDateaddKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'd'
+                && (tok.charAt(6) | 32) == 'd';
     }
 
     public static boolean isDayKeyword(CharSequence tok) {
@@ -1879,6 +1879,7 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 't';
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public static boolean isRightParen(CharSequence tok) {
         return tok.length() == 1 && tok.charAt(0) == ')';
     }
