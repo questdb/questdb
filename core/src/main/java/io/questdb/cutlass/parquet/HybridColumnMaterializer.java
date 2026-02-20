@@ -622,6 +622,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 dataBuf.putLong(iv.getHi());
             }
             case ColumnType.ARRAY -> ArrayTypeDriver.appendValue(auxBuf, dataBuf, record.getArray(col, columnType));
+            // determineExportMode() routes queries with BINARY columns to TEMP_TABLE
+            // mode, so this method never encounters BINARY.
             default ->
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(columnType));
         }
@@ -670,6 +672,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 dataBuf.putLong(iv.getHi());
             }
             case ColumnType.ARRAY -> ArrayTypeDriver.appendValue(auxBuf, dataBuf, func.getArray(record));
+            // determineExportMode() routes queries with computed BINARY columns to
+            // TEMP_TABLE mode, so this method never encounters BINARY.
             default ->
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(outputType));
         }
