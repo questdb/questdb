@@ -245,8 +245,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isRuntimeConstant() {
-            return true;
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override
