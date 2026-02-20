@@ -132,6 +132,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull CheckpointListener getCheckpointListener() {
+        return getDelegate().getCheckpointListener();
+    }
+
+    @Override
     public boolean getCheckpointRecoveryRebuildColumnIndexes() {
         return getDelegate().getCheckpointRecoveryRebuildColumnIndexes();
     }
