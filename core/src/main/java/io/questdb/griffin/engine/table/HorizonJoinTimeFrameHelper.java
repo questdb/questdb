@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -79,11 +80,12 @@ public class HorizonJoinTimeFrameHelper {
      * <p>
      * Updates the internal backward watermark after scanning.
      *
-     * @param startRowId            starting position for backward scan (inclusive), typically the ASOF position
-     * @param masterRecord          master record containing the target key
-     * @param masterAsOfJoinMapSink copier for master's join key columns
-     * @param slaveAsOfJoinMapSink  copier for slave's join key columns
-     * @param keyToRowIdMap         map to update with (key -> rowId) entries
+     * @param startRowId              starting position for backward scan (inclusive), typically the ASOF position
+     * @param masterRecord            master record containing the target key
+     * @param masterAsOfJoinMapSink   copier for master's join key columns
+     * @param slaveAsOfJoinMapSink    copier for slave's join key columns
+     * @param keyToRowIdMap           map to update with (key -> rowId) entries
+     * @param symbolTranslatingRecord nullable; when non-null, used to skip scan for non-existent slave symbols
      * @return the rowId where target key was found, or Long.MIN_VALUE if not found
      */
     public long backwardScanForKeyMatch(
@@ -91,7 +93,8 @@ public class HorizonJoinTimeFrameHelper {
             Record masterRecord,
             RecordSink masterAsOfJoinMapSink,
             RecordSink slaveAsOfJoinMapSink,
-            Map keyToRowIdMap
+            Map keyToRowIdMap,
+            @Nullable SymbolTranslatingRecord symbolTranslatingRecord
     ) {
         if (startRowId == Long.MIN_VALUE) {
             return Long.MIN_VALUE;
@@ -119,6 +122,11 @@ public class HorizonJoinTimeFrameHelper {
             effectiveStart = backwardWatermark;
         } else {
             effectiveStart = startRowId;
+        }
+
+        // Fast path: skip backward scan for keys with non-existent slave symbols
+        if (symbolTranslatingRecord != null && symbolTranslatingRecord.hasNonExistentKey()) {
+            return Long.MIN_VALUE;
         }
 
         int frameIndex = Rows.toPartitionIndex(effectiveStart);
@@ -231,6 +239,18 @@ public class HorizonJoinTimeFrameHelper {
                     if (bookmarkedRowIndex < timeFrame.getRowHi()) {
                         timeFrameCursor.recordAt(record, bookmarkedFrameIndex, bookmarkedRowIndex);
                         if (scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale) <= targetTimestamp) {
+                            // Fast path: if the next row's timestamp > target, the bookmark
+                            // is already the ASOF answer. Avoids full linear scan.
+                            final long nextRowIndex = bookmarkedRowIndex + 1;
+                            if (nextRowIndex < timeFrame.getRowHi()) {
+                                timeFrameCursor.recordAtRowIndex(record, nextRowIndex);
+                                if (scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale) > targetTimestamp) {
+                                    return Rows.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
+                                }
+                            }
+                            // Slow path: bookmark is the last row in this frame or its ts <= target.
+                            // Need to check if the next frame has rows <= target too,
+                            // so fall through to the normal search.
                             rowLo = bookmarkedRowIndex;
                         } else {
                             rowLo = timeFrame.getRowLo();

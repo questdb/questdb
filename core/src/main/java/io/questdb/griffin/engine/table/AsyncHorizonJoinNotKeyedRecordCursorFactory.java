@@ -408,6 +408,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             GroupByFunctionsUpdater functionUpdater
     ) {
         final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
+        final SymbolTranslatingRecord symbolTranslatingRecord =
+                masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
 
         // Reset helper state and clear the ASOF join map for this frame
         slaveTimeFrameHelper.toTop();
@@ -445,7 +447,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                                 masterKeyRecord,
                                 masterAsOfJoinMapSink,
                                 slaveAsOfJoinMapSink,
-                                asOfJoinMap
+                                asOfJoinMap,
+                                symbolTranslatingRecord
                         );
                         // Initialize forward watermark to ASOF position for subsequent forward scans
                         slaveTimeFrameHelper.initForwardWatermark(asOfRowId);
@@ -471,7 +474,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                                     masterKeyRecord,
                                     masterAsOfJoinMapSink,
                                     slaveAsOfJoinMapSink,
-                                    asOfJoinMap
+                                    asOfJoinMap,
+                                    symbolTranslatingRecord
                             );
                         }
                     }
@@ -490,6 +494,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             horizonJoinRecord.of(masterRecord, offset, horizonTs, matchedSlaveRecord);
             aggregateRecord(horizonJoinRecord, masterRowId, value, functionUpdater);
         }
+
     }
 
     /**

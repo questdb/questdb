@@ -468,6 +468,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
         final boolean sharded = !groupByMapFragment.isNotSharded();
         final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
+        final SymbolTranslatingRecord symbolTranslatingRecord =
+                masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
 
         // Reset helper state and clear the ASOF join map for this frame
         slaveTimeFrameHelper.toTop();
@@ -505,7 +507,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                                 masterKeyRecord,
                                 masterAsOfJoinMapSink,
                                 slaveAsOfJoinMapSink,
-                                asOfJoinMap
+                                asOfJoinMap,
+                                symbolTranslatingRecord
                         );
                         // Initialize forward watermark to ASOF position for subsequent forward scans
                         slaveTimeFrameHelper.initForwardWatermark(asOfRowId);
@@ -531,7 +534,8 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                                     masterKeyRecord,
                                     masterAsOfJoinMapSink,
                                     slaveAsOfJoinMapSink,
-                                    asOfJoinMap
+                                    asOfJoinMap,
+                                    symbolTranslatingRecord
                             );
                         }
                     }

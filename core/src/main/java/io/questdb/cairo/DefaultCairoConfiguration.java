@@ -850,7 +850,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlAsOfJoinLookAhead() {
-        return 100;
+        return 64;
     }
 
     @Override

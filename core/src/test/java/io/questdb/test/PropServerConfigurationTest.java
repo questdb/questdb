@@ -258,7 +258,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlLatestByRowCount());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlHashJoinLightValuePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlHashJoinLightValueMaxPages());
-        Assert.assertEquals(100, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());

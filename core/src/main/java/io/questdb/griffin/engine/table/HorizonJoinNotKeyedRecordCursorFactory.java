@@ -373,7 +373,8 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                                     masterKeyRecord,
                                     masterAsOfJoinMapSink,
                                     slaveAsOfJoinMapSink,
-                                    asOfJoinMap
+                                    asOfJoinMap,
+                                    symbolTranslatingRecord
                             );
                             slaveTimeFrameHelper.initForwardWatermark(asOfRowId);
                         } else {
@@ -395,7 +396,8 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
                                         masterKeyRecord,
                                         masterAsOfJoinMapSink,
                                         slaveAsOfJoinMapSink,
-                                        asOfJoinMap
+                                        asOfJoinMap,
+                                        symbolTranslatingRecord
                                 );
                             }
                         }

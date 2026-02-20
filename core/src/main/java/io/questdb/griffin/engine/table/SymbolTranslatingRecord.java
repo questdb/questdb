@@ -110,6 +110,22 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     }
 
     /**
+     * Checks if any symbol key column in the current master record translates
+     * to a symbol that doesn't exist in the slave table.
+     *
+     * @return true if at least one symbol key translates to {@link SymbolTable#VALUE_NOT_FOUND}
+     */
+    public boolean hasNonExistentKey() {
+        for (int i = 0; i < masterColumnIndices.length; i++) {
+            int masterSymKey = base.getInt(masterColumnIndices[i]);
+            if (translate(i, masterSymKey) == SymbolTable.VALUE_NOT_FOUND) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Set the symbol table sources for lazy symbol table resolution.
      * Must be called before any {@link #getInt(int)} call on symbol key columns.
      */

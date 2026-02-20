@@ -660,6 +660,178 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinKeyedAllMasterSymbolsMissing() throws Exception {
+        // All master symbols have no match in the slave table.
+        // Exercises the hasNonExistentKey() fast path in backwardScanForKeyMatch.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:02.000000Z', 'B', 20.0),
+                                ('2024-01-01T00:00:03.000000Z', 'A', 30.0)
+                            """
+            );
+
+            // Slave has only symbol C — no overlap with master
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'C', 100.0),
+                                ('2024-01-01T00:00:02.500000Z', 'C', 200.0)
+                            """
+            );
+
+            String sql = "SELECT t.sym, h.offset / " + getSecondsDivisor() + " AS sec_offs, count() AS n, avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0, 5s) AS h " +
+                    "GROUP BY t.sym, h.offset " +
+                    "ORDER BY t.sym, h.offset";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tsec_offs\tn\tavg_price
+                            A\t0\t2\tnull
+                            A\t5\t2\tnull
+                            B\t0\t1\tnull
+                            B\t5\t1\tnull
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinKeyedMissingSymbolsMultipleOffsets() throws Exception {
+        // Mixed existing and missing symbols with multiple horizon offsets.
+        // Ensures forward/backward scan state isn't corrupted by missing symbols.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:01.500000Z', 'B', 15.0),
+                                ('2024-01-01T00:00:02.000000Z', 'A', 20.0),
+                                ('2024-01-01T00:00:03.000000Z', 'C', 30.0),
+                                ('2024-01-01T00:00:04.000000Z', 'A', 40.0)
+                            """
+            );
+
+            // Slave has only A — B and C are missing
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 100.0),
+                                ('2024-01-01T00:00:02.500000Z', 'A', 200.0),
+                                ('2024-01-01T00:00:06.500000Z', 'A', 300.0)
+                            """
+            );
+
+            String sql = "SELECT t.sym, h.offset / " + getSecondsDivisor() + " AS sec_offs, count() AS n, avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 5s STEP 5s AS h " +
+                    "GROUP BY t.sym, h.offset " +
+                    "ORDER BY t.sym, h.offset";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tsec_offs\tn\tavg_price
+                            A\t0\t3\t133.33333333333334
+                            A\t5\t3\t266.6666666666667
+                            B\t0\t1\tnull
+                            B\t5\t1\tnull
+                            C\t0\t1\tnull
+                            C\t5\t1\tnull
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinKeyedSomeMasterSymbolsMissing() throws Exception {
+        // Some master symbols exist in slave, some don't.
+        // Matching symbols produce results, non-matching produce NULLs.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T00:00:01.000000Z', 'A', 10.0),
+                                ('2024-01-01T00:00:02.000000Z', 'B', 20.0),
+                                ('2024-01-01T00:00:03.000000Z', 'A', 30.0),
+                                ('2024-01-01T00:00:04.000000Z', 'C', 40.0)
+                            """
+            );
+
+            // Slave has A and C but not B
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T00:00:00.500000Z', 'A', 100.0),
+                                ('2024-01-01T00:00:00.500000Z', 'C', 300.0),
+                                ('2024-01-01T00:00:02.500000Z', 'A', 150.0),
+                                ('2024-01-01T00:00:03.500000Z', 'C', 350.0)
+                            """
+            );
+
+            String sql = "SELECT t.sym, h.offset / " + getSecondsDivisor() + " AS sec_offs, count() AS n, avg(p.price) AS avg_price " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "LIST (0) AS h " +
+                    "GROUP BY t.sym, h.offset " +
+                    "ORDER BY t.sym, h.offset";
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tsec_offs\tn\tavg_price
+                            A\t0\t2\t125.0
+                            B\t0\t1\tnull
+                            C\t0\t1\t350.0
+                            """,
+                    sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinListTooManyOffsets() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 4);
