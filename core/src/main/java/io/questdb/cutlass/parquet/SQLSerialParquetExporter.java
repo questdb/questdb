@@ -127,7 +127,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                 case DIRECT_PAGE_FRAME, PAGE_FRAME_BACKED, CURSOR_BASED -> {
                     // Streaming export: the mode was determined upstream in
                     // CopyExportFactory so we avoid an extra query compilation.
-                    processStreamingExport(task.getSelectFactory(), exportMode, entry, cairoEngine);
+                    processStreamingExport(task.getSelectFactory(), exportMode, entry);
                     success = true;
                     return CopyExportRequestTask.Phase.SUCCESS;
                 }
@@ -450,8 +450,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
     private void processStreamingExport(
             RecordCursorFactory selectFactory,
             ParquetExportMode mode,
-            CopyExportContext.ExportTaskEntry entry,
-            CairoEngine cairoEngine
+            CopyExportContext.ExportTaskEntry entry
     ) throws SqlException {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.STREAM_SENDING_DATA;
         entry.setPhase(phase);
