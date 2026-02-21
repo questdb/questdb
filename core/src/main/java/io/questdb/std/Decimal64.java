@@ -696,6 +696,17 @@ public class Decimal64 implements Sinkable, Decimal {
     }
 
     @Override
+    public void ofDigitsAndPower(long digits, int power) {
+        if (power > 0) {
+            this.value = scaleUp(digits, power);
+            this.scale = 0;
+        } else {
+            this.value = digits;
+            this.scale = -power;
+        }
+    }
+
+    @Override
     public void ofZero() {
         of(0, 0);
     }

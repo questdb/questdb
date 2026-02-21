@@ -1035,6 +1035,18 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     @Override
+    public void ofDigitsAndPower(long digits, int power) {
+        this.high = 0;
+        this.low = digits;
+        if (power > 0) {
+            this.scale = 0;
+            multiplyByPowerOf10InPlace(power);
+        } else {
+            this.scale = -power;
+        }
+    }
+
+    @Override
     public void ofZero() {
         of(0, 0, 0);
     }
