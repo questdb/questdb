@@ -899,9 +899,9 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         0.7905675319675964
                         4.689592037643856E15
                         4.729996258992366E15
-                        7.7465360618163292E18
-                        -6.9459215023845018E18
-                        8.2601885552325868E18
+                        7.746536061816329E18
+                        -6.945921502384502E18
+                        8.260188555232587E18
                         """,
                 "create table x as (select rnd_double() a from long_sequence(5))",
                 "create table y as (select rnd_long() b from long_sequence(5))"

@@ -397,20 +397,20 @@ public class NumbersTest {
     public void testFormatDoubleAsRandomFloat() {
         Rnd rnd = TestUtils.generateRandom(null);
         for (int i = 0; i < 1_000_000; i++) {
-            float d1 = rnd.nextFloat();
-            float d2 = rnd.nextFloat();
-            float d3 = rnd.nextFloat() * Float.MAX_VALUE;
+            float f1 = rnd.nextFloat();
+            float f2 = rnd.nextFloat();
+            float f3 = rnd.nextFloat() * Float.MAX_VALUE;
             sink.clear();
-            Numbers.append(sink, (double) d1);
-            TestUtils.assertEquals(Double.toString(d1), sink);
+            Numbers.append(sink, (double) f1);
+            Assert.assertEquals(f1, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
-            Numbers.append(sink, (double) d2);
-            TestUtils.assertEquals(Double.toString(d2), sink);
+            Numbers.append(sink, (double) f2);
+            Assert.assertEquals(f2, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
-            Numbers.append(sink, (double) d3);
-            TestUtils.assertEquals(Double.toString(d3), sink);
+            Numbers.append(sink, (double) f3);
+            Assert.assertEquals(f3, Double.parseDouble(sink.toString()), 0);
         }
     }
 
@@ -446,7 +446,7 @@ public class NumbersTest {
     public void testFormatDoubleFast() {
         sink.clear();
         Numbers.append(sink, -5.9522650387500933e18);
-        TestUtils.assertEquals("-5.9522650387500933E18", sink);
+        TestUtils.assertEquals("-5.952265038750093E18", sink);
     }
 
     @Test
@@ -507,15 +507,15 @@ public class NumbersTest {
             double d3 = rnd.nextDouble() * Double.MAX_VALUE;
             sink.clear();
             Numbers.append(sink, d1);
-            TestUtils.assertEquals(Double.toString(d1), sink);
+            Assert.assertEquals(d1, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
             Numbers.append(sink, d2);
-            TestUtils.assertEquals(Double.toString(d2), sink);
+            Assert.assertEquals(d2, Double.parseDouble(sink.toString()), 0);
 
             sink.clear();
             Numbers.append(sink, d3);
-            TestUtils.assertEquals(Double.toString(d3), sink);
+            Assert.assertEquals(d3, Double.parseDouble(sink.toString()), 0);
 
         }
     }
@@ -528,10 +528,49 @@ public class NumbersTest {
     }
 
     @Test
+    public void testFormatDoubleRoundEven() {
+        // Ryu round-half-to-even: when the removed portion is exactly 0.5
+        // and the retained significand is even, don't round up.
+        // 1.3607615367753142E15 has significand 13607615367753142 (even),
+        // last removed digit 5, trailing zeros — must NOT round up to ...3143.
+        sink.clear();
+        Numbers.append(sink, 1.3607615367753142E15);
+        TestUtils.assertEquals("1.3607615367753142E15", sink);
+    }
+
+    @Test
     public void testFormatDoubleSlowInteractive() {
         sink.clear();
         Numbers.append(sink, 1.1317400099603851e308);
         TestUtils.assertEquals("1.1317400099603851E308", sink);
+    }
+
+    @Test
+    public void testFormatDoubleSubnormals() {
+        // Smallest subnormal
+        sink.clear();
+        Numbers.append(sink, Double.MIN_VALUE);
+        Assert.assertEquals(Double.MIN_VALUE, Double.parseDouble(sink.toString()), 0);
+
+        // Largest subnormal (just below Double.MIN_NORMAL)
+        sink.clear();
+        Numbers.append(sink, Math.nextDown(Double.MIN_NORMAL));
+        Assert.assertEquals(Math.nextDown(Double.MIN_NORMAL), Double.parseDouble(sink.toString()), 0);
+
+        // Negative subnormals
+        sink.clear();
+        Numbers.append(sink, -Double.MIN_VALUE);
+        Assert.assertEquals(-Double.MIN_VALUE, Double.parseDouble(sink.toString()), 0);
+
+        sink.clear();
+        Numbers.append(sink, -Math.nextDown(Double.MIN_NORMAL));
+        Assert.assertEquals(-Math.nextDown(Double.MIN_NORMAL), Double.parseDouble(sink.toString()), 0);
+
+        // A subnormal in the middle of the range
+        sink.clear();
+        double midSubnormal = Double.longBitsToDouble(0x0008_0000_0000_0000L);
+        Numbers.append(sink, midSubnormal);
+        Assert.assertEquals(midSubnormal, Double.parseDouble(sink.toString()), 0);
     }
 
     @Test
@@ -2078,6 +2117,7 @@ public class NumbersTest {
             assertTrue(d + " " + n + " " + (n - d - 1E-8), n - d - 1E-8 < Numbers.TOLERANCE);
         }
     }
+
 
     @Test
     public void testShortBswap() {
