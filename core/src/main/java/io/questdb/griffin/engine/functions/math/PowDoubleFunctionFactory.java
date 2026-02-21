@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -46,13 +45,18 @@ public class PowDoubleFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends DoubleFunction implements BinaryFunction {
+    private static class Func extends DoubleFunction implements ArithmeticBinaryFunction {
         final Function left;
         final Function right;
 
         public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(4, Function.addComplexity(getLeft().getComplexity(), getRight().getComplexity()));
         }
 
         @Override
