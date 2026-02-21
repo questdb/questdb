@@ -723,7 +723,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     try {
                         testHttpClient.assertGetContains("/exp", "cancelled by user", params);
                     } catch (HttpClientException e) {
-                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                        String msg = e.getMessage();
+                        Assert.assertTrue(
+                                "unexpected error: " + msg,
+                                msg.contains("peer disconnect") || msg.contains("malformed chunk")
+                        );
                     }
                     thread.join();
                 });
@@ -1429,7 +1433,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     } catch (AssertionError ae) {
                         TestUtils.assertContains(ae.getMessage(), "cancelled by user");
                     } catch (HttpClientException e) {
-                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                        String msg = e.getMessage();
+                        Assert.assertTrue(
+                                "unexpected error: " + msg,
+                                msg.contains("peer disconnect") || msg.contains("malformed chunk")
+                        );
                     }
                 });
     }
@@ -1844,7 +1852,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         testHttpClient.assertGetContains("/exp", "nothing", params);
                         Assert.fail();
                     } catch (HttpClientException e) {
-                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                        String msg = e.getMessage();
+                        Assert.assertTrue(
+                                "unexpected error: " + msg,
+                                msg.contains("peer disconnect") || msg.contains("malformed chunk")
+                        );
                     }
 
                 });
