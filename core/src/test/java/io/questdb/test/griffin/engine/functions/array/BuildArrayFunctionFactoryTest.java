@@ -217,6 +217,22 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void test2dVariableSize() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::INT AS sz FROM long_sequence(3))");
+            assertSql(
+                    """
+                            array_build
+                            [[1.0],[2.0]]
+                            [[1.0,1.0],[2.0,2.0]]
+                            [[1.0,1.0,1.0],[2.0,2.0,2.0]]
+                            """,
+                    "SELECT array_build(2, sz, 1.0, 2.0) FROM t"
+            );
+        });
+    }
+
+    @Test
     public void test2dZeroSize() throws Exception {
         assertMemoryLeak(() -> assertSqlWithTypes(
                 """
@@ -225,6 +241,20 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
                         """,
                 "SELECT array_build(2, 0, 1.0, 2.0)"
         ));
+    }
+
+    @Test
+    public void test2dZeroSizeArrayFiller() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0, 3.0] AS arr FROM long_sequence(1))");
+            assertSqlWithTypes(
+                    """
+                            array_build
+                            []:DOUBLE[][]
+                            """,
+                    "SELECT array_build(2, 0, arr, 7.0) FROM t"
+            );
+        });
     }
 
     @Test
@@ -300,17 +330,6 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
                 19,
                 "nArrays out of range"
         );
-    }
-
-    @Test
-    public void testNArraysThreeScalarFillers() throws Exception {
-        assertMemoryLeak(() -> assertSqlWithTypes(
-                """
-                        array_build
-                        [[1.0,1.0,1.0],[2.0,2.0,2.0],[3.0,3.0,3.0]]:DOUBLE[][]
-                        """,
-                "SELECT array_build(3, 3, 1.0, 2.0, 3.0)"
-        ));
     }
 
     @Test
@@ -452,6 +471,17 @@ public class BuildArrayFunctionFactoryTest extends AbstractCairoTest {
                     "SELECT array_build(1, arr, arr) FROM t"
             );
         });
+    }
+
+    @Test
+    public void testNArraysThreeScalarFillers() throws Exception {
+        assertMemoryLeak(() -> assertSqlWithTypes(
+                """
+                        array_build
+                        [[1.0,1.0,1.0],[2.0,2.0,2.0],[3.0,3.0,3.0]]:DOUBLE[][]
+                        """,
+                "SELECT array_build(3, 3, 1.0, 2.0, 3.0)"
+        ));
     }
 
     @Test
