@@ -6551,10 +6551,10 @@ public class CastTest extends AbstractCairoTest {
                 "select cast(a as double) as a from tab",
                 "create table tab (a string)",
                 null,
-                "insert into tab values ('4.9E-324')",
+                "insert into tab values ('5E-324')",
                 """
                         a
-                        4.9E-324
+                        5.0E-324
                         """,
                 true,
                 true,
@@ -9022,10 +9022,10 @@ public class CastTest extends AbstractCairoTest {
                 "select cast(a as double) as a from tab",
                 "create table tab (a varchar)",
                 null,
-                "insert into tab values ('4.9E-324')",
+                "insert into tab values ('5E-324')",
                 """
                         a
-                        4.9E-324
+                        5.0E-324
                         """,
                 true,
                 true,

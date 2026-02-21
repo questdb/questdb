@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -53,7 +53,7 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
         return new BitNotIntFunction(args.getQuick(0));
     }
 
-    public static final class BitNotIntFunction extends IntFunction implements UnaryFunction {
+    public static final class BitNotIntFunction extends IntFunction implements ArithmeticUnaryFunction {
         private final Function value;
 
         public BitNotIntFunction(Function value) {
