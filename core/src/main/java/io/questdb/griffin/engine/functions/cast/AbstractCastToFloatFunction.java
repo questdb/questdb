@@ -27,12 +27,11 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.FloatFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
 /**
  * Abstract base class for functions that cast values to float.
  */
-public abstract class AbstractCastToFloatFunction extends FloatFunction implements UnaryFunction {
+public abstract class AbstractCastToFloatFunction extends FloatFunction implements CastFunction {
     /**
      * The function argument to cast.
      */

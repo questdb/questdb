@@ -27,12 +27,11 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
 /**
  * Abstract base class for functions that cast values to byte.
  */
-public abstract class AbstractCastToByteFunction extends ByteFunction implements UnaryFunction {
+public abstract class AbstractCastToByteFunction extends ByteFunction implements CastFunction {
     /**
      * The function argument to cast.
      */

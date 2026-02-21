@@ -182,6 +182,16 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public int getCurrentWalId(final TableToken tableToken) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            try {
+                return tableSequencer.getCurrentWalId();
+            } finally {
+                tableSequencer.unlockRead();
+            }
+        }
+    }
+
     public @NotNull TransactionLogCursor getCursor(final TableToken tableToken, long seqTxn) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             TransactionLogCursor cursor;
@@ -309,6 +319,10 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void notifySegmentClosed(TableToken tableToken, long txn, int walId, int segmentId) {
         engine.getWalListener().segmentClosed(tableToken, txn, walId, segmentId);
+    }
+
+    public void notifyWalClosed(TableToken tableToken, long txn, int walId) {
+        engine.getWalListener().walClosed(tableToken, txn, walId);
     }
 
     @TestOnly

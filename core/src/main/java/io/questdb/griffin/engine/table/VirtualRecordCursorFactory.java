@@ -109,8 +109,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
-    public ObjList<Function> getFunctions() {
-        return functions;
+    public int getColumnComplexity(int columnIndex) {
+        return functions.getQuick(columnIndex).getComplexity();
     }
 
     @Override
@@ -125,6 +125,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.close();
             throw th;
         }
+    }
+
+    public ObjList<Function> getFunctions() {
+        return functions;
     }
 
     public PriorityMetadata getPriorityMetadata() {

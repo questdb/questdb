@@ -145,8 +145,23 @@ public class WalListenerTest extends AbstractCairoTest {
                     drainWalQueue();
                     releaseInactive(engine);
 
-                    // Empty segment does not generate close event
-                    Assert.assertEquals(0, listener.events.size());
+                    // The rename WalWriter (walId=2) is released from pool and closed,
+                    // generating WAL_CLOSED. Uses tableToken2 because the rename updated the token.
+                    // Empty segment does not generate SEGMENT_CLOSED.
+                    // txn=2 because the rename operation was assigned sequencer txn 2.
+                    Assert.assertEquals(
+                            new WalListenerEvent(
+                                    WalListenerEventType.WAL_CLOSED,
+                                    tableToken2.get(),
+                                    2,
+                                    0,
+                                    2,
+                                    -1,
+                                    -1,
+                                    null
+                            ),
+                            listener.events.remove()
+                    );
                 }
             }
 
@@ -160,6 +175,21 @@ public class WalListenerTest extends AbstractCairoTest {
                             0,
                             1,
                             0,
+                            -1,
+                            null
+                    ),
+                    listener.events.remove()
+            );
+
+            // txn=1 because walWriter1 committed data at txn 1.
+            Assert.assertEquals(
+                    new WalListenerEvent(
+                            WalListenerEventType.WAL_CLOSED,
+                            tableToken1.get(),
+                            1,
+                            0,
+                            1,
+                            -1,
                             -1,
                             null
                     ),
@@ -186,8 +216,22 @@ public class WalListenerTest extends AbstractCairoTest {
 
             releaseInactive(engine);
 
-            // No data event, segment closed ignored
-            Assert.assertEquals(0, listener.events.size());
+            // No data event, segment closed ignored, but WAL closed is still emitted.
+            // walId=3 because: walWriter1=1, rename operation=2, walWriter2=3
+            // txn=3 because walWriter2 committed addColumn at txn 3.
+            Assert.assertEquals(
+                    new WalListenerEvent(
+                            WalListenerEventType.WAL_CLOSED,
+                            tableToken2.get(),
+                            3,
+                            0,
+                            3,
+                            -1,
+                            -1,
+                            null
+                    ),
+                    listener.events.remove()
+            );
 
             engine.dropTableOrViewOrMatView(Path.getThreadLocal(""), tableToken2.get());
 
@@ -222,7 +266,8 @@ public class WalListenerTest extends AbstractCairoTest {
         SEGMENT_CLOSED,
         TABLE_CREATED,
         TABLE_DROPPED,
-        TABLE_RENAMED
+        TABLE_RENAMED,
+        WAL_CLOSED
     }
 
     static class TestWalListener implements WalListener {
@@ -309,6 +354,20 @@ public class WalListenerTest extends AbstractCairoTest {
                     -1,
                     -1,
                     oldTableToken
+            ));
+        }
+
+        @Override
+        public void walClosed(TableToken tableToken, long txn, int walId) {
+            events.add(new WalListenerEvent(
+                    WalListenerEventType.WAL_CLOSED,
+                    tableToken,
+                    txn,
+                    0,
+                    walId,
+                    -1,
+                    -1,
+                    null
             ));
         }
     }
