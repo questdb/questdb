@@ -91,6 +91,8 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final BoolList computedIsSymbolToString = new BoolList();
     // Pre-computed per-column: adjustedMetadata.getColumnType(computedColumnIndices[k])
     private final IntList computedOutputTypes = new IntList();
+    // Pre-computed per-column: original column type before SYMBOL→STRING conversion (cursor path)
+    private final IntList computedSourceTypes = new IntList();
     // Per computed col: data memory
     private final ObjList<MemoryCARWImpl> dataBuffers = new ObjList<>();
     private final Decimal128 decimal128A = new Decimal128();
@@ -182,7 +184,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 int bufIdx = computedBufferIdx.getQuick(computedColumnIndices.getQuick(k));
                 MemoryCARWImpl dataBuf = dataBuffers.getQuick(bufIdx);
                 MemoryCARWImpl auxBuf = auxBuffers.getQuick(bufIdx);
-                writeColumnValue(record, computedColumnIndices.getQuick(k), computedOutputTypes.getQuick(k), dataBuf, auxBuf);
+                writeColumnValue(record, computedColumnIndices.getQuick(k), computedSourceTypes.getQuick(k), dataBuf, auxBuf);
             }
             rowCount++;
         } while (rowCount < batchSize && cursor.hasNext());
@@ -278,6 +280,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         computedFunctions.clear();
         computedIsSymbolToString.clear();
         computedOutputTypes.clear();
+        computedSourceTypes.clear();
         functions = null;
         functionRecord = null;
         adjustedMetadata.clear();
@@ -466,6 +469,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
         computedBufferIdx.setQuick(i, computedCount);
         allocateBuffer(adjustedType);
+        computedSourceTypes.add(columnType);
         computedCount++;
         adjustedMetadata.add(new TableColumnMetadata(metadata.getColumnName(i), adjustedType));
     }
