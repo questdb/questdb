@@ -42,7 +42,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 
 public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
     public static Function newInstance(Function arg, int targetType, int position) {
@@ -75,7 +74,6 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         private final int position;
         private final int precision;
         private final int scale;
-        private final StringSink sink = new StringSink();
 
         public Func128(Function value, int targetType, int position) {
             super(targetType);
@@ -97,12 +95,10 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
                 decimal.ofRawNull();
                 return;
             }
-            sink.clear();
-            sink.put(d);
             try {
-                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
+                Numbers.doubleToDecimal(d, decimal, precision, scale, true);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(sink, ColumnType.DOUBLE, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(d, ColumnType.DOUBLE, type).position(position);
             }
         }
 
@@ -122,7 +118,6 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         private final int position;
         private final int precision;
         private final int scale;
-        private final StringSink sink = new StringSink();
 
         public Func256(Function value, int targetType, int position) {
             super(targetType);
@@ -144,12 +139,10 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
                 decimal.ofRawNull();
                 return;
             }
-            sink.clear();
-            sink.put(d);
             try {
-                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
+                Numbers.doubleToDecimal(d, decimal, precision, scale, true);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(sink, ColumnType.DOUBLE, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(d, ColumnType.DOUBLE, type).position(position);
             }
         }
 
@@ -165,7 +158,6 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class Func64 extends AbstractCastToDecimal64Function {
-        private final StringSink sink = new StringSink();
 
         public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
@@ -176,12 +168,10 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
             if (!Numbers.isFinite(d)) {
                 return false;
             }
-            sink.clear();
-            sink.put(d);
             try {
-                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
+                Numbers.doubleToDecimal(d, decimal, precision, scale, true);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(sink, ColumnType.DOUBLE, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(d, ColumnType.DOUBLE, type).position(position);
             }
             return true;
         }

@@ -110,7 +110,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putByte(valueIndex + 1, srcVal);
             }
@@ -157,7 +157,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putInt(valueIndex + 1, srcVal);
             }
@@ -204,7 +204,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putLong(valueIndex + 1, srcVal);
             }
@@ -251,7 +251,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putShort(valueIndex + 1, srcVal);
             }

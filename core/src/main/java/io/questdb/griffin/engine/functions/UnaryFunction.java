@@ -50,6 +50,11 @@ public interface UnaryFunction extends Function {
     Function getArg();
 
     @Override
+    default int getComplexity() {
+        return getArg().getComplexity();
+    }
+
+    @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getArg().init(symbolTableSource, executionContext);
     }

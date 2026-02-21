@@ -111,44 +111,9 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             return value;
         }
 
-        public CharSequence getStr(Record rec, StringBuilderSink sink) {
-            if (matcher == null || replacementStr == null) {
-                return null;
-            }
-
-            CharSequence cs = value.getStrA(rec);
-            if (cs == null) {
-                return null;
-            }
-
-            matcher.reset(cs);
-            sink.clear();
-
-            try {
-                boolean result = matcher.find();
-                if (!result) {
-                    sink.buffer.append(cs);
-                } else {
-                    do {
-                        if (sink.length() > maxLength) {
-                            throw CairoException.critical(0)
-                                    .put("breached memory limit set for ").put(SIGNATURE)
-                                    .put(" [maxLength=").put(maxLength).put(']');
-                        }
-                        matcher.appendReplacement(sink.buffer, replacementStr);
-                        result = matcher.find();
-                    } while (result);
-                    matcher.appendTail(sink.buffer);
-                }
-                return sink;
-            } catch (CairoException e) {
-                throw e;
-            } catch (Throwable e) {
-                throw CairoException.critical(0)
-                        .put("regexp_replace failed [position=").put(functionPos)
-                        .put(", ex=").put(e.getMessage())
-                        .put(']');
-            }
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
         }
 
         @Override
@@ -193,6 +158,46 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("regexp_replace(").val(value).val(',').val(pattern).val(',').val(replacement).val(')');
+        }
+
+        private CharSequence getStr(Record rec, StringBuilderSink sink) {
+            if (matcher == null || replacementStr == null) {
+                return null;
+            }
+
+            CharSequence cs = value.getStrA(rec);
+            if (cs == null) {
+                return null;
+            }
+
+            matcher.reset(cs);
+            sink.clear();
+
+            try {
+                boolean result = matcher.find();
+                if (!result) {
+                    sink.buffer.append(cs);
+                } else {
+                    do {
+                        if (sink.length() > maxLength) {
+                            throw CairoException.critical(0)
+                                    .put("breached memory limit set for ").put(SIGNATURE)
+                                    .put(" [maxLength=").put(maxLength).put(']');
+                        }
+                        matcher.appendReplacement(sink.buffer, replacementStr);
+                        result = matcher.find();
+                    } while (result);
+                    matcher.appendTail(sink.buffer);
+                }
+                return sink;
+            } catch (CairoException e) {
+                throw e;
+            } catch (Throwable e) {
+                throw CairoException.critical(0)
+                        .put("regexp_replace failed [position=").put(functionPos)
+                        .put(", ex=").put(e.getMessage())
+                        .put(']');
+            }
         }
     }
 

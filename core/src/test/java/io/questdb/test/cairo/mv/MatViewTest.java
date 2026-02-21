@@ -4796,7 +4796,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\t[-1]: unexpected filter error
+                            price_1h\tbase_price\tinvalid\t[-1]: unexpected reduce error
                             """,
                     "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
                     null,
@@ -5413,7 +5413,7 @@ public class MatViewTest extends AbstractCairoTest {
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
                             price_1d\timmediate\tprice_1h\tinvalid\tbase materialized view refresh failed
                             price_1d_2\timmediate\tprice_1h\tinvalid\tbase materialized view refresh failed
-                            price_1h\timmediate\tbase_price\tinvalid\t[-1]: unexpected filter error
+                            price_1h\timmediate\tbase_price\tinvalid\t[-1]: unexpected reduce error
                             price_1w\timmediate\tprice_1d\tinvalid\tbase materialized view is invalidated
                             """,
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",

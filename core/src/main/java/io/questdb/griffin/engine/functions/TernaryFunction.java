@@ -48,6 +48,14 @@ public interface TernaryFunction extends Function {
 
     Function getCenter();
 
+    @Override
+    default int getComplexity() {
+        return Function.addComplexity(
+                getLeft().getComplexity(),
+                Function.addComplexity(getCenter().getComplexity(), getRight().getComplexity())
+        );
+    }
+
     Function getLeft();
 
     Function getRight();

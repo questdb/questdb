@@ -24,10 +24,16 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 
 public interface CaseFunction extends MultiArgFunction {
+    @Override
+    default int getComplexity() {
+        return Function.addComplexity(5, MultiArgFunction.super.getComplexity());
+    }
+
     @Override
     default void toPlan(PlanSink sink) {
         sink.val("case(").val(args()).val(')');

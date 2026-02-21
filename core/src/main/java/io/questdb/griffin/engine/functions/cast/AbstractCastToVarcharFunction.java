@@ -26,13 +26,13 @@ package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.griffin.engine.functions.VarcharFunction;
 
 /**
  * Abstract base class for functions that cast values to varchar.
  */
-public abstract class AbstractCastToVarcharFunction extends VarcharFunction implements UnaryFunction {
+public abstract class AbstractCastToVarcharFunction extends VarcharFunction implements CastFunction {
     /**
      * The function argument to cast.
      */
