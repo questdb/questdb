@@ -695,7 +695,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "LIST (0, 5s) AS h " +
-                    "GROUP BY t.sym, h.offset " +
+                    "GROUP BY t.sym, sec_offs " +
                     "ORDER BY t.sym, h.offset";
 
             assertQueryNoLeakCheck(
@@ -753,7 +753,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "RANGE FROM 0s TO 5s STEP 5s AS h " +
-                    "GROUP BY t.sym, h.offset " +
+                    "GROUP BY t.sym, sec_offs " +
                     "ORDER BY t.sym, h.offset";
 
             assertQueryNoLeakCheck(
@@ -813,7 +813,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "LIST (0) AS h " +
-                    "GROUP BY t.sym, h.offset " +
+                    "GROUP BY t.sym, sec_offs " +
                     "ORDER BY t.sym, h.offset";
 
             assertQueryNoLeakCheck(
@@ -1797,7 +1797,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                    "GROUP BY offset, timestamp " +
+                    "GROUP BY offset / " + getSecondsDivisor() + ", timestamp " +
                     "ORDER BY sec_offs";
 
             assertQueryNoLeakCheck(
@@ -1915,7 +1915,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "RANGE FROM 0s TO 1s STEP 1s AS h " +
-                    "GROUP BY h.offset, t.sym " +
+                    "GROUP BY h.offset / " + getSecondsDivisor() + ", t.sym " +
                     "ORDER BY sec_offs, t.sym";
 
             assertQueryNoLeakCheck(
@@ -1961,7 +1961,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "RANGE FROM 0s TO 0s STEP 1s AS h " +
-                    "GROUP BY h.offset, sym " +
+                    "GROUP BY sec_offs, sym " +
                     "ORDER BY sec_offs";
 
             assertQueryNoLeakCheck(
@@ -2156,6 +2156,47 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             "GROUP BY h.offset",
                     17,
                     "non-aggregate column must be included in HORIZON JOIN GROUP BY clause"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithGroupByPartialExpressionCoverage() throws Exception {
+        // GROUP BY covers only one literal in a multi-literal expression — should fail.
+        // SELECT has "t.qty + p.price" but GROUP BY only has t.qty which doesn't
+        // exactly match any non-aggregate SELECT expression.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT t.qty + p.price, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                            "GROUP BY t.qty",
+                    140,
+                    "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column"
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithGroupByPartialExpressionCoverage2() throws Exception {
+        // SELECT has "t.qty + h.offset" but GROUP BY only has h.offset which doesn't
+        // exactly match any non-aggregate SELECT expression.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "SELECT t.qty + h.offset, avg(p.price) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 1s STEP 1s AS h " +
+                            "GROUP BY h.offset",
+                    141,
+                    "HORIZON JOIN GROUP BY column must match a non-aggregate SELECT column"
             );
         });
     }
@@ -2546,7 +2587,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "LIST (0U, 1000000U) AS h " +
-                    "GROUP BY h.offset " +
+                    "GROUP BY sec_offs " +
                     "ORDER BY h.offset";
 
             assertQueryNoLeakCheck(
@@ -2858,7 +2899,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "FROM trades AS t " +
                     "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                     "LIST (0n, 1000000000n) AS h " +
-                    "GROUP BY h.offset " +
+                    "GROUP BY sec_offs " +
                     "ORDER BY h.offset";
 
             assertQueryNoLeakCheck(

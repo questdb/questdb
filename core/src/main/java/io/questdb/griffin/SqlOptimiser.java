@@ -3551,37 +3551,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Check if the expression tree contains a literal with the given name.
-    // Uses exact matching to ensure table prefixes are respected (t.sym != p.sym).
-    // Uses stack-based iteration to avoid deep recursion.
-    private boolean expressionContainsLiteral(ExpressionNode node, CharSequence literalName) {
-        if (node == null) {
-            return false;
-        }
-        sqlNodeStack.clear();
-        sqlNodeStack.push(node);
-
-        while (!sqlNodeStack.isEmpty()) {
-            ExpressionNode current = sqlNodeStack.poll();
-            if (current.type == LITERAL && Chars.equalsIgnoreCase(current.token, literalName)) {
-                return true;
-            }
-            if (current.lhs != null) {
-                sqlNodeStack.push(current.lhs);
-            }
-            if (current.rhs != null) {
-                sqlNodeStack.push(current.rhs);
-            }
-            for (int i = 0, n = current.args.size(); i < n; i++) {
-                ExpressionNode arg = current.args.getQuick(i);
-                if (arg != null) {
-                    sqlNodeStack.push(arg);
-                }
-            }
-        }
-        return false;
-    }
-
     /**
      * Checks if the given AST node contains nested window functions in its arguments,
      * and if so, extracts them to a new inner window model. The AST is modified in-place
@@ -10028,19 +9997,6 @@ public class SqlOptimiser implements Mutable {
             ObjList<ExpressionNode> groupByColumns,
             QueryModel baseModel
     ) throws SqlException {
-        // Get the horizon alias to handle h.offset -> offset matching
-        // The horizon alias is stored on the synthetic offset model (CROSS JOIN model with HorizonJoinContext)
-        CharSequence horizonAlias = null;
-        ObjList<QueryModel> joinModels = baseModel.getJoinModels();
-        for (int jm = 0, jmn = joinModels.size(); jm < jmn; jm++) {
-            QueryModel jModel = joinModels.getQuick(jm);
-            HorizonJoinContext hjc = jModel.getHorizonJoinContext();
-            if (hjc.getMode() != HorizonJoinContext.MODE_NONE && hjc.getAlias() != null) {
-                horizonAlias = hjc.getAlias().token;
-                break;
-            }
-        }
-
         // Validate each GROUP BY column matches a non-aggregate SELECT column
         for (int i = 0, n = groupByColumns.size(); i < n; i++) {
             ExpressionNode groupByCol = groupByColumns.getQuick(i);
@@ -10072,22 +10028,10 @@ public class SqlOptimiser implements Mutable {
             int dotPos = Chars.indexOfLastUnquoted(groupByCol.token, '.');
             boolean groupByHasTablePrefix = dotPos >= 0;
 
-            // If GROUP BY column has a prefix that matches the horizon alias (e.g., h.offset),
-            // we need to compare with the suffix (offset) since SELECT uses just the column name
-            CharSequence groupByColName = groupByCol.token;
-            CharSequence groupByColNameWithoutHorizonPrefix = null;
-            if (groupByHasTablePrefix && horizonAlias != null) {
-                CharSequence prefix = groupByColName.subSequence(0, dotPos);
-                if (Chars.equalsIgnoreCase(prefix, horizonAlias)) {
-                    groupByColNameWithoutHorizonPrefix = groupByColName.subSequence(dotPos + 1, groupByColName.length());
-                }
-            }
-
-            // Check if this GROUP BY column matches any non-aggregate SELECT column
-            // The GROUP BY column can match:
-            // 1. A SELECT column's AST (with or without table prefix differences)
-            // 2. A literal within a SELECT expression (e.g., GROUP BY h.offset matches SELECT h.offset / 1000000)
-            // 3. A SELECT column's alias (only if GROUP BY doesn't have a table prefix)
+            // Check if this GROUP BY column matches any non-aggregate SELECT column.
+            // Requires exact expression match (with table prefix tolerance) or alias match.
+            // Unlike regular GROUP BY, HORIZON JOIN doesn't extract a virtual model, so
+            // GROUP BY expressions must exactly match SELECT expressions.
             for (int j = 0, m = selectColumns.size(); j < m; j++) {
                 QueryColumn selectCol = selectColumns.getQuick(j);
                 ExpressionNode selectAst = selectCol.getAst();
@@ -10099,19 +10043,6 @@ public class SqlOptimiser implements Mutable {
 
                 // Compare expressions while accounting for table prefixes (e.g., t.qty vs qty, h.offset vs offset)
                 if (compareExpressionsWithTablePrefixes(groupByCol, selectAst)) {
-                    found = true;
-                    break;
-                }
-
-                // Check if GROUP BY column is referenced within SELECT expression (exact match including prefix)
-                if (expressionContainsLiteral(selectAst, groupByCol.token)) {
-                    found = true;
-                    break;
-                }
-
-                // If GROUP BY has horizon alias prefix (e.g., h.offset), also check for match without prefix
-                if (groupByColNameWithoutHorizonPrefix != null
-                        && expressionContainsLiteral(selectAst, groupByColNameWithoutHorizonPrefix)) {
                     found = true;
                     break;
                 }
@@ -10168,26 +10099,8 @@ public class SqlOptimiser implements Mutable {
                     break;
                 }
 
-                // Check if GROUP BY literal appears in SELECT expression
-                if (expressionContainsLiteral(selectAst, groupByCol.token)) {
-                    covered = true;
-                    break;
-                }
-
-                // Handle horizon alias prefix (e.g., h.offset -> offset)
-                int dotPos = Chars.indexOfLastUnquoted(groupByCol.token, '.');
-                if (dotPos >= 0 && horizonAlias != null) {
-                    CharSequence prefix = groupByCol.token.subSequence(0, dotPos);
-                    if (Chars.equalsIgnoreCase(prefix, horizonAlias)) {
-                        CharSequence withoutPrefix = groupByCol.token.subSequence(dotPos + 1, groupByCol.token.length());
-                        if (expressionContainsLiteral(selectAst, withoutPrefix)) {
-                            covered = true;
-                            break;
-                        }
-                    }
-                }
-
                 // Alias match (only if GROUP BY doesn't have table prefix)
+                int dotPos = Chars.indexOfLastUnquoted(groupByCol.token, '.');
                 if (dotPos < 0 && Chars.equalsIgnoreCase(groupByCol.token, selectCol.getAlias())) {
                     covered = true;
                     break;

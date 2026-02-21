@@ -798,7 +798,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             CharSequence slaveAlias,
             RecordMetadata slaveMetadata,
             int[] columnSources,
-            int[] columnIndices
+            int[] columnIndices,
+            int queryPosition
     ) throws SqlException {
         for (int i = 0, n = innerMetadata.getColumnCount(); i < n; i++) {
             final CharSequence fullName = innerMetadata.getColumnName(i);
@@ -811,7 +812,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
                     int colIdx = masterMetadata.getColumnIndexQuiet(columnName);
                     if (colIdx < 0) {
-                        throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
+                        throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
                     }
                     columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
                     columnIndices[i] = colIdx;
@@ -824,20 +825,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else if (Chars.equalsIgnoreCase(columnName, "timestamp")) {
                         columnIndices[i] = 1;
                     } else {
-                        throw SqlException.$(0, "unknown horizon column: ").put(columnName);
+                        throw SqlException.$(queryPosition, "unknown horizon column: ").put(columnName);
                     }
                     continue;
                 }
                 if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
                     int colIdx = slaveMetadata.getColumnIndexQuiet(columnName);
                     if (colIdx < 0) {
-                        throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
+                        throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
                     }
                     columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
                     columnIndices[i] = colIdx;
                     continue;
                 }
-                throw SqlException.$(0, "failed to resolve table.column: ").put(fullName);
+                throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
             }
             // No alias prefix - try matching by name in priority order
             // Horizon columns first (offset, timestamp)
@@ -863,7 +864,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 columnIndices[i] = idx;
                 continue;
             }
-            throw SqlException.$(0, "failed to resolve column: ").put(fullName);
+            throw SqlException.$(queryPosition, "failed to resolve column: ").put(fullName);
         }
     }
 
@@ -3492,7 +3493,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveAlias,
                     slaveMetadata,
                     columnSources,
-                    columnIndices
+                    columnIndices,
+                    slaveModel.getJoinKeywordPosition()
             );
 
             // Save GROUP BY column filter before ASOF join processing overwrites it
@@ -4939,6 +4941,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveMetadata,
                                         executionContext
                                 );
+                                // from now on, master owns slave, so we don't have to close it
+                                closeSlaveOnFailure = false;
                                 break;
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);

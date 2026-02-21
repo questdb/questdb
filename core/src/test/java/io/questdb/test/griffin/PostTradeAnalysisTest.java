@@ -182,7 +182,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "HORIZON JOIN market_data m ON (symbol)" +
                     "    LIST (0, 1s, 5s, 10s, 30s, 1m, 5m) AS h " +
                     "WHERE t.side = 'buy' " +
-                    "GROUP BY t.symbol, t.counterparty, h.offset " +
+                    "GROUP BY t.symbol, t.counterparty, horizon_sec " +
                     "ORDER BY t.symbol, t.counterparty, h.offset";
 
             assertQueryNoLeakCheck(
@@ -255,7 +255,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "HORIZON JOIN market_data m ON (symbol)" +
                     "    RANGE FROM 0s TO 10s STEP 5s AS h " +
                     "WHERE t.side = 'buy' " +
-                    "GROUP BY t.symbol, h.offset " +
+                    "GROUP BY t.symbol, horizon_sec " +
                     "ORDER BY t.symbol, h.offset";
 
             assertQueryNoLeakCheck(
@@ -526,7 +526,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "HORIZON JOIN market_data m ON (symbol)" +
                     "    RANGE FROM 0s TO 5s STEP 5s AS h " +
                     "WHERE t.side = 'buy' " +
-                    "GROUP BY t.symbol, t.ecn, h.offset " +
+                    "GROUP BY t.symbol, t.ecn, horizon_sec " +
                     "ORDER BY t.symbol, t.ecn, h.offset";
 
             assertQueryNoLeakCheck(
@@ -687,7 +687,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "FROM fx_trades t " +
                     "HORIZON JOIN market_data m ON (symbol)" +
                     "    LIST (0, 1T, 5T, 10T, 50T, 100T, 500T, 1000T, 5000T) AS h " +
-                    "GROUP BY t.symbol, t.counterparty, t.passive, h.offset " +
+                    "GROUP BY t.symbol, t.counterparty, t.passive, horizon_ms " +
                     "ORDER BY t.symbol, t.counterparty, t.passive, h.offset";
 
             assertQueryNoLeakCheck(
@@ -776,7 +776,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "FROM fx_trades t " +
                     "HORIZON JOIN market_data m ON (symbol)" +
                     "    LIST (0, 1s, 5s) AS h " +
-                    "GROUP BY t.ecn, t.passive, h.offset " +
+                    "GROUP BY t.ecn, t.passive, horizon_sec " +
                     "ORDER BY t.ecn, t.passive, h.offset";
 
             assertQueryNoLeakCheck(
@@ -854,7 +854,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "FROM fx_trades t " +
                     "HORIZON JOIN market_data m ON (symbol)" +
                     "    RANGE FROM 0s TO 5s STEP 1s AS h " +
-                    "GROUP BY t.symbol, t.ecn, t.counterparty, t.passive, h.offset " +
+                    "GROUP BY t.symbol, t.ecn, t.counterparty, t.passive, horizon_sec " +
                     "ORDER BY t.symbol, t.ecn, t.counterparty, t.passive, h.offset";
 
             assertQueryNoLeakCheck(
@@ -1016,7 +1016,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "HORIZON JOIN market_data m ON (symbol)" +
                     "    RANGE FROM 0s TO 5s STEP 1s AS h " +
                     "WHERE t.side = 'buy' " +
-                    "GROUP BY t.symbol, t.ecn, t.passive, h.offset " +
+                    "GROUP BY t.symbol, t.ecn, t.passive, horizon_sec " +
                     "ORDER BY t.symbol, t.ecn, t.passive, h.offset";
 
             assertQueryNoLeakCheck(
@@ -1167,7 +1167,7 @@ public class PostTradeAnalysisTest extends AbstractCairoTest {
                     "FROM fx_trades t " +
                     "HORIZON JOIN market_data m ON (symbol)" +
                     "    RANGE FROM -2s TO 2s STEP 1s AS h " +
-                    "GROUP BY h.offset " +
+                    "GROUP BY horizon_sec " +
                     "ORDER BY h.offset";
 
             assertQueryNoLeakCheck(
