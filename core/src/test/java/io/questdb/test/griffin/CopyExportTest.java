@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
@@ -459,15 +460,41 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyParquetFailsWithMmapErrorCleansTempTable() throws Exception {
-        // The streaming export path does not create a temp table, so mmap errors on temp table
-        // column files don't affect it. Verify the export succeeds and no temp table is created.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test_table (x INT, y LONG, z STRING)");
-            execute("INSERT INTO test_table VALUES (1, 100, 'hello'), (2, 200, 'world')");
+        final LongHashSet tempTableColumnFds = new LongHashSet();
+        final AtomicBoolean failed = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                tempTableColumnFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (tempTableColumnFds.contains(fd) && failed.compareAndSet(false, true)) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (Utf8s.containsAscii(name, File.separator + "copy.") && Utf8s.endsWithAscii(name, ".d")) {
+                    tempTableColumnFds.add(fd);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            // BINARY column forces the TEMP_TABLE export path
+            execute("CREATE TABLE test_table (x INT, y LONG, z BINARY)");
+            execute("INSERT INTO test_table VALUES (1, 100, NULL), (2, 200, NULL)");
 
             CopyExportRunnable stmt = () ->
                     runAndFetchCopyExportID(
-                            "COPY (SELECT * FROM test_table) TO 'mmap_fail_output' WITH FORMAT parquet",
+                            "COPY (test_table where x > 0) TO 'mmap_fail_output' WITH FORMAT parquet",
                             sqlExecutionContext
                     );
 
@@ -476,30 +503,20 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertSql(
                                 """
                                         status
-                                        finished
+                                        failed
                                         """,
                                 "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
                         );
 
-                        // Verify no temp table was created
                         ObjHashSet<TableToken> bucket = new ObjHashSet<>();
                         engine.getTableTokens(bucket, false);
                         for (int i = 0, n = bucket.size(); i < n; i++) {
                             TableToken token = bucket.get(i);
                             Assert.assertFalse(
-                                    "temp table should not have been created: " + token.getTableName(),
+                                    "temp table should have been cleaned up: " + token.getTableName(),
                                     token.getTableName().startsWith("copy.")
                             );
                         }
-
-                        // Verify data is correct
-                        assertSql("""
-                                        x\ty\tz
-                                        1\t100\thello
-                                        2\t200\tworld
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "mmap_fail_output.parquet') ORDER BY x"
-                        );
                     });
 
             testCopyExport(stmt, test);
