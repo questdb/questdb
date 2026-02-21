@@ -518,11 +518,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             Sort light
                               keys: [c1]
-                                VirtualRecord
-                                  functions: [a,b,memoize(a+b)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [a,b,memoize(a+b)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """
             );
             assertSql(

@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -48,7 +47,7 @@ public class AddLong256FunctionFactory implements FunctionFactory {
         return new AddLong256Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddLong256Func extends Long256Function implements BinaryFunction {
+    private static class AddLong256Func extends Long256Function implements ArithmeticBinaryFunction {
         final Function left;
         final Long256Impl long256A = new Long256Impl();
         final Long256Impl long256B = new Long256Impl();
