@@ -1544,15 +1544,18 @@ public final class TableUtils {
     /**
      * Produces a Parquet file from a native partition.
      *
-     * @param reader             Table reader
-     * @param path               Path to the native partition directory (will be modified during execution)
-     * @param other              Path for the output parquet file (will be modified during execution)
-     * @param pathSize           Root path size for restoring paths after modifications
-     * @param partitionTimestamp Timestamp of the partition
-     * @param tableName          Name of the table
-     * @param partitionIndex     Index of the partition in the transaction file
-     * @param configuration      Cairo configuration for parquet encoder options
-     * @return The length of the produced Parquet file
+     * @param reader                   Table reader
+     * @param path                     Path to the native partition directory (will be modified during execution)
+     * @param other                    Path for the output parquet file (will be modified during execution)
+     * @param pathSize                 Root path size for restoring paths after modifications
+     * @param partitionTimestamp       Timestamp of the partition
+     * @param tableName                Name of the table
+     * @param partitionIndex           Index of the partition in the transaction file
+     * @param configuration            Cairo configuration for parquet encoder options
+     * @param expectedPartitionNameTxn Expected partition name txn captured at PARQUET_MARK time, or -1 to skip the check.
+     *                                 When non-negative, the reader is reloaded before each column to detect concurrent
+     *                                 partition changes (e.g. O3 merge, partition squash). Returns -1 on mismatch.
+     * @return The length of the produced Parquet file, or -1 if the partition txn changed during conversion
      */
     public static long produceParquetFromNative(
             TableReader reader,
@@ -1562,7 +1565,8 @@ public final class TableUtils {
             long partitionTimestamp,
             String tableName,
             int partitionIndex,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            long expectedPartitionNameTxn
     ) {
         final TxReader txReader = reader.getTxFile();
         final TableMetadata metadata = reader.getMetadata();
@@ -1599,6 +1603,15 @@ public final class TableUtils {
                     if (columnType <= 0) {
                         continue; // skip deleted columns
                     }
+
+                    if (expectedPartitionNameTxn >= 0) {
+                        reader.reload();
+                        final int index = reader.getPartitionIndexByTimestamp(partitionTimestamp);
+                        if (index < 0 || reader.getTxFile().getPartitionNameTxn(index) != expectedPartitionNameTxn) {
+                            return -1L;
+                        }
+                    }
+
                     final String columnName = metadata.getColumnName(columnIndex);
                     final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
 
