@@ -63,9 +63,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 
 /**
@@ -940,9 +937,11 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnIndex,
             QwpFixedWidthColumnCursor cursor,
             int rowCount,
-            int columnType) {
+            int columnType
+    ) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int columnPrecision = ColumnType.getDecimalPrecision(columnType);
         int columnScale = ColumnType.getDecimalScale(columnType);
 
         cursor.resetRowPosition();
@@ -953,29 +952,21 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     writeNullSentinel(dataMem, columnType);
                 } else {
                     double value = cursor.getDouble();
-                    BigDecimal bd = BigDecimal.valueOf(value);
-                    try {
-                        bd = bd.setScale(columnScale, RoundingMode.UNNECESSARY);
-                    } catch (ArithmeticException e) {
-                        throw CairoException.nonCritical()
-                                .put("double value ").put(value)
-                                .put(" loses precision when converted to ")
-                                .put(ColumnType.nameOf(columnType))
-                                .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
-                                .put(", scale=").put(columnScale)
-                                .put(']');
-                    }
-                    Decimal256 decimal = Decimal256.fromBigDecimal(bd);
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.DECIMAL8 -> dataMem.putByte((byte) decimal.getLl());
-                        case ColumnType.DECIMAL16 -> dataMem.putShort((short) decimal.getLl());
-                        case ColumnType.DECIMAL32 -> dataMem.putInt((int) decimal.getLl());
-                        case ColumnType.DECIMAL64 -> dataMem.putLong(decimal.getLl());
-                        case ColumnType.DECIMAL128 -> dataMem.putDecimal128(decimal.getLh(), decimal.getLl());
-                        case ColumnType.DECIMAL256 -> dataMem.putDecimal256(decimal.getHh(), decimal.getHl(),
-                                decimal.getLh(), decimal.getLl());
-                        default -> throw CairoException.nonCritical()
-                                .put("unsupported decimal type: ").put(ColumnType.nameOf(columnType));
+                    if (!Numbers.isFinite(value)) {
+                        writeNullSentinel(dataMem, columnType);
+                    } else {
+                        try {
+                            Numbers.doubleToDecimal(value, decimal, columnPrecision, columnScale, false);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical()
+                                    .put("double value ").put(value)
+                                    .put(" cannot be converted to ")
+                                    .put(ColumnType.nameOf(columnType))
+                                    .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                                    .put(", scale=").put(columnScale)
+                                    .put(']');
+                        }
+                        writeDecimalValue(dataMem, decimal, columnType, columnIndex);
                     }
                 }
             }
@@ -1521,6 +1512,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     public void putStringToDecimalColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int columnPrecision = ColumnType.getDecimalPrecision(columnType);
         int columnScale = ColumnType.getDecimalScale(columnType);
 
         cursor.resetRowPosition();
@@ -1532,11 +1524,10 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 } else {
                     DirectUtf8Sequence value = cursor.getUtf8Value();
                     try {
-                        BigDecimal bd = new BigDecimal(value.toString());
-                        bd = bd.setScale(columnScale, RoundingMode.HALF_UP);
-                        Decimal256 decimal = Decimal256.fromBigDecimal(bd);
+                        decimal.ofString(value.asAsciiCharSequence(), 0, value.size(),
+                                columnPrecision, columnScale, false, false);
                         writeDecimalValue(dataMem, decimal, columnType, columnIndex);
-                    } catch (NumberFormatException | NumericException e) {
+                    } catch (NumericException e) {
                         throw CairoException.nonCritical()
                                 .put("cannot parse decimal from string [value=")
                                 .put(value)
@@ -2438,6 +2429,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 .put("decimal value overflows ")
                 .put(ColumnType.nameOf(columnType))
                 .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(", decimal=").put(decimal)
                 .put(']');
     }
 
