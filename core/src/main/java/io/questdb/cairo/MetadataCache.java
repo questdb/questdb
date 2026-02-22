@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -431,7 +432,7 @@ public class MetadataCache implements QuietCloseable {
          * @return the current version of the snapshot
          */
         @Override
-        public long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion) {
+        public long snapshot(CharSequenceObjSortedHashMap<CairoTable> localCache, long priorVersion) {
             if (priorVersion >= getVersion()) {
                 return priorVersion;
             }

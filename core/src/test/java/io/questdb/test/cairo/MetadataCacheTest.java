@@ -32,7 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -716,7 +716,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     public void testDropAndRecreateTableRefreshSnapshots() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            CharSequenceObjHashMap<CairoTable> cache = new CharSequenceObjHashMap<>();
+            CharSequenceObjSortedHashMap<CairoTable> cache = new CharSequenceObjSortedHashMap<>();
             long tableCacheVersion = -1;
 
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
@@ -888,6 +888,51 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=1]
                     """);
         });
+    }
+
+    @Test
+    public void testSnapshotSortedWithInitialListOfTables() throws Exception {
+        for (int cu = 'Z'; cu > 'A' - 1; cu--) {
+            execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+        }
+
+        assertTableNamesOrderedWith(new CharSequenceObjSortedHashMap<>(), "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);
+    }
+
+    @Test
+    public void testSnapshotSortedAlwaysAsNumberOfTablesGrow() throws Exception {
+        CharSequenceObjSortedHashMap<CairoTable> sortedMap = new CharSequenceObjSortedHashMap<>();
+
+        for (int cu = 'Z'; cu > 'A' - 1; cu--) {
+            execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+        }
+
+        long version = assertTableNamesOrderedWith(sortedMap, "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);
+
+        for (int cu = 'Z'; cu > 'A' - 1; cu = cu - 2) {
+            execute("drop table " + new String(new char[]{(char) cu}));
+        }
+
+        for (int cu = 'z'; cu > 'a' - 1; cu = cu - 2) {
+            for (int cd = 0; cd < 2; cd++) {
+                execute("CREATE TABLE " + new String(new char[]{(char) cu, (char) (cd + 48)}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+            }
+        }
+
+        assertTableNamesOrderedWith(sortedMap, "[A,C,E,G,I,K,M,O,Q,S,U,W,Y,b0,b1,d0,d1,f0,f1,h0,h1,j0,j1,l0,l1,n0,n1,p0,p1,r0,r1,t0,t1,v0,v1,x0,x1,z0,z1]", version);
+    }
+
+    private static long assertTableNamesOrderedWith(CharSequenceObjSortedHashMap<CairoTable> sortedMap, String expected, long version) {
+        try (MetadataCacheReader metadataCacheReader = engine.getMetadataCache().readLock()) {
+            version = metadataCacheReader.snapshot(sortedMap, version);
+
+            sink.clear();
+            sortedMap.keys().toSink(sink);
+
+            TestUtils.assertEquals(expected, sink);
+
+            return version;
+        }
     }
 
     private static void assertCairoMetadata(String expected) {
