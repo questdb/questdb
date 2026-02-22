@@ -7864,7 +7864,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
                     if (columnIndex > -1) {
                         filter.add(columnIndex + 1);
-                        return;
+                        continue;
                     }
                 }
                 throw SqlException.invalidColumn(columnNames.getQuick(i).position, columnName);
