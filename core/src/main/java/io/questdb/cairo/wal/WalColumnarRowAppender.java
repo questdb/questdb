@@ -47,7 +47,9 @@ import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpStringColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -76,6 +78,8 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseable {
 
     private final Decimal256 decimal = new Decimal256();
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal64 decimal64 = new Decimal64();
     private final DirectArray reusableArray = new DirectArray();
     private final StringSink strSink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -946,29 +950,19 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
         cursor.resetRowPosition();
         try {
-            for (int row = 0; row < rowCount; row++) {
-                cursor.advanceRow();
-                if (cursor.isNull()) {
-                    writeNullSentinel(dataMem, columnType);
-                } else {
-                    double value = cursor.getDouble();
-                    if (!Numbers.isFinite(value)) {
-                        writeNullSentinel(dataMem, columnType);
-                    } else {
-                        try {
-                            Numbers.doubleToDecimal(value, decimal, columnPrecision, columnScale, false);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical()
-                                    .put("double value ").put(value)
-                                    .put(" cannot be converted to ")
-                                    .put(ColumnType.nameOf(columnType))
-                                    .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
-                                    .put(", scale=").put(columnScale)
-                                    .put(']');
-                        }
-                        writeDecimalValue(dataMem, decimal, columnType, columnIndex);
-                    }
-                }
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.DECIMAL8 ->
+                        putFloatToDecimal8Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                case ColumnType.DECIMAL16 ->
+                        putFloatToDecimal16Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                case ColumnType.DECIMAL32 ->
+                        putFloatToDecimal32Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                case ColumnType.DECIMAL64 ->
+                        putFloatToDecimal64Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                case ColumnType.DECIMAL128 ->
+                        putFloatToDecimal128Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                default ->
+                        putFloatToDecimal256Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
             }
         } catch (QwpParseException e) {
             throw CairoException.nonCritical().put("failed to convert float column to decimal");
@@ -1517,24 +1511,19 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
         cursor.resetRowPosition();
         try {
-            for (int row = 0; row < rowCount; row++) {
-                cursor.advanceRow();
-                if (cursor.isNull()) {
-                    writeNullSentinel(dataMem, columnType);
-                } else {
-                    DirectUtf8Sequence value = cursor.getUtf8Value();
-                    try {
-                        decimal.ofString(value.asAsciiCharSequence(), 0, value.size(),
-                                columnPrecision, columnScale, false, false);
-                        writeDecimalValue(dataMem, decimal, columnType, columnIndex);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical()
-                                .put("cannot parse decimal from string [value=")
-                                .put(value)
-                                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
-                                .put(']');
-                    }
-                }
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.DECIMAL8 ->
+                        putStringToDecimal8Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                case ColumnType.DECIMAL16 ->
+                        putStringToDecimal16Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                case ColumnType.DECIMAL32 ->
+                        putStringToDecimal32Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                case ColumnType.DECIMAL64 ->
+                        putStringToDecimal64Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                case ColumnType.DECIMAL128 ->
+                        putStringToDecimal128Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                default ->
+                        putStringToDecimal256Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
             }
         } catch (QwpParseException e) {
             throw CairoException.nonCritical().put("failed to convert STRING to decimal");
@@ -2325,6 +2314,16 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
     }
 
+    private CairoException doubleToDecimalConversionError(double value, int columnType, int columnIndex, int columnScale) {
+        return CairoException.nonCritical()
+                .put("double value ").put(value)
+                .put(" cannot be converted to ")
+                .put(ColumnType.nameOf(columnType))
+                .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(", scale=").put(columnScale)
+                .put(']');
+    }
+
     private CairoException geoHashParseError(DirectUtf8Sequence value, int columnIndex) {
         return CairoException.nonCritical()
                 .put("cannot parse geohash from string [value=")
@@ -2422,6 +2421,284 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
 
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    private void putFloatToDecimal128Loop(
+            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                double value = cursor.getDouble();
+                if (!Numbers.isFinite(value)) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    try {
+                        Numbers.doubleToDecimal(value, decimal128, columnPrecision, columnScale, false);
+                    } catch (NumericException e) {
+                        throw doubleToDecimalConversionError(value, columnType, columnIndex, columnScale);
+                    }
+                    dataMem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
+                }
+            }
+        }
+    }
+
+    private void putFloatToDecimal16Loop(
+            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                double value = cursor.getDouble();
+                if (!Numbers.isFinite(value)) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    try {
+                        Numbers.doubleToDecimal(value, decimal64, columnPrecision, columnScale, false);
+                    } catch (NumericException e) {
+                        throw doubleToDecimalConversionError(value, columnType, columnIndex, columnScale);
+                    }
+                    dataMem.putShort((short) decimal64.getValue());
+                }
+            }
+        }
+    }
+
+    private void putFloatToDecimal256Loop(
+            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                double value = cursor.getDouble();
+                if (!Numbers.isFinite(value)) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    try {
+                        Numbers.doubleToDecimal(value, decimal, columnPrecision, columnScale, false);
+                    } catch (NumericException e) {
+                        throw doubleToDecimalConversionError(value, columnType, columnIndex, columnScale);
+                    }
+                    dataMem.putDecimal256(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl());
+                }
+            }
+        }
+    }
+
+    private void putFloatToDecimal32Loop(
+            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                double value = cursor.getDouble();
+                if (!Numbers.isFinite(value)) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    try {
+                        Numbers.doubleToDecimal(value, decimal64, columnPrecision, columnScale, false);
+                    } catch (NumericException e) {
+                        throw doubleToDecimalConversionError(value, columnType, columnIndex, columnScale);
+                    }
+                    dataMem.putInt((int) decimal64.getValue());
+                }
+            }
+        }
+    }
+
+    private void putFloatToDecimal64Loop(
+            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                double value = cursor.getDouble();
+                if (!Numbers.isFinite(value)) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    try {
+                        Numbers.doubleToDecimal(value, decimal64, columnPrecision, columnScale, false);
+                    } catch (NumericException e) {
+                        throw doubleToDecimalConversionError(value, columnType, columnIndex, columnScale);
+                    }
+                    dataMem.putLong(decimal64.getValue());
+                }
+            }
+        }
+    }
+
+    private void putFloatToDecimal8Loop(
+            MemoryMA dataMem, QwpFixedWidthColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                double value = cursor.getDouble();
+                if (!Numbers.isFinite(value)) {
+                    writeNullSentinel(dataMem, columnType);
+                } else {
+                    try {
+                        Numbers.doubleToDecimal(value, decimal64, columnPrecision, columnScale, false);
+                    } catch (NumericException e) {
+                        throw doubleToDecimalConversionError(value, columnType, columnIndex, columnScale);
+                    }
+                    dataMem.putByte((byte) decimal64.getValue());
+                }
+            }
+        }
+    }
+
+    private void putStringToDecimal128Loop(
+            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                DirectUtf8Sequence value = cursor.getUtf8Value();
+                try {
+                    decimal128.ofString(value.asAsciiCharSequence(), 0, value.size(),
+                            columnPrecision, columnScale, false, false);
+                } catch (NumericException e) {
+                    throw stringToDecimalConversionError(value, columnIndex);
+                }
+                dataMem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
+            }
+        }
+    }
+
+    private void putStringToDecimal16Loop(
+            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                DirectUtf8Sequence value = cursor.getUtf8Value();
+                try {
+                    decimal64.ofString(value.asAsciiCharSequence(), 0, value.size(),
+                            columnPrecision, columnScale, false, false);
+                } catch (NumericException e) {
+                    throw stringToDecimalConversionError(value, columnIndex);
+                }
+                dataMem.putShort((short) decimal64.getValue());
+            }
+        }
+    }
+
+    private void putStringToDecimal256Loop(
+            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                DirectUtf8Sequence value = cursor.getUtf8Value();
+                try {
+                    decimal.ofString(value.asAsciiCharSequence(), 0, value.size(),
+                            columnPrecision, columnScale, false, false);
+                } catch (NumericException e) {
+                    throw stringToDecimalConversionError(value, columnIndex);
+                }
+                dataMem.putDecimal256(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl());
+            }
+        }
+    }
+
+    private void putStringToDecimal32Loop(
+            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                DirectUtf8Sequence value = cursor.getUtf8Value();
+                try {
+                    decimal64.ofString(value.asAsciiCharSequence(), 0, value.size(),
+                            columnPrecision, columnScale, false, false);
+                } catch (NumericException e) {
+                    throw stringToDecimalConversionError(value, columnIndex);
+                }
+                dataMem.putInt((int) decimal64.getValue());
+            }
+        }
+    }
+
+    private void putStringToDecimal64Loop(
+            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                DirectUtf8Sequence value = cursor.getUtf8Value();
+                try {
+                    decimal64.ofString(value.asAsciiCharSequence(), 0, value.size(),
+                            columnPrecision, columnScale, false, false);
+                } catch (NumericException e) {
+                    throw stringToDecimalConversionError(value, columnIndex);
+                }
+                dataMem.putLong(decimal64.getValue());
+            }
+        }
+    }
+
+    private void putStringToDecimal8Loop(
+            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
+            int columnType, int columnPrecision, int columnScale, int columnIndex
+    ) throws QwpParseException {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                writeNullSentinel(dataMem, columnType);
+            } else {
+                DirectUtf8Sequence value = cursor.getUtf8Value();
+                try {
+                    decimal64.ofString(value.asAsciiCharSequence(), 0, value.size(),
+                            columnPrecision, columnScale, false, false);
+                } catch (NumericException e) {
+                    throw stringToDecimalConversionError(value, columnIndex);
+                }
+                dataMem.putByte((byte) decimal64.getValue());
+            }
+        }
+    }
+
+    private CairoException stringToDecimalConversionError(DirectUtf8Sequence value, int columnIndex) {
+        return CairoException.nonCritical()
+                .put("cannot parse decimal from string [value=")
+                .put(value)
+                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(']');
     }
 
     private void throwDecimalOverflow(Decimal256 decimal, int columnType, int columnIndex) {
