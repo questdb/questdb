@@ -98,7 +98,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             tempTableFactory = Misc.free(tempTableFactory);
             pageFrameCursor = Misc.free(pageFrameCursor);
         } else {
-            // Ownership belongs to HTTPSerialParquetExporter (streamingPfc)
+            // Ownership belongs to BaseParquetExporter subclass (streamingPfc)
             // or ExportQueryProcessorState (for DIRECT_PAGE_FRAME).
             pageFrameCursor = null;
         }

@@ -64,7 +64,7 @@ import java.io.File;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
-public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implements Closeable {
+public class SQLSerialParquetExporter extends BaseParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SQLSerialParquetExporter.class);
     private final CairoConfiguration configuration;
     private final StringSink exportPath = new StringSink(128);
@@ -106,7 +106,6 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
         numOfFiles = 0;
     }
 
-    @Override
     public CopyExportRequestTask.Phase process() {
         if (copyExportRoot == null) {
             throw CairoException.nonCritical().put("parquet export is disabled ['cairo.sql.copy.export.root' is not set]");
