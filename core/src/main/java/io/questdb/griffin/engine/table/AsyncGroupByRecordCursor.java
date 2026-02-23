@@ -44,7 +44,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -57,10 +56,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.tasks.GroupByLongTopKTask;
-import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
 
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
@@ -81,12 +81,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     public AsyncGroupByRecordCursor(
             @NotNull CairoEngine engine,
-            @NotNull ObjList<Function> recordFunctions,
-            @NotNull MessageBus messageBus
+            @NotNull MessageBus messageBus,
+            @NotNull ObjList<Function> recordFunctions
     ) {
         this.configuration = engine.getConfiguration();
-        this.recordFunctions = recordFunctions;
         this.messageBus = messageBus;
+        this.recordFunctions = recordFunctions;
         recordA = new VirtualRecord(recordFunctions);
         recordB = new VirtualRecord(recordFunctions);
         postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
@@ -194,13 +194,24 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
 
+        final GroupByShardingContext shardingCtx = atom.getShardingContext();
         if (!atom.isSharded()) {
             // No sharding was necessary, so the maps are small, and we merge them ourselves.
-            final Map dataMap = atom.mergeOwnerMap();
+            final Map dataMap = shardingCtx.mergeOwnerMap();
             mapCursor = dataMap.getCursor();
         } else {
             // We had to shard the maps, so they must be big.
-            final ObjList<Map> shards = mergeShards(atom);
+            final ObjList<Map> shards = shardingCtx.mergeShards(
+                    messageBus,
+                    frameSequence.getWorkStealingStrategy(),
+                    circuitBreaker,
+                    postAggregationCircuitBreaker,
+                    postAggregationDoneLatch,
+                    postAggregationStartedCounter
+            );
+            if (postAggregationCircuitBreaker.checkIfTripped()) {
+                throwTimeoutException();
+            }
             // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
@@ -217,101 +228,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
-    private ObjList<Map> mergeShards(AsyncGroupByAtom atom) {
-        postAggregationCircuitBreaker.reset();
-        postAggregationStartedCounter.set(0);
-        postAggregationDoneLatch.reset();
-
-        // First, make sure to shard all non-sharded maps, if any.
-        atom.shardAll();
-
-        // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
-        final int shardCount = atom.getShardCount();
-        final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
-        final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
-        final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
-        final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(postAggregationStartedCounter);
-
-        int queuedCount = 0;
-        int ownCount = 0;
-        int reclaimed = 0;
-        int total = 0;
-        int mergedCount = 0; // used for work stealing decisions
-
-        try {
-            for (int i = 0; i < shardCount; i++) {
-                while (true) {
-                    long cursor = pubSeq.next();
-                    if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-
-                        if (workStealingStrategy.shouldSteal(mergedCount)) {
-                            atom.mergeShard(-1, i);
-                            ownCount++;
-                            total++;
-                            mergedCount = postAggregationDoneLatch.getCount();
-                            break;
-                        }
-                        mergedCount = postAggregationDoneLatch.getCount();
-                    } else {
-                        queue.get(cursor).of(postAggregationCircuitBreaker, postAggregationStartedCounter, postAggregationDoneLatch, atom, i);
-                        pubSeq.done(cursor);
-                        queuedCount++;
-                        total++;
-                        break;
-                    }
-                }
-            }
-        } catch (Throwable th) {
-            postAggregationCircuitBreaker.cancel();
-            throw th;
-        } finally {
-            // All done? Great, start consuming the queue we just published.
-            // How do we get to the end? If we consume our own queue there is chance we will be consuming
-            // aggregation tasks not related to this execution (we work in concurrent environment).
-            // To deal with that we need to check our latch.
-            while (!postAggregationDoneLatch.done(queuedCount)) {
-                if (circuitBreaker.checkIfTripped()) {
-                    postAggregationCircuitBreaker.cancel();
-                }
-
-                if (workStealingStrategy.shouldSteal(mergedCount)) {
-                    long cursor = subSeq.next();
-                    if (cursor > -1) {
-                        GroupByMergeShardTask task = queue.get(cursor);
-                        GroupByMergeShardJob.run(-1, task, subSeq, cursor, atom);
-                        reclaimed++;
-                    } else {
-                        Os.pause();
-                    }
-                } else {
-                    Os.pause();
-                }
-                mergedCount = postAggregationDoneLatch.getCount();
-            }
-        }
-
-        if (postAggregationCircuitBreaker.checkIfTripped()) {
-            throwTimeoutException();
-        }
-
-        atom.finalizeShardStats();
-
-        LOG.debug().$("merge shards done [total=").$(total)
-                .$(", ownCount=").$(ownCount)
-                .$(", reclaimed=").$(reclaimed)
-                .$(", queuedCount=").$(queuedCount).I$();
-
-        return atom.getDestShards();
-    }
-
     private void parallelLongTopK(DirectLongLongSortedList destList, Function longFunc) {
         postAggregationCircuitBreaker.reset();
         postAggregationStartedCounter.set(0);
         postAggregationDoneLatch.reset();
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
-        final int shardCount = atom.getShardCount();
         final RingQueue<GroupByLongTopKTask> queue = messageBus.getGroupByLongTopKQueue();
         final MPSequence pubSeq = messageBus.getGroupByLongTopKPubSeq();
         final MCSequence subSeq = messageBus.getGroupByLongTopKSubSeq();
@@ -324,14 +246,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         int processedCount = 0; // used for work stealing decisions
 
         try {
-            for (int i = 0; i < shardCount; i++) {
+            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 while (true) {
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
                         if (workStealingStrategy.shouldSteal(processedCount)) {
-                            final Map shard = atom.getDestShards().getQuick(i);
+                            final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
                             shard.getCursor().longTopK(ownerList, longFunc);
                             ownCount++;
@@ -347,7 +269,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                                 postAggregationDoneLatch,
                                 atom,
                                 longFunc,
-                                i,
+                                shardIndex,
                                 destList.getOrder(),
                                 destList.getCapacity()
                         );

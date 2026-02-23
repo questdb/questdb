@@ -519,29 +519,46 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     private OrderedMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
-        long offset;
         long offsetAddr = offsetsAddr + ((long) index << 3);
-        while ((offset = decompressOffset(Unsafe.getUnsafe().getInt(offsetAddr))) > -1) {
-            if (hashCodeLo == Unsafe.getUnsafe().getInt(offsetAddr + 4) && keyWriter.eq(offset)) {
-                long startAddr = heapAddr + offset;
-                return valueOf(startAddr, startAddr + keyOffset + keySize, false, value);
+        // Read offset and hash as a single 64-bit value to reduce memory accesses.
+        // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
+        long slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+        int rawOffset = Numbers.decodeLowInt(slotValue);
+        while (rawOffset > 0) {
+            int storedHash = Numbers.decodeHighInt(slotValue);
+            if (hashCodeLo == storedHash) {
+                long offset = decompressOffset(rawOffset);
+                if (keyWriter.eq(offset)) {
+                    long startAddr = heapAddr + offset;
+                    return valueOf(startAddr, startAddr + keyOffset + keySize, false, value);
+                }
             }
             index = (index + 1) & mask;
             offsetAddr = offsetsAddr + ((long) index << 3);
+            slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+            rawOffset = Numbers.decodeLowInt(slotValue);
         }
         return asNew(keyWriter, index, hashCodeLo, value);
     }
 
     private OrderedMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
-        long offset;
         long offsetAddr = offsetsAddr + ((long) index << 3);
-        while ((offset = decompressOffset(Unsafe.getUnsafe().getInt(offsetAddr))) > -1) {
-            if (hashCodeLo == Unsafe.getUnsafe().getInt(offsetAddr + 4) && keyWriter.eq(offset)) {
-                long startAddr = heapAddr + offset;
-                return valueOf(startAddr, startAddr + keyOffset + keySize, false, value);
+        // Read offset and hash as a single 64-bit value to reduce memory accesses.
+        long slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+        int rawOffset = Numbers.decodeLowInt(slotValue);
+        while (rawOffset > 0) {
+            int storedHash = Numbers.decodeHighInt(slotValue);
+            if (hashCodeLo == storedHash) {
+                long offset = decompressOffset(rawOffset);
+                if (keyWriter.eq(offset)) {
+                    long startAddr = heapAddr + offset;
+                    return valueOf(startAddr, startAddr + keyOffset + keySize, false, value);
+                }
             }
             index = (index + 1) & mask;
             offsetAddr = offsetsAddr + ((long) index << 3);
+            slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+            rawOffset = Numbers.decodeLowInt(slotValue);
         }
         return null;
     }
@@ -802,6 +819,13 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         protected boolean eq(long offset) {
+            // Fast paths for common small key sizes to avoid Vect.memeq overhead.
+            if (keySize == Integer.BYTES) {
+                return Unsafe.getUnsafe().getInt(heapAddr + offset) == Unsafe.getUnsafe().getInt(startAddr);
+            }
+            if (keySize == Long.BYTES) {
+                return Unsafe.getUnsafe().getLong(heapAddr + offset) == Unsafe.getUnsafe().getLong(startAddr);
+            }
             return Vect.memeq(heapAddr + offset, startAddr, keySize);
         }
     }
