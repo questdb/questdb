@@ -94,13 +94,17 @@ offending character, not the start of the expression.
   `Enhancement`, `Flaky Test`, `ILP`, `Materialized View`, `New feature`,
   `Performance`, `Postgres Wire`, `REST API`, `SQL`, `Security`, `UI`, `WAL`,
   `Windows`, `regression`, `rust`, `storage`.
-
-## Writing Style
-
-- Prefer active voice over passive voice in commit messages, PR descriptions,
-  and comments.
-  - Good: "The owner thread waits for the latch"
-  - Avoid: "The latch is waited on by the owner thread"
+- Use active voice in commit messages, PR descriptions, and code comments. Name
+  the acting subject — a class, method, caller, or component — instead of
+  writing "is/are + past participle" constructions.
+  - Good: "`determineExportMode()` inspects the compiled factory"
+  - Avoid: "The export mode is determined by inspecting the compiled factory"
+  - Good: "`setUp()` pre-computes per-column metadata into flat arrays"
+  - Avoid: "Per-column metadata are pre-computed into flat arrays at setup time"
+  - Good: "The ring queue passes the factory to the exporter"
+  - Avoid: "The factory is passed through the ring queue to the exporter"
+  - Good: "The materializer converts computed SYMBOL columns to STRING"
+  - Avoid: "Symbol columns that are computed are converted to STRING"
 
 ## Build Commands
 
