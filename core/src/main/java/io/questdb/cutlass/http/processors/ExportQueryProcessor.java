@@ -444,13 +444,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             if (state.pageFrameCursor == null) { // cannot stream parquet export
                 String tableName = getTableName(state.copyID);
                 state.setParquetExportTableName(tableName);
+                var exportModel = state.getExportModel();
                 var createOp = copyExportContext.validateAndCreateParquetExportTableOp(
                         sqlExecutionContext,
                         state.sqlText,
-                        state.getExportModel().getPartitionBy(),
+                        exportModel.getPartitionBy(),
                         tableName,
                         "",
-                        0
+                        0,
+                        exportModel.getBloomFilterColumns(),
+                        exportModel.getBloomFilterColumnsPosition()
                 );
 
                 state.setParquetTempTableCreate(createOp);
@@ -591,7 +594,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
         DirectUtf8Sequence bloomFilterColumns = request.getUrlParam(EXPORT_PARQUET_OPTION_BLOOM_FILTER_COLUMNS);
         if (bloomFilterColumns != null && bloomFilterColumns.size() > 0) {
-            exportModel.setBloomFilterColumns(bloomFilterColumns.toString());
+            exportModel.setBloomFilterColumns(bloomFilterColumns.toString(), 0);
         }
 
         DirectUtf8Sequence bloomFilterFpp = request.getUrlParam(EXPORT_PARQUET_OPTION_BLOOM_FILTER_FPP);
@@ -652,6 +655,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.metadata,
                         state.getWriteCallback(),
                         state.getExportModel().getBloomFilterColumns(),
+                        0,
                         state.getExportModel().getBloomFilterFpp()
                 );
 

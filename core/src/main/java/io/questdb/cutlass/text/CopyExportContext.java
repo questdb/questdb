@@ -34,6 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.CompiledQuery;
@@ -356,7 +357,9 @@ public class CopyExportContext {
             int partitionBy,
             String tableName,
             String sqlText,
-            int tableOrSelectTextPos
+            int tableOrSelectTextPos,
+            @Nullable CharSequence bloomFilterColumns,
+            int bloomFilterColumnsPosition
     ) throws SqlException {
         CreateTableOperationImpl createOp = null;
         final CairoEngine engine = executionContext.getCairoEngine();
@@ -383,6 +386,7 @@ public class CopyExportContext {
                 createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
                 createOp.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
                 createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection());
+                validateBloomFilterColumns(bloomFilterColumns, rcf.getMetadata(), bloomFilterColumnsPosition - tableOrSelectTextPos);
             }
         } catch (SqlException ex) {
             ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
@@ -398,6 +402,34 @@ public class CopyExportContext {
         }
 
         return createOp;
+    }
+
+    private static void validateBloomFilterColumns(@Nullable CharSequence columns, RecordMetadata meta, int position) throws SqlException {
+        if (columns == null || columns.isEmpty()) {
+            return;
+        }
+        int start = 0;
+        int len = columns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || columns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameStart < nameEnd) {
+                    CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                    if (meta.getColumnIndexQuiet(columnName) < 0) {
+                        throw SqlException.$(position > 0 ? position + start : 0,
+                                "bloom_filter_columns contains non-existent column: ").put(columnName);
+                    }
+                }
+                start = i + 1;
+            }
+        }
     }
 
     public enum CopyTrigger {

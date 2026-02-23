@@ -56,6 +56,7 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private final StreamPartitionParquetExporter streamPartitionParquetExporter = new StreamPartitionParquetExporter();
     private @Nullable CharSequence bloomFilterColumns;
+    private int bloomFilterColumnsPosition = -1;
     private double bloomFilterFpp = Double.NaN;
     private int compressionCodec;
     private int compressionLevel;
@@ -98,6 +99,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         streamPartitionParquetExporter.clear();
         descending = false;
         bloomFilterColumns = null;
+        bloomFilterColumnsPosition = -1;
         bloomFilterFpp = Double.NaN;
         if (factory != null) { // owned only if setUpStreamPartitionParquetExporter called with factory
             factory = Misc.free(factory);
@@ -112,6 +114,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public @Nullable CharSequence getBloomFilterColumns() {
         return bloomFilterColumns;
+    }
+
+    public int getBloomFilterColumnsPosition() {
+        return bloomFilterColumnsPosition;
     }
 
     public double getBloomFilterFpp() {
@@ -221,6 +227,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             RecordMetadata metadata,
             StreamWriteParquetCallBack writeCallback,
             @Nullable CharSequence bloomFilterColumns,
+            int bloomFilterColumnsPosition,
             double bloomFilterFpp
     ) {
         this.entry = entry;
@@ -241,6 +248,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.now = now;
         this.nowTimestampType = nowTimestampType;
         this.bloomFilterColumns = bloomFilterColumns;
+        this.bloomFilterColumnsPosition = bloomFilterColumnsPosition;
         this.bloomFilterFpp = bloomFilterFpp;
     }
 
@@ -261,6 +269,34 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
         pageFrameCursor.setStreamingMode(true);
         streamPartitionParquetExporter.setUp();
+    }
+
+    protected static void parseBloomFilterColumnIndexes(CharSequence columns, RecordMetadata meta, DirectIntList indexes, int bloomFilterColumnsPosition) {
+        int start = 0;
+        int len = columns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || columns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameStart < nameEnd) {
+                    CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                    int columnIndex = meta.getColumnIndexQuiet(columnName);
+                    if (columnIndex >= 0) {
+                        indexes.add(columnIndex);
+                    } else {
+                        throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName)
+                                .position(bloomFilterColumnsPosition > 0 ? bloomFilterColumnsPosition + start : 0);
+                    }
+                }
+                start = i + 1;
+            }
+        }
     }
 
     public enum Phase {
@@ -452,7 +488,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
             if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
                 bloomFilterColumnIndexes.reopen();
-                parseBloomFilterColumnIndexes(bloomFilterColumns, metadata, bloomFilterColumnIndexes);
+                parseBloomFilterColumnIndexes(bloomFilterColumns, metadata, bloomFilterColumnIndexes, bloomFilterColumnsPosition);
                 if (bloomFilterColumnIndexes.size() > 0) {
                     bloomFilterIndexesPtr = bloomFilterColumnIndexes.getAddress();
                     bloomFilterCount = (int) bloomFilterColumnIndexes.size();
@@ -614,33 +650,6 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             if (streamWriter != -1) {
                 closeStreamingParquetWriter(streamWriter);
                 streamWriter = -1;
-            }
-        }
-
-        private void parseBloomFilterColumnIndexes(CharSequence columns, RecordMetadata meta, DirectIntList indexes) {
-            int start = 0;
-            int len = columns.length();
-            for (int i = 0; i <= len; i++) {
-                if (i == len || columns.charAt(i) == ',') {
-                    int nameStart = start;
-                    int nameEnd = i;
-                    while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
-                        nameStart++;
-                    }
-                    while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
-                        nameEnd--;
-                    }
-                    if (nameStart < nameEnd) {
-                        CharSequence columnName = columns.subSequence(nameStart, nameEnd);
-                        int columnIndex = meta.getColumnIndexQuiet(columnName);
-                        if (columnIndex >= 0) {
-                            indexes.add(columnIndex);
-                        } else {
-                            throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName);
-                        }
-                    }
-                    start = i + 1;
-                }
             }
         }
     }

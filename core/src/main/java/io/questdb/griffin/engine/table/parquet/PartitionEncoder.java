@@ -33,6 +33,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
@@ -74,6 +75,7 @@ public class PartitionEncoder {
         );
     }
 
+    @TestOnly
     public static void encodeWithOptions(
             PartitionDescriptor descriptor,
             Path destPath,

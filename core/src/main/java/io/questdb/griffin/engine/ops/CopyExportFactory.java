@@ -34,6 +34,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyExportContext;
@@ -67,6 +68,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private final CopyImportFactory.CopyRecord record = new CopyImportFactory.CopyRecord();
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private @Nullable CharSequence bloomFilterColumns;
+    private int bloomFilterColumnsPosition = -1;
     private double bloomFilterFpp = Double.NaN;
     private int compressionCodec;
     private int compressionLevel;
@@ -134,8 +136,15 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         partitionBy,
                         tableName,
                         sqlText.toString(),
-                        tableOrSelectTextPos
+                        tableOrSelectTextPos,
+                        bloomFilterColumns,
+                        bloomFilterColumnsPosition
                 );
+            } else if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                TableToken token = executionContext.getTableTokenIfExists(tableName);
+                try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(token)) {
+                    validateBloomFilterColumns(bloomFilterColumns, meta, bloomFilterColumnsPosition);
+                }
             }
 
             exportIdSink.clear();
@@ -187,6 +196,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         null,
                         null,
                         bloomFilterColumns,
+                        bloomFilterColumnsPosition,
                         bloomFilterFpp
                 );
             } finally {
@@ -223,6 +233,31 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         sink.type("Copy");
     }
 
+    private static void validateBloomFilterColumns(CharSequence columns, RecordMetadata meta, int position) throws SqlException {
+        int start = 0;
+        int len = columns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || columns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameStart < nameEnd) {
+                    CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                    if (meta.getColumnIndexQuiet(columnName) < 0) {
+                        throw SqlException.$(position > 0 ? position + start : 0,
+                                "bloom_filter_columns contains non-existent column: ").put(columnName);
+                    }
+                }
+                start = i + 1;
+            }
+        }
+    }
+
     private void of(
             MessageBus messageBus,
             CopyExportContext exportContext,
@@ -252,7 +287,11 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.statisticsEnabled = model.isStatisticsEnabled();
         this.parquetVersion = model.getParquetVersion();
         this.rawArrayEncoding = model.isRawArrayEncoding();
-        this.bloomFilterColumns = model.getBloomFilterColumns();
+        CharSequence filterColumns = model.getBloomFilterColumns();
+        if (filterColumns != null && !filterColumns.isEmpty()) {
+            this.bloomFilterColumns = filterColumns.toString();
+        }
+        this.bloomFilterColumnsPosition = model.getBloomFilterColumnsPosition();
         this.bloomFilterFpp = model.getBloomFilterFpp();
         this.sqlText = sqlText;
     }

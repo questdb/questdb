@@ -649,20 +649,8 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
-    private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
-        final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
-        if (n != null) {
-            return n;
-        }
-        throw SqlException.$(lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition(), "Expression expected");
-    }
-
-    private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
-        return expectExpr(lexer, sqlParserCallback, null);
-    }
-
     private double expectDouble(GenericLexer lexer) throws SqlException {
-        CharSequence tok = tok(lexer, "number");
+        CharSequence tok = GenericLexer.unquote(expectStringLiteral(lexer).token);
         boolean negative;
         if (Chars.equals(tok, '-')) {
             negative = true;
@@ -676,6 +664,18 @@ public class SqlParser {
         } catch (NumericException e) {
             throw err(lexer, tok, "bad number");
         }
+    }
+
+    private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+        final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
+        if (n != null) {
+            return n;
+        }
+        throw SqlException.$(lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition(), "Expression expected");
+    }
+
+    private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+        return expectExpr(lexer, sqlParserCallback, null);
     }
 
     private int expectInt(GenericLexer lexer) throws SqlException {
@@ -755,6 +755,13 @@ public class SqlParser {
             return;
         }
         throw SqlException.$(pos, "one letter sample by period unit expected");
+    }
+
+    private ExpressionNode expectStringLiteral(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "literal");
+        int pos = lexer.lastTokenPosition();
+        assertNameIsQuotedOrNotAKeyword(tok, pos);
+        return nextLiteral(GenericLexer.immutableOf(tok), pos);
     }
 
     private CharSequence expectTableNameOrSubQuery(GenericLexer lexer) throws SqlException {
@@ -1169,8 +1176,8 @@ public class SqlParser {
                         model.setParquetVersion(parquetVersion);
                         break;
                     case ExportModel.COPY_OPTION_BLOOM_FILTER_COLUMNS:
-                        ExpressionNode bloomFilterColumnsExpr = expectLiteral(lexer);
-                        model.setBloomFilterColumns(GenericLexer.unquote(bloomFilterColumnsExpr.token));
+                        ExpressionNode bloomFilterColumnsExpr = expectStringLiteral(lexer);
+                        model.setBloomFilterColumns(GenericLexer.unquote(bloomFilterColumnsExpr.token), Chars.isQuoted(bloomFilterColumnsExpr.token) ? bloomFilterColumnsExpr.position + 1 : bloomFilterColumnsExpr.position);
                         break;
                     case ExportModel.COPY_OPTION_BLOOM_FILTER_FPP:
                         double fpp = expectDouble(lexer);

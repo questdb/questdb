@@ -64,6 +64,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
     private int atomicity = -1;
     @Nullable
     private CharSequence bloomFilterColumns;
+    private int bloomFilterColumnsPosition = -1;
     private double bloomFilterFpp = Double.NaN;
     private boolean cancel;
     private int compressionCodec = -1;
@@ -122,6 +123,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         compressionLevelPos = 0;
         noDelay = false;
         bloomFilterColumns = null;
+        bloomFilterColumnsPosition = -1;
         bloomFilterFpp = Double.NaN;
     }
 
@@ -132,6 +134,10 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
     @Nullable
     public CharSequence getBloomFilterColumns() {
         return bloomFilterColumns;
+    }
+
+    public int getBloomFilterColumnsPosition() {
+        return bloomFilterColumnsPosition;
     }
 
     public double getBloomFilterFpp() {
@@ -256,8 +262,9 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         this.atomicity = atomicity;
     }
 
-    public void setBloomFilterColumns(@Nullable CharSequence bloomFilterColumns) {
+    public void setBloomFilterColumns(@Nullable CharSequence bloomFilterColumns, int position) {
         this.bloomFilterColumns = bloomFilterColumns;
+        this.bloomFilterColumnsPosition = position;
     }
 
     public void setBloomFilterFpp(double bloomFilterFpp) {

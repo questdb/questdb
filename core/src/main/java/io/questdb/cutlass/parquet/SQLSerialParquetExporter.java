@@ -41,8 +41,10 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -55,6 +57,7 @@ import java.io.File;
 
 public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SQLSerialParquetExporter.class);
+    private final DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
     private final CairoConfiguration configuration;
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
@@ -76,6 +79,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
 
     @Override
     public void close() {
+        Misc.free(bloomFilterColumnIndexes);
         Misc.free(toParquet);
         Misc.free(fromParquet);
         Misc.free(tempPath);
@@ -144,6 +148,19 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                 final int partitionBy = reader.getPartitionedBy();
                 entry.setTotalPartitionCount(partitionCount);
 
+                long bloomFilterIndexesPtr = 0;
+                int bloomFilterCount = 0;
+                double bloomFilterFpp = Double.isNaN(task.getBloomFilterFpp()) ? 0.01 : task.getBloomFilterFpp();
+                CharSequence bloomFilterColumns = task.getBloomFilterColumns();
+                if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
+                    bloomFilterColumnIndexes.reopen();
+                    CopyExportRequestTask.parseBloomFilterColumnIndexes(bloomFilterColumns, reader.getMetadata(), bloomFilterColumnIndexes, task.getBloomFilterColumnsPosition());
+                    if (bloomFilterColumnIndexes.size() > 0) {
+                        bloomFilterIndexesPtr = bloomFilterColumnIndexes.getAddress();
+                        bloomFilterCount = (int) bloomFilterColumnIndexes.size();
+                    }
+                }
+
                 if (partitionCount > 0) {
                     int fromParquetBaseLen = 0;
                     // temporary directory path
@@ -211,6 +228,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                             LOG.info().$("converting partition to parquet temp file [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                                     .$(", partition=").$(nameSink).$();
 
+
                             PartitionEncoder.encodeWithOptions(
                                     partitionDescriptor,
                                     tempPath,
@@ -219,7 +237,10 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                                     task.isRawArrayEncoding(),
                                     task.getRowGroupSize(),
                                     task.getDataPageSize(),
-                                    task.getParquetVersion()
+                                    task.getParquetVersion(),
+                                    bloomFilterIndexesPtr,
+                                    bloomFilterCount,
+                                    bloomFilterFpp
                             );
                             long parquetFileSize = ff.length(tempPath.$());
                             LOG.info().$("converted partition to parquet temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)

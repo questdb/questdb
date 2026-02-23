@@ -7101,7 +7101,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int len = bloomFilterColumns.length();
         for (int i = 0; i <= len; i++) {
             if (i == len || bloomFilterColumns.charAt(i) == ',') {
-                // Extract column name (trim whitespace)
                 int nameStart = start;
                 int nameEnd = i;
                 while (nameStart < nameEnd && Character.isWhitespace(bloomFilterColumns.charAt(nameStart))) {
