@@ -789,10 +789,10 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
 
             match (encoding, dict) {
                 (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                    let dict_decoder = ConvertablePrimitiveDictDecoder::new(
+                    let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                         dict_page,
                         Int32ToDoubleConverter::new(scale),
-                    );
+                    )?;
                     decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
@@ -1362,7 +1362,7 @@ fn decode_int96_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 Int96Timestamp,
                 i64,
                 Int96ToTimestampConverter,
-            >::new(dict_page, Int96ToTimestampConverter::new());
+            >::try_new(dict_page, Int96ToTimestampConverter::new())?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,

@@ -225,12 +225,20 @@ where
 }
 
 impl<'a, U, T, V> ConvertablePrimitiveDictDecoder<'a, U, T, V> {
-    pub fn new(dict_page: &'a DictPage<'a>, converter: V) -> Self {
-        Self {
+    pub fn try_new(dict_page: &'a DictPage<'a>, converter: V) -> ParquetResult<Self> {
+        if size_of::<U>() * dict_page.num_values != dict_page.buffer.len() {
+            return Err(fmt_err!(
+                Layout,
+                "dictionary data page size is not a multiple of {}",
+                size_of::<U>()
+            ));
+        }
+
+        Ok(Self {
             dict_page: dict_page.buffer.as_ref(),
             converter,
             _u: std::marker::PhantomData,
             _t: std::marker::PhantomData,
-        }
+        })
     }
 }
