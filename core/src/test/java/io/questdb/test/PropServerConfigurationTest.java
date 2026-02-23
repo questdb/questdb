@@ -2131,7 +2131,7 @@ public class PropServerConfigurationTest {
                     if (!key.contains(".") || key.startsWith("http.redirect") || key.contains(" ")
                             || key.startsWith("replication") || key.startsWith("acl") || key.contains("tls")
                             || key.startsWith("cold.storage") || key.startsWith("native.")
-                            || key.startsWith("backup.")) { // Enterprise confs
+                            || key.startsWith("backup.") || key.startsWith("checkpoint.history.")) { // Enterprise confs
                         continue;
                     }
                     properties.clear();

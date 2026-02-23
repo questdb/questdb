@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DecimalFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -908,7 +908,7 @@ public final class DecimalTransformerFactory {
         }
     }
 
-    private static class DecimalTransformerFunction extends DecimalFunction implements UnaryFunction {
+    private static class DecimalTransformerFunction extends DecimalFunction implements ArithmeticUnaryFunction {
         protected final int fromScale;
         protected final DecimalTransformer transformer;
         protected final Function value;

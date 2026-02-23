@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -47,7 +46,7 @@ public class SubLongFunctionFactory implements FunctionFactory {
         return new SubtractIntVVFunc(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class SubtractIntVVFunc extends LongFunction implements BinaryFunction {
+    private static class SubtractIntVVFunc extends LongFunction implements ArithmeticBinaryFunction {
         final Function left;
         final Function right;
 

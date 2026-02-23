@@ -86,8 +86,6 @@
                 <version>3.11.0</version>
                 <configuration>
                     <compilerArgs>
-                        <arg>${compilerArg1}</arg>
-                        <arg>${compilerArg2}</arg>
                         <arg>-J-XX:-TieredCompilation</arg>
                         <arg>-J-XX:TieredStopAtLevel=1</arg>
                     </compilerArgs>
@@ -247,10 +245,6 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <additionalJOptions>
-                                <additionalJOption>${compilerArg1}</additionalJOption>
-                                <additionalJOption>${compilerArg2}</additionalJOption>
-                            </additionalJOptions>
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
@@ -276,10 +270,6 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <additionalJOptions>
-                                <additionalJOption>${compilerArg1}</additionalJOption>
-                                <additionalJOption>${compilerArg2}</additionalJOption>
-                            </additionalJOptions>
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
@@ -630,8 +620,6 @@
                 <jdk.version>17</jdk.version>
                 <java.enforce.version>17</java.enforce.version>
                 <questdb.artifactid>questdb</questdb.artifactid>
-                <compilerArg1>--add-exports</compilerArg1>
-                <compilerArg2>java.base/jdk.internal.math=io.questdb</compilerArg2>
                 <excludePattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludePattern1>
                 <excludeTestPattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludeTestPattern1>
                 <javac.compile.source>${javac.target}</javac.compile.source>

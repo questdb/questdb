@@ -28,13 +28,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.griffin.engine.functions.decimal.ToDecimal64Function;
 
 /**
  * Abstract base class for functions that cast values to decimal64.
  */
-public abstract class AbstractCastToDecimal64Function extends ToDecimal64Function implements UnaryFunction {
+public abstract class AbstractCastToDecimal64Function extends ToDecimal64Function implements CastFunction {
     /**
      * The function argument to cast.
      */
@@ -70,11 +70,6 @@ public abstract class AbstractCastToDecimal64Function extends ToDecimal64Functio
     @Override
     public Function getArg() {
         return arg;
-    }
-
-    @Override
-    public boolean isThreadSafe() {
-        return false;
     }
 
     public boolean store(Record rec) {

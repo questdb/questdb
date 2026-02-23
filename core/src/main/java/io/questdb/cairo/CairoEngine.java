@@ -783,6 +783,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.getBusyCount();
     }
 
+    public @NotNull CheckpointListener getCheckpointListener() {
+        return configuration.getCheckpointListener();
+    }
+
     public DatabaseCheckpointStatus getCheckpointStatus() {
         return checkpointAgent;
     }
