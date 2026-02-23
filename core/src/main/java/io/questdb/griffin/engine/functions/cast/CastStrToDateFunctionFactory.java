@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -56,7 +56,7 @@ public class CastStrToDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             final CharSequence value = arg.getStrA(rec);
             try {
-                return value == null ? Numbers.LONG_NULL : MillsTimestampDriver.floor(value);
+                return value == null ? Numbers.LONG_NULL : MillisTimestampDriver.floor(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NULL;
             }
