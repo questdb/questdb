@@ -290,25 +290,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
             if (createOp != null) {
-                phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
-                entry.setPhase(phase);
-                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                try {
-                    if (tableToken == null) {
-                        tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
-                    }
-                    if (tableToken != null) {
-                        fromParquet.trimTo(0);
-                        cairoEngine.dropTableOrViewOrMatView(fromParquet, tableToken);
-                    }
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                } catch (CairoException e) {
-                    LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                } catch (Throwable e) {
-                    LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getMessage()).$(']').$();
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                }
+                dropTempTable(entry, tableToken);
             }
             if (numOfFiles == 0 || !success) {
                 tempPath.trimTo(tempBaseDirLen);

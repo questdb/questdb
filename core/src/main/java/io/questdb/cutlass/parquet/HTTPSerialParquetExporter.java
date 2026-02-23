@@ -199,26 +199,8 @@ public class HTTPSerialParquetExporter {
             throw e;
         } finally {
             if (createOp != null) {
-                phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
-                entry.setPhase(phase);
-                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 task.getStreamPartitionParquetExporter().freeOwnedPageFrameCursor();
-                try {
-                    if (tableToken == null) {
-                        tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
-                    }
-                    if (tableToken != null) {
-                        cairoEngine.dropTableOrViewOrMatView(Path.getThreadLocal(""), tableToken);
-                    }
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                } catch (CairoException e) {
-                    // drop failure doesn't affect task continuation - log and proceed
-                    LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                } catch (Throwable e) {
-                    LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getMessage()).$(']').$();
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                }
+                dropTempTable(entry, tableToken);
             }
         }
         clearExportResources();
@@ -251,6 +233,35 @@ public class HTTPSerialParquetExporter {
         this.streamingPfc = pfc;
         this.materializer = materializer;
         this.materializerColumnData = materializerColumnData;
+    }
+
+    /**
+     * Drops the temporary table created for TEMP_TABLE export mode.
+     * Shared by both HTTP and SQL export paths.
+     */
+    protected void dropTempTable(
+            CopyExportContext.ExportTaskEntry entry,
+            TableToken tableToken
+    ) {
+        CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
+        entry.setPhase(phase);
+        copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
+        try {
+            if (tableToken == null) {
+                tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
+            }
+            if (tableToken != null) {
+                cairoEngine.dropTableOrViewOrMatView(Path.getThreadLocal(""), tableToken);
+            }
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        } catch (CairoException e) {
+            LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        } catch (Throwable e) {
+            LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getMessage()).$(']').$();
+            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        }
     }
 
     private void processHybridStreamExport() throws Exception {
