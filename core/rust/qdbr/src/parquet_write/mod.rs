@@ -771,7 +771,7 @@ mod tests {
     #[test]
     fn test_bloom_filter_roundtrip_i64() {
         use crate::allocator::TestAllocatorState;
-        use crate::parquet_read::{ColumnFilterValues, ParquetDecoder};
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
         use std::collections::HashSet;
 
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
@@ -822,13 +822,10 @@ mod tests {
 
         // Values NOT in the data: should skip
         let absent_vals: Vec<i64> = vec![0, 1, 50, 999];
-        let filters = [(
-            0i32,
-            ColumnFilterValues {
-                count: absent_vals.len() as u32,
-                ptr: absent_vals.as_ptr() as u64,
-            },
-        )];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (absent_vals.len() as u64) << 32,
+            ptr: absent_vals.as_ptr() as u64,
+        }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
             .expect("can_skip");
@@ -839,13 +836,10 @@ mod tests {
 
         // Values IN the data: should not skip
         let present_vals: Vec<i64> = vec![0, 105, 999];
-        let filters = [(
-            0i32,
-            ColumnFilterValues {
-                count: present_vals.len() as u32,
-                ptr: present_vals.as_ptr() as u64,
-            },
-        )];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (present_vals.len() as u64) << 32,
+            ptr: present_vals.as_ptr() as u64,
+        }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
             .expect("can_skip");
@@ -855,7 +849,7 @@ mod tests {
     #[test]
     fn test_bloom_filter_roundtrip_i32() {
         use crate::allocator::TestAllocatorState;
-        use crate::parquet_read::{ColumnFilterValues, ParquetDecoder};
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
         use std::collections::HashSet;
 
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
@@ -916,13 +910,10 @@ mod tests {
 
         // Values not in the data
         let absent_vals: Vec<i64> = vec![0, 1, 50, 999];
-        let filters = [(
-            0i32,
-            ColumnFilterValues {
-                count: absent_vals.len() as u32,
-                ptr: absent_vals.as_ptr() as u64,
-            },
-        )];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (absent_vals.len() as u64) << 32,
+            ptr: absent_vals.as_ptr() as u64,
+        }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
             .expect("can_skip");

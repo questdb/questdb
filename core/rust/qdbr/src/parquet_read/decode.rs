@@ -800,19 +800,34 @@ impl ParquetDecoder {
             let bitset =
                 parquet2::bloom_filter::read_from_slice(column_metadata, file_data).unwrap_or(&[]);
 
+            let is_decimal = matches!(
+                column_metadata
+                    .descriptor()
+                    .descriptor
+                    .primitive_type
+                    .logical_type,
+                Some(PrimitiveLogicalType::Decimal(_, _))
+            );
+
             if !bitset.is_empty() {
                 let all_absent = Self::all_values_absent_from_bloom(
                     bitset,
                     &physical_type,
                     &filter_desc,
                     has_nulls,
+                    is_decimal,
                 );
                 if all_absent {
                     return Ok(true);
                 }
             }
 
-            if Self::all_values_outside_min_max(column_metadata, &physical_type, &filter_desc) {
+            if Self::all_values_outside_min_max(
+                column_metadata,
+                &physical_type,
+                &filter_desc,
+                is_decimal,
+            ) {
                 return Ok(true);
             }
         }
@@ -825,6 +840,7 @@ impl ParquetDecoder {
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
         has_nulls: bool,
+        is_decimal: bool,
     ) -> bool {
         let count = filter_desc.count as usize;
         if count == 0 {
@@ -922,9 +938,14 @@ impl ParquetDecoder {
             }
             PhysicalType::FixedLenByteArray(size) => {
                 let size = *size;
+                let null_check = if is_decimal {
+                    is_fixed_len_null_be
+                } else {
+                    is_fixed_len_null
+                };
                 for i in 0..count {
                     let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
-                    if is_fixed_len_null(bytes) {
+                    if null_check(bytes) {
                         if has_nulls {
                             return false;
                         }
@@ -945,6 +966,7 @@ impl ParquetDecoder {
         column_metadata: &parquet2::metadata::ColumnChunkMetaData,
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
+        is_decimal: bool,
     ) -> bool {
         let column_chunk = column_metadata.column_chunk();
         let meta_data = match &column_chunk.meta_data {
@@ -1101,14 +1123,25 @@ impl ParquetDecoder {
                     }
                     _ => None,
                 };
+                let null_check = if is_decimal {
+                    is_fixed_len_null_be
+                } else {
+                    is_fixed_len_null
+                };
                 for i in 0..count {
                     let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
-                    if is_fixed_len_null(bytes) {
+                    if null_check(bytes) {
                         if has_nulls {
                             return false;
                         }
                     } else if let Some((min_b, max_b)) = min_max {
-                        if bytes >= min_b && bytes <= max_b {
+                        if is_decimal {
+                            if compare_signed_be(bytes, min_b) != cmp::Ordering::Less
+                                && compare_signed_be(bytes, max_b) != cmp::Ordering::Greater
+                            {
+                                return false;
+                            }
+                        } else if bytes >= min_b && bytes <= max_b {
                             return false;
                         }
                     } else {
@@ -1217,11 +1250,27 @@ impl ParquetDecoder {
     }
 }
 
-/// Check if a FixedLenByteArray value is the null sentinel.
+/// Check if a FixedLenByteArray value is the null sentinel (LE format).
 /// Matches the write path null_value: `i64::MIN` LE bytes repeated.
+/// Used for UUID and LONG128.
 fn is_fixed_len_null(bytes: &[u8]) -> bool {
     let le_null = i64::MIN.to_le_bytes();
     bytes.iter().enumerate().all(|(i, &b)| b == le_null[i % 8])
+}
+
+/// Check if a big-endian FixedLenByteArray value is the decimal null sentinel.
+/// Decimal nulls are stored as the MIN value of the underlying integer type,
+/// which in big-endian is [0x80, 0x00, ...].
+fn is_fixed_len_null_be(bytes: &[u8]) -> bool {
+    !bytes.is_empty() && bytes[0] == 0x80 && bytes[1..].iter().all(|&b| b == 0x00)
+}
+
+fn compare_signed_be(a: &[u8], b: &[u8]) -> cmp::Ordering {
+    debug_assert_eq!(a.len(), b.len());
+    match (a[0] as i8).cmp(&(b[0] as i8)) {
+        cmp::Ordering::Equal => a[1..].cmp(&b[1..]),
+        other => other,
+    }
 }
 
 /// Decode a filtered data page.

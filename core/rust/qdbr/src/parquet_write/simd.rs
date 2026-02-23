@@ -1469,7 +1469,7 @@ mod tests {
         let data: Vec<i64> = (0..100).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1486,7 +1486,7 @@ mod tests {
         let data: Vec<i64> = (0..100).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, false).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, false, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1498,7 +1498,7 @@ mod tests {
         let data: Vec<i64> = vec![i64::MIN; 100];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 100);
         assert_eq!(result.min, None);
@@ -1516,7 +1516,7 @@ mod tests {
         data[99] = i64::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 3);
         assert_eq!(result.min, Some(0));
@@ -1535,7 +1535,7 @@ mod tests {
         let data: Vec<i64> = (0..50).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 10, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 10, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1559,7 +1559,7 @@ mod tests {
         data[25] = i64::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 10, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 10, true, None).unwrap();
 
         assert_eq!(result.null_count, 2);
 
@@ -1578,7 +1578,7 @@ mod tests {
         let data: Vec<i64> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 20, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 20, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1593,7 +1593,7 @@ mod tests {
         let data: Vec<i64> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1605,7 +1605,7 @@ mod tests {
         let data = vec![42i64];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(42));
@@ -1620,7 +1620,7 @@ mod tests {
         let data = vec![i64::MIN];
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, None);
@@ -1633,7 +1633,7 @@ mod tests {
         let data: Vec<i64> = (0..64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1649,7 +1649,7 @@ mod tests {
         let data: Vec<i64> = (0..67).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.max, Some(66));
@@ -1666,7 +1666,7 @@ mod tests {
         data[65] = i64::MIN; // In the remainder portion
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
 
@@ -1682,7 +1682,7 @@ mod tests {
         let data: Vec<i64> = (0..10).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 3, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 3, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -1700,7 +1700,7 @@ mod tests {
         let data: Vec<i64> = (0..10000).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1714,7 +1714,7 @@ mod tests {
             .collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 50);
 
@@ -1733,7 +1733,7 @@ mod tests {
         let data: Vec<i32> = (0..100).map(|x| x).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1748,7 +1748,7 @@ mod tests {
         let data: Vec<i32> = vec![i32::MIN; 100];
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 100);
         assert_eq!(result.min, None);
@@ -1763,7 +1763,7 @@ mod tests {
         data[95] = i32::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 3);
         assert_eq!(result.min, Some(0));
@@ -1780,7 +1780,7 @@ mod tests {
         let data: Vec<i32> = (0..50).map(|x| x).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 15, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 15, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -1798,7 +1798,7 @@ mod tests {
         let data: Vec<i32> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 25, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 25, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1811,7 +1811,7 @@ mod tests {
         let data: Vec<i32> = (0..64).map(|x| x).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -1824,7 +1824,7 @@ mod tests {
         let data: Vec<i32> = (0..67).map(|x| x).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.max, Some(66));
@@ -1838,7 +1838,7 @@ mod tests {
         let data: Vec<i32> = (0..10).map(|x| x).collect();
         let mut buffer = Vec::new();
 
-        let _result = encode_i32_def_levels(&mut buffer, &data, 5, true).unwrap();
+        let _result = encode_i32_def_levels(&mut buffer, &data, 5, true, None).unwrap();
 
         let decoded = decode_def_levels(&buffer, 15);
         for i in 0..5 {
@@ -1854,7 +1854,7 @@ mod tests {
         let data: Vec<i32> = (0..100).map(|x| x).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, false).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, false, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1870,7 +1870,7 @@ mod tests {
         let data: Vec<f64> = (0..100).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -1885,7 +1885,7 @@ mod tests {
         let data: Vec<f64> = vec![f64::NAN; 100];
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 100);
         assert_eq!(result.min, None);
@@ -1900,7 +1900,7 @@ mod tests {
         data[99] = f64::NAN;
 
         let mut buffer = Vec::new();
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 3);
         assert_eq!(result.min, Some(0.0));
@@ -1917,7 +1917,7 @@ mod tests {
         let data: Vec<f64> = (0..50).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 10, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 10, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -1937,7 +1937,7 @@ mod tests {
         let data: Vec<f64> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 20, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 20, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -1949,7 +1949,7 @@ mod tests {
         let data = vec![f64::NEG_INFINITY, -1.0, 0.0, 1.0, f64::INFINITY, f64::NAN];
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, Some(f64::NEG_INFINITY));
@@ -1970,7 +1970,7 @@ mod tests {
         let data = vec![1.0, neg_nan, 3.0];
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
 
@@ -1983,7 +1983,7 @@ mod tests {
         let data: Vec<f64> = (0..64).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.max, Some(63.0));
@@ -1994,7 +1994,7 @@ mod tests {
         let data: Vec<f64> = (0..67).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -2007,7 +2007,7 @@ mod tests {
         let data: Vec<f64> = (0..100).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, false).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, false, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -2023,7 +2023,7 @@ mod tests {
         let data: Vec<f32> = (0..100).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -2035,7 +2035,7 @@ mod tests {
         let data: Vec<f32> = vec![f32::NAN; 100];
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 100);
         assert_eq!(result.min, None);
@@ -2050,7 +2050,7 @@ mod tests {
         data[95] = f32::NAN;
 
         let mut buffer = Vec::new();
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 3);
 
@@ -2065,7 +2065,7 @@ mod tests {
         let data: Vec<f32> = (0..50).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 15, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 15, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -2083,7 +2083,7 @@ mod tests {
         let data: Vec<f32> = vec![];
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 25, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 25, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -2102,7 +2102,7 @@ mod tests {
         ];
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, Some(f32::NEG_INFINITY));
@@ -2115,7 +2115,7 @@ mod tests {
         let data: Vec<f32> = (0..64).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.max, Some(63.0));
@@ -2126,7 +2126,7 @@ mod tests {
         let data: Vec<f32> = (0..67).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -2139,7 +2139,7 @@ mod tests {
         let data: Vec<f32> = (0..10).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let _result = encode_f32_def_levels(&mut buffer, &data, 5, true).unwrap();
+        let _result = encode_f32_def_levels(&mut buffer, &data, 5, true, None).unwrap();
 
         let decoded = decode_def_levels(&buffer, 15);
         for i in 0..5 {
@@ -2155,7 +2155,7 @@ mod tests {
         let data: Vec<f32> = (0..100).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, false).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, false, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, None);
@@ -2229,7 +2229,7 @@ mod tests {
         data[0] = i64::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 7, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 7, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
 
@@ -2252,7 +2252,7 @@ mod tests {
         let data: Vec<i64> = (0..10).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 16, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 16, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
 
@@ -2274,7 +2274,7 @@ mod tests {
         }
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 8);
         assert_eq!(result.min, Some(8));
@@ -2286,7 +2286,7 @@ mod tests {
         let data: Vec<i64> = (-50..50).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(-50));
@@ -2298,7 +2298,7 @@ mod tests {
         let data: Vec<f64> = (-50..50).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(-50.0));
@@ -2315,7 +2315,7 @@ mod tests {
         let data: Vec<i32> = (0..1000).map(|x| x).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -2341,7 +2341,7 @@ mod tests {
         data[500] = i32::MIN;
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, Some(0));
@@ -2366,7 +2366,7 @@ mod tests {
         let data: Vec<f32> = (0..1000).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -2390,7 +2390,7 @@ mod tests {
         data[500] = f32::NAN;
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         assert_eq!(result.min, Some(0.0));
@@ -2413,7 +2413,7 @@ mod tests {
         let data: Vec<i64> = (0..1000).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -2435,7 +2435,7 @@ mod tests {
         let data: Vec<f64> = (0..1000).map(|x| x as f64).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -2457,7 +2457,7 @@ mod tests {
         let data: Vec<i32> = (-50..50).map(|x| x).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(-50));
@@ -2473,7 +2473,7 @@ mod tests {
         let data: Vec<f32> = (-50..50).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(-50.0));
@@ -2489,7 +2489,7 @@ mod tests {
         let data: Vec<i32> = (0..100000).map(|x| x).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -2512,7 +2512,7 @@ mod tests {
         let data: Vec<f32> = (0..100000).map(|x| x as f32).collect();
         let mut buffer = Vec::new();
 
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0.0));
@@ -2540,7 +2540,7 @@ mod tests {
         data[50] = i64::MIN; // Null in probe region
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2555,7 +2555,7 @@ mod tests {
         let data: Vec<i64> = (0..500).collect();
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert_eq!(result.min, Some(0));
@@ -2574,7 +2574,7 @@ mod tests {
         data[200] = i64::MIN; // Null after probe region (128)
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2587,7 +2587,7 @@ mod tests {
         let data: Vec<i64> = vec![i64::MIN; 50];
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 50);
         assert_eq!(result.min, None);
@@ -2605,7 +2605,7 @@ mod tests {
         let data: Vec<i64> = vec![i64::MIN; 500];
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 500);
         assert_eq!(result.min, None);
@@ -2623,7 +2623,7 @@ mod tests {
         data[200] = 42; // Valid value after probe region
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 499);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2639,7 +2639,7 @@ mod tests {
         data[100] = i32::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 1000);
@@ -2651,7 +2651,7 @@ mod tests {
         let data: Vec<i32> = vec![i32::MIN; 1000];
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1000);
         assert!(buffer.len() < 10, "RLE all-zeros should be compact");
@@ -2666,7 +2666,7 @@ mod tests {
         data[500] = 42;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 999);
         let decoded = decode_def_levels(&buffer, 1000);
@@ -2679,7 +2679,7 @@ mod tests {
         data[50] = f64::NAN;
 
         let mut buffer = Vec::new();
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2691,7 +2691,7 @@ mod tests {
         let data: Vec<f64> = vec![f64::NAN; 500];
 
         let mut buffer = Vec::new();
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 500);
         assert!(buffer.len() < 10, "RLE all-zeros should be compact");
@@ -2706,7 +2706,7 @@ mod tests {
         data[200] = 42.0;
 
         let mut buffer = Vec::new();
-        let result = encode_f64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 499);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2719,7 +2719,7 @@ mod tests {
         data[100] = f32::NAN;
 
         let mut buffer = Vec::new();
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 1000);
@@ -2731,7 +2731,7 @@ mod tests {
         let data: Vec<f32> = vec![f32::NAN; 1000];
 
         let mut buffer = Vec::new();
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1000);
         assert!(buffer.len() < 10, "RLE all-zeros should be compact");
@@ -2746,7 +2746,7 @@ mod tests {
         data[500] = 42.0;
 
         let mut buffer = Vec::new();
-        let result = encode_f32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_f32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 999);
         let decoded = decode_def_levels(&buffer, 1000);
@@ -2786,7 +2786,7 @@ mod tests {
         let data: Vec<i64> = (0..128).collect();
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert!(buffer.len() < 10);
@@ -2797,7 +2797,7 @@ mod tests {
         let data: Vec<i64> = vec![i64::MIN; 128];
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 128);
         assert!(buffer.len() < 10);
@@ -2809,7 +2809,7 @@ mod tests {
         let data: Vec<i64> = (0..129).collect();
 
         let mut buffer = Vec::new();
-        let result = encode_i64_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i64_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert!(buffer.len() < 10);
@@ -2824,7 +2824,7 @@ mod tests {
         let data: Vec<i32> = (0..256).map(|x| x).collect();
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 0);
         assert!(buffer.len() < 10);
@@ -2837,7 +2837,7 @@ mod tests {
         data[255] = i32::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
@@ -2851,7 +2851,7 @@ mod tests {
         data[256] = i32::MIN;
 
         let mut buffer = Vec::new();
-        let result = encode_i32_def_levels(&mut buffer, &data, 0, true).unwrap();
+        let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
 
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);

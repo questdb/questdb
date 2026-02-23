@@ -133,8 +133,7 @@ mod tests {
     use crate::parquet::error::ParquetResult;
     use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
     use crate::parquet::tests::ColumnTypeTagExt;
-    use crate::parquet_read::decode::ParquetColumnIndex;
-    use crate::parquet_read::{ColumnFilterValues, DecodeContext, ParquetDecoder, RowGroupBuffers};
+    use crate::parquet_read::{ColumnFilterPacked, DecodeContext, ParquetDecoder, RowGroupBuffers};
     use parquet::basic::{ConvertedType, LogicalType, Type as PhysicalType};
     use parquet::data_type::{ByteArray, ByteArrayType};
     use parquet::file::properties::{BloomFilterPosition, WriterProperties, WriterVersion};
@@ -310,14 +309,15 @@ mod tests {
         Ok(cursor.into_inner())
     }
 
-    fn make_i64_filter(values: &[i64]) -> (ParquetColumnIndex, ColumnFilterValues) {
-        (
-            0,
-            ColumnFilterValues {
-                count: values.len() as u32,
-                ptr: values.as_ptr() as u64,
-            },
-        )
+    fn make_filter(column_index: u32, count: usize, ptr: u64) -> ColumnFilterPacked {
+        ColumnFilterPacked {
+            col_idx_and_count: (column_index as u64) | ((count as u64) << 32),
+            ptr,
+        }
+    }
+
+    fn make_i64_filter(values: &[i64]) -> ColumnFilterPacked {
+        make_filter(0, values.len(), values.as_ptr() as u64)
     }
 
     fn make_string_filter_buf(values: &[&str]) -> Vec<u8> {
@@ -420,10 +420,7 @@ mod tests {
         let decoder = read_decoder(&buf)?;
 
         let filter_buf = make_string_filter_buf(&["xyz", "unknown"]);
-        let filters = [(
-            0 as ParquetColumnIndex,
-            ColumnFilterValues { count: 2, ptr: filter_buf.as_ptr() as u64 },
-        )];
+        let filters = [make_filter(0, 2, filter_buf.as_ptr() as u64)];
         let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
         assert!(
             can_skip,
@@ -439,10 +436,7 @@ mod tests {
         let decoder = read_decoder(&buf)?;
 
         let filter_buf = make_string_filter_buf(&["xyz", "bob"]);
-        let filters = [(
-            0 as ParquetColumnIndex,
-            ColumnFilterValues { count: 2, ptr: filter_buf.as_ptr() as u64 },
-        )];
+        let filters = [make_filter(0, 2, filter_buf.as_ptr() as u64)];
         let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
         assert!(!can_skip, "should not skip: 'bob' is in the row group");
         Ok(())
@@ -508,14 +502,8 @@ mod tests {
         let fa: Vec<i64> = vec![105];
         let fb: Vec<i64> = vec![999];
         let filters = [
-            (
-                0 as ParquetColumnIndex,
-                ColumnFilterValues { count: fa.len() as u32, ptr: fa.as_ptr() as u64 },
-            ),
-            (
-                1 as ParquetColumnIndex,
-                ColumnFilterValues { count: fb.len() as u32, ptr: fb.as_ptr() as u64 },
-            ),
+            make_filter(0, fa.len(), fa.as_ptr() as u64),
+            make_filter(1, fb.len(), fb.as_ptr() as u64),
         ];
         let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
         assert!(can_skip);
@@ -524,14 +512,8 @@ mod tests {
         let fa2: Vec<i64> = vec![105];
         let fb2: Vec<i64> = vec![205];
         let filters2 = [
-            (
-                0 as ParquetColumnIndex,
-                ColumnFilterValues { count: fa2.len() as u32, ptr: fa2.as_ptr() as u64 },
-            ),
-            (
-                1 as ParquetColumnIndex,
-                ColumnFilterValues { count: fb2.len() as u32, ptr: fb2.as_ptr() as u64 },
-            ),
+            make_filter(0, fa2.len(), fa2.as_ptr() as u64),
+            make_filter(1, fb2.len(), fb2.as_ptr() as u64),
         ];
         let can_skip = decoder.can_skip_row_group(0, &buf, &filters2)?;
         assert!(!can_skip,);

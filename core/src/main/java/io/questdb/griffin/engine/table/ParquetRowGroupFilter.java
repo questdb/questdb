@@ -28,7 +28,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
@@ -141,6 +144,46 @@ public final class ParquetRowGroupFilter {
                         filterValues.putInt(valueFunctions.getQuick(j).getIPv4(null));
                     }
                     break;
+                case ColumnType.DECIMAL8:
+                    for (int j = 0; j < valueCount; j++) {
+                        filterValues.putByte(valueFunctions.getQuick(j).getDecimal8(null));
+                    }
+                    break;
+                case ColumnType.DECIMAL16:
+                    for (int j = 0; j < valueCount; j++) {
+                        filterValues.putShort(Short.reverseBytes(valueFunctions.getQuick(j).getDecimal16(null)));
+                    }
+                    break;
+                case ColumnType.DECIMAL32:
+                    for (int j = 0; j < valueCount; j++) {
+                        filterValues.putInt(Integer.reverseBytes(valueFunctions.getQuick(j).getDecimal32(null)));
+                    }
+                    break;
+                case ColumnType.DECIMAL64:
+                    for (int j = 0; j < valueCount; j++) {
+                        filterValues.putLong(Long.reverseBytes(valueFunctions.getQuick(j).getDecimal64(null)));
+                    }
+                    break;
+                case ColumnType.DECIMAL128: {
+                    Decimal128 d = Misc.getThreadLocalDecimal128();
+                    for (int j = 0; j < valueCount; j++) {
+                        valueFunctions.getQuick(j).getDecimal128(null, d);
+                        filterValues.putLong(Long.reverseBytes(d.getHigh()));
+                        filterValues.putLong(Long.reverseBytes(d.getLow()));
+                    }
+                    break;
+                }
+                case ColumnType.DECIMAL256: {
+                    Decimal256 d = Misc.getThreadLocalDecimal256();
+                    for (int j = 0; j < valueCount; j++) {
+                        valueFunctions.getQuick(j).getDecimal256(null, d);
+                        filterValues.putLong(Long.reverseBytes(d.getHh()));
+                        filterValues.putLong(Long.reverseBytes(d.getHl()));
+                        filterValues.putLong(Long.reverseBytes(d.getLh()));
+                        filterValues.putLong(Long.reverseBytes(d.getLl()));
+                    }
+                    break;
+                }
                 case ColumnType.UUID:
                     for (int j = 0; j < valueCount; j++) {
                         long lo = valueFunctions.getQuick(j).getLong128Lo(null);
