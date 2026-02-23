@@ -1323,6 +1323,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isParallelHorizonJoinEnabled() {
+            return sqlExecutionContext.isParallelHorizonJoinEnabled();
+        }
+
+        @Override
         public boolean isParallelWindowJoinEnabled() {
             return sqlExecutionContext.isParallelWindowJoinEnabled();
         }
@@ -1436,6 +1441,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
             sqlExecutionContext.setParallelTopKEnabled(parallelTopKEnabled);
+        }
+
+        @Override
+        public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(parallelHorizonJoinEnabled);
         }
 
         @Override

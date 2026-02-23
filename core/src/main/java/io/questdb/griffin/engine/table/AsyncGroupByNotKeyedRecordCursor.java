@@ -46,9 +46,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
     private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
+    private boolean isExhausted;
     private boolean isOpen;
     private boolean isValueBuilt;
-    private int recordsRemaining = 1;
 
     public AsyncGroupByNotKeyedRecordCursor(ObjList<GroupByFunction> groupByFunctions) {
         this.groupByFunctions = groupByFunctions;
@@ -58,9 +58,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (recordsRemaining > 0) {
-            counter.add(recordsRemaining);
-            recordsRemaining = 0;
+        if (!isExhausted) {
+            counter.inc();
+            isExhausted = true;
         }
     }
 
@@ -91,10 +91,14 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
+        if (isExhausted) {
+            return false;
+        }
         if (!isValueBuilt) {
             buildValue();
         }
-        return recordsRemaining-- > 0;
+        isExhausted = true;
+        return true;
     }
 
     @Override
@@ -114,7 +118,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void toTop() {
-        recordsRemaining = 1;
+        isExhausted = false;
         GroupByUtils.toTop(groupByFunctions);
         if (frameSequence != null) {
             frameSequence.getAtom().toTop();
@@ -154,9 +158,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             atom.reopen();
         }
         this.frameSequence = frameSequence;
+        this.isValueBuilt = false;
         recordA.of(atom.getOwnerMapValue());
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
-        isValueBuilt = false;
         toTop();
     }
 }

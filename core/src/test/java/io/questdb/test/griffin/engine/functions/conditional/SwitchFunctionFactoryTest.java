@@ -1931,6 +1931,120 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolConstIntBasic() throws Exception {
+        // single-branch CASE with constant int results triggers inlined
+        // SymbolSwitchConstIntFunction: direct int comparison, no picker/CaseFunction
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (side SYMBOL, price DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('BUY', 100.0),
+                    ('SELL', 200.0),
+                    ('BUY', 150.0),
+                    ('SELL', 50.0)
+                    """);
+            String query = "SELECT side, CASE side WHEN 'BUY' THEN 1 ELSE -1 END AS dir FROM t";
+            assertQueryNoLeakCheck(
+                    """
+                            side\tdir
+                            BUY\t1
+                            SELL\t-1
+                            BUY\t1
+                            SELL\t-1
+                            """,
+                    query, null, null, true, true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            VirtualRecord
+                              functions: [side,switch(side,'BUY',1,-1)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolConstIntInDoubleContext() throws Exception {
+        // inlined CASE used in arithmetic with doubles exercises
+        // the getDouble() override that avoids Numbers.intToDouble() NULL check
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (side SYMBOL, price DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('BUY', 100.0),
+                    ('SELL', 200.0),
+                    ('BUY', 150.0),
+                    ('SELL', 50.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            side\tsigned_price
+                            BUY\t100.0
+                            SELL\t-200.0
+                            BUY\t150.0
+                            SELL\t-50.0
+                            """,
+                    "SELECT side, CASE side WHEN 'BUY' THEN 1 ELSE -1 END * price AS signed_price FROM t",
+                    null, null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolConstIntMissingKey() throws Exception {
+        // WHEN value not in symbol table: resolvedKey becomes VALUE_NOT_FOUND (-2),
+        // which never matches any record key, so every row gets the else value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (side SYMBOL, price DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('BUY', 100.0),
+                    ('SELL', 200.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            side\tdir
+                            BUY\t-1
+                            SELL\t-1
+                            """,
+                    "SELECT side, CASE side WHEN 'ZZZ' THEN 1 ELSE -1 END AS dir FROM t",
+                    null, null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolConstIntWithNulls() throws Exception {
+        // NULL symbol values: VALUE_IS_NULL (INT_NULL) never equals a valid
+        // resolved key, so NULLs naturally map to the else value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (side SYMBOL, price DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('BUY', 100.0),
+                    (NULL, 200.0),
+                    ('SELL', 150.0),
+                    (NULL, 50.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            side\tdir
+                            BUY\t1
+                            \t-1
+                            SELL\t-1
+                            \t-1
+                            """,
+                    "SELECT side, CASE side WHEN 'BUY' THEN 1 ELSE -1 END AS dir FROM t",
+                    null, null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testSymbolDualBranchMissingKeyOrElse() throws Exception {
         // dual-branch picker where one WHEN value doesn't exist in the symbol table;
         // 'b2' resolves normally, 'zz' becomes VALUE_NOT_FOUND and never matches

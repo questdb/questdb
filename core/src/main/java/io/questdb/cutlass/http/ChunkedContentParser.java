@@ -31,6 +31,9 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
 public class ChunkedContentParser implements Mutable {
+    // Maximum chunkSize value before multiplying by 16 that won't overflow a positive long.
+    // Long.MAX_VALUE / 16 = 0x07FF_FFFF_FFFF_FFFF. Any value above this overflows on * 16.
+    private static final long MAX_CHUNK_SIZE_BEFORE_SHIFT = Long.MAX_VALUE >>> 4;
     private long chunkSize = -1;
 
     @Override
@@ -85,12 +88,21 @@ public class ChunkedContentParser implements Mutable {
 
         while (lo < hi) {
             byte b = Unsafe.getUnsafe().getByte(lo++);
+            int digit = -1;
             if (b >= '0' && b <= '9') {
-                chunkSize = chunkSize * 16 + (b - '0');
+                digit = b - '0';
             } else if (b >= 'a' && b <= 'f') {
-                chunkSize = chunkSize * 16 + (b - 'a' + 10);
+                digit = b - 'a' + 10;
             } else if (b >= 'A' && b <= 'F') {
-                chunkSize = chunkSize * 16 + (b - 'A' + 10);
+                digit = b - 'A' + 10;
+            }
+
+            if (digit >= 0) {
+                if (chunkSize > MAX_CHUNK_SIZE_BEFORE_SHIFT) {
+                    this.chunkSize = -2;
+                    return Long.MIN_VALUE;
+                }
+                chunkSize = chunkSize * 16 + digit;
             } else if (b == '\r' && hi - lo < 1) {
                 // Not enough buffer to parse \r\n
                 break;
