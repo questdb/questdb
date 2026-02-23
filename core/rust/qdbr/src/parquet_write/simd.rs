@@ -244,39 +244,84 @@ fn scan_i64_verify_all_not_null<W: Write>(
 
     // Compute stats for probe portion
     let probe_len = full_slice.len() - rest_slice.len();
+    let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        for chunk in full_slice[..probe_len].chunks_exact(8) {
-            let values = Simd::<i64, 8>::from_slice(chunk);
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+        let probe_chunks = probe_slice.chunks_exact(8);
+        let probe_remainder = probe_chunks.remainder();
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in probe_chunks {
+                let values = Simd::<i64, 8>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                h.insert(hash_native(val));
+            }
+        } else {
+            for chunk in probe_chunks {
+                let values = Simd::<i64, 8>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+            }
         }
-        for &val in full_slice[..probe_len].chunks_exact(8).remainder() {
-            min_vec = Simd::splat(min_vec.reduce_min().min(val));
-            max_vec = Simd::splat(max_vec.reduce_max().max(val));
-        }
-    }
-    if let Some(ref mut h) = bloom_hashes {
-        for &val in &full_slice[..probe_len] {
+    } else if let Some(ref mut h) = bloom_hashes {
+        for &val in probe_slice {
             h.insert(hash_native(val));
         }
     }
 
     // Verify rest_slice (empty for small slices)
-    for chunk in chunks {
-        let values = Simd::<i64, 8>::from_slice(chunk);
-        let mask = values.simd_ne(null_val).to_bitmask();
-
-        if mask != 0xFF {
-            return Ok(None); // Found null, pattern broken
-        }
-
-        if compute_stats {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
-        }
+    if compute_stats {
         if let Some(ref mut h) = bloom_hashes {
+            for chunk in chunks {
+                let values = Simd::<i64, 8>::from_slice(chunk);
+                let mask = values.simd_ne(null_val).to_bitmask();
+                if mask != 0xFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+        } else {
+            for chunk in chunks {
+                let values = Simd::<i64, 8>::from_slice(chunk);
+                let mask = values.simd_ne(null_val).to_bitmask();
+                if mask != 0xFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+        }
+    } else if let Some(ref mut h) = bloom_hashes {
+        for chunk in chunks {
+            let values = Simd::<i64, 8>::from_slice(chunk);
+            let mask = values.simd_ne(null_val).to_bitmask();
+            if mask != 0xFF {
+                return Ok(None);
+            }
             for &val in chunk {
                 h.insert(hash_native(val));
+            }
+        }
+    } else {
+        for chunk in chunks {
+            let values = Simd::<i64, 8>::from_slice(chunk);
+            let mask = values.simd_ne(null_val).to_bitmask();
+            if mask != 0xFF {
+                return Ok(None);
             }
         }
     }
@@ -293,19 +338,27 @@ fn scan_i64_verify_all_not_null<W: Write>(
     let (min_val, max_val) = if compute_stats {
         let mut min_i = min_vec.reduce_min();
         let mut max_i = max_vec.reduce_max();
-        for &val in remainder {
-            min_i = min_i.min(val);
-            max_i = max_i.max(val);
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                min_i = min_i.min(val);
+                max_i = max_i.max(val);
+                h.insert(hash_native(val));
+            }
+        } else {
+            for &val in remainder {
+                min_i = min_i.min(val);
+                max_i = max_i.max(val);
+            }
         }
         (Some(min_i), Some(max_i))
     } else {
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                h.insert(hash_native(val));
+            }
+        }
         (None, None)
     };
-    if let Some(ref mut h) = bloom_hashes {
-        for &val in remainder {
-            h.insert(hash_native(val));
-        }
-    }
 
     Ok(Some(DefLevelResult {
         null_count: 0,
@@ -536,39 +589,84 @@ fn scan_i32_verify_all_not_null<W: Write>(
 
     // Compute stats for probe portion
     let probe_len = full_slice.len() - rest_slice.len();
+    let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        for chunk in full_slice[..probe_len].chunks_exact(16) {
-            let values = Simd::<i32, 16>::from_slice(chunk);
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+        let probe_chunks = probe_slice.chunks_exact(16);
+        let probe_remainder = probe_chunks.remainder();
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in probe_chunks {
+                let values = Simd::<i32, 16>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                h.insert(hash_native(val));
+            }
+        } else {
+            for chunk in probe_chunks {
+                let values = Simd::<i32, 16>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+            }
         }
-        for &val in full_slice[..probe_len].chunks_exact(16).remainder() {
-            min_vec = Simd::splat(min_vec.reduce_min().min(val));
-            max_vec = Simd::splat(max_vec.reduce_max().max(val));
-        }
-    }
-    if let Some(ref mut h) = bloom_hashes {
-        for &val in &full_slice[..probe_len] {
+    } else if let Some(ref mut h) = bloom_hashes {
+        for &val in probe_slice {
             h.insert(hash_native(val));
         }
     }
 
     // Verify rest_slice (empty for small slices)
-    for chunk in chunks {
-        let values = Simd::<i32, 16>::from_slice(chunk);
-        let mask = values.simd_ne(null_val).to_bitmask();
-
-        if mask != 0xFFFF {
-            return Ok(None);
-        }
-
-        if compute_stats {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
-        }
+    if compute_stats {
         if let Some(ref mut h) = bloom_hashes {
+            for chunk in chunks {
+                let values = Simd::<i32, 16>::from_slice(chunk);
+                let mask = values.simd_ne(null_val).to_bitmask();
+                if mask != 0xFFFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+        } else {
+            for chunk in chunks {
+                let values = Simd::<i32, 16>::from_slice(chunk);
+                let mask = values.simd_ne(null_val).to_bitmask();
+                if mask != 0xFFFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+        }
+    } else if let Some(ref mut h) = bloom_hashes {
+        for chunk in chunks {
+            let values = Simd::<i32, 16>::from_slice(chunk);
+            let mask = values.simd_ne(null_val).to_bitmask();
+            if mask != 0xFFFF {
+                return Ok(None);
+            }
             for &val in chunk {
                 h.insert(hash_native(val));
+            }
+        }
+    } else {
+        for chunk in chunks {
+            let values = Simd::<i32, 16>::from_slice(chunk);
+            let mask = values.simd_ne(null_val).to_bitmask();
+            if mask != 0xFFFF {
+                return Ok(None);
             }
         }
     }
@@ -584,19 +682,27 @@ fn scan_i32_verify_all_not_null<W: Write>(
     let (min_val, max_val) = if compute_stats {
         let mut min_i = min_vec.reduce_min();
         let mut max_i = max_vec.reduce_max();
-        for &val in remainder {
-            min_i = min_i.min(val);
-            max_i = max_i.max(val);
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                min_i = min_i.min(val);
+                max_i = max_i.max(val);
+                h.insert(hash_native(val));
+            }
+        } else {
+            for &val in remainder {
+                min_i = min_i.min(val);
+                max_i = max_i.max(val);
+            }
         }
         (Some(min_i), Some(max_i))
     } else {
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                h.insert(hash_native(val));
+            }
+        }
         (None, None)
     };
-    if let Some(ref mut h) = bloom_hashes {
-        for &val in remainder {
-            h.insert(hash_native(val));
-        }
-    }
 
     Ok(Some(DefLevelResult {
         null_count: 0,
@@ -838,42 +944,96 @@ fn scan_f64_verify_all_not_null<W: Write>(
 
     // Compute stats for probe portion
     let probe_len = full_slice.len() - rest_slice.len();
+    let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        for chunk in full_slice[..probe_len].chunks_exact(8) {
-            let values = Simd::<f64, 8>::from_slice(chunk);
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+        let probe_chunks = probe_slice.chunks_exact(8);
+        let probe_remainder = probe_chunks.remainder();
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in probe_chunks {
+                let values = Simd::<f64, 8>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                h.insert(hash_native(val));
+            }
+        } else {
+            for chunk in probe_chunks {
+                let values = Simd::<f64, 8>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+            }
         }
-        for &val in full_slice[..probe_len].chunks_exact(8).remainder() {
-            min_vec = Simd::splat(min_vec.reduce_min().min(val));
-            max_vec = Simd::splat(max_vec.reduce_max().max(val));
-        }
-    }
-    if let Some(ref mut h) = bloom_hashes {
-        for &val in &full_slice[..probe_len] {
+    } else if let Some(ref mut h) = bloom_hashes {
+        for &val in probe_slice {
             h.insert(hash_native(val));
         }
     }
 
     // Verify rest_slice (empty for small slices)
-    for chunk in chunks {
-        let values = Simd::<f64, 8>::from_slice(chunk);
-        let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
-        let abs_bits = bits & sign_mask_vec;
-        let is_not_nan = abs_bits.simd_le(infinity_vec);
-        let mask = is_not_nan.to_bitmask();
-
-        if mask != 0xFF {
-            return Ok(None);
-        }
-
-        if compute_stats {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
-        }
+    if compute_stats {
         if let Some(ref mut h) = bloom_hashes {
+            for chunk in chunks {
+                let values = Simd::<f64, 8>::from_slice(chunk);
+                let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
+                let abs_bits = bits & sign_mask_vec;
+                let is_not_nan = abs_bits.simd_le(infinity_vec);
+                let mask = is_not_nan.to_bitmask();
+                if mask != 0xFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+        } else {
+            for chunk in chunks {
+                let values = Simd::<f64, 8>::from_slice(chunk);
+                let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
+                let abs_bits = bits & sign_mask_vec;
+                let is_not_nan = abs_bits.simd_le(infinity_vec);
+                let mask = is_not_nan.to_bitmask();
+                if mask != 0xFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+        }
+    } else if let Some(ref mut h) = bloom_hashes {
+        for chunk in chunks {
+            let values = Simd::<f64, 8>::from_slice(chunk);
+            let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
+            let abs_bits = bits & sign_mask_vec;
+            let is_not_nan = abs_bits.simd_le(infinity_vec);
+            let mask = is_not_nan.to_bitmask();
+            if mask != 0xFF {
+                return Ok(None);
+            }
             for &val in chunk {
                 h.insert(hash_native(val));
+            }
+        }
+    } else {
+        for chunk in chunks {
+            let values = Simd::<f64, 8>::from_slice(chunk);
+            let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
+            let abs_bits = bits & sign_mask_vec;
+            let is_not_nan = abs_bits.simd_le(infinity_vec);
+            let mask = is_not_nan.to_bitmask();
+            if mask != 0xFF {
+                return Ok(None);
             }
         }
     }
@@ -889,19 +1049,27 @@ fn scan_f64_verify_all_not_null<W: Write>(
     let (min_val, max_val) = if compute_stats {
         let mut min_f = min_vec.reduce_min();
         let mut max_f = max_vec.reduce_max();
-        for &val in remainder {
-            min_f = min_f.min(val);
-            max_f = max_f.max(val);
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                min_f = min_f.min(val);
+                max_f = max_f.max(val);
+                h.insert(hash_native(val));
+            }
+        } else {
+            for &val in remainder {
+                min_f = min_f.min(val);
+                max_f = max_f.max(val);
+            }
         }
         (Some(min_f), Some(max_f))
     } else {
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                h.insert(hash_native(val));
+            }
+        }
         (None, None)
     };
-    if let Some(ref mut h) = bloom_hashes {
-        for &val in remainder {
-            h.insert(hash_native(val));
-        }
-    }
 
     Ok(Some(DefLevelResult {
         null_count: 0,
@@ -1152,42 +1320,96 @@ fn scan_f32_verify_all_not_null<W: Write>(
 
     // Compute stats for probe portion
     let probe_len = full_slice.len() - rest_slice.len();
+    let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        for chunk in full_slice[..probe_len].chunks_exact(16) {
-            let values = Simd::<f32, 16>::from_slice(chunk);
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
+        let probe_chunks = probe_slice.chunks_exact(16);
+        let probe_remainder = probe_chunks.remainder();
+        if let Some(ref mut h) = bloom_hashes {
+            for chunk in probe_chunks {
+                let values = Simd::<f32, 16>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+                h.insert(hash_native(val));
+            }
+        } else {
+            for chunk in probe_chunks {
+                let values = Simd::<f32, 16>::from_slice(chunk);
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+            for &val in probe_remainder {
+                min_vec = Simd::splat(min_vec.reduce_min().min(val));
+                max_vec = Simd::splat(max_vec.reduce_max().max(val));
+            }
         }
-        for &val in full_slice[..probe_len].chunks_exact(16).remainder() {
-            min_vec = Simd::splat(min_vec.reduce_min().min(val));
-            max_vec = Simd::splat(max_vec.reduce_max().max(val));
-        }
-    }
-    if let Some(ref mut h) = bloom_hashes {
-        for &val in &full_slice[..probe_len] {
+    } else if let Some(ref mut h) = bloom_hashes {
+        for &val in probe_slice {
             h.insert(hash_native(val));
         }
     }
 
     // Verify rest_slice (empty for small slices)
-    for chunk in chunks {
-        let values = Simd::<f32, 16>::from_slice(chunk);
-        let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
-        let abs_bits = bits & sign_mask_vec;
-        let is_not_nan = abs_bits.simd_le(infinity_vec);
-        let mask = is_not_nan.to_bitmask();
-
-        if mask != 0xFFFF {
-            return Ok(None);
-        }
-
-        if compute_stats {
-            min_vec = min_vec.simd_min(values);
-            max_vec = max_vec.simd_max(values);
-        }
+    if compute_stats {
         if let Some(ref mut h) = bloom_hashes {
+            for chunk in chunks {
+                let values = Simd::<f32, 16>::from_slice(chunk);
+                let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
+                let abs_bits = bits & sign_mask_vec;
+                let is_not_nan = abs_bits.simd_le(infinity_vec);
+                let mask = is_not_nan.to_bitmask();
+                if mask != 0xFFFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+                for &val in chunk {
+                    h.insert(hash_native(val));
+                }
+            }
+        } else {
+            for chunk in chunks {
+                let values = Simd::<f32, 16>::from_slice(chunk);
+                let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
+                let abs_bits = bits & sign_mask_vec;
+                let is_not_nan = abs_bits.simd_le(infinity_vec);
+                let mask = is_not_nan.to_bitmask();
+                if mask != 0xFFFF {
+                    return Ok(None);
+                }
+                min_vec = min_vec.simd_min(values);
+                max_vec = max_vec.simd_max(values);
+            }
+        }
+    } else if let Some(ref mut h) = bloom_hashes {
+        for chunk in chunks {
+            let values = Simd::<f32, 16>::from_slice(chunk);
+            let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
+            let abs_bits = bits & sign_mask_vec;
+            let is_not_nan = abs_bits.simd_le(infinity_vec);
+            let mask = is_not_nan.to_bitmask();
+            if mask != 0xFFFF {
+                return Ok(None);
+            }
             for &val in chunk {
                 h.insert(hash_native(val));
+            }
+        }
+    } else {
+        for chunk in chunks {
+            let values = Simd::<f32, 16>::from_slice(chunk);
+            let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
+            let abs_bits = bits & sign_mask_vec;
+            let is_not_nan = abs_bits.simd_le(infinity_vec);
+            let mask = is_not_nan.to_bitmask();
+            if mask != 0xFFFF {
+                return Ok(None);
             }
         }
     }
@@ -1203,19 +1425,27 @@ fn scan_f32_verify_all_not_null<W: Write>(
     let (min_val, max_val) = if compute_stats {
         let mut min_f = min_vec.reduce_min();
         let mut max_f = max_vec.reduce_max();
-        for &val in remainder {
-            min_f = min_f.min(val);
-            max_f = max_f.max(val);
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                min_f = min_f.min(val);
+                max_f = max_f.max(val);
+                h.insert(hash_native(val));
+            }
+        } else {
+            for &val in remainder {
+                min_f = min_f.min(val);
+                max_f = max_f.max(val);
+            }
         }
         (Some(min_f), Some(max_f))
     } else {
+        if let Some(ref mut h) = bloom_hashes {
+            for &val in remainder {
+                h.insert(hash_native(val));
+            }
+        }
         (None, None)
     };
-    if let Some(ref mut h) = bloom_hashes {
-        for &val in remainder {
-            h.insert(hash_native(val));
-        }
-    }
 
     Ok(Some(DefLevelResult {
         null_count: 0,
@@ -2856,5 +3086,375 @@ mod tests {
         assert_eq!(result.null_count, 1);
         let decoded = decode_def_levels(&buffer, 500);
         assert!(!decoded[256]);
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_rle_path() {
+        // RLE fast path: all values present (no nulls)
+        let data: Vec<i64> = (0..100).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(result.min, Some(0));
+        assert_eq!(result.max, Some(99));
+
+        // Verify all values are in the bloom filter
+        assert_eq!(bloom_hashes.len(), 100);
+        for val in &data {
+            assert!(
+                bloom_hashes.contains(&hash_native(*val)),
+                "Bloom filter should contain hash for value {}",
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_bitpacked_path() {
+        // Bitpacked slow path: has nulls
+        let mut data: Vec<i64> = (0..100).collect();
+        data[10] = i64::MIN; // null
+        data[50] = i64::MIN; // null
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 2);
+
+        // Should have 98 unique hashes (100 - 2 nulls)
+        assert_eq!(bloom_hashes.len(), 98);
+
+        // Verify non-null values are in bloom filter
+        for (i, val) in data.iter().enumerate() {
+            if i != 10 && i != 50 {
+                assert!(
+                    bloom_hashes.contains(&hash_native(*val)),
+                    "Bloom filter should contain hash for value {}",
+                    val
+                );
+            }
+        }
+
+        // Verify null sentinel is NOT in bloom filter
+        assert!(
+            !bloom_hashes.contains(&hash_native(i64::MIN)),
+            "Bloom filter should not contain null sentinel"
+        );
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_with_column_top() {
+        // Column top nulls should not be included in bloom hashes
+        let data: Vec<i64> = (0..50).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 20, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        // Should only have hashes for the 50 data values, not column_top
+        assert_eq!(bloom_hashes.len(), 50);
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_no_stats() {
+        // Bloom filter collection without stats computation
+        let data: Vec<i64> = (0..100).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, false, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(result.min, None);
+        assert_eq!(result.max, None);
+
+        // Bloom filter should still be populated
+        assert_eq!(bloom_hashes.len(), 100);
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_all_nulls() {
+        // All null values - bloom filter should be empty
+        let data: Vec<i64> = vec![i64::MIN; 100];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 100);
+        assert!(bloom_hashes.is_empty(), "Bloom filter should be empty for all nulls");
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_rle_path() {
+        let data: Vec<i32> = (0..100).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 100);
+
+        for val in &data {
+            assert!(bloom_hashes.contains(&hash_native(*val)));
+        }
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_bitpacked_path() {
+        let mut data: Vec<i32> = (0..100).collect();
+        data[25] = i32::MIN;
+        data[75] = i32::MIN;
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 2);
+        assert_eq!(bloom_hashes.len(), 98);
+        assert!(!bloom_hashes.contains(&hash_native(i32::MIN)));
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_with_column_top() {
+        let data: Vec<i32> = (0..50).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 15, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 50);
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_rle_path() {
+        let data: Vec<f64> = (0..100).map(|x| x as f64).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 100);
+
+        for val in &data {
+            assert!(bloom_hashes.contains(&hash_native(*val)));
+        }
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_bitpacked_path() {
+        let mut data: Vec<f64> = (0..100).map(|x| x as f64).collect();
+        data[30] = f64::NAN;
+        data[60] = f64::NAN;
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 2);
+        assert_eq!(bloom_hashes.len(), 98);
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_all_nans() {
+        let data: Vec<f64> = vec![f64::NAN; 100];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 100);
+        assert!(bloom_hashes.is_empty());
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_rle_path() {
+        let data: Vec<f32> = (0..100).map(|x| x as f32).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 100);
+
+        for val in &data {
+            assert!(bloom_hashes.contains(&hash_native(*val)));
+        }
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_bitpacked_path() {
+        let mut data: Vec<f32> = (0..100).map(|x| x as f32).collect();
+        data[40] = f32::NAN;
+        data[80] = f32::NAN;
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 2);
+        assert_eq!(bloom_hashes.len(), 98);
+    }
+
+    #[test]
+    fn test_bloom_filter_large_data() {
+        // Test bloom filter with large dataset to verify SIMD paths
+        let data: Vec<i64> = (0..10000).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 10000);
+    }
+
+    #[test]
+    fn test_bloom_filter_remainder_handling() {
+        // Test with data size that doesn't align to SIMD chunk size
+        // i64 uses 8-element chunks, so 67 elements = 8 chunks + 3 remainder
+        let data: Vec<i64> = (0..67).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 67);
+
+        // Verify all values including remainder
+        for val in &data {
+            assert!(
+                bloom_hashes.contains(&hash_native(*val)),
+                "Missing hash for value {}",
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_bloom_filter_duplicate_values() {
+        // Duplicate values should result in same hash
+        let data: Vec<i64> = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 4];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        // Only 4 unique values: 1, 2, 3, 4
+        assert_eq!(bloom_hashes.len(), 4);
+    }
+
+    #[test]
+    fn test_bloom_filter_negative_values() {
+        let data: Vec<i64> = (-50..50).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 100);
+
+        // Verify negative values are correctly hashed
+        assert!(bloom_hashes.contains(&hash_native(-50i64)));
+        assert!(bloom_hashes.contains(&hash_native(-1i64)));
+        assert!(bloom_hashes.contains(&hash_native(0i64)));
+        assert!(bloom_hashes.contains(&hash_native(49i64)));
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_remainder_handling() {
+        // i32 uses 16-element chunks, so 35 elements = 2 chunks + 3 remainder
+        let data: Vec<i32> = (0..35).collect();
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 35);
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_special_values() {
+        // Test with special f64 values (infinity is valid, not null)
+        let data = vec![
+            f64::NEG_INFINITY,
+            -1.0,
+            0.0,
+            1.0,
+            f64::INFINITY,
+            f64::NAN, // null
+        ];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        // 5 valid values (excluding NaN)
+        assert_eq!(bloom_hashes.len(), 5);
+
+        // Verify special values are in bloom filter
+        assert!(bloom_hashes.contains(&hash_native(f64::NEG_INFINITY)));
+        assert!(bloom_hashes.contains(&hash_native(f64::INFINITY)));
+        assert!(bloom_hashes.contains(&hash_native(0.0f64)));
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_special_values() {
+        let data = vec![
+            f32::NEG_INFINITY,
+            -1.0f32,
+            0.0f32,
+            1.0f32,
+            f32::INFINITY,
+            f32::NAN,
+        ];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 5);
+
+        assert!(bloom_hashes.contains(&hash_native(f32::NEG_INFINITY)));
+        assert!(bloom_hashes.contains(&hash_native(f32::INFINITY)));
     }
 }
