@@ -492,7 +492,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case OperationCodes.DROP_TABLE -> executeDropTable((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_VIEW -> executeDropView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_MAT_VIEW -> executeDropMatView((GenericDropOperation) op, executionContext);
-            case OperationCodes.DROP_ALL -> executeDropAllTables(executionContext);
+            case OperationCodes.DROP_ALL -> executeDropAllTables((DropAllOperation) op, executionContext);
             default ->
                     throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
         };
@@ -2581,7 +2581,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropExt(executionContext, tok, lexer.lastTokenPosition());
+                    compileDropExt(executionContext, tok);
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -2620,7 +2620,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropExt(executionContext, tok, lexer.lastTokenPosition());
+                    compileDropExt(executionContext, tok);
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -2663,7 +2663,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropExt(executionContext, tok, lexer.lastTokenPosition());
+                    compileDropExt(executionContext, tok);
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -2674,9 +2674,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                 }
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("';' or 'tables' expected");
+                    compileDropAllExt(executionContext, tok);
+                } else {
+                    compiledQuery.ofDrop(DropAllOperation.INSTANCE);
                 }
-                compiledQuery.ofDrop(DropAllOperation.INSTANCE);
             } else {
                 compileDropOther(executionContext, tok, lexer.lastTokenPosition());
             }
@@ -4224,7 +4225,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private boolean executeDropAllTables(SqlExecutionContext executionContext) {
+    private boolean executeDropAllTables(DropAllOperation op, SqlExecutionContext executionContext) {
         // collect table names
         dropAllTablesFailedTableNames.clear();
         tableTokenBucket.clear();
@@ -4243,7 +4244,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     securityContext.authorizeTableDrop(tableToken);
                 }
                 try {
+                    final String tableName = tableToken.getTableName();
                     engine.dropTableOrViewOrMatView(path, tableToken);
+                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
                     dropped = true;
                 } catch (CairoException report) {
                     // it will fail when there are readers/writers and lock cannot be acquired
@@ -4867,12 +4870,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
 
+    protected void compileDropAllExt(
+            @NotNull SqlExecutionContext executionContext,
+            @NotNull CharSequence tok
+    ) throws SqlException {
+        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+    }
+
     protected void compileDropExt(
             @NotNull SqlExecutionContext executionContext,
-            @NotNull CharSequence tok,
-            int position
+            @NotNull CharSequence tok
     ) throws SqlException {
-        throw SqlException.$(position, "unexpected token [").put(tok).put(']');
+        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
     }
 
     protected void compileDropOther(

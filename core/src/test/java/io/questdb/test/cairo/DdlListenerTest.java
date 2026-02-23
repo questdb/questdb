@@ -110,6 +110,79 @@ public class DdlListenerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDdlListenerDropAll() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] callbackCounters = new int[6];
+
+            engine.setDdlListener(new DefaultDdlListener() {
+                @Override
+                public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+                    callbackCounters[0]++;
+                }
+
+                @Override
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                    callbackCounters[1]++;
+                }
+
+                @Override
+                public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+                    callbackCounters[2]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                    Assert.assertFalse(cascadePermissions);
+                    callbackCounters[3]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                    callbackCounters[4]++;
+                }
+
+                @Override
+                public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
+                    callbackCounters[5]++;
+                }
+            });
+
+            // Create 2 tables, 1 materialized view, 1 view
+            engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            engine.execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m) PARTITION BY DAY");
+            drainWalQueue();
+            engine.execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m)");
+            drainWalQueue();
+
+            engine.execute("DROP ALL");
+            drainWalQueue();
+
+            Assert.assertEquals(0, callbackCounters[0]);
+            Assert.assertEquals(0, callbackCounters[1]);
+            Assert.assertEquals(0, callbackCounters[2]);
+            Assert.assertEquals(4, callbackCounters[3]);
+            Assert.assertEquals(4, callbackCounters[4]);
+            Assert.assertEquals(0, callbackCounters[5]);
+
+            engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            engine.execute("DROP ALL TABLES");
+            drainWalQueue();
+
+            Assert.assertEquals(0, callbackCounters[0]);
+            Assert.assertEquals(0, callbackCounters[1]);
+            Assert.assertEquals(0, callbackCounters[2]);
+            Assert.assertEquals(6, callbackCounters[3]);
+            Assert.assertEquals(6, callbackCounters[4]);
+            Assert.assertEquals(0, callbackCounters[5]);
+        });
+    }
+
+    @Test
     public void testDdlListenerWithMatView() throws Exception {
         assertMemoryLeak(() -> {
             engine.setDdlListener(new DefaultDdlListener());

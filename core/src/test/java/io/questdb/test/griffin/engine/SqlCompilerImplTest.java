@@ -7961,11 +7961,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         @Override
         protected void compileDropExt(
                 @NotNull SqlExecutionContext executionContext,
-                @NotNull CharSequence tok,
-                int position
+                @NotNull CharSequence tok
         ) throws SqlException {
             compileDropTableExtCalled = true;
-            super.compileDropExt(executionContext, tok, position);
+            super.compileDropExt(executionContext, tok);
         }
 
         @Override

@@ -1,5 +1,6 @@
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
@@ -9,11 +10,14 @@ import io.questdb.mp.SCSequence;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Drops all tables and materialized views.
+ * Drops all tables, materialized views and views.
  */
 public class DropAllOperation implements Operation {
     public static final DropAllOperation INSTANCE = new DropAllOperation();
     private final DoneOperationFuture future = new DoneOperationFuture();
+
+    protected DropAllOperation() {
+    }
 
     @Override
     public void close() {
@@ -35,5 +39,9 @@ public class DropAllOperation implements Operation {
     @Override
     public OperationFuture getOperationFuture() {
         return future;
+    }
+
+    public void onTableOrViewOrMatViewDropped(DdlListener ddlListener, String tableName) {
+        ddlListener.onTableOrViewOrMatViewDropped(tableName, false);
     }
 }
