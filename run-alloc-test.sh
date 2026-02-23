@@ -137,11 +137,12 @@ case "$1" in
         check_jars
         shift  # remove 'server' from args
 
-        # Check for --debug flag
         DEBUG_FLAG=""
         for arg in "$@"; do
             if [[ "$arg" == "--debug" ]]; then
                 DEBUG_FLAG="-Debug"
+            elif [[ "$arg" == --dbroot=* ]]; then
+                QDB_ROOT="${arg#--dbroot=}"
             fi
         done
 
@@ -511,6 +512,7 @@ case "$1" in
         echo "  server-lock [options]    Profile SERVER lock contention during client test"
         echo ""
         echo "Options:"
+        echo "  --dbroot=DIR             Server data directory (default: ./qdb-alloc-test)"
         echo "  --debug                  Enable debug logging"
         echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket (default: qwp-websocket)"
         echo "  --host=HOST              Server host (default: localhost)"

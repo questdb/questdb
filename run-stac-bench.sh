@@ -208,6 +208,8 @@ case "$1" in
         for arg in "$@"; do
             if [[ "$arg" == "--debug" ]]; then
                 DEBUG_FLAG="-Debug"
+            elif [[ "$arg" == --dbroot=* ]]; then
+                QDB_ROOT="${arg#--dbroot=}"
             fi
         done
 
@@ -559,6 +561,7 @@ case "$1" in
         echo "  server-lock [options]    Profile SERVER lock contention during client test"
         echo ""
         echo "Options:"
+        echo "  --dbroot=DIR             Server data directory (default: ./qdb-stac-bench)"
         echo "  --debug                  Enable debug logging"
         echo "  --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket (default: qwp-websocket)"
         echo "  --host=HOST              Server host (default: localhost)"
