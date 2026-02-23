@@ -151,7 +151,7 @@ public interface GroupByFunction extends Function, Mutable {
      * the argument function is LONG, but the aggregate function's argument type is
      * DOUBLE. This means that the input values need to be materialized in
      * an intermediate buffer via getDouble calls before to calling
-     * {@link #computeBatch(MapValue, long, int)}.
+     * {@link #computeBatch(MapValue, long, int, long)}.
      *
      * @return the column type of the batch argument
      */
@@ -337,7 +337,7 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
-     * Indicates whether {@link #computeBatch(MapValue, long, int)}, {@link #getComputeBatchArg()},
+     * Indicates whether {@link #computeBatch(MapValue, long, int, long)}, {@link #getComputeBatchArg()},
      * and {@link #getComputeBatchArgType()} are implemented for this function. When {@code true},
      * the engine may materialise the argument column into native memory buffers and invoke
      * {@code computeBatch} instead of per-row aggregation for compatible execution paths.
