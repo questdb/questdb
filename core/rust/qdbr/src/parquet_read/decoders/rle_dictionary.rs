@@ -316,7 +316,12 @@ where
         null_value: U,
         buffers: &'a mut ColumnChunkBuffers,
     ) -> ParquetResult<Self> {
-        let num_bits = buffer[0];
+        let num_bits = buffer.get(0).copied().ok_or_else(|| {
+            fmt_err!(
+                Layout,
+                "RLE dictionary page is missing the initial byte with bit width"
+            )
+        })?;
         if num_bits > 0 {
             buffer = &buffer[1..];
             let decoder = Decoder::new(buffer, num_bits as usize);
