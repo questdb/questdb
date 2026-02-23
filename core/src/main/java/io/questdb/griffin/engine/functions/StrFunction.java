@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
@@ -80,7 +80,7 @@ public abstract class StrFunction implements Function {
 
     @Override
     public final long getDate(Record rec) {
-        return MillsTimestampDriver.INSTANCE.implicitCast(getStrA(rec));
+        return MillisTimestampDriver.INSTANCE.implicitCast(getStrA(rec));
     }
 
     @Override
