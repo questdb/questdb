@@ -301,10 +301,18 @@ public class CheckpointTest extends AbstractCairoTest {
             TableToken walTable1Token = server.getEngine().getTableTokenIfExists("wal_table1");
             TableToken walTable2Token = server.getEngine().getTableTokenIfExists("wal_table2");
             TableToken matViewToken = server.getEngine().getTableTokenIfExists("mat_view");
+            final long[] expectedMatViewSeqTxn = new long[1];
 
             // wal_table1: seqTxn=1 (one insert)
             // wal_table2: seqTxn=1 (one insert)
-            // mat_view: seqTxn=3 (creation + empty refresh + actual refresh with data)
+            // mat_view: sequencer txn depends on refresh ordering.
+            // Path A (first refresh before wal_table1 INSERT is applied):
+            //   1) fromTxn=-1,toTxn=0 -> refreshSuccessNoRows() writes resetMatViewState() => seqTxn=1
+            //   2) follow-up refresh updates cached intervals via resetMatViewState() => seqTxn=2
+            //   3) data refresh writes commitMatView() => seqTxn=3
+            // Path B (first refresh after wal_table1 INSERT is applied):
+            //   1) fromTxn=-1,toTxn=1 -> single data refresh writes commitMatView() => seqTxn=1
+            // Wait until mat_view is caught up to base table txn=1, then capture seqTxn.
             TestUtils.assertEventually(() -> {
                 long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(walTable1Token).getSeqTxn();
                 Assert.assertEquals("wal_table1 seqTxn should be 1", 1L, seqTxn);
@@ -314,8 +322,12 @@ public class CheckpointTest extends AbstractCairoTest {
                 Assert.assertEquals("wal_table2 seqTxn should be 1", 1L, seqTxn);
             });
             TestUtils.assertEventually(() -> {
+                MatViewState viewState = server.getEngine().getMatViewStateStore().getViewState(matViewToken);
+                Assert.assertNotNull("mat_view state should exist", viewState);
+                Assert.assertEquals("mat_view lastRefreshBaseTxn should be 1", 1L, viewState.getLastRefreshBaseTxn());
                 long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(matViewToken).getSeqTxn();
-                Assert.assertEquals("mat_view seqTxn should be 3", 3L, seqTxn);
+                Assert.assertTrue("mat_view seqTxn should be either 1 or 3, was " + seqTxn, seqTxn == 1L || seqTxn == 3L);
+                expectedMatViewSeqTxn[0] = seqTxn;
             });
 
             // Verify listener not called yet
@@ -347,7 +359,7 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertEquals("wal_table1 seqTxn mismatch", 1L, getSeqTxnForTable(actual, "wal_table1"));
             Assert.assertEquals("wal_table2 seqTxn mismatch", 1L, getSeqTxnForTable(actual, "wal_table2"));
             Assert.assertEquals("test_view seqTxn mismatch", 0L, getSeqTxnForTable(actual, "test_view"));
-            Assert.assertEquals("mat_view seqTxn mismatch", 3L, getSeqTxnForTable(actual, "mat_view"));
+            Assert.assertEquals("mat_view seqTxn mismatch", expectedMatViewSeqTxn[0], getSeqTxnForTable(actual, "mat_view"));
 
             // Verify non-WAL table is NOT present
             for (int i = 0, n = actual.size(); i < n; i++) {
