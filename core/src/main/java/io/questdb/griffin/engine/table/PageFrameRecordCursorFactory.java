@@ -146,7 +146,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public ConcurrentTimeFrameCursor newTimeFrameCursor() {
         if (framingSupported) {
-            return new ConcurrentTimeFrameCursor(configuration, getMetadata());
+            return new ConcurrentTimeFrameCursorImpl(configuration, getMetadata());
         }
         return null;
     }

@@ -26,10 +26,13 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -44,7 +47,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -135,7 +140,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         if (pageFrameCursor == null) {
             pageFrameCursor = new SelectedPageFrameCursor(columnCrossIndex);
         }
-        return pageFrameCursor.wrap(baseCursor);
+        return pageFrameCursor.wrap((TablePageFrameCursor) baseCursor);
     }
 
     @Override
@@ -178,6 +183,15 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        ConcurrentTimeFrameCursor baseCursor = base.newTimeFrameCursor();
+        if (baseCursor == null || !crossedIndex) {
+            return baseCursor;
+        }
+        return new SelectedConcurrentTimeFrameCursor(baseCursor, getMetadata().getTimestampIndex());
     }
 
     @Override
@@ -300,10 +314,10 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
-    private static class SelectedPageFrameCursor implements PageFrameCursor {
+    private static class SelectedPageFrameCursor implements TablePageFrameCursor {
         private final IntList columnCrossIndex;
         private final SelectedPageFrame pageFrame;
-        private PageFrameCursor baseCursor;
+        private TablePageFrameCursor baseCursor;
 
         private SelectedPageFrameCursor(IntList columnCrossIndex) {
             this.columnCrossIndex = columnCrossIndex;
@@ -323,6 +337,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public IntList getColumnIndexes() {
             return baseCursor.getColumnIndexes();
+        }
+
+        @Override
+        public TableReader getTableReader() {
+            return baseCursor.getTableReader();
         }
 
         @Override
@@ -352,6 +371,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void setStreamingMode(boolean enabled) {
             baseCursor.setStreamingMode(enabled);
         }
@@ -371,9 +395,118 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             baseCursor.toTop();
         }
 
-        public SelectedPageFrameCursor wrap(PageFrameCursor baseCursor) {
+        public SelectedPageFrameCursor wrap(TablePageFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
             return this;
+        }
+    }
+
+    // This wrapper handles column remapping for ConcurrentTimeFrameCursor when a
+    // SelectedRecordCursorFactory wraps another factory. Column remapping for symbol
+    // tables and page frame data is handled by SelectedPageFrameCursor (which wraps
+    // the delegate's frameCursor). This wrapper only needs to:
+    // 1. Override getTimestampIndex() to return the selected timestamp index.
+    // 2. Pass the selected timestamp index to the delegate via of() so that
+    //    ConcurrentTimeFrameCursorImpl.open() reads timestamps from the correct
+    //    position in the logically-remapped address cache.
+    // Record data access works correctly without wrapping because the address cache
+    // is populated with SelectedPageFrame data (logically-indexed), and the join code
+    // accesses it using logical column indices from the selected metadata.
+    static final class SelectedConcurrentTimeFrameCursor implements ConcurrentTimeFrameCursor {
+        private final ConcurrentTimeFrameCursor delegate;
+        private final int selectedTimestampIndex;
+
+        SelectedConcurrentTimeFrameCursor(
+                ConcurrentTimeFrameCursor delegate,
+                int selectedTimestampIndex
+        ) {
+            this.delegate = delegate;
+            this.selectedTimestampIndex = selectedTimestampIndex;
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+
+        @Override
+        public Record getRecord() {
+            return delegate.getRecord();
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return delegate.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public TimeFrame getTimeFrame() {
+            return delegate.getTimeFrame();
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return selectedTimestampIndex;
+        }
+
+        @Override
+        public void jumpTo(int frameIndex) {
+            delegate.jumpTo(frameIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return delegate.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean next() {
+            return delegate.next();
+        }
+
+        @Override
+        public ConcurrentTimeFrameCursor of(
+                TablePageFrameCursor frameCursor,
+                PageFrameAddressCache frameAddressCache,
+                DirectIntList framePartitionIndexes,
+                LongList frameRowCounts,
+                LongList partitionTimestamps,
+                LongList partitionCeilings,
+                int frameCount,
+                int timestampIndex
+        ) {
+            delegate.of(frameCursor, frameAddressCache, framePartitionIndexes, frameRowCounts, partitionTimestamps, partitionCeilings, frameCount, selectedTimestampIndex);
+            return this;
+        }
+
+        @Override
+        public long open() {
+            return delegate.open();
+        }
+
+        @Override
+        public boolean prev() {
+            return delegate.prev();
+        }
+
+        @Override
+        public void recordAt(Record record, long rowId) {
+            delegate.recordAt(record, rowId);
+        }
+
+        @Override
+        public void recordAt(Record record, int frameIndex, long rowIndex) {
+            delegate.recordAt(record, frameIndex, rowIndex);
+        }
+
+        @Override
+        public void recordAtRowIndex(Record record, long rowIndex) {
+            delegate.recordAtRowIndex(record, rowIndex);
+        }
+
+        @Override
+        public void toTop() {
+            delegate.toTop();
         }
     }
 
