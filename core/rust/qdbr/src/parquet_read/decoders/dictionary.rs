@@ -141,12 +141,20 @@ pub struct BasePrimitiveDictDecoder<'a, U, T> {
 
 impl<U, T> PrimitiveDictDecoder<T> for BasePrimitiveDictDecoder<'_, U, T> {
     #[inline]
+    #[cfg(target_endian = "little")]
     fn get_dict_value(&self, index: u32) -> T {
+        // SAFETY: Caller guarantees index is in bounds and dict_page is properly sized.
+        // We also require little-endian platforms, so no byte swapping is necessary.
         unsafe {
             ptr::read_unaligned(
                 self.dict_page.as_ptr().add(index as usize * size_of::<U>()) as *const T
             )
         }
+    }
+
+    #[cfg(not(target_endian = "little"))]
+    fn get_dict_value(&self, index: u32) -> T {
+        unimplemented!("Big-endian platforms are not supported");
     }
 
     #[inline]
@@ -157,6 +165,8 @@ impl<U, T> PrimitiveDictDecoder<T> for BasePrimitiveDictDecoder<'_, U, T> {
 
 impl<'a, U, T> BasePrimitiveDictDecoder<'a, U, T> {
     pub fn try_new(dict_page: &'a DictPage<'a>) -> ParquetResult<Self> {
+        assert!(size_of::<U>() >= size_of::<T>());
+
         if size_of::<U>() * dict_page.num_values != dict_page.buffer.len() {
             return Err(fmt_err!(
                 Layout,
