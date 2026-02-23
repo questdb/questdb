@@ -16,22 +16,6 @@ pub trait ByteSink {
     fn extend_from_slice_safe(&mut self, data: &[u8]) -> ParquetResult<()>;
 }
 
-pub struct SliceSink<'a>(pub &'a mut [u8]);
-
-impl ByteSink for SliceSink<'_> {
-    #[inline]
-    fn extend_from_slice(&mut self, data: &[u8]) -> ParquetResult<()> {
-        self.0[..data.len()].copy_from_slice(data);
-        Ok(())
-    }
-
-    #[inline]
-    fn extend_from_slice_safe(&mut self, data: &[u8]) -> ParquetResult<()> {
-        self.0[..data.len()].copy_from_slice(data);
-        Ok(())
-    }
-}
-
 pub trait Converter<const N: usize> {
     fn convert<S: ByteSink>(input: &[u8], output: &mut S) -> ParquetResult<()>;
 }
@@ -153,73 +137,6 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
 impl<'a, const N: usize> DataPageFixedSlicer<'a, N> {
     pub fn new(data: &'a [u8], row_count: usize) -> Self {
         Self { data, pos: 0, sliced_row_count: row_count }
-    }
-}
-
-pub struct DataPageDynSlicer<'a> {
-    data: &'a [u8],
-    pos: usize,
-    sliced_row_count: usize,
-    elem_size: usize,
-}
-
-impl DataPageSlicer for DataPageDynSlicer<'_> {
-    #[inline]
-    fn next(&mut self) -> &[u8] {
-        let res = &self.data[self.pos..self.pos + self.elem_size];
-        self.pos += self.elem_size;
-        res
-    }
-
-    #[inline]
-    fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()> {
-        let res = &self.data[self.pos..self.pos + self.elem_size];
-        self.pos += self.elem_size;
-        dest.extend_from_slice(res)
-    }
-
-    #[inline]
-    fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()> {
-        let len = self.elem_size * count;
-        let res = &self.data[self.pos..self.pos + len];
-        self.pos += len;
-        dest.extend_from_slice(res)
-    }
-
-    #[inline]
-    fn next_raw_slice(&mut self, count: usize) -> Option<&[u8]> {
-        let len = self.elem_size * count;
-        let res = &self.data[self.pos..self.pos + len];
-        self.pos += len;
-        Some(res)
-    }
-
-    #[inline]
-    fn skip(&mut self, count: usize) {
-        self.pos += self.elem_size * count;
-    }
-
-    fn count(&self) -> usize {
-        self.sliced_row_count
-    }
-
-    fn data_size(&self) -> usize {
-        self.sliced_row_count * self.elem_size
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        Ok(())
-    }
-}
-
-impl<'a> DataPageDynSlicer<'a> {
-    pub fn new(data: &'a [u8], row_count: usize, elem_size: usize) -> Self {
-        Self {
-            data,
-            pos: 0,
-            sliced_row_count: row_count,
-            elem_size,
-        }
     }
 }
 

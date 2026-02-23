@@ -5,7 +5,7 @@ use crate::parquet_read::decoders::{
 };
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
-use crate::parquet_read::slicer::{DataPageDynSlicer, DataPageSlicer, PlainVarSlicer, SliceSink};
+use crate::parquet_read::slicer::{DataPageSlicer, PlainVarSlicer};
 use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::decimal::{
     Decimal128, Decimal16, Decimal256, Decimal32, Decimal64, Decimal8, DECIMAL128_NULL,
@@ -16,6 +16,40 @@ use crate::parquet_write::decimal::{
 use qdb_core::col_type::ColumnTypeTag;
 use std::ptr;
 
+struct Slicer<'a> {
+    data: &'a [u8],
+    pos: usize,
+    elem_size: usize,
+}
+
+impl Slicer<'_> {
+    #[inline]
+    fn next(&mut self) -> &[u8] {
+        let res = &self.data[self.pos..self.pos + self.elem_size];
+        self.pos += self.elem_size;
+        res
+    }
+
+    #[inline]
+    fn next_raw_slice(&mut self, count: usize) -> &[u8] {
+        let len = self.elem_size * count;
+        let res = &self.data[self.pos..self.pos + len];
+        self.pos += len;
+        res
+    }
+
+    #[inline]
+    fn skip(&mut self, count: usize) {
+        self.pos += self.elem_size * count;
+    }
+}
+
+impl<'a> Slicer<'a> {
+    fn new(data: &'a [u8], elem_size: usize) -> Self {
+        Self { data, pos: 0, elem_size }
+    }
+}
+
 #[inline(always)]
 pub(super) fn decode_fixed_decimal_mode<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
@@ -25,8 +59,8 @@ pub(super) fn decode_fixed_decimal_mode<const FILTERED: bool, const FILL_NULLS: 
     src_len: usize,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
-    let mut slicer = DataPageDynSlicer::new(values_buffer, mode.sliced_row_count(), src_len);
-    decode_fixed_decimal_with_slicer_mode::<FILTERED, FILL_NULLS, _>(
+    let mut slicer = Slicer::new(values_buffer, src_len);
+    decode_fixed_decimal_with_slicer_mode::<FILTERED, FILL_NULLS>(
         page,
         bufs,
         &mut slicer,
@@ -406,13 +440,13 @@ unsafe fn convert_byte_array_decimal_to_target<const N: usize>(
     convert_decimal_to_target::<N>(src, dest, "ByteArray")
 }
 
-pub struct ReverseDecimalColumnSink<'a, const N: usize, T: DataPageSlicer> {
-    slicer: &'a mut T,
+struct ReverseDecimalColumnSink<'a, const N: usize> {
+    slicer: &'a mut Slicer<'a>,
     buffers: &'a mut ColumnChunkBuffers,
     null_value: [u8; N],
 }
 
-impl<const N: usize, T: DataPageSlicer> Pushable for ReverseDecimalColumnSink<'_, N, T> {
+impl<const N: usize> Pushable for ReverseDecimalColumnSink<'_, N> {
     fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         self.buffers.data_vec.reserve(count * N)?;
         Ok(())
@@ -434,69 +468,44 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseDecimalColumnSink<'_
 
     #[inline]
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
-        match count {
-            0 => Ok(()),
-            1 => self.push(),
-            2 => {
-                self.push()?;
-                self.push()
-            }
-            3 => {
-                self.push()?;
-                self.push()?;
-                self.push()
-            }
-            4 => {
-                self.push()?;
-                self.push()?;
-                self.push()?;
-                self.push()
-            }
-            _ => {
-                let base = self.buffers.data_vec.len();
-                let total_bytes = count * N;
-                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        let base = self.buffers.data_vec.len();
+        let total_bytes = count * N;
+        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
-                unsafe {
-                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-                    {
-                        let dst = std::slice::from_raw_parts_mut(ptr, total_bytes);
-                        let mut sink = SliceSink(dst);
-                        self.slicer.next_slice_into(count, &mut sink)?;
-                    }
-                    if N == 2 {
-                        for c in 0..count {
-                            let p = ptr.add(c * 2) as *mut u16;
-                            p.write_unaligned(p.read_unaligned().swap_bytes());
-                        }
-                    } else if N == 4 {
-                        for c in 0..count {
-                            let p = ptr.add(c * 4) as *mut u32;
-                            p.write_unaligned(p.read_unaligned().swap_bytes());
-                        }
-                    } else if N == 8 {
-                        for c in 0..count {
-                            let p = ptr.add(c * 8) as *mut u64;
-                            p.write_unaligned(p.read_unaligned().swap_bytes());
-                        }
-                    } else {
-                        for c in 0..count {
-                            let dest = ptr.add(c * N);
-                            let mut i = 0usize;
-                            while i < N / 2 {
-                                let a = *dest.add(i);
-                                let b = *dest.add(N - i - 1);
-                                *dest.add(i) = b;
-                                *dest.add(N - i - 1) = a;
-                                i += 1;
-                            }
-                        }
-                    }
-                    self.buffers.data_vec.set_len(base + total_bytes);
+        unsafe {
+            let src_ptr = self.slicer.next_raw_slice(count).as_ptr();
+            let dst_ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            if N == 2 {
+                for c in 0..count {
+                    let v = (src_ptr.add(c * 2) as *const u16)
+                        .read_unaligned()
+                        .swap_bytes();
+                    (dst_ptr.add(c * 2) as *mut u16).write_unaligned(v);
                 }
-                Ok(())
+            } else if N == 4 {
+                for c in 0..count {
+                    let v = (src_ptr.add(c * 4) as *const u32)
+                        .read_unaligned()
+                        .swap_bytes();
+                    (dst_ptr.add(c * 4) as *mut u32).write_unaligned(v);
+                }
+            } else if N == 8 {
+                for c in 0..count {
+                    let v = (src_ptr.add(c * 8) as *const u64)
+                        .read_unaligned()
+                        .swap_bytes();
+                    (dst_ptr.add(c * 8) as *mut u64).write_unaligned(v);
+                }
+            } else {
+                for c in 0..count {
+                    for i in 0..N {
+                        *dst_ptr.add(c * N + i) = *src_ptr.add(c * N + (N - i - 1));
+                    }
+                }
             }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
+        Ok(())
     }
 
     #[inline]
@@ -507,39 +516,18 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseDecimalColumnSink<'_
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        match count {
-            0 => Ok(()),
-            1 => self.push_null(),
-            2 => {
-                self.push_null()?;
-                self.push_null()
-            }
-            3 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
-            }
-            4 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
-            }
-            _ => {
-                let base = self.buffers.data_vec.len();
-                let total_bytes = count * N;
-                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        let base = self.buffers.data_vec.len();
+        let total_bytes = count * N;
+        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
-                unsafe {
-                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-                    for i in 0..count {
-                        ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
-                    }
-                    self.buffers.data_vec.set_len(base + total_bytes);
-                }
-                Ok(())
+        unsafe {
+            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            for i in 0..count {
+                ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
             }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
+        Ok(())
     }
 
     #[inline]
@@ -549,13 +537,13 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseDecimalColumnSink<'_
     }
 
     fn result(&self) -> ParquetResult<()> {
-        self.slicer.result()
+        Ok(())
     }
 }
 
-impl<'a, const N: usize, T: DataPageSlicer> ReverseDecimalColumnSink<'a, N, T> {
-    pub fn new(
-        slicer: &'a mut T,
+impl<'a, const N: usize> ReverseDecimalColumnSink<'a, N> {
+    fn new(
+        slicer: &'a mut Slicer<'a>,
         buffers: &'a mut ColumnChunkBuffers,
         null_value: [u8; N],
     ) -> Self {
@@ -568,15 +556,13 @@ impl<'a, const N: usize, T: DataPageSlicer> ReverseDecimalColumnSink<'a, N, T> {
 /// Decimal128/256 as multiple i64 values in little-endian order.
 /// N is the total size (16 for Decimal128, 32 for Decimal256).
 /// WORDS is the number of 8-byte words (2 for Decimal128, 4 for Decimal256).
-pub struct WordSwapDecimalColumnSink<'a, const N: usize, const WORDS: usize, T: DataPageSlicer> {
-    slicer: &'a mut T,
+struct WordSwapDecimalColumnSink<'a, const N: usize, const WORDS: usize> {
+    slicer: &'a mut Slicer<'a>,
     buffers: &'a mut ColumnChunkBuffers,
     null_value: [u8; N],
 }
 
-impl<const N: usize, const WORDS: usize, T: DataPageSlicer> Pushable
-    for WordSwapDecimalColumnSink<'_, N, WORDS, T>
-{
+impl<const N: usize, const WORDS: usize> Pushable for WordSwapDecimalColumnSink<'_, N, WORDS> {
     fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         self.buffers.data_vec.reserve(count * N)?;
         Ok(())
@@ -598,48 +584,26 @@ impl<const N: usize, const WORDS: usize, T: DataPageSlicer> Pushable
 
     #[inline]
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
-        match count {
-            0 => Ok(()),
-            1 => self.push(),
-            2 => {
-                self.push()?;
-                self.push()
-            }
-            3 => {
-                self.push()?;
-                self.push()?;
-                self.push()
-            }
-            4 => {
-                self.push()?;
-                self.push()?;
-                self.push()?;
-                self.push()
-            }
-            _ => {
-                let base = self.buffers.data_vec.len();
-                let total_bytes = count * N;
-                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
-
-                unsafe {
-                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-                    {
-                        let dst = std::slice::from_raw_parts_mut(ptr, total_bytes);
-                        let mut sink = SliceSink(dst);
-                        self.slicer.next_slice_into(count, &mut sink)?;
-                    }
-                    for c in 0..count {
-                        let value_ptr = ptr.add(c * N);
-                        for w in 0..WORDS {
-                            let p = value_ptr.add(w * 8) as *mut u64;
-                            p.write_unaligned(p.read_unaligned().swap_bytes());
-                        }
-                    }
-                    self.buffers.data_vec.set_len(base + total_bytes);
+        let base = self.buffers.data_vec.len();
+        let total_bytes = count * N;
+        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        // SAFETY: We reserved enough capacity for `count` values of `N` bytes each, and we only write to the range from `base` to `base + total_bytes`.
+        unsafe {
+            let src = self.slicer.next_raw_slice(count);
+            let dst = self.buffers.data_vec.as_mut_ptr().add(base);
+            for c in 0..count {
+                let src_ptr = src.as_ptr().add(c * N);
+                let dst_ptr = dst.add(c * N);
+                for w in 0..WORDS {
+                    let src_word = (src_ptr.add(w * 8) as *const u64)
+                        .read_unaligned()
+                        .swap_bytes();
+                    (dst_ptr.add(w * 8) as *mut u64).write_unaligned(src_word);
                 }
-                Ok(())
             }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
+        Ok(())
     }
 
     #[inline]
@@ -650,39 +614,18 @@ impl<const N: usize, const WORDS: usize, T: DataPageSlicer> Pushable
 
     #[inline]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        match count {
-            0 => Ok(()),
-            1 => self.push_null(),
-            2 => {
-                self.push_null()?;
-                self.push_null()
-            }
-            3 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
-            }
-            4 => {
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()?;
-                self.push_null()
-            }
-            _ => {
-                let base = self.buffers.data_vec.len();
-                let total_bytes = count * N;
-                debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
+        let base = self.buffers.data_vec.len();
+        let total_bytes = count * N;
+        debug_assert!(base + total_bytes <= self.buffers.data_vec.capacity());
 
-                unsafe {
-                    let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-                    for i in 0..count {
-                        ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
-                    }
-                    self.buffers.data_vec.set_len(base + total_bytes);
-                }
-                Ok(())
+        unsafe {
+            let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+            for i in 0..count {
+                ptr::copy_nonoverlapping(self.null_value.as_ptr(), ptr.add(i * N), N);
             }
+            self.buffers.data_vec.set_len(base + total_bytes);
         }
+        Ok(())
     }
 
     #[inline]
@@ -692,15 +635,13 @@ impl<const N: usize, const WORDS: usize, T: DataPageSlicer> Pushable
     }
 
     fn result(&self) -> ParquetResult<()> {
-        self.slicer.result()
+        Ok(())
     }
 }
 
-impl<'a, const N: usize, const WORDS: usize, T: DataPageSlicer>
-    WordSwapDecimalColumnSink<'a, N, WORDS, T>
-{
-    pub fn new(
-        slicer: &'a mut T,
+impl<'a, const N: usize, const WORDS: usize> WordSwapDecimalColumnSink<'a, N, WORDS> {
+    fn new(
+        slicer: &'a mut Slicer<'a>,
         buffers: &'a mut ColumnChunkBuffers,
         null_value: [u8; N],
     ) -> Self {
@@ -717,14 +658,14 @@ impl<'a, const N: usize, const WORDS: usize, T: DataPageSlicer>
 ///
 /// For simple decimals (N <= 8): sign-extend and reverse all bytes.
 /// For multi-word decimals (N = 16 or 32): sign-extend and swap bytes within each 8-byte word.
-pub struct SignExtendDecimalColumnSink<'a, const N: usize, T: DataPageSlicer> {
-    slicer: &'a mut T,
+struct SignExtendDecimalColumnSink<'a, const N: usize> {
+    slicer: &'a mut Slicer<'a>,
     buffers: &'a mut ColumnChunkBuffers,
     null_value: [u8; N],
     src_len: usize,
 }
 
-impl<const N: usize, T: DataPageSlicer> Pushable for SignExtendDecimalColumnSink<'_, N, T> {
+impl<const N: usize> Pushable for SignExtendDecimalColumnSink<'_, N> {
     fn reserve(&mut self, count: usize) -> ParquetResult<()> {
         self.buffers.data_vec.reserve(count * N)?;
         Ok(())
@@ -754,30 +695,14 @@ impl<const N: usize, T: DataPageSlicer> Pushable for SignExtendDecimalColumnSink
             let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
             if N == 8 {
                 const CHUNK_VALUES: usize = 256;
-                let mut tmp = [0u8; CHUNK_VALUES * 32];
                 let mut out_idx = 0usize;
                 while out_idx < count {
                     let chunk = (count - out_idx).min(CHUNK_VALUES);
-                    if let Some(raw_chunk) = self.slicer.next_raw_slice(chunk) {
-                        for c in 0..chunk {
-                            let src_ptr = raw_chunk.as_ptr().add(c * self.src_len);
-                            let signed = decode_decimal64_from_be(src_ptr, self.src_len);
-                            (ptr.add((out_idx + c) * 8) as *mut i64)
-                                .write_unaligned(signed.to_le());
-                        }
-                    } else {
-                        let src_bytes = chunk * self.src_len;
-                        {
-                            let mut sink = SliceSink(&mut tmp[..src_bytes]);
-                            self.slicer.next_slice_into(chunk, &mut sink)?;
-                        }
-
-                        for c in 0..chunk {
-                            let src_ptr = tmp.as_ptr().add(c * self.src_len);
-                            let signed = decode_decimal64_from_be(src_ptr, self.src_len);
-                            (ptr.add((out_idx + c) * 8) as *mut i64)
-                                .write_unaligned(signed.to_le());
-                        }
+                    let raw_chunk = self.slicer.next_raw_slice(chunk);
+                    for c in 0..chunk {
+                        let src_ptr = raw_chunk.as_ptr().add(c * self.src_len);
+                        let signed = decode_decimal64_from_be(src_ptr, self.src_len);
+                        (ptr.add((out_idx + c) * 8) as *mut i64).write_unaligned(signed.to_le());
                     }
                     out_idx += chunk;
                 }
@@ -822,13 +747,13 @@ impl<const N: usize, T: DataPageSlicer> Pushable for SignExtendDecimalColumnSink
     }
 
     fn result(&self) -> ParquetResult<()> {
-        self.slicer.result()
+        Ok(())
     }
 }
 
-impl<'a, const N: usize, T: DataPageSlicer> SignExtendDecimalColumnSink<'a, N, T> {
-    pub fn new(
-        slicer: &'a mut T,
+impl<'a, const N: usize> SignExtendDecimalColumnSink<'a, N> {
+    fn new(
+        slicer: &'a mut Slicer<'a>,
         buffers: &'a mut ColumnChunkBuffers,
         null_value: [u8; N],
         src_len: usize,
@@ -1103,15 +1028,11 @@ fn validate_flba_dict(dict_page: &DictPage, src_len: usize) -> ParquetResult<()>
     Ok(())
 }
 
-fn decode_fixed_decimal_with_slicer_mode<
-    const FILTERED: bool,
-    const FILL_NULLS: bool,
-    T: DataPageSlicer,
->(
+fn decode_fixed_decimal_with_slicer_mode<'a, const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
-    bufs: &mut ColumnChunkBuffers,
-    slicer: &mut T,
-    mode: super::DecodeModeContext<'_>,
+    bufs: &'a mut ColumnChunkBuffers,
+    slicer: &'a mut Slicer<'a>,
+    mode: super::DecodeModeContext<'a>,
     src_len: usize,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
@@ -1146,13 +1067,13 @@ fn decode_fixed_decimal_with_slicer_mode<
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut ReverseDecimalColumnSink::<1, _>::new(slicer, bufs, DECIMAL8_NULL),
+                    &mut ReverseDecimalColumnSink::<1>::new(slicer, bufs, DECIMAL8_NULL),
                 )
             } else {
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut SignExtendDecimalColumnSink::<1, _>::new(
+                    &mut SignExtendDecimalColumnSink::<1>::new(
                         slicer,
                         bufs,
                         DECIMAL8_NULL,
@@ -1166,13 +1087,13 @@ fn decode_fixed_decimal_with_slicer_mode<
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut ReverseDecimalColumnSink::<2, _>::new(slicer, bufs, DECIMAL16_NULL),
+                    &mut ReverseDecimalColumnSink::<2>::new(slicer, bufs, DECIMAL16_NULL),
                 )
             } else {
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut SignExtendDecimalColumnSink::<2, _>::new(
+                    &mut SignExtendDecimalColumnSink::<2>::new(
                         slicer,
                         bufs,
                         DECIMAL16_NULL,
@@ -1186,13 +1107,13 @@ fn decode_fixed_decimal_with_slicer_mode<
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut ReverseDecimalColumnSink::<4, _>::new(slicer, bufs, DECIMAL32_NULL),
+                    &mut ReverseDecimalColumnSink::<4>::new(slicer, bufs, DECIMAL32_NULL),
                 )
             } else {
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut SignExtendDecimalColumnSink::<4, _>::new(
+                    &mut SignExtendDecimalColumnSink::<4>::new(
                         slicer,
                         bufs,
                         DECIMAL32_NULL,
@@ -1206,13 +1127,13 @@ fn decode_fixed_decimal_with_slicer_mode<
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut ReverseDecimalColumnSink::<8, _>::new(slicer, bufs, DECIMAL64_NULL),
+                    &mut ReverseDecimalColumnSink::<8>::new(slicer, bufs, DECIMAL64_NULL),
                 )
             } else {
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut SignExtendDecimalColumnSink::<8, _>::new(
+                    &mut SignExtendDecimalColumnSink::<8>::new(
                         slicer,
                         bufs,
                         DECIMAL64_NULL,
@@ -1226,13 +1147,13 @@ fn decode_fixed_decimal_with_slicer_mode<
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut WordSwapDecimalColumnSink::<16, 2, _>::new(slicer, bufs, DECIMAL128_NULL),
+                    &mut WordSwapDecimalColumnSink::<16, 2>::new(slicer, bufs, DECIMAL128_NULL),
                 )
             } else {
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut SignExtendDecimalColumnSink::<16, _>::new(
+                    &mut SignExtendDecimalColumnSink::<16>::new(
                         slicer,
                         bufs,
                         DECIMAL128_NULL,
@@ -1246,13 +1167,13 @@ fn decode_fixed_decimal_with_slicer_mode<
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut WordSwapDecimalColumnSink::<32, 4, _>::new(slicer, bufs, DECIMAL256_NULL),
+                    &mut WordSwapDecimalColumnSink::<32, 4>::new(slicer, bufs, DECIMAL256_NULL),
                 )
             } else {
                 super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
-                    &mut SignExtendDecimalColumnSink::<32, _>::new(
+                    &mut SignExtendDecimalColumnSink::<32>::new(
                         slicer,
                         bufs,
                         DECIMAL256_NULL,
