@@ -76,7 +76,7 @@ impl ParquetDecoder {
         row_group_lo: u32,
         row_group_hi: u32,
     ) -> ParquetResult<usize> {
-        if row_group_index > self.row_group_count {
+        if row_group_index >= self.row_group_count {
             return Err(fmt_err!(
                 InvalidLayout,
                 "row group index {} out of range [0,{})",
@@ -176,7 +176,7 @@ impl ParquetDecoder {
         row_group_hi: u32,
         rows_filter: &[i64],
     ) -> ParquetResult<usize> {
-        if row_group_index > self.row_group_count {
+        if row_group_index >= self.row_group_count {
             return Err(fmt_err!(
                 InvalidLayout,
                 "row group index {} out of range [0,{})",
