@@ -335,10 +335,7 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
                             &self.data[self.data_offset..self.data_offset + suffix_len],
                         );
                         self.data_offset += suffix_len;
-                        // SAFETY: we extend lifetime to 'a because last_value lives as long as self
-                        unsafe {
-                            std::mem::transmute::<&[u8], &'a [u8]>(self.last_value.as_slice())
-                        }
+                        self.last_value.as_slice()
                     }
                     None => {
                         self.error = Err(fmt_err!(Layout, "not enough suffix values to iterate"));
