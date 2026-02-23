@@ -23,6 +23,7 @@ pub trait Converter<const N: usize> {
 impl ByteSink for AcVec<u8> {
     #[inline(always)]
     fn extend_from_slice(&mut self, data: &[u8]) -> ParquetResult<()> {
+        // SAFETY: Caller ensures capacity via reserve()
         unsafe {
             let len = self.len();
             ptr::copy_nonoverlapping(data.as_ptr(), self.as_mut_ptr().add(len), data.len());
