@@ -476,9 +476,11 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                         pfc.setStreamingMode(true);
                         RecordMetadata meta = baseFactory.getMetadata();
                         int colCount = meta.getColumnCount();
-                        identityColumnMap.setPos(colCount);
-                        for (int i = 0; i < colCount; i++) {
-                            identityColumnMap.setQuick(i, i);
+                        if (identityColumnMap.size() != colCount) {
+                            identityColumnMap.setPos(colCount);
+                            for (int i = 0; i < colCount; i++) {
+                                identityColumnMap.setQuick(i, i);
+                            }
                         }
                         exporter.setUp(meta, pfc, identityColumnMap);
 
