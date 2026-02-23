@@ -42,14 +42,24 @@ QDB_ROOT="$SCRIPT_DIR/qdb-alloc-test"
 
 # Find JARs dynamically (don't rely on specific version)
 find_jars() {
-    # Find main JAR (questdb-*.jar but not -tests.jar or -sources.jar)
+    # Find server JAR (questdb-*.jar but not -tests.jar or -sources.jar)
     MAIN_JAR=$(find "$SCRIPT_DIR/core/target" -maxdepth 1 -name "questdb-*.jar" \
                ! -name "*-tests.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
                2>/dev/null | head -1)
 
-    # Find test JAR
-    TEST_JAR=$(find "$SCRIPT_DIR/core/target" -maxdepth 1 -name "questdb-*-tests.jar" \
-               2>/dev/null | head -1)
+    # Find client JAR
+    CLIENT_JAR=$(find "$SCRIPT_DIR/java-questdb-client/core/target" -maxdepth 1 -name "questdb-client-*.jar" \
+                 ! -name "*-tests.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
+                 2>/dev/null | head -1)
+
+    # Find client test JAR (contains benchmark clients)
+    CLIENT_TEST_JAR=$(find "$SCRIPT_DIR/java-questdb-client/core/target" -maxdepth 1 -name "questdb-client-*-tests.jar" \
+                      2>/dev/null | head -1)
+
+    # Find slf4j-api JAR (client dependency)
+    SLF4J_JAR=$(find "$HOME/.m2/repository/org/slf4j/slf4j-api" -name "slf4j-api-*.jar" \
+                ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
+                2>/dev/null | sort -V | tail -1)
 }
 
 # Check if JARs exist
@@ -57,20 +67,27 @@ check_jars() {
     find_jars
 
     if [ -z "$MAIN_JAR" ] || [ ! -f "$MAIN_JAR" ]; then
-        echo "ERROR: Main JAR not found in $SCRIPT_DIR/core/target/"
+        echo "ERROR: Server JAR not found in $SCRIPT_DIR/core/target/"
         echo "Run: mvn clean package -DskipTests -pl core"
         exit 1
     fi
 
-    if [ -z "$TEST_JAR" ] || [ ! -f "$TEST_JAR" ]; then
-        echo "ERROR: Test JAR not found in $SCRIPT_DIR/core/target/"
-        echo "Run: mvn test-compile -pl core"
+    if [ -z "$CLIENT_JAR" ] || [ ! -f "$CLIENT_JAR" ]; then
+        echo "ERROR: Client JAR not found in $SCRIPT_DIR/java-questdb-client/core/target/"
+        echo "Run: mvn clean package -DskipTests -f java-questdb-client/core/pom.xml"
+        exit 1
+    fi
+
+    if [ -z "$CLIENT_TEST_JAR" ] || [ ! -f "$CLIENT_TEST_JAR" ]; then
+        echo "ERROR: Client test JAR not found in $SCRIPT_DIR/java-questdb-client/core/target/"
+        echo "Run: mvn test-compile -f java-questdb-client/core/pom.xml"
         exit 1
     fi
 
     echo "Using JARs:"
-    echo "  Main: $MAIN_JAR"
-    echo "  Test: $TEST_JAR"
+    echo "  Server: $MAIN_JAR"
+    echo "  Client: $CLIENT_JAR"
+    echo "  Client tests: $CLIENT_TEST_JAR"
 }
 
 # Extract protocol from args for port defaulting
@@ -153,8 +170,8 @@ case "$1" in
         done
 
         echo "Running ILP test client..."
-        java -cp "$MAIN_JAR:$TEST_JAR" $DEBUG_FLAG \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" $DEBUG_FLAG \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "${CLIENT_ARGS[@]}"
         ;;
 
@@ -177,8 +194,8 @@ case "$1" in
         echo "Output: $PROFILE_OUTPUT (collapsed stacks format)"
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=alloc,alloc=1k,file=$PROFILE_OUTPUT,collapsed" \
-             -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "Profile saved to: $PROFILE_OUTPUT"
@@ -206,8 +223,8 @@ case "$1" in
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=cpu,file=$PROFILE_OUTPUT,jfr" \
-             -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "CPU profile saved to: $PROFILE_OUTPUT"
@@ -236,8 +253,8 @@ case "$1" in
         echo "This captures time spent waiting (I/O, locks, sleep) in addition to CPU time."
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=wall,file=$PROFILE_OUTPUT,jfr" \
-             -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "Wall-clock profile saved to: $PROFILE_OUTPUT"
@@ -266,8 +283,8 @@ case "$1" in
         echo "This captures thread contention on synchronized blocks and locks."
         echo ""
         java -agentpath:"$ASYNC_PROFILER_HOME/lib/libasyncProfiler.so=start,event=lock,file=$PROFILE_OUTPUT,jfr" \
-             -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "Lock contention profile saved to: $PROFILE_OUTPUT"
@@ -301,8 +318,8 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
         # Stop profiler (file is written automatically)
@@ -341,8 +358,8 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
         # Stop profiler (file is written automatically)
@@ -380,8 +397,8 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
         # Stop profiler (file is written automatically)
@@ -420,8 +437,8 @@ case "$1" in
 
         # Run client test
         echo "Running client test..."
-        java -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+        java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@" || true  # Don't fail if client errors
 
         # Stop profiler (file is written automatically)
@@ -444,8 +461,8 @@ case "$1" in
         echo "Output: $JFR_OUTPUT"
         echo ""
         java -XX:StartFlightRecording=filename="$JFR_OUTPUT",settings=profile \
-             -cp "$MAIN_JAR:$TEST_JAR" \
-             io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+             -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+             io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
              "$@"
         echo ""
         echo "JFR recording saved to: $JFR_OUTPUT"
@@ -465,8 +482,8 @@ case "$1" in
             echo "=========================================="
             echo "Testing: $protocol"
             echo "=========================================="
-            java -cp "$MAIN_JAR:$TEST_JAR" \
-                 io.questdb.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
+            java -cp "$CLIENT_JAR:$CLIENT_TEST_JAR:$SLF4J_JAR" \
+                 io.questdb.client.test.cutlass.line.tcp.v4.QwpAllocationTestClient \
                  --protocol="$protocol" "$@"
             echo ""
         done
