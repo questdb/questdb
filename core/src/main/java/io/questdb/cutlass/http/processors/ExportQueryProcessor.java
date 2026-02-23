@@ -195,14 +195,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     final int order = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
                     state.descending = order == ORDER_DESC;
                     if (isParquet) {
-                        state.parquetExportMode = HybridColumnMaterializer.determineExportMode(state.recordCursorFactory);
-                        // The hybrid path (PAGE_FRAME_BACKED) uses zero-copy pointers for
-                        // pass-through columns, so data within each page frame is always in
-                        // storage (ascending) order. Descending queries must fall back to
-                        // cursor-based export to produce fully reversed row order.
-                        if (state.descending && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
-                            state.parquetExportMode = ParquetExportMode.CURSOR_BASED;
-                        }
+                        state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending);
                     }
                     for (int retries = 0; runQuery; retries++) {
                         try {
@@ -213,7 +206,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                     case PAGE_FRAME_BACKED -> {
                                         // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
                                         // when unwrapped instanceof VirtualRecordCursorFactory.
-                                        RecordCursorFactory unwrapped = HybridColumnMaterializer.unwrapFactory(state.recordCursorFactory);
+                                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
                                         state.pageFrameCursor = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
                                     }
@@ -246,10 +239,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
                             if (isParquet) {
-                                state.parquetExportMode = HybridColumnMaterializer.determineExportMode(state.recordCursorFactory);
-                                if (state.descending && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
-                                    state.parquetExportMode = ParquetExportMode.CURSOR_BASED;
-                                }
+                                state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending);
                             }
                         }
                     }
@@ -257,7 +247,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     if (isParquet && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
                         // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
                         // when unwrapped instanceof VirtualRecordCursorFactory.
-                        RecordCursorFactory unwrapped = HybridColumnMaterializer.unwrapFactory(state.recordCursorFactory);
+                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
                         state.pageFrameCursor.setStreamingMode(true);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);

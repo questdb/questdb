@@ -37,7 +37,6 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -47,7 +46,6 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.std.BoolList;
@@ -108,60 +106,6 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private VirtualFunctionRecord functionRecord;
     private ObjList<Function> functions;
     private int outputColumnCount;
-
-    /**
-     * Determines the export mode for a given RecordCursorFactory.
-     * Shared by both HTTP and SQL export paths.
-     */
-    public static ParquetExportMode determineExportMode(RecordCursorFactory factory) {
-        RecordCursorFactory unwrapped = unwrapFactory(factory);
-        if (factory.supportsPageFrameCursor()) {
-            return ParquetExportMode.DIRECT_PAGE_FRAME;
-        }
-        if (unwrapped instanceof VirtualRecordCursorFactory vf && vf.getBaseFactory().supportsPageFrameCursor()) {
-            if (hasComputedBinaryColumn(vf)) {
-                return ParquetExportMode.TEMP_TABLE;
-            }
-            return ParquetExportMode.PAGE_FRAME_BACKED;
-        }
-        RecordMetadata meta = factory.getMetadata();
-        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(meta.getColumnType(i)) == ColumnType.BINARY) {
-                return ParquetExportMode.TEMP_TABLE;
-            }
-        }
-        return ParquetExportMode.CURSOR_BASED;
-    }
-
-    /**
-     * Checks whether a VirtualRecordCursorFactory has any computed BINARY columns.
-     * Computed BINARY columns cannot be materialized into buffers for Parquet export.
-     */
-    public static boolean hasComputedBinaryColumn(VirtualRecordCursorFactory vf) {
-        PriorityMetadata pm = vf.getPriorityMetadata();
-        ObjList<Function> functions = vf.getFunctions();
-        RecordMetadata meta = vf.getMetadata();
-        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
-            if (ColumnType.tagOf(meta.getColumnType(i)) != ColumnType.BINARY) {
-                continue;
-            }
-            Function func = functions.getQuick(i);
-            if (func instanceof ColumnFunction cf) {
-                if (pm.getBaseColumnIndex(cf.getColumnIndex()) >= 0) {
-                    continue; // pass-through BINARY is fine
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Unwraps a QueryProgress wrapper to access the underlying factory.
-     */
-    public static RecordCursorFactory unwrapFactory(RecordCursorFactory factory) {
-        return factory instanceof QueryProgress qp ? qp.getBaseFactory() : factory;
-    }
 
     /**
      * Builds column data by reading rows from a RecordCursor (cursor-based path, no page frame backing).

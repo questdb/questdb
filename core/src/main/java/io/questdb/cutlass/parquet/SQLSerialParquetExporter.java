@@ -483,7 +483,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             // Unwrap QueryProgress so that its register/unregister lifecycle
             // does not null the circuit breaker's cancelledFlag when cursors close.
             // The outer COPY command handles query registration and cancellation.
-            RecordCursorFactory baseFactory = HybridColumnMaterializer.unwrapFactory(selectFactory);
+            RecordCursorFactory baseFactory = ParquetExportMode.unwrapFactory(selectFactory);
             CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
             // File-write callback
             writeCallback.of(ff, fd);
