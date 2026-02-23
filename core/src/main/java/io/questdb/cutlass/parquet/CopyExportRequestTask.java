@@ -443,85 +443,66 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         public void setUp() {
-            columnNames.reopen();
-            columnMetadata.reopen();
-            columnData.reopen();
-
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                CharSequence columnName = metadata.getColumnName(i);
-                final int startSize = columnNames.size();
-                columnNames.put(columnName);
-                columnMetadata.add(columnNames.size() - startSize);
-                final int columnType = metadata.getColumnType(i);
-
-                if (ColumnType.isSymbol(columnType)) {
-                    assert pageFrameCursor != null;
-                    StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(i);
-                    assert symbolTable != null;
-                    int symbolColumnType = columnType;
-                    if (!symbolTable.containsNullValue()) {
-                        symbolColumnType |= 1 << 31;
-                    }
-                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | symbolColumnType);
-                } else {
-                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
-                }
-            }
-            streamWriter = createStreamingParquetWriter(
-                    Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
-                    metadata.getColumnCount(),
-                    columnNames.ptr(),
-                    columnNames.size(),
-                    columnMetadata.getAddress(),
-                    metadata.getTimestampIndex(),
-                    descending,
-                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                    statisticsEnabled,
-                    rawArrayEncoding,
-                    rowGroupSize,
-                    dataPageSize,
-                    parquetVersion
-            );
+            setUp(metadata, pageFrameCursor, null);
         }
 
         public void setUp(RecordMetadata adjustedMetadata) {
             setUp(adjustedMetadata, null, null);
         }
 
-        public void setUp(RecordMetadata adjustedMetadata, PageFrameCursor pfc, IntList baseColumnMap) {
-            metadata = adjustedMetadata;
+        /**
+         * Unified writer setup for all export modes.
+         *
+         * @param meta          column metadata to encode
+         * @param pfc           page frame cursor for SYMBOL table lookup (null when cursor-based)
+         * @param baseColumnMap per-output-column base index for hybrid path, or null for
+         *                      direct/temp-table path (where every column is a real table column)
+         */
+        public void setUp(RecordMetadata meta, PageFrameCursor pfc, IntList baseColumnMap) {
+            metadata = meta;
             pageFrameCursor = pfc;
             columnNames.reopen();
             columnMetadata.reopen();
             columnData.reopen();
 
-            for (int i = 0, n = adjustedMetadata.getColumnCount(); i < n; i++) {
-                CharSequence columnName = adjustedMetadata.getColumnName(i);
+            for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+                CharSequence columnName = meta.getColumnName(i);
                 final int startSize = columnNames.size();
                 columnNames.put(columnName);
                 columnMetadata.add(columnNames.size() - startSize);
-                final int columnType = adjustedMetadata.getColumnType(i);
+                final int columnType = meta.getColumnType(i);
+                // GenericRecordMetadata (hybrid/cursor paths) returns i;
+                // table metadata returns the physical writer column index.
+                final int writerIdx = meta.getWriterIndex(i);
 
-                if (baseColumnMap != null && ColumnType.isSymbol(columnType) && baseColumnMap.getQuick(i) >= 0) {
-                    // Pass-through SYMBOL: use symbol table from page frame cursor
-                    StaticSymbolTable symbolTable = pfc.getSymbolTable(baseColumnMap.getQuick(i));
+                // A SYMBOL column needs symbol-table metadata when it is a
+                // real table column.  In the hybrid path (baseColumnMap != null)
+                // only pass-through columns (baseColumnMap >= 0) qualify;
+                // in the direct path (baseColumnMap == null) every column is real.
+                boolean isPassThroughSymbol = ColumnType.isSymbol(columnType)
+                        && (baseColumnMap == null || baseColumnMap.getQuick(i) >= 0);
+
+                if (isPassThroughSymbol) {
+                    assert pfc != null;
+                    int symbolTableIdx = baseColumnMap != null ? baseColumnMap.getQuick(i) : i;
+                    StaticSymbolTable symbolTable = pfc.getSymbolTable(symbolTableIdx);
                     assert symbolTable != null;
                     int symbolColumnType = columnType;
                     if (!symbolTable.containsNullValue()) {
                         symbolColumnType |= 1 << 31;
                     }
-                    columnMetadata.add((long) i << 32 | symbolColumnType);
+                    columnMetadata.add((long) writerIdx << 32 | symbolColumnType);
                 } else {
-                    columnMetadata.add((long) i << 32 | columnType);
+                    columnMetadata.add((long) writerIdx << 32 | columnType);
                 }
             }
             streamWriter = createStreamingParquetWriter(
                     Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
-                    adjustedMetadata.getColumnCount(),
+                    meta.getColumnCount(),
                     columnNames.ptr(),
                     columnNames.size(),
                     columnMetadata.getAddress(),
-                    adjustedMetadata.getTimestampIndex(),
+                    meta.getTimestampIndex(),
                     descending,
                     ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                     statisticsEnabled,
