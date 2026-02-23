@@ -675,13 +675,10 @@ public class QwpWebSocketEncoderTest {
         try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
             QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < 10000; i++) {
-                sb.append('a');
-            }
+            String sb = "a".repeat(10000);
 
             QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("data", TYPE_STRING, true);
-            col.addString(sb.toString());
+            col.addString(sb);
             buffer.nextRow();
 
             int size = encoder.encode(buffer, false);
