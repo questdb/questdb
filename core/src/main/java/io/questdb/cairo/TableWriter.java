@@ -968,7 +968,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (isParquet) {
                 txWriter.setPartitionParquetGenerated(timestamp, true);
-                txWriter.setPartitionParquetFormat(timestamp, parquetSize, true);
+                txWriter.setPartitionParquetFormat(timestamp, parquetSize);
             }
 
             txWriter.bumpTruncateVersion();
@@ -2305,8 +2305,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (!ff.exists(path.$())) {
                 return false;
             }
+            final long parquetFileLength = ff.length(path.$());
 
-            txWriter.setPartitionParquetGenerated(partitionIndex, true);
+            txWriter.setPartitionParquetGenerated(partitionIndex, parquetFileLength);
             txWriter.bumpPartitionTableVersion();
             txWriter.commit(denseSymbolMapWriters);
             return true;

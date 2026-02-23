@@ -429,7 +429,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionParquetGenerated(int partitionIndex, boolean parquetGenerated) {
-        setPartitionParquetGeneratedByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetGenerated);
+        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        setPartitionParquetGeneratedByRawIndex(indexRaw, parquetGenerated);
+    }
+
+    public void setPartitionParquetGenerated(int partitionIndex, long fileLength) {
+        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        setPartitionParquetGeneratedByRawIndex(indexRaw, true);
+        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, fileLength);
     }
 
     public void setPartitionParquetGeneratedByRawIndex(int indexRaw, boolean parquetGenerated) {
@@ -584,8 +591,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return maskedSize;
     }
 
-    private static long updatePartitionHasParquetGenerated(long maskedSize, boolean markedForConversion) {
-        return updatePartitionFlagAt(maskedSize, markedForConversion, PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET);
+    private static long updatePartitionHasParquetGenerated(long maskedSize, boolean parquetGenerated) {
+        return updatePartitionFlagAt(maskedSize, parquetGenerated, PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET);
     }
 
     private static long updatePartitionHasParquetFormat(long maskedSize, boolean isParquetFormat) {
