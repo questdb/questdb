@@ -86,11 +86,20 @@ pub fn split_buffer_v2(
     rep_level_buffer_length: usize,
     def_level_buffer_length: usize,
 ) -> Result<(&[u8], &[u8], &[u8])> {
-    Ok((
-        &buffer[..rep_level_buffer_length],
-        &buffer[rep_level_buffer_length..rep_level_buffer_length + def_level_buffer_length],
-        &buffer[rep_level_buffer_length + def_level_buffer_length..],
-    ))
+    let rep = buffer.get(..rep_level_buffer_length).ok_or_else(|| {
+        Error::oos("The number of bytes declared in v2 rep levels is higher than the page size")
+    })?;
+    let def = buffer
+        .get(rep_level_buffer_length..rep_level_buffer_length + def_level_buffer_length)
+        .ok_or_else(|| {
+            Error::oos("The number of bytes declared in v2 def levels is higher than the page size")
+        })?;
+    let values = buffer.get(rep_level_buffer_length + def_level_buffer_length..).ok_or_else(|| {
+                Error::oos(
+                    "The number of bytes declared in v2 rep and def levels is higher than the page size",
+                )
+            })?;
+    Ok((rep, def, values))
 }
 
 /// Splits the page buffer into 3 slices corresponding to (encoded rep levels, encoded def levels, encoded values).
