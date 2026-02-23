@@ -5,7 +5,10 @@ use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DictPage, Page};
-use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
+use parquet2::schema::types::{
+    FieldInfo, ParquetType, PhysicalType, PrimitiveLogicalType, PrimitiveType,
+};
+use parquet2::schema::Repetition;
 use parquet2::statistics::{serialize_statistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
 use parquet2::write::Version;
@@ -305,6 +308,134 @@ fn make_i64_data(row_count: usize, null_pct: u8, null_value: i64) -> Vec<i64> {
         data.push(v);
     }
     data
+}
+
+fn decimal_primitive_type(
+    physical_type: PhysicalType,
+    precision: usize,
+    scale: usize,
+) -> PrimitiveType {
+    PrimitiveType {
+        field_info: FieldInfo {
+            name: "dec_col".to_string(),
+            repetition: Repetition::Optional,
+            id: None,
+        },
+        logical_type: Some(PrimitiveLogicalType::Decimal(precision, scale)),
+        converted_type: None,
+        physical_type,
+    }
+}
+
+fn decimal_col_type(precision: u8, scale: u8) -> ColumnType {
+    ColumnType::new_decimal(precision, scale).expect("valid decimal column type")
+}
+
+fn make_decimal_i32_data(row_count: usize, null_pct: u8) -> Vec<i32> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            i32::MIN
+        } else {
+            ((i as i32 % 60_001) - 30_000).wrapping_mul(17)
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_decimal_i64_data(row_count: usize, null_pct: u8) -> Vec<i64> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            i64::MIN
+        } else {
+            ((i as i64 % 2_000_001) - 1_000_000).wrapping_mul(1_003)
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn be_from_i64(value: i64, len: usize) -> Vec<u8> {
+    let sign = if value < 0 { 0xFF } else { 0x00 };
+    let mut out = vec![sign; len];
+    let be = value.to_be_bytes();
+    if len >= be.len() {
+        out[len - be.len()..].copy_from_slice(&be);
+    } else {
+        out.copy_from_slice(&be[be.len() - len..]);
+    }
+    out
+}
+
+fn make_decimal_var_data(row_count: usize, null_pct: u8, max_len: usize) -> BinaryData {
+    let mut data = Vec::new();
+    let mut offsets = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        offsets.push(data.len() as i64);
+        if is_null_at(i, null_pct) {
+            data.extend_from_slice(&(-1i64).to_le_bytes());
+            continue;
+        }
+        let len = 1 + (i % max_len);
+        let value = ((i as i64 % 20_001) - 10_000).wrapping_mul(13);
+        let be = be_from_i64(value, len);
+        data.extend_from_slice(&(be.len() as i64).to_le_bytes());
+        data.extend_from_slice(&be);
+    }
+    BinaryData { data, offsets }
+}
+
+fn make_decimal_var_dict_values(cardinality: usize, max_len: usize) -> Vec<Vec<u8>> {
+    (0..cardinality)
+        .map(|i| {
+            let len = 1 + (i % max_len);
+            let value = ((i as i64 % 20_001) - 10_000).wrapping_mul(13);
+            be_from_i64(value, len)
+        })
+        .collect()
+}
+
+fn decimal_flba_null_value<const N: usize>() -> [u8; N] {
+    let mut null_value = [0u8; N];
+    let null_bytes = i64::MIN.to_le_bytes();
+    for i in 0..N {
+        null_value[i] = null_bytes[i % null_bytes.len()];
+    }
+    null_value
+}
+
+fn make_decimal_flba_data<const N: usize>(row_count: usize, null_pct: u8) -> Vec<[u8; N]> {
+    let null_value = decimal_flba_null_value::<N>();
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            data.push(null_value);
+        } else {
+            let value = ((i as i64 % 20_001) - 10_000).wrapping_mul(7);
+            let mut be: [u8; N] = be_from_i64(value, N).try_into().expect("fixed length");
+            if be == null_value {
+                be[0] ^= 1;
+            }
+            data.push(be);
+        }
+    }
+    data
+}
+
+fn make_decimal_flba_dict_values<const N: usize>(cardinality: usize) -> Vec<[u8; N]> {
+    let null_value = decimal_flba_null_value::<N>();
+    let mut values = Vec::with_capacity(cardinality);
+    for i in 0..cardinality {
+        let value = ((i as i64 % 20_001) - 10_000).wrapping_mul(7);
+        let mut be: [u8; N] = be_from_i64(value, N).try_into().expect("fixed length");
+        if be == null_value {
+            be[0] ^= 1;
+        }
+        values.push(be);
+    }
+    values
 }
 
 fn make_f32_data(row_count: usize, null_pct: u8) -> Vec<f32> {
@@ -951,6 +1082,80 @@ fn build_var_rle_dict_pages(
     (data_page, dict_page)
 }
 
+/// Build RLE dictionary-encoded DataPage + DictPage for fixed-size byte values.
+fn build_fixed_bytes_rle_dict_pages<const N: usize>(
+    unique_values: &[[u8; N]],
+    null_pct: u8,
+    row_count: usize,
+    primitive_type: PrimitiveType,
+) -> (DataPage, DictPage) {
+    let cardinality = unique_values.len();
+    let mut indices: Vec<u32> = Vec::new();
+    let mut null_count = 0usize;
+
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            null_count += 1;
+            continue;
+        }
+        indices.push((i % cardinality) as u32);
+    }
+
+    let mut dict_buffer = Vec::with_capacity(unique_values.len() * N);
+    for value in unique_values {
+        dict_buffer.extend_from_slice(value);
+    }
+
+    let max_key = if unique_values.is_empty() {
+        0u32
+    } else {
+        unique_values.len() as u32 - 1
+    };
+    let bits_per_key = dict_bit_width(max_key as u64);
+
+    let mut data_buffer = Vec::new();
+    if null_count > 0 {
+        data_buffer.extend_from_slice(&[0u8; 4]);
+        let dl_start = data_buffer.len();
+        let def_levels = (0..row_count).map(|i| !is_null_at(i, null_pct));
+        encode_bool(&mut data_buffer, def_levels, row_count).expect("encode def levels");
+        let dl_len = (data_buffer.len() - dl_start) as i32;
+        data_buffer[dl_start - 4..dl_start].copy_from_slice(&dl_len.to_le_bytes());
+    }
+
+    let non_null_len = indices.len();
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        indices.into_iter(),
+        non_null_len,
+        bits_per_key as u32,
+    )
+    .expect("encode indices");
+
+    let max_def_level = if null_count > 0 { 1 } else { 0 };
+    let header = DataPageHeader::V1(DataPageHeaderV1 {
+        num_values: row_count as i32,
+        encoding: Encoding::RleDictionary.into(),
+        definition_level_encoding: Encoding::Rle.into(),
+        repetition_level_encoding: Encoding::Rle.into(),
+        statistics: None,
+    });
+    let data_page = DataPage::new(
+        header,
+        data_buffer,
+        Descriptor {
+            primitive_type,
+            max_def_level,
+            max_rep_level: 0,
+        },
+        Some(row_count),
+    );
+
+    let dict_page = DictPage::new(dict_buffer, unique_values.len(), false);
+    (data_page, dict_page)
+}
+
 /// Number of f64 elements per array row in LIST-encoded array benchmarks.
 const ARRAY_ELEMS_PER_ROW: usize = 4;
 
@@ -1176,6 +1381,56 @@ macro_rules! fixed_dict_cases {
     };
 }
 
+macro_rules! decimal_flba_cases {
+    ($cases:ident, $opts:ident, $src_len:expr, $precision:expr, $scale:expr, $label:literal) => {{
+        let primitive_type = decimal_primitive_type(
+            PhysicalType::FixedLenByteArray($src_len),
+            $precision,
+            $scale,
+        );
+        let column_type = decimal_col_type($precision as u8, $scale as u8);
+
+        for &null_pct in null_pcts(true) {
+            let data = make_decimal_flba_data::<$src_len>(ROW_COUNT, null_pct);
+            let page = data_page_from(
+                bytes_to_page(&data, false, 0, $opts, primitive_type.clone()).expect("page"),
+            );
+            $cases.push(build_case(
+                format!(concat!($label, "_plain_n{null_pct}"), null_pct = null_pct),
+                page,
+                None,
+                column_type,
+                None,
+                ROW_COUNT,
+            ));
+        }
+
+        for &card in &DICT_CARDINALITIES {
+            for &null_pct in null_pcts(true) {
+                let values = make_decimal_flba_dict_values::<$src_len>(card);
+                let (page, dict) = build_fixed_bytes_rle_dict_pages(
+                    &values,
+                    null_pct,
+                    ROW_COUNT,
+                    primitive_type.clone(),
+                );
+                $cases.push(build_case(
+                    format!(
+                        concat!($label, "_dict_c{card}_n{null_pct}"),
+                        card = card,
+                        null_pct = null_pct
+                    ),
+                    page,
+                    Some(dict),
+                    column_type,
+                    None,
+                    ROW_COUNT,
+                ));
+            }
+        }
+    }};
+}
+
 fn build_cases() -> Vec<BenchCase> {
     let mut cases = Vec::new();
     let options = write_options();
@@ -1321,6 +1576,162 @@ fn build_cases() -> Vec<BenchCase> {
         ROW_COUNT, np, card
     ));
 
+    // Decimal (physical Int32) -> Decimal32
+    {
+        let precision = 9usize;
+        let scale = 2usize;
+        let primitive_type = decimal_primitive_type(PhysicalType::Int32, precision, scale);
+        let column_type = decimal_col_type(precision as u8, scale as u8);
+
+        for &null_pct in null_pcts(true) {
+            let data = make_decimal_i32_data(ROW_COUNT, null_pct);
+            let page = data_page_from(
+                int_slice_to_page_nullable::<i32, i32>(
+                    &data,
+                    0,
+                    options,
+                    primitive_type.clone(),
+                    Encoding::Plain,
+                )
+                .expect("page"),
+            );
+            cases.push(build_case(
+                format!("decimal_int32_plain_n{null_pct}"),
+                page,
+                None,
+                column_type,
+                None,
+                ROW_COUNT,
+            ));
+        }
+
+        for &card in &DICT_CARDINALITIES {
+            for &null_pct in null_pcts(true) {
+                let data = make_i32_dict_data(ROW_COUNT, null_pct, card);
+                let (page, dict) =
+                    build_fixed_rle_dict_pages(&data, null_pct, ROW_COUNT, primitive_type.clone());
+                cases.push(build_case(
+                    format!("decimal_int32_dict_c{card}_n{null_pct}"),
+                    page,
+                    Some(dict),
+                    column_type,
+                    None,
+                    ROW_COUNT,
+                ));
+            }
+        }
+    }
+
+    // Decimal (physical Int64) -> Decimal64
+    {
+        let precision = 18usize;
+        let scale = 3usize;
+        let primitive_type = decimal_primitive_type(PhysicalType::Int64, precision, scale);
+        let column_type = decimal_col_type(precision as u8, scale as u8);
+
+        for &encoding in &INT_ENCODINGS {
+            let enc = enc_label(encoding);
+            for &null_pct in null_pcts(true) {
+                let data = make_decimal_i64_data(ROW_COUNT, null_pct);
+                let page = data_page_from(
+                    int_slice_to_page_nullable::<i64, i64>(
+                        &data,
+                        0,
+                        options,
+                        primitive_type.clone(),
+                        encoding,
+                    )
+                    .expect("page"),
+                );
+                cases.push(build_case(
+                    format!("decimal_int64_{enc}_n{null_pct}"),
+                    page,
+                    None,
+                    column_type,
+                    None,
+                    ROW_COUNT,
+                ));
+            }
+        }
+
+        for &card in &DICT_CARDINALITIES {
+            for &null_pct in null_pcts(true) {
+                let data = make_i64_dict_data(ROW_COUNT, null_pct, card);
+                let (page, dict) =
+                    build_fixed_rle_dict_pages(&data, null_pct, ROW_COUNT, primitive_type.clone());
+                cases.push(build_case(
+                    format!("decimal_int64_dict_c{card}_n{null_pct}"),
+                    page,
+                    Some(dict),
+                    column_type,
+                    None,
+                    ROW_COUNT,
+                ));
+            }
+        }
+    }
+
+    // Decimal (physical ByteArray) -> Decimal64 / Decimal128
+    for (precision, scale, label) in [(18usize, 3usize, "dec64"), (30usize, 4usize, "dec128")] {
+        let primitive_type = decimal_primitive_type(PhysicalType::ByteArray, precision, scale);
+        let column_type = decimal_col_type(precision as u8, scale as u8);
+
+        for &null_pct in null_pcts(true) {
+            let data = make_decimal_var_data(ROW_COUNT, null_pct, 12);
+            let page = data_page_from(
+                binary_to_page(
+                    &data.offsets,
+                    &data.data,
+                    0,
+                    options,
+                    primitive_type.clone(),
+                    Encoding::Plain,
+                )
+                .expect("page"),
+            );
+            cases.push(build_case(
+                format!("decimal_byte_array_{label}_plain_n{null_pct}"),
+                page,
+                None,
+                column_type,
+                None,
+                ROW_COUNT,
+            ));
+        }
+
+        for &card in &DICT_CARDINALITIES {
+            for &null_pct in null_pcts(true) {
+                let values = make_decimal_var_dict_values(card, 12);
+                let (page, dict) =
+                    build_var_rle_dict_pages(&values, null_pct, ROW_COUNT, primitive_type.clone());
+                cases.push(build_case(
+                    format!("decimal_byte_array_{label}_dict_c{card}_n{null_pct}"),
+                    page,
+                    Some(dict),
+                    column_type,
+                    None,
+                    ROW_COUNT,
+                ));
+            }
+        }
+    }
+
+    // Decimal (physical FixedLenByteArray), including odd src_len values.
+    // Decimal64 target (precision 18): odd len < 8, exact 8, odd len > 8, and wider truncation case.
+    decimal_flba_cases!(cases, options, 7, 18usize, 3usize, "decimal_flba7_dec64");
+    decimal_flba_cases!(cases, options, 8, 18usize, 3usize, "decimal_flba8_dec64");
+    decimal_flba_cases!(cases, options, 9, 18usize, 3usize, "decimal_flba9_dec64");
+    decimal_flba_cases!(cases, options, 15, 18usize, 3usize, "decimal_flba15_dec64");
+    decimal_flba_cases!(cases, options, 16, 18usize, 3usize, "decimal_flba16_dec64");
+
+    // Decimal128 target (precision 30): odd len < 16, exact 16, odd len > 16.
+    decimal_flba_cases!(cases, options, 15, 30usize, 4usize, "decimal_flba15_dec128");
+    decimal_flba_cases!(cases, options, 16, 30usize, 4usize, "decimal_flba16_dec128");
+    decimal_flba_cases!(cases, options, 17, 30usize, 4usize, "decimal_flba17_dec128");
+
+    // Decimal256 target (precision 60): odd len close to 32 to exercise multi-word sign-extension.
+    decimal_flba_cases!(cases, options, 31, 60usize, 6usize, "decimal_flba31_dec256");
+
     // Variable-length types — each uses a different page function with different args
     for &encoding in &LEN_ENCODINGS {
         let enc = enc_label(encoding);
@@ -1421,9 +1832,7 @@ fn build_cases() -> Vec<BenchCase> {
     // Binary — RLE dictionary
     for &card in &DICT_CARDINALITIES {
         for &null_pct in null_pcts(true) {
-            let values: Vec<Vec<u8>> = (0..card)
-                .map(|i| vec![i as u8; 8 + (i % 5)])
-                .collect();
+            let values: Vec<Vec<u8>> = (0..card).map(|i| vec![i as u8; 8 + (i % 5)]).collect();
             let column_type = ColumnType::new(ColumnTypeTag::Binary, 0);
             let primitive_type = primitive_type_for(column_type);
             let (page, dict) =

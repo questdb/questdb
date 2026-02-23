@@ -136,6 +136,11 @@ where
             "data_vec length is not aligned to element size"
         );
         let buffers_offset = existing / std::mem::size_of::<U>();
+        debug_assert_eq!(
+            values.len() % size_of::<T>(),
+            0,
+            "plain source buffer is not element-aligned"
+        );
         Self {
             values: values.as_ptr().cast(),
             values_offset: 0,
@@ -170,6 +175,8 @@ where
     V: Converter<T, U>,
 {
     fn push(&mut self) -> ParquetResult<()> {
+        // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
+        // We rely on trusted parquet metadata/level streams to keep `values_offset` in-bounds.
         unsafe {
             *self.buffers_ptr.add(self.buffers_offset) = self
                 .converter
@@ -181,6 +188,7 @@ where
     }
 
     fn push_null(&mut self) -> ParquetResult<()> {
+        // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
         unsafe {
             *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
             self.buffers_offset += 1;
@@ -189,8 +197,10 @@ where
     }
 
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+        // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
         let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
         for i in 0..count {
+            // SAFETY: `out` points to reserved output space and `i < count`.
             unsafe {
                 *out.add(i) = self.null_value;
             }
@@ -203,6 +213,8 @@ where
         if size_of::<T>() == size_of::<U>() && TypeId::of::<T>() == TypeId::of::<U>() && V::IDENTITY
         {
             // Same type, same layout: bulk copy (also handles unaligned source)
+            // SAFETY: destination bytes are in-bounds because decode paths reserve output upfront.
+            // We rely on trusted parquet metadata/level streams to keep source in-bounds.
             unsafe {
                 ptr::copy_nonoverlapping(
                     self.values.add(self.values_offset) as *const u8,
@@ -211,8 +223,11 @@ where
                 );
             }
         } else {
+            // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
             let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
             for i in 0..count {
+                // SAFETY: destination element `buffers_offset + i` is within reserved output.
+                // We rely on trusted parquet metadata/level streams to keep source in-bounds.
                 unsafe {
                     *out.add(i) = self
                         .converter
@@ -230,6 +245,8 @@ where
         if self.buffers.data_vec.len() < needed {
             let additional = needed - self.buffers.data_vec.len();
             self.buffers.data_vec.reserve(additional)?;
+            // SAFETY: `needed <= capacity` after reserve; we only expose initialized bytes
+            // after writes in push/push_slice paths.
             unsafe {
                 self.buffers.data_vec.set_len(needed);
             }

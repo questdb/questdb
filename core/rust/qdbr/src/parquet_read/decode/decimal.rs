@@ -1,27 +1,48 @@
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
-use crate::parquet_read::decode::{decode_page0, decode_page0_filtered};
-use crate::parquet_read::decoders::{BaseVarDictDecoder, VarDictDecoder};
+use crate::parquet_read::decoders::{
+    BaseVarDictDecoder, PrimitiveDictDecoder, RleDictionaryDecoder,
+};
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
-use crate::parquet_read::slicer::{DataPageDynSlicer, DataPageSlicer, PlainVarSlicer};
+use crate::parquet_read::slicer::{DataPageDynSlicer, DataPageSlicer, PlainVarSlicer, SliceSink};
 use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::decimal::{
-    DECIMAL128_NULL, DECIMAL16_NULL, DECIMAL256_NULL, DECIMAL32_NULL, DECIMAL64_NULL, DECIMAL8_NULL,
+    Decimal128, Decimal16, Decimal256, Decimal32, Decimal64, Decimal8, DECIMAL128_NULL,
+    DECIMAL128_NULL_VAL, DECIMAL16_NULL, DECIMAL16_NULL_VAL, DECIMAL256_NULL, DECIMAL256_NULL_VAL,
+    DECIMAL32_NULL, DECIMAL32_NULL_VAL, DECIMAL64_NULL, DECIMAL64_NULL_VAL, DECIMAL8_NULL,
+    DECIMAL8_NULL_VAL,
 };
 use qdb_core::col_type::ColumnTypeTag;
 use std::ptr;
 
-/// Decode a FixedLenByteArray with Decimal logical type to a QuestDB decimal column.
-/// Handles all source sizes (1-32 bytes) and target decimal types (Decimal8-Decimal256).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn decode_fixed_decimal(
+#[inline(always)]
+pub(super) fn decode_fixed_decimal_mode<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     bufs: &mut ColumnChunkBuffers,
     values_buffer: &[u8],
-    row_lo: usize,
-    row_hi: usize,
-    row_count: usize,
+    mode: super::DecodeModeContext<'_>,
+    src_len: usize,
+    target_tag: ColumnTypeTag,
+) -> ParquetResult<()> {
+    let mut slicer = DataPageDynSlicer::new(values_buffer, mode.sliced_row_count(), src_len);
+    decode_fixed_decimal_with_slicer_mode::<FILTERED, FILL_NULLS, _>(
+        page,
+        bufs,
+        &mut slicer,
+        mode,
+        src_len,
+        target_tag,
+    )
+}
+
+#[inline(always)]
+pub(super) fn decode_fixed_decimal_dict_mode<const FILTERED: bool, const FILL_NULLS: bool>(
+    page: &DataPage<'_>,
+    dict_page: &DictPage<'_>,
+    bufs: &mut ColumnChunkBuffers,
+    values_buffer: &[u8],
+    mode: super::DecodeModeContext<'_>,
     src_len: usize,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
@@ -40,7 +61,6 @@ pub(crate) fn decode_fixed_decimal(
             ))
         }
     };
-
     if src_len == 0 || src_len > 32 {
         return Err(fmt_err!(
             Unsupported,
@@ -51,61 +71,92 @@ pub(crate) fn decode_fixed_decimal(
         ));
     }
 
+    let row_hi = mode.source_row_count();
     match target_tag {
-        ColumnTypeTag::Decimal8 => decode_fixed_decimal_1(
-            page,
-            bufs,
-            values_buffer,
-            row_lo,
-            row_hi,
-            row_count,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal16 => decode_fixed_decimal_2(
-            page,
-            bufs,
-            values_buffer,
-            row_lo,
-            row_hi,
-            row_count,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal32 => decode_fixed_decimal_4(
-            page,
-            bufs,
-            values_buffer,
-            row_lo,
-            row_hi,
-            row_count,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal64 => decode_fixed_decimal_8(
-            page,
-            bufs,
-            values_buffer,
-            row_lo,
-            row_hi,
-            row_count,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal128 => decode_fixed_decimal_16(
-            page,
-            bufs,
-            values_buffer,
-            row_lo,
-            row_hi,
-            row_count,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal256 => decode_fixed_decimal_32(
-            page,
-            bufs,
-            values_buffer,
-            row_lo,
-            row_hi,
-            row_count,
-            src_len,
-        ),
+        ColumnTypeTag::Decimal8 => {
+            let dict = PreconvertedFlbaDecimalDict::try_new_decimal8(dict_page, src_len)?;
+            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict,
+                    row_hi,
+                    DECIMAL8_NULL_VAL,
+                    bufs,
+                )?,
+            )
+        }
+        ColumnTypeTag::Decimal16 => {
+            let dict = PreconvertedFlbaDecimalDict::try_new_decimal16(dict_page, src_len)?;
+            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict,
+                    row_hi,
+                    DECIMAL16_NULL_VAL,
+                    bufs,
+                )?,
+            )
+        }
+        ColumnTypeTag::Decimal32 => {
+            let dict = PreconvertedFlbaDecimalDict::try_new_decimal32(dict_page, src_len)?;
+            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict,
+                    row_hi,
+                    DECIMAL32_NULL_VAL,
+                    bufs,
+                )?,
+            )
+        }
+        ColumnTypeTag::Decimal64 => {
+            let dict = PreconvertedFlbaDecimalDict::try_new_decimal64(dict_page, src_len)?;
+            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict,
+                    row_hi,
+                    DECIMAL64_NULL_VAL,
+                    bufs,
+                )?,
+            )
+        }
+        ColumnTypeTag::Decimal128 => {
+            let dict = PreconvertedFlbaDecimalDict::try_new_decimal128(dict_page, src_len)?;
+            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict,
+                    row_hi,
+                    DECIMAL128_NULL_VAL,
+                    bufs,
+                )?,
+            )
+        }
+        ColumnTypeTag::Decimal256 => {
+            let dict = PreconvertedFlbaDecimalDict::try_new_decimal256(dict_page, src_len)?;
+            super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict,
+                    row_hi,
+                    DECIMAL256_NULL_VAL,
+                    bufs,
+                )?,
+            )
+        }
         _ => Err(fmt_err!(
             Unsupported,
             "unsupported target column type {:?} for FixedLenByteArray decimal",
@@ -114,131 +165,246 @@ pub(crate) fn decode_fixed_decimal(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn decode_fixed_decimal_dict(
-    page: &DataPage<'_>,
-    dict_page: &DictPage<'_>,
-    bufs: &mut ColumnChunkBuffers,
-    values_buffer: &[u8],
-    row_lo: usize,
-    row_hi: usize,
-    row_count: usize,
-    src_len: usize,
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    let dict_decoder = RuntimeFixedDictDecoder::try_new(dict_page, src_len)?;
-    let error_value = vec![0u8; src_len];
-    let mut slicer = RleDictionarySlicer::try_new(
-        values_buffer,
-        dict_decoder,
-        row_hi,
-        row_count,
-        error_value.as_slice(),
-    )?;
-    decode_fixed_decimal_with_slicer(page, bufs, &mut slicer, row_lo, row_hi, src_len, target_tag)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn decode_byte_array_decimal(
+#[inline(always)]
+pub(super) fn decode_byte_array_decimal_mode<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     bufs: &mut ColumnChunkBuffers,
     values_buffer: &[u8],
-    row_lo: usize,
-    row_hi: usize,
-    row_count: usize,
+    mode: super::DecodeModeContext<'_>,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
-    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
-    decode_byte_array_decimal_with_slicer(page, bufs, &mut slicer, row_lo, row_hi, target_tag)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn decode_byte_array_decimal_dict(
-    page: &DataPage,
-    dict_page: &DictPage,
-    bufs: &mut ColumnChunkBuffers,
-    values_buffer: &[u8],
-    row_lo: usize,
-    row_hi: usize,
-    row_count: usize,
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
-    let mut slicer = RleDictionarySlicer::try_new(
-        values_buffer,
-        dict_decoder,
-        row_hi,
-        row_count,
-        &DECIMAL_DICT_ERROR_VALUE,
-    )?;
-    decode_byte_array_decimal_with_slicer(page, bufs, &mut slicer, row_lo, row_hi, target_tag)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn decode_byte_array_decimal_filtered<const FILL_NULLS: bool>(
-    page: &DataPage,
-    bufs: &mut ColumnChunkBuffers,
-    values_buffer: &[u8],
-    page_row_start: usize,
-    page_row_count: usize,
-    row_group_lo: usize,
-    row_lo: usize,
-    row_hi: usize,
-    rows_filter: &[i64],
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    let mut slicer = PlainVarSlicer::new(values_buffer, page_row_count);
-    decode_byte_array_decimal_filtered_with_slicer::<FILL_NULLS, _>(
+    let mut slicer = PlainVarSlicer::new(values_buffer, mode.sliced_row_count());
+    decode_byte_array_decimal_with_slicer_mode::<FILTERED, FILL_NULLS, _>(
         page,
         bufs,
         &mut slicer,
-        page_row_start,
-        page_row_count,
-        row_group_lo,
-        row_lo,
-        row_hi,
-        rows_filter,
+        mode,
         target_tag,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn decode_byte_array_decimal_filtered_dict<const FILL_NULLS: bool>(
+#[inline(always)]
+pub(super) fn decode_byte_array_decimal_dict_mode<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict_page: &DictPage,
     bufs: &mut ColumnChunkBuffers,
     values_buffer: &[u8],
-    page_row_start: usize,
-    page_row_count: usize,
-    row_group_lo: usize,
-    row_lo: usize,
-    row_hi: usize,
-    rows_filter: &[i64],
+    mode: super::DecodeModeContext<'_>,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
     let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
     let mut slicer = RleDictionarySlicer::try_new(
         values_buffer,
         dict_decoder,
-        page_row_count,
-        page_row_count,
+        mode.source_row_count(),
+        mode.sliced_row_count(),
         &DECIMAL_DICT_ERROR_VALUE,
     )?;
-    decode_byte_array_decimal_filtered_with_slicer::<FILL_NULLS, _>(
+    decode_byte_array_decimal_with_slicer_mode::<FILTERED, FILL_NULLS, _>(
         page,
         bufs,
         &mut slicer,
-        page_row_start,
-        page_row_count,
-        row_group_lo,
-        row_lo,
-        row_hi,
-        rows_filter,
+        mode,
         target_tag,
     )
 }
 
 const DECIMAL_DICT_ERROR_VALUE: [u8; 1] = [0u8];
+
+#[inline]
+unsafe fn reverse_exact<const N: usize>(src: &[u8], dest: *mut u8) {
+    debug_assert!(src.len() == N);
+
+    if N == 1 {
+        *dest = src[0];
+    } else if N == 2 {
+        let v = (src.as_ptr() as *const u16).read_unaligned().swap_bytes();
+        (dest as *mut u16).write_unaligned(v);
+    } else if N == 4 {
+        let v = (src.as_ptr() as *const u32).read_unaligned().swap_bytes();
+        (dest as *mut u32).write_unaligned(v);
+    } else if N == 8 {
+        let v = (src.as_ptr() as *const u64).read_unaligned().swap_bytes();
+        (dest as *mut u64).write_unaligned(v);
+    } else {
+        for i in 0..N {
+            *dest.add(i) = src[N - i - 1];
+        }
+    }
+}
+
+#[inline]
+unsafe fn word_swap_exact<const WORDS: usize>(src: &[u8], dest: *mut u8) {
+    debug_assert!(src.len() == WORDS * 8);
+    for w in 0..WORDS {
+        let src_word = (src.as_ptr().add(w * 8) as *const u64)
+            .read_unaligned()
+            .swap_bytes();
+        (dest.add(w * 8) as *mut u64).write_unaligned(src_word);
+    }
+}
+
+#[inline]
+unsafe fn load_be_u64_by_len(src: *const u8, src_len: usize) -> u64 {
+    match src_len {
+        1 => *src as u64,
+        2 => u16::from_be((src as *const u16).read_unaligned()) as u64,
+        3 => {
+            ((u16::from_be((src as *const u16).read_unaligned()) as u64) << 8) | *src.add(2) as u64
+        }
+        4 => u32::from_be((src as *const u32).read_unaligned()) as u64,
+        5 => {
+            ((u32::from_be((src as *const u32).read_unaligned()) as u64) << 8) | *src.add(4) as u64
+        }
+        6 => {
+            ((u32::from_be((src as *const u32).read_unaligned()) as u64) << 16)
+                | u16::from_be((src.add(4) as *const u16).read_unaligned()) as u64
+        }
+        7 => {
+            ((u32::from_be((src as *const u32).read_unaligned()) as u64) << 24)
+                | ((u16::from_be((src.add(4) as *const u16).read_unaligned()) as u64) << 8)
+                | *src.add(6) as u64
+        }
+        8 => u64::from_be((src as *const u64).read_unaligned()),
+        _ => unreachable!("source len for Decimal64 fast path must be in 1..=8"),
+    }
+}
+
+#[inline]
+unsafe fn decode_decimal64_from_be(src: *const u8, src_len: usize) -> i64 {
+    if src_len <= 8 {
+        let raw = load_be_u64_by_len(src, src_len);
+        let shift = (8 - src_len) * 8;
+        (raw << shift) as i64 >> shift
+    } else {
+        let trunc = src_len - 8;
+        u64::from_be((src.add(trunc) as *const u64).read_unaligned()) as i64
+    }
+}
+
+#[inline]
+unsafe fn load_be_u64_signext_window(
+    src: *const u8,
+    src_len: usize,
+    total_len: usize,
+    window_start: usize,
+    sign_byte: u8,
+) -> u64 {
+    debug_assert!(total_len >= src_len);
+    debug_assert!(window_start + 8 <= total_len);
+
+    let sign_prefix = total_len - src_len;
+    if window_start + 8 <= sign_prefix {
+        return if sign_byte == 0xFF { u64::MAX } else { 0 };
+    }
+
+    let prefix_len = sign_prefix.saturating_sub(window_start).min(8);
+    let src_start = window_start.saturating_sub(sign_prefix);
+    let available = src_len.saturating_sub(src_start);
+    let take = (8 - prefix_len).min(available);
+
+    if take == 0 {
+        return if sign_byte == 0xFF { u64::MAX } else { 0 };
+    }
+
+    let fragment = load_be_u64_by_len(src.add(src_start), take);
+    if sign_byte == 0xFF {
+        if take == 8 {
+            fragment
+        } else {
+            let sign_mask = (!0u64) << (take * 8);
+            sign_mask | fragment
+        }
+    } else {
+        fragment
+    }
+}
+
+#[inline]
+unsafe fn convert_decimal_to_target<const N: usize>(
+    mut src: &[u8],
+    dest: *mut u8,
+    _source_name: &'static str,
+) -> ParquetResult<()> {
+    let mut src_len = src.len();
+
+    if src_len > N {
+        let trunc = src_len - N;
+        src = &src[trunc..];
+        src_len = N;
+    }
+
+    if N <= 8 {
+        let raw = load_be_u64_by_len(src.as_ptr(), src_len);
+        let shift = (8 - src_len) * 8;
+        let signed = (raw << shift) as i64 >> shift;
+        if N == 1 {
+            *dest = signed as i8 as u8;
+        } else if N == 2 {
+            (dest as *mut i16).write_unaligned((signed as i16).to_le());
+        } else if N == 4 {
+            (dest as *mut i32).write_unaligned((signed as i32).to_le());
+        } else if N == 8 {
+            (dest as *mut i64).write_unaligned(signed.to_le());
+        } else {
+            unreachable!("unsupported small decimal target size {}", N);
+        }
+        return Ok(());
+    }
+
+    if src_len == N {
+        if N == 16 {
+            word_swap_exact::<2>(src, dest);
+            return Ok(());
+        }
+        if N == 32 {
+            word_swap_exact::<4>(src, dest);
+            return Ok(());
+        }
+    }
+
+    let sign_byte = if src[0] & 0x80 != 0 { 0xFF } else { 0x00 };
+    if N > 8 {
+        let words = N / 8;
+        for w in 0..words {
+            let word_start = w * 8;
+            let word = load_be_u64_signext_window(src.as_ptr(), src_len, N, word_start, sign_byte);
+            (dest.add(word_start) as *mut u64).write_unaligned(word);
+        }
+    }
+
+    Ok(())
+}
+
+#[inline]
+unsafe fn convert_fixed_decimal_to_target<const N: usize>(
+    src: &[u8],
+    dest: *mut u8,
+) -> ParquetResult<()> {
+    if src.is_empty() {
+        return Err(fmt_err!(
+            Unsupported,
+            "invalid decimal source length 0 for target size {}",
+            N
+        ));
+    }
+    convert_decimal_to_target::<N>(src, dest, "FixedLenByteArray")
+}
+
+#[inline]
+unsafe fn convert_byte_array_decimal_to_target<const N: usize>(
+    src: &[u8],
+    dest: *mut u8,
+) -> ParquetResult<()> {
+    if src.is_empty() {
+        return Err(fmt_err!(
+            Unsupported,
+            "invalid ByteArray decimal source length 0 for target size {}",
+            N
+        ));
+    }
+    convert_decimal_to_target::<N>(src, dest, "ByteArray")
+}
 
 pub struct ReverseDecimalColumnSink<'a, const N: usize, T: DataPageSlicer> {
     slicer: &'a mut T,
@@ -260,9 +426,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseDecimalColumnSink<'_
 
         unsafe {
             let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-            for i in 0..N {
-                *ptr.add(i) = slice[N - i - 1];
-            }
+            reverse_exact::<N>(slice, ptr);
             self.buffers.data_vec.set_len(base + N);
         }
         Ok(())
@@ -295,11 +459,37 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseDecimalColumnSink<'_
 
                 unsafe {
                     let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-                    for c in 0..count {
-                        let slice = self.slicer.next();
-                        let dest = ptr.add(c * N);
-                        for i in 0..N {
-                            *dest.add(i) = slice[N - i - 1];
+                    {
+                        let dst = std::slice::from_raw_parts_mut(ptr, total_bytes);
+                        let mut sink = SliceSink(dst);
+                        self.slicer.next_slice_into(count, &mut sink)?;
+                    }
+                    if N == 2 {
+                        for c in 0..count {
+                            let p = ptr.add(c * 2) as *mut u16;
+                            p.write_unaligned(p.read_unaligned().swap_bytes());
+                        }
+                    } else if N == 4 {
+                        for c in 0..count {
+                            let p = ptr.add(c * 4) as *mut u32;
+                            p.write_unaligned(p.read_unaligned().swap_bytes());
+                        }
+                    } else if N == 8 {
+                        for c in 0..count {
+                            let p = ptr.add(c * 8) as *mut u64;
+                            p.write_unaligned(p.read_unaligned().swap_bytes());
+                        }
+                    } else {
+                        for c in 0..count {
+                            let dest = ptr.add(c * N);
+                            let mut i = 0usize;
+                            while i < N / 2 {
+                                let a = *dest.add(i);
+                                let b = *dest.add(N - i - 1);
+                                *dest.add(i) = b;
+                                *dest.add(N - i - 1) = a;
+                                i += 1;
+                            }
                         }
                     }
                     self.buffers.data_vec.set_len(base + total_bytes);
@@ -400,13 +590,7 @@ impl<const N: usize, const WORDS: usize, T: DataPageSlicer> Pushable
 
         unsafe {
             let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-            for w in 0..WORDS {
-                let src_offset = w * 8;
-                let dst_offset = w * 8;
-                for i in 0..8 {
-                    *ptr.add(dst_offset + i) = slice[src_offset + 7 - i];
-                }
-            }
+            word_swap_exact::<WORDS>(slice, ptr);
             self.buffers.data_vec.set_len(base + N);
         }
         Ok(())
@@ -439,15 +623,16 @@ impl<const N: usize, const WORDS: usize, T: DataPageSlicer> Pushable
 
                 unsafe {
                     let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
+                    {
+                        let dst = std::slice::from_raw_parts_mut(ptr, total_bytes);
+                        let mut sink = SliceSink(dst);
+                        self.slicer.next_slice_into(count, &mut sink)?;
+                    }
                     for c in 0..count {
-                        let slice = self.slicer.next();
-                        let dest = ptr.add(c * N);
+                        let value_ptr = ptr.add(c * N);
                         for w in 0..WORDS {
-                            let src_offset = w * 8;
-                            let dst_offset = w * 8;
-                            for i in 0..8 {
-                                *dest.add(dst_offset + i) = slice[src_offset + 7 - i];
-                            }
+                            let p = value_ptr.add(w * 8) as *mut u64;
+                            p.write_unaligned(p.read_unaligned().swap_bytes());
                         }
                     }
                     self.buffers.data_vec.set_len(base + total_bytes);
@@ -528,7 +713,7 @@ impl<'a, const N: usize, const WORDS: usize, T: DataPageSlicer>
 ///
 /// N is the target size in bytes (1, 2, 4, 8, 16, or 32).
 /// `src_len` is the source size in bytes from the Parquet file.
-/// If `src_len` > N, the value must be sign-extended (only leading sign bytes may be truncated).
+/// If `src_len` > N, high-order bytes are truncated and low-order bytes are decoded.
 ///
 /// For simple decimals (N <= 8): sign-extend and reverse all bytes.
 /// For multi-word decimals (N = 16 or 32): sign-extend and swap bytes within each 8-byte word.
@@ -567,10 +752,41 @@ impl<const N: usize, T: DataPageSlicer> Pushable for SignExtendDecimalColumnSink
 
         unsafe {
             let ptr = self.buffers.data_vec.as_mut_ptr().add(base);
-            for c in 0..count {
-                let slice = self.slicer.next();
-                let dest = ptr.add(c * N);
-                Self::sign_extend_and_convert(slice, dest, self.src_len)?;
+            if N == 8 {
+                const CHUNK_VALUES: usize = 256;
+                let mut tmp = [0u8; CHUNK_VALUES * 32];
+                let mut out_idx = 0usize;
+                while out_idx < count {
+                    let chunk = (count - out_idx).min(CHUNK_VALUES);
+                    if let Some(raw_chunk) = self.slicer.next_raw_slice(chunk) {
+                        for c in 0..chunk {
+                            let src_ptr = raw_chunk.as_ptr().add(c * self.src_len);
+                            let signed = decode_decimal64_from_be(src_ptr, self.src_len);
+                            (ptr.add((out_idx + c) * 8) as *mut i64)
+                                .write_unaligned(signed.to_le());
+                        }
+                    } else {
+                        let src_bytes = chunk * self.src_len;
+                        {
+                            let mut sink = SliceSink(&mut tmp[..src_bytes]);
+                            self.slicer.next_slice_into(chunk, &mut sink)?;
+                        }
+
+                        for c in 0..chunk {
+                            let src_ptr = tmp.as_ptr().add(c * self.src_len);
+                            let signed = decode_decimal64_from_be(src_ptr, self.src_len);
+                            (ptr.add((out_idx + c) * 8) as *mut i64)
+                                .write_unaligned(signed.to_le());
+                        }
+                    }
+                    out_idx += chunk;
+                }
+            } else {
+                for c in 0..count {
+                    let slice = self.slicer.next();
+                    let dest = ptr.add(c * N);
+                    Self::sign_extend_and_convert(slice, dest, self.src_len)?;
+                }
             }
             self.buffers.data_vec.set_len(base + total_bytes);
         }
@@ -627,198 +843,50 @@ impl<'a, const N: usize, T: DataPageSlicer> SignExtendDecimalColumnSink<'a, N, T
         src_len: usize,
     ) -> ParquetResult<()> {
         debug_assert!(src.len() == src_len);
-        if src_len == 0 {
-            return Err(fmt_err!(
-                Unsupported,
-                "invalid decimal source length 0 for target size {}",
-                N
-            ));
-        }
-        let mut src = src;
-        let mut src_len = src_len;
-        if src_len > N {
-            let sign_byte = if src[0] & 0x80 != 0 { 0xFF } else { 0x00 };
-            let trunc = src_len - N;
-            if src[..trunc].iter().any(|b| *b != sign_byte) {
-                return Err(fmt_err!(
-                    Unsupported,
-                    "FixedLenByteArray({}) decimal cannot be decoded to target size {} bytes: \
-                     source is larger than target and not sign-extended",
-                    src_len,
-                    N
-                ));
-            }
-            let msb = src[trunc];
-            if (msb & 0x80) != (sign_byte & 0x80) {
-                return Err(fmt_err!(
-                    Unsupported,
-                    "FixedLenByteArray({}) decimal cannot be decoded to target size {} bytes: \
-                     source is larger than target and would truncate significant digits",
-                    src_len,
-                    N
-                ));
-            }
-            src = &src[trunc..];
-            src_len = N;
-        }
-
-        let sign_byte = if src[0] & 0x80 != 0 { 0xFF } else { 0x00 };
-
-        if N <= 8 {
-            for i in 0..src_len {
-                *dest.add(i) = src[src_len - 1 - i];
-            }
-            for i in src_len..N {
-                *dest.add(i) = sign_byte;
-            }
-        } else {
-            let words = N / 8;
-            let sign_prefix = N - src_len;
-
-            for w in 0..words {
-                let word_start_in_extended = w * 8;
-                let word_dest = dest.add(w * 8);
-
-                for i in 0..8 {
-                    let extended_pos = word_start_in_extended + 7 - i;
-                    let byte = if extended_pos < sign_prefix {
-                        sign_byte
-                    } else {
-                        src[extended_pos - sign_prefix]
-                    };
-                    *word_dest.add(i) = byte;
-                }
-            }
-        }
-        Ok(())
+        convert_fixed_decimal_to_target::<N>(src, dest)
     }
 }
 
-fn decode_byte_array_decimal_with_slicer<T: DataPageSlicer>(
+fn decode_byte_array_decimal_with_slicer_mode<
+    const FILTERED: bool,
+    const FILL_NULLS: bool,
+    T: DataPageSlicer,
+>(
     page: &DataPage,
     bufs: &mut ColumnChunkBuffers,
     slicer: &mut T,
-    row_lo: usize,
-    row_hi: usize,
+    mode: super::DecodeModeContext<'_>,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
     match target_tag {
-        ColumnTypeTag::Decimal8 => decode_page0(
+        ColumnTypeTag::Decimal8 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
             page,
-            row_lo,
-            row_hi,
+            mode,
             &mut ByteArrayDecimalColumnSink::<1, _>::new(slicer, bufs, DECIMAL8_NULL),
         ),
-        ColumnTypeTag::Decimal16 => decode_page0(
+        ColumnTypeTag::Decimal16 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
             page,
-            row_lo,
-            row_hi,
+            mode,
             &mut ByteArrayDecimalColumnSink::<2, _>::new(slicer, bufs, DECIMAL16_NULL),
         ),
-        ColumnTypeTag::Decimal32 => decode_page0(
+        ColumnTypeTag::Decimal32 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
             page,
-            row_lo,
-            row_hi,
+            mode,
             &mut ByteArrayDecimalColumnSink::<4, _>::new(slicer, bufs, DECIMAL32_NULL),
         ),
-        ColumnTypeTag::Decimal64 => decode_page0(
+        ColumnTypeTag::Decimal64 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
             page,
-            row_lo,
-            row_hi,
+            mode,
             &mut ByteArrayDecimalColumnSink::<8, _>::new(slicer, bufs, DECIMAL64_NULL),
         ),
-        ColumnTypeTag::Decimal128 => decode_page0(
+        ColumnTypeTag::Decimal128 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
             page,
-            row_lo,
-            row_hi,
+            mode,
             &mut ByteArrayDecimalColumnSink::<16, _>::new(slicer, bufs, DECIMAL128_NULL),
         ),
-        ColumnTypeTag::Decimal256 => decode_page0(
+        ColumnTypeTag::Decimal256 => super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
             page,
-            row_lo,
-            row_hi,
-            &mut ByteArrayDecimalColumnSink::<32, _>::new(slicer, bufs, DECIMAL256_NULL),
-        ),
-        _ => Err(fmt_err!(
-            Unsupported,
-            "unsupported target column type {:?} for ByteArray decimal",
-            target_tag
-        )),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn decode_byte_array_decimal_filtered_with_slicer<const FILL_NULLS: bool, T: DataPageSlicer>(
-    page: &DataPage,
-    bufs: &mut ColumnChunkBuffers,
-    slicer: &mut T,
-    page_row_start: usize,
-    page_row_count: usize,
-    row_group_lo: usize,
-    row_lo: usize,
-    row_hi: usize,
-    rows_filter: &[i64],
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    match target_tag {
-        ColumnTypeTag::Decimal8 => decode_page0_filtered::<_, FILL_NULLS>(
-            page,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            &mut ByteArrayDecimalColumnSink::<1, _>::new(slicer, bufs, DECIMAL8_NULL),
-        ),
-        ColumnTypeTag::Decimal16 => decode_page0_filtered::<_, FILL_NULLS>(
-            page,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            &mut ByteArrayDecimalColumnSink::<2, _>::new(slicer, bufs, DECIMAL16_NULL),
-        ),
-        ColumnTypeTag::Decimal32 => decode_page0_filtered::<_, FILL_NULLS>(
-            page,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            &mut ByteArrayDecimalColumnSink::<4, _>::new(slicer, bufs, DECIMAL32_NULL),
-        ),
-        ColumnTypeTag::Decimal64 => decode_page0_filtered::<_, FILL_NULLS>(
-            page,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            &mut ByteArrayDecimalColumnSink::<8, _>::new(slicer, bufs, DECIMAL64_NULL),
-        ),
-        ColumnTypeTag::Decimal128 => decode_page0_filtered::<_, FILL_NULLS>(
-            page,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            &mut ByteArrayDecimalColumnSink::<16, _>::new(slicer, bufs, DECIMAL128_NULL),
-        ),
-        ColumnTypeTag::Decimal256 => decode_page0_filtered::<_, FILL_NULLS>(
-            page,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
+            mode,
             &mut ByteArrayDecimalColumnSink::<32, _>::new(slicer, bufs, DECIMAL256_NULL),
         ),
         _ => Err(fmt_err!(
@@ -912,130 +980,138 @@ impl<'a, const N: usize, T: DataPageSlicer> ByteArrayDecimalColumnSink<'a, N, T>
 
     #[inline]
     unsafe fn convert_decimal(src: &[u8], dest: *mut u8) -> ParquetResult<()> {
-        let mut src = src;
-        let mut src_len = src.len();
-        if src_len == 0 {
-            return Err(fmt_err!(
-                Unsupported,
-                "invalid ByteArray decimal source length 0 for target size {}",
-                N
-            ));
-        }
-
-        if src_len > N {
-            let sign_byte = if src[0] & 0x80 != 0 { 0xFF } else { 0x00 };
-            let trunc = src_len - N;
-            if src[..trunc].iter().any(|b| *b != sign_byte) {
-                return Err(fmt_err!(
-                    Unsupported,
-                    "ByteArray({}) decimal cannot be decoded to target size {} bytes: \
-                     source is larger than target and not sign-extended",
-                    src_len,
-                    N
-                ));
-            }
-            let msb = src[trunc];
-            if (msb & 0x80) != (sign_byte & 0x80) {
-                return Err(fmt_err!(
-                    Unsupported,
-                    "ByteArray({}) decimal cannot be decoded to target size {} bytes: \
-                     source is larger than target and would truncate significant digits",
-                    src_len,
-                    N
-                ));
-            }
-            src = &src[trunc..];
-            src_len = N;
-        }
-
-        let sign_byte = if src[0] & 0x80 != 0 { 0xFF } else { 0x00 };
-        if N <= 8 {
-            for i in 0..src_len {
-                *dest.add(i) = src[src_len - 1 - i];
-            }
-            for i in src_len..N {
-                *dest.add(i) = sign_byte;
-            }
-        } else {
-            let words = N / 8;
-            let sign_prefix = N - src_len;
-            for w in 0..words {
-                let word_dest = dest.add(w * 8);
-                for i in 0..8 {
-                    let extended_pos = w * 8 + 7 - i;
-                    let byte = if extended_pos < sign_prefix {
-                        sign_byte
-                    } else {
-                        src[extended_pos - sign_prefix]
-                    };
-                    *word_dest.add(i) = byte;
-                }
-            }
-        }
-        Ok(())
+        convert_byte_array_decimal_to_target::<N>(src, dest)
     }
 }
 
-struct RuntimeFixedDictDecoder<'a> {
-    dict_page: &'a [u8],
-    value_size: usize,
+struct PreconvertedFlbaDecimalDict<T: Copy> {
+    values: Vec<T>,
 }
 
-impl<'a> RuntimeFixedDictDecoder<'a> {
-    fn try_new(dict_page: &'a DictPage, value_size: usize) -> ParquetResult<Self> {
-        if value_size == 0 {
-            return Err(fmt_err!(Layout, "dictionary fixed value size must be > 0"));
-        }
-        if value_size * dict_page.num_values != dict_page.buffer.len() {
-            return Err(fmt_err!(
-                Layout,
-                "dictionary data page size is not multiple of {value_size}"
-            ));
-        }
-        Ok(Self { dict_page: dict_page.buffer.as_ref(), value_size })
-    }
-
+impl<T: Copy> PrimitiveDictDecoder<T> for PreconvertedFlbaDecimalDict<T> {
     #[inline]
-    fn get_dict_value(&self, index: u32) -> &[u8] {
-        let start = index as usize * self.value_size;
-        let end = start + self.value_size;
-        self.dict_page[start..end].as_ref()
-    }
-
-    #[inline]
-    fn avg_key_len(&self) -> f32 {
-        self.value_size as f32
+    fn get_dict_value(&self, index: u32) -> T {
+        self.values[index as usize]
     }
 
     #[inline]
     fn len(&self) -> u32 {
-        (self.dict_page.len() / self.value_size) as u32
+        self.values.len() as u32
     }
 }
 
-impl VarDictDecoder for RuntimeFixedDictDecoder<'_> {
-    #[inline]
-    fn get_dict_value(&self, index: u32) -> &[u8] {
-        RuntimeFixedDictDecoder::get_dict_value(self, index)
-    }
-
-    #[inline]
-    fn avg_key_len(&self) -> f32 {
-        RuntimeFixedDictDecoder::avg_key_len(self)
-    }
-
-    #[inline]
-    fn len(&self) -> u32 {
-        RuntimeFixedDictDecoder::len(self)
+impl PreconvertedFlbaDecimalDict<Decimal8> {
+    fn try_new_decimal8(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
+        validate_flba_dict(dict_page, src_len)?;
+        let mut values = Vec::with_capacity(dict_page.num_values);
+        for i in 0..dict_page.num_values {
+            let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
+            let mut buf = [0u8; 1];
+            unsafe { convert_fixed_decimal_to_target::<1>(src, buf.as_mut_ptr())? };
+            values.push(Decimal8(buf[0] as i8));
+        }
+        Ok(Self { values })
     }
 }
 
-fn decode_fixed_decimal_with_slicer<T: DataPageSlicer>(
+impl PreconvertedFlbaDecimalDict<Decimal16> {
+    fn try_new_decimal16(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
+        validate_flba_dict(dict_page, src_len)?;
+        let mut values = Vec::with_capacity(dict_page.num_values);
+        for i in 0..dict_page.num_values {
+            let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
+            let mut buf = [0u8; 2];
+            unsafe { convert_fixed_decimal_to_target::<2>(src, buf.as_mut_ptr())? };
+            values.push(Decimal16(i16::from_le_bytes(buf)));
+        }
+        Ok(Self { values })
+    }
+}
+
+impl PreconvertedFlbaDecimalDict<Decimal32> {
+    fn try_new_decimal32(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
+        validate_flba_dict(dict_page, src_len)?;
+        let mut values = Vec::with_capacity(dict_page.num_values);
+        for i in 0..dict_page.num_values {
+            let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
+            let mut buf = [0u8; 4];
+            unsafe { convert_fixed_decimal_to_target::<4>(src, buf.as_mut_ptr())? };
+            values.push(Decimal32(i32::from_le_bytes(buf)));
+        }
+        Ok(Self { values })
+    }
+}
+
+impl PreconvertedFlbaDecimalDict<Decimal64> {
+    fn try_new_decimal64(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
+        validate_flba_dict(dict_page, src_len)?;
+        let mut values = Vec::with_capacity(dict_page.num_values);
+        for i in 0..dict_page.num_values {
+            let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
+            let mut buf = [0u8; 8];
+            unsafe { convert_fixed_decimal_to_target::<8>(src, buf.as_mut_ptr())? };
+            values.push(Decimal64(i64::from_le_bytes(buf)));
+        }
+        Ok(Self { values })
+    }
+}
+
+impl PreconvertedFlbaDecimalDict<Decimal128> {
+    fn try_new_decimal128(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
+        validate_flba_dict(dict_page, src_len)?;
+        let mut values = Vec::with_capacity(dict_page.num_values);
+        for i in 0..dict_page.num_values {
+            let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
+            let mut buf = [0u8; 16];
+            unsafe { convert_fixed_decimal_to_target::<16>(src, buf.as_mut_ptr())? };
+            let hi = i64::from_le_bytes(buf[0..8].try_into().unwrap());
+            let lo = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+            values.push(Decimal128(hi, lo));
+        }
+        Ok(Self { values })
+    }
+}
+
+impl PreconvertedFlbaDecimalDict<Decimal256> {
+    fn try_new_decimal256(dict_page: &DictPage, src_len: usize) -> ParquetResult<Self> {
+        validate_flba_dict(dict_page, src_len)?;
+        let mut values = Vec::with_capacity(dict_page.num_values);
+        for i in 0..dict_page.num_values {
+            let src = &dict_page.buffer[i * src_len..(i + 1) * src_len];
+            let mut buf = [0u8; 32];
+            unsafe { convert_fixed_decimal_to_target::<32>(src, buf.as_mut_ptr())? };
+            let w0 = i64::from_le_bytes(buf[0..8].try_into().unwrap());
+            let w1 = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+            let w2 = u64::from_le_bytes(buf[16..24].try_into().unwrap());
+            let w3 = u64::from_le_bytes(buf[24..32].try_into().unwrap());
+            values.push(Decimal256(w0, w1, w2, w3));
+        }
+        Ok(Self { values })
+    }
+}
+
+fn validate_flba_dict(dict_page: &DictPage, src_len: usize) -> ParquetResult<()> {
+    if src_len == 0 {
+        return Err(fmt_err!(Layout, "dictionary fixed value size must be > 0"));
+    }
+    if src_len * dict_page.num_values != dict_page.buffer.len() {
+        return Err(fmt_err!(
+            Layout,
+            "dictionary data page size is not multiple of {src_len}"
+        ));
+    }
+    Ok(())
+}
+
+fn decode_fixed_decimal_with_slicer_mode<
+    const FILTERED: bool,
+    const FILL_NULLS: bool,
+    T: DataPageSlicer,
+>(
     page: &DataPage,
     bufs: &mut ColumnChunkBuffers,
     slicer: &mut T,
-    row_lo: usize,
-    row_hi: usize,
+    mode: super::DecodeModeContext<'_>,
     src_len: usize,
     target_tag: ColumnTypeTag,
 ) -> ParquetResult<()> {
@@ -1067,17 +1143,15 @@ fn decode_fixed_decimal_with_slicer<T: DataPageSlicer>(
     match target_tag {
         ColumnTypeTag::Decimal8 => {
             if src_len == 1 {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut ReverseDecimalColumnSink::<1, _>::new(slicer, bufs, DECIMAL8_NULL),
                 )
             } else {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut SignExtendDecimalColumnSink::<1, _>::new(
                         slicer,
                         bufs,
@@ -1089,17 +1163,15 @@ fn decode_fixed_decimal_with_slicer<T: DataPageSlicer>(
         }
         ColumnTypeTag::Decimal16 => {
             if src_len == 2 {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut ReverseDecimalColumnSink::<2, _>::new(slicer, bufs, DECIMAL16_NULL),
                 )
             } else {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut SignExtendDecimalColumnSink::<2, _>::new(
                         slicer,
                         bufs,
@@ -1111,17 +1183,15 @@ fn decode_fixed_decimal_with_slicer<T: DataPageSlicer>(
         }
         ColumnTypeTag::Decimal32 => {
             if src_len == 4 {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut ReverseDecimalColumnSink::<4, _>::new(slicer, bufs, DECIMAL32_NULL),
                 )
             } else {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut SignExtendDecimalColumnSink::<4, _>::new(
                         slicer,
                         bufs,
@@ -1133,17 +1203,15 @@ fn decode_fixed_decimal_with_slicer<T: DataPageSlicer>(
         }
         ColumnTypeTag::Decimal64 => {
             if src_len == 8 {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut ReverseDecimalColumnSink::<8, _>::new(slicer, bufs, DECIMAL64_NULL),
                 )
             } else {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut SignExtendDecimalColumnSink::<8, _>::new(
                         slicer,
                         bufs,
@@ -1155,17 +1223,15 @@ fn decode_fixed_decimal_with_slicer<T: DataPageSlicer>(
         }
         ColumnTypeTag::Decimal128 => {
             if src_len == 16 {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut WordSwapDecimalColumnSink::<16, 2, _>::new(slicer, bufs, DECIMAL128_NULL),
                 )
             } else {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut SignExtendDecimalColumnSink::<16, _>::new(
                         slicer,
                         bufs,
@@ -1177,17 +1243,15 @@ fn decode_fixed_decimal_with_slicer<T: DataPageSlicer>(
         }
         ColumnTypeTag::Decimal256 => {
             if src_len == 32 {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut WordSwapDecimalColumnSink::<32, 4, _>::new(slicer, bufs, DECIMAL256_NULL),
                 )
             } else {
-                decode_page0(
+                super::decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
-                    row_lo,
-                    row_hi,
+                    mode,
                     &mut SignExtendDecimalColumnSink::<32, _>::new(
                         slicer,
                         bufs,
@@ -1204,646 +1268,3 @@ fn decode_fixed_decimal_with_slicer<T: DataPageSlicer>(
         )),
     }
 }
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn decode_fixed_decimal_filtered<const FILL_NULLS: bool>(
-    page: &DataPage<'_>,
-    bufs: &mut ColumnChunkBuffers,
-    values_buffer: &[u8],
-    page_row_start: usize,
-    page_row_count: usize,
-    row_group_lo: usize,
-    row_lo: usize,
-    row_hi: usize,
-    rows_filter: &[i64],
-    src_len: usize,
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    let target_size = match target_tag {
-        ColumnTypeTag::Decimal8 => 1,
-        ColumnTypeTag::Decimal16 => 2,
-        ColumnTypeTag::Decimal32 => 4,
-        ColumnTypeTag::Decimal64 => 8,
-        ColumnTypeTag::Decimal128 => 16,
-        ColumnTypeTag::Decimal256 => 32,
-        _ => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported target column type {:?} for FixedLenByteArray decimal",
-                target_tag
-            ))
-        }
-    };
-    if src_len == 0 || src_len > 32 {
-        return Err(fmt_err!(
-            Unsupported,
-            "FixedLenByteArray({}) decimal cannot be decoded to {:?} (target size {} bytes)",
-            src_len,
-            target_tag,
-            target_size
-        ));
-    }
-
-    match target_tag {
-        ColumnTypeTag::Decimal8 => decode_fixed_decimal_filtered_1::<FILL_NULLS>(
-            page,
-            bufs,
-            values_buffer,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal16 => decode_fixed_decimal_filtered_2::<FILL_NULLS>(
-            page,
-            bufs,
-            values_buffer,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal32 => decode_fixed_decimal_filtered_4::<FILL_NULLS>(
-            page,
-            bufs,
-            values_buffer,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal64 => decode_fixed_decimal_filtered_8::<FILL_NULLS>(
-            page,
-            bufs,
-            values_buffer,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal128 => decode_fixed_decimal_filtered_16::<FILL_NULLS>(
-            page,
-            bufs,
-            values_buffer,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            src_len,
-        ),
-        ColumnTypeTag::Decimal256 => decode_fixed_decimal_filtered_32::<FILL_NULLS>(
-            page,
-            bufs,
-            values_buffer,
-            page_row_start,
-            page_row_count,
-            row_group_lo,
-            row_lo,
-            row_hi,
-            rows_filter,
-            src_len,
-        ),
-        _ => Err(fmt_err!(
-            Unsupported,
-            "unsupported target column type {:?} for FixedLenByteArray decimal",
-            target_tag
-        )),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn decode_fixed_decimal_filtered_dict<const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict_page: &DictPage,
-    bufs: &mut ColumnChunkBuffers,
-    values_buffer: &[u8],
-    page_row_start: usize,
-    page_row_count: usize,
-    row_group_lo: usize,
-    row_lo: usize,
-    row_hi: usize,
-    rows_filter: &[i64],
-    src_len: usize,
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    let dict_decoder = RuntimeFixedDictDecoder::try_new(dict_page, src_len)?;
-    let error_value = vec![0u8; src_len];
-    let mut slicer = RleDictionarySlicer::try_new(
-        values_buffer,
-        dict_decoder,
-        page_row_count,
-        page_row_count,
-        error_value.as_slice(),
-    )?;
-    decode_fixed_decimal_filtered_with_slicer::<FILL_NULLS, _>(
-        page,
-        bufs,
-        &mut slicer,
-        page_row_start,
-        page_row_count,
-        row_group_lo,
-        row_lo,
-        row_hi,
-        rows_filter,
-        src_len,
-        target_tag,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn decode_fixed_decimal_filtered_with_slicer<const FILL_NULLS: bool, T: DataPageSlicer>(
-    page: &DataPage,
-    bufs: &mut ColumnChunkBuffers,
-    slicer: &mut T,
-    page_row_start: usize,
-    page_row_count: usize,
-    row_group_lo: usize,
-    row_lo: usize,
-    row_hi: usize,
-    rows_filter: &[i64],
-    src_len: usize,
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    let target_size = match target_tag {
-        ColumnTypeTag::Decimal8 => 1,
-        ColumnTypeTag::Decimal16 => 2,
-        ColumnTypeTag::Decimal32 => 4,
-        ColumnTypeTag::Decimal64 => 8,
-        ColumnTypeTag::Decimal128 => 16,
-        ColumnTypeTag::Decimal256 => 32,
-        _ => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported target column type {:?} for FixedLenByteArray decimal",
-                target_tag
-            ))
-        }
-    };
-    if src_len == 0 || src_len > 32 {
-        return Err(fmt_err!(
-            Unsupported,
-            "FixedLenByteArray({}) decimal cannot be decoded to {:?} (target size {} bytes)",
-            src_len,
-            target_tag,
-            target_size
-        ));
-    }
-
-    match target_tag {
-        ColumnTypeTag::Decimal8 => {
-            if src_len == 1 {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut ReverseDecimalColumnSink::<1, _>::new(slicer, bufs, DECIMAL8_NULL),
-                )
-            } else {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut SignExtendDecimalColumnSink::<1, _>::new(
-                        slicer,
-                        bufs,
-                        DECIMAL8_NULL,
-                        src_len,
-                    ),
-                )
-            }
-        }
-        ColumnTypeTag::Decimal16 => {
-            if src_len == 2 {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut ReverseDecimalColumnSink::<2, _>::new(slicer, bufs, DECIMAL16_NULL),
-                )
-            } else {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut SignExtendDecimalColumnSink::<2, _>::new(
-                        slicer,
-                        bufs,
-                        DECIMAL16_NULL,
-                        src_len,
-                    ),
-                )
-            }
-        }
-        ColumnTypeTag::Decimal32 => {
-            if src_len == 4 {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut ReverseDecimalColumnSink::<4, _>::new(slicer, bufs, DECIMAL32_NULL),
-                )
-            } else {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut SignExtendDecimalColumnSink::<4, _>::new(
-                        slicer,
-                        bufs,
-                        DECIMAL32_NULL,
-                        src_len,
-                    ),
-                )
-            }
-        }
-        ColumnTypeTag::Decimal64 => {
-            if src_len == 8 {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut ReverseDecimalColumnSink::<8, _>::new(slicer, bufs, DECIMAL64_NULL),
-                )
-            } else {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut SignExtendDecimalColumnSink::<8, _>::new(
-                        slicer,
-                        bufs,
-                        DECIMAL64_NULL,
-                        src_len,
-                    ),
-                )
-            }
-        }
-        ColumnTypeTag::Decimal128 => {
-            if src_len == 16 {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut WordSwapDecimalColumnSink::<16, 2, _>::new(slicer, bufs, DECIMAL128_NULL),
-                )
-            } else {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut SignExtendDecimalColumnSink::<16, _>::new(
-                        slicer,
-                        bufs,
-                        DECIMAL128_NULL,
-                        src_len,
-                    ),
-                )
-            }
-        }
-        ColumnTypeTag::Decimal256 => {
-            if src_len == 32 {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut WordSwapDecimalColumnSink::<32, 4, _>::new(slicer, bufs, DECIMAL256_NULL),
-                )
-            } else {
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut SignExtendDecimalColumnSink::<32, _>::new(
-                        slicer,
-                        bufs,
-                        DECIMAL256_NULL,
-                        src_len,
-                    ),
-                )
-            }
-        }
-        _ => Err(fmt_err!(
-            Unsupported,
-            "unsupported target column type {:?} for FixedLenByteArray decimal",
-            target_tag
-        )),
-    }
-}
-
-macro_rules! decode_fixed_decimal_impl {
-    (unfiltered simple $fn_name:ident, $target_size:expr, $null_value:expr, $target_name:expr) => {
-        fn $fn_name(
-            page: &DataPage,
-            bufs: &mut ColumnChunkBuffers,
-            values_buffer: &[u8],
-            row_lo: usize,
-            row_hi: usize,
-            row_count: usize,
-            src_len: usize,
-        ) -> ParquetResult<()> {
-            if src_len == 0 {
-                return Err(fmt_err!(
-                    Unsupported,
-                    "unsupported FixedLenByteArray({}) source size for {}, valid sizes are 1-{}",
-                    src_len,
-                    $target_name,
-                    $target_size
-                ));
-            }
-            if src_len == $target_size {
-                let mut slicer = DataPageDynSlicer::new(values_buffer, row_count, src_len);
-                decode_page0(
-                    page,
-                    row_lo,
-                    row_hi,
-                    &mut ReverseDecimalColumnSink::<$target_size, _>::new(
-                        &mut slicer,
-                        bufs,
-                        $null_value,
-                    ),
-                )?;
-            } else {
-                let mut slicer = DataPageDynSlicer::new(values_buffer, row_count, src_len);
-                decode_page0(
-                    page,
-                    row_lo,
-                    row_hi,
-                    &mut SignExtendDecimalColumnSink::<$target_size, _>::new(
-                        &mut slicer,
-                        bufs,
-                        $null_value,
-                        src_len,
-                    ),
-                )?;
-            }
-            Ok(())
-        }
-    };
-    (unfiltered multiword $fn_name:ident, $target_size:expr, $words:expr, $null_value:expr, $target_name:expr) => {
-        fn $fn_name(
-            page: &DataPage,
-            bufs: &mut ColumnChunkBuffers,
-            values_buffer: &[u8],
-            row_lo: usize,
-            row_hi: usize,
-            row_count: usize,
-            src_len: usize,
-        ) -> ParquetResult<()> {
-            if src_len == 0 {
-                return Err(fmt_err!(
-                    Unsupported,
-                    "unsupported FixedLenByteArray({}) source size for {}, valid sizes are 1-{}",
-                    src_len,
-                    $target_name,
-                    $target_size
-                ));
-            }
-            if src_len == $target_size {
-                let mut slicer = DataPageDynSlicer::new(values_buffer, row_count, src_len);
-                decode_page0(
-                    page,
-                    row_lo,
-                    row_hi,
-                    &mut WordSwapDecimalColumnSink::<$target_size, $words, _>::new(
-                        &mut slicer,
-                        bufs,
-                        $null_value,
-                    ),
-                )?;
-            } else {
-                let mut slicer = DataPageDynSlicer::new(values_buffer, row_count, src_len);
-                decode_page0(
-                    page,
-                    row_lo,
-                    row_hi,
-                    &mut SignExtendDecimalColumnSink::<$target_size, _>::new(
-                        &mut slicer,
-                        bufs,
-                        $null_value,
-                        src_len,
-                    ),
-                )?;
-            }
-            Ok(())
-        }
-    };
-    (filtered simple $fn_name:ident, $target_size:expr, $null_value:expr, $target_name:expr) => {
-        #[allow(clippy::too_many_arguments)]
-        fn $fn_name<const FILL_NULLS: bool>(
-            page: &DataPage,
-            bufs: &mut ColumnChunkBuffers,
-            values_buffer: &[u8],
-            page_row_start: usize,
-            page_row_count: usize,
-            row_group_lo: usize,
-            row_lo: usize,
-            row_hi: usize,
-            rows_filter: &[i64],
-            src_len: usize,
-        ) -> ParquetResult<()> {
-            if src_len == 0 {
-                return Err(fmt_err!(
-                    Unsupported,
-                    "unsupported FixedLenByteArray({}) source size for {}, valid sizes are 1-{}",
-                    src_len,
-                    $target_name,
-                    $target_size
-                ));
-            }
-            if src_len == $target_size {
-                let mut slicer = DataPageDynSlicer::new(values_buffer, page_row_count, src_len);
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut ReverseDecimalColumnSink::<$target_size, _>::new(
-                        &mut slicer,
-                        bufs,
-                        $null_value,
-                    ),
-                )?;
-            } else {
-                let mut slicer = DataPageDynSlicer::new(values_buffer, page_row_count, src_len);
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut SignExtendDecimalColumnSink::<$target_size, _>::new(
-                        &mut slicer,
-                        bufs,
-                        $null_value,
-                        src_len,
-                    ),
-                )?;
-            }
-            Ok(())
-        }
-    };
-    (filtered multiword $fn_name:ident, $target_size:expr, $words:expr, $null_value:expr, $target_name:expr) => {
-        #[allow(clippy::too_many_arguments)]
-        fn $fn_name<const FILL_NULLS: bool>(
-            page: &DataPage,
-            bufs: &mut ColumnChunkBuffers,
-            values_buffer: &[u8],
-            page_row_start: usize,
-            page_row_count: usize,
-            row_group_lo: usize,
-            row_lo: usize,
-            row_hi: usize,
-            rows_filter: &[i64],
-            src_len: usize,
-        ) -> ParquetResult<()> {
-            if src_len == 0 {
-                return Err(fmt_err!(
-                    Unsupported,
-                    "unsupported FixedLenByteArray({}) source size for {}, valid sizes are 1-{}",
-                    src_len,
-                    $target_name,
-                    $target_size
-                ));
-            }
-            if src_len == $target_size {
-                let mut slicer = DataPageDynSlicer::new(values_buffer, page_row_count, src_len);
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut WordSwapDecimalColumnSink::<$target_size, $words, _>::new(
-                        &mut slicer,
-                        bufs,
-                        $null_value,
-                    ),
-                )?;
-            } else {
-                let mut slicer = DataPageDynSlicer::new(values_buffer, page_row_count, src_len);
-                decode_page0_filtered::<_, FILL_NULLS>(
-                    page,
-                    page_row_start,
-                    page_row_count,
-                    row_group_lo,
-                    row_lo,
-                    row_hi,
-                    rows_filter,
-                    &mut SignExtendDecimalColumnSink::<$target_size, _>::new(
-                        &mut slicer,
-                        bufs,
-                        $null_value,
-                        src_len,
-                    ),
-                )?;
-            }
-            Ok(())
-        }
-    };
-}
-
-decode_fixed_decimal_impl!(unfiltered simple decode_fixed_decimal_1, 1, DECIMAL8_NULL, "Decimal8");
-decode_fixed_decimal_impl!(unfiltered simple decode_fixed_decimal_2, 2, DECIMAL16_NULL, "Decimal16");
-decode_fixed_decimal_impl!(unfiltered simple decode_fixed_decimal_4, 4, DECIMAL32_NULL, "Decimal32");
-decode_fixed_decimal_impl!(unfiltered simple decode_fixed_decimal_8, 8, DECIMAL64_NULL, "Decimal64");
-decode_fixed_decimal_impl!(
-    unfiltered multiword decode_fixed_decimal_16,
-    16,
-    2,
-    DECIMAL128_NULL,
-    "Decimal128"
-);
-decode_fixed_decimal_impl!(
-    unfiltered multiword decode_fixed_decimal_32,
-    32,
-    4,
-    DECIMAL256_NULL,
-    "Decimal256"
-);
-decode_fixed_decimal_impl!(filtered simple decode_fixed_decimal_filtered_1, 1, DECIMAL8_NULL, "Decimal8");
-decode_fixed_decimal_impl!(filtered simple decode_fixed_decimal_filtered_2, 2, DECIMAL16_NULL, "Decimal16");
-decode_fixed_decimal_impl!(filtered simple decode_fixed_decimal_filtered_4, 4, DECIMAL32_NULL, "Decimal32");
-decode_fixed_decimal_impl!(filtered simple decode_fixed_decimal_filtered_8, 8, DECIMAL64_NULL, "Decimal64");
-decode_fixed_decimal_impl!(
-    filtered multiword decode_fixed_decimal_filtered_16,
-    16,
-    2,
-    DECIMAL128_NULL,
-    "Decimal128"
-);
-decode_fixed_decimal_impl!(
-    filtered multiword decode_fixed_decimal_filtered_32,
-    32,
-    4,
-    DECIMAL256_NULL,
-    "Decimal256"
-);

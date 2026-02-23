@@ -6,9 +6,8 @@ use crate::parquet_read::column_sink::var::{
 };
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decode::decimal::{
-    decode_byte_array_decimal, decode_byte_array_decimal_dict, decode_byte_array_decimal_filtered,
-    decode_byte_array_decimal_filtered_dict, decode_fixed_decimal, decode_fixed_decimal_dict,
-    decode_fixed_decimal_filtered, decode_fixed_decimal_filtered_dict,
+    decode_byte_array_decimal_dict_mode, decode_byte_array_decimal_mode,
+    decode_fixed_decimal_dict_mode, decode_fixed_decimal_mode,
 };
 use crate::parquet_read::decoders::int128::Int128ToUuidConverter;
 use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConverter};
@@ -220,158 +219,6 @@ fn decode_array_page_mode<T: DataPageSlicer, const FILTERED: bool, const FILL_NU
         )
     } else {
         decode_array_page(page, mode.row_lo, mode.row_hi, slicer, bufs)
-    }
-}
-
-#[inline(always)]
-fn decode_fixed_decimal_mode<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    bufs: &mut ColumnChunkBuffers,
-    values_buffer: &[u8],
-    mode: DecodeModeContext<'_>,
-    src_len: usize,
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    if FILTERED {
-        let filter = mode.filtered_context();
-        decode_fixed_decimal_filtered::<FILL_NULLS>(
-            page,
-            bufs,
-            values_buffer,
-            filter.page_row_start,
-            filter.page_row_count,
-            filter.row_group_lo,
-            mode.row_lo,
-            mode.row_hi,
-            filter.rows_filter,
-            src_len,
-            target_tag,
-        )
-    } else {
-        decode_fixed_decimal(
-            page,
-            bufs,
-            values_buffer,
-            mode.row_lo,
-            mode.row_hi,
-            mode.output_row_count(),
-            src_len,
-            target_tag,
-        )
-    }
-}
-
-#[inline(always)]
-fn decode_fixed_decimal_dict_mode<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict_page: &DictPage,
-    bufs: &mut ColumnChunkBuffers,
-    values_buffer: &[u8],
-    mode: DecodeModeContext<'_>,
-    src_len: usize,
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    if FILTERED {
-        let filter = mode.filtered_context();
-        decode_fixed_decimal_filtered_dict::<FILL_NULLS>(
-            page,
-            dict_page,
-            bufs,
-            values_buffer,
-            filter.page_row_start,
-            filter.page_row_count,
-            filter.row_group_lo,
-            mode.row_lo,
-            mode.row_hi,
-            filter.rows_filter,
-            src_len,
-            target_tag,
-        )
-    } else {
-        decode_fixed_decimal_dict(
-            page,
-            dict_page,
-            bufs,
-            values_buffer,
-            mode.row_lo,
-            mode.row_hi,
-            mode.output_row_count(),
-            src_len,
-            target_tag,
-        )
-    }
-}
-
-#[inline(always)]
-fn decode_byte_array_decimal_mode<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    bufs: &mut ColumnChunkBuffers,
-    values_buffer: &[u8],
-    mode: DecodeModeContext<'_>,
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    if FILTERED {
-        let filter = mode.filtered_context();
-        decode_byte_array_decimal_filtered::<FILL_NULLS>(
-            page,
-            bufs,
-            values_buffer,
-            filter.page_row_start,
-            filter.page_row_count,
-            filter.row_group_lo,
-            mode.row_lo,
-            mode.row_hi,
-            filter.rows_filter,
-            target_tag,
-        )
-    } else {
-        decode_byte_array_decimal(
-            page,
-            bufs,
-            values_buffer,
-            mode.row_lo,
-            mode.row_hi,
-            mode.output_row_count(),
-            target_tag,
-        )
-    }
-}
-
-#[inline(always)]
-fn decode_byte_array_decimal_dict_mode<const FILTERED: bool, const FILL_NULLS: bool>(
-    page: &DataPage,
-    dict_page: &DictPage,
-    bufs: &mut ColumnChunkBuffers,
-    values_buffer: &[u8],
-    mode: DecodeModeContext<'_>,
-    target_tag: ColumnTypeTag,
-) -> ParquetResult<()> {
-    if FILTERED {
-        let filter = mode.filtered_context();
-        decode_byte_array_decimal_filtered_dict::<FILL_NULLS>(
-            page,
-            dict_page,
-            bufs,
-            values_buffer,
-            filter.page_row_start,
-            filter.page_row_count,
-            filter.row_group_lo,
-            mode.row_lo,
-            mode.row_hi,
-            filter.rows_filter,
-            target_tag,
-        )
-    } else {
-        decode_byte_array_decimal_dict(
-            page,
-            dict_page,
-            bufs,
-            values_buffer,
-            mode.row_lo,
-            mode.row_hi,
-            mode.output_row_count(),
-            target_tag,
-        )
     }
 }
 
@@ -1155,33 +1002,33 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (src_len, Some(PrimitiveLogicalType::Decimal(_, _)), _)
         | (src_len, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
             match (page.encoding(), dict) {
-    (Encoding::Plain, _) => decode_fixed_decimal_mode::<FILTERED, FILL_NULLS>(
-        page,
-        bufs,
-        values_buffer,
-        mode,
-        src_len,
-        column_type.tag(),
-    )?,
-    (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-        decode_fixed_decimal_dict_mode::<FILTERED, FILL_NULLS>(
-            page,
-            dict_page,
-            bufs,
-            values_buffer,
-            mode,
-            src_len,
-            column_type.tag(),
-        )?
-    }
-    _ => {
-        return Err(fmt_err!(
-            Unsupported,
-            "only Plain and dictionary encodings supported for FixedLenByteArray decimals, got {:?}",
-            page.encoding()
-        ))
-    }
-}
+                (Encoding::Plain, _) => decode_fixed_decimal_mode::<FILTERED, FILL_NULLS>(
+                    page,
+                    bufs,
+                    values_buffer,
+                    mode,
+                    src_len,
+                    column_type.tag(),
+                )?,
+                (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
+                    decode_fixed_decimal_dict_mode::<FILTERED, FILL_NULLS>(
+                        page,
+                        dict_page,
+                        bufs,
+                        values_buffer,
+                        mode,
+                        src_len,
+                        column_type.tag(),
+                    )?
+                }
+                _ => {
+                    return Err(fmt_err!(
+                        Unsupported,
+                        "only Plain and dictionary encodings supported for FixedLenByteArray decimals, got {:?}",
+                        page.encoding()
+                    ))
+                }
+            }
             Ok(true)
         }
         (len, _, _) => match (page.encoding(), len, column_type.tag()) {
@@ -2847,17 +2694,17 @@ mod tests {
                         assert_eq!(&expected_aux_data[0..bufs.aux_size], bufs.aux_vec);
                     } else if column_type.tag() == ColumnTypeTag::String {
                         let mut expected_aux_data_slice = AcVec::new_in(allocator.clone());
-                        let vec_i64_ref = unsafe {
-                            std::slice::from_raw_parts(
-                                expected_aux_data.as_ptr() as *const i64,
-                                expected_aux_data.len() / size_of::<i64>(),
-                            )
+                        assert_eq!(expected_aux_data.len() % size_of::<i64>(), 0);
+                        let read_i64 = |index: usize| {
+                            let start = index * size_of::<i64>();
+                            let end = start + size_of::<i64>();
+                            i64::from_le_bytes(expected_aux_data[start..end].try_into().unwrap())
                         };
                         expected_aux_data_slice
                             .extend_from_slice(&0u64.to_le_bytes())
                             .unwrap();
                         for i in 0..row_count {
-                            let row_data_offset = vec_i64_ref[col_row_count + 1 + i];
+                            let row_data_offset = read_i64(col_row_count + 1 + i);
                             expected_aux_data_slice
                                 .extend_from_slice(
                                     &(row_data_offset - data_offset as i64).to_le_bytes(),

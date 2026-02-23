@@ -19,7 +19,7 @@ mod unpack;
 
 pub use self::dictionary::{
     BasePrimitiveDictDecoder, BaseVarDictDecoder, ConvertablePrimitiveDictDecoder,
-    FixedDictDecoder, RleLocalIsGlobalSymbolDictDecoder, VarDictDecoder,
+    FixedDictDecoder, PrimitiveDictDecoder, RleLocalIsGlobalSymbolDictDecoder, VarDictDecoder,
 };
 pub use converters::*;
 pub use delta_binary_packed::DeltaBinaryPackedDecoder;

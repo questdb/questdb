@@ -300,6 +300,8 @@ impl ParquetDecoder {
             .try_into()
             .map_err(|_| fmt_err!(Layout, "column chunk size overflow, size: {chunk_size}"))?;
 
+        // SAFETY: `DecodeContext` is created from a caller-owned mmap region and guarantees
+        // `file_ptr` is valid for `file_size` bytes for the lifetime of this decode call.
         let buf = unsafe { slice::from_raw_parts(ctx.file_ptr, ctx.file_size as usize) };
         let page_reader = SlicePageReader::new(buf, column_metadata, chunk_size)?;
 
@@ -516,6 +518,8 @@ impl ParquetDecoder {
             .try_into()
             .map_err(|_| fmt_err!(Layout, "column chunk size overflow, size: {chunk_size}"))?;
 
+        // SAFETY: `DecodeContext` is created from a caller-owned mmap region and guarantees
+        // `file_ptr` is valid for `file_size` bytes for the lifetime of this decode call.
         let buf = unsafe { slice::from_raw_parts(ctx.file_ptr, ctx.file_size as usize) };
         let page_reader = SlicePageReader::new(buf, column_metadata, chunk_size)?;
 

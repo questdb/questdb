@@ -84,6 +84,11 @@ pub trait DataPageSlicer {
     fn next_into<S: ByteSink>(&mut self, dest: &mut S) -> ParquetResult<()>;
     /// Only called by fixed-size column decoders.
     fn next_slice_into<S: ByteSink>(&mut self, count: usize, dest: &mut S) -> ParquetResult<()>;
+    /// Returns a contiguous chunk of `count` fixed-size values if available.
+    /// Implementations that cannot provide borrowed contiguous slices return `None`.
+    fn next_raw_slice(&mut self, _count: usize) -> Option<&[u8]> {
+        None
+    }
     fn skip(&mut self, count: usize);
     fn count(&self) -> usize;
     fn data_size(&self) -> usize;
@@ -117,6 +122,14 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
         let res = &self.data[self.pos..self.pos + len];
         self.pos += len;
         dest.extend_from_slice(res)
+    }
+
+    #[inline]
+    fn next_raw_slice(&mut self, count: usize) -> Option<&[u8]> {
+        let len = N * count;
+        let res = &self.data[self.pos..self.pos + len];
+        self.pos += len;
+        Some(res)
     }
 
     #[inline]
@@ -171,6 +184,14 @@ impl DataPageSlicer for DataPageDynSlicer<'_> {
         let res = &self.data[self.pos..self.pos + len];
         self.pos += len;
         dest.extend_from_slice(res)
+    }
+
+    #[inline]
+    fn next_raw_slice(&mut self, count: usize) -> Option<&[u8]> {
+        let len = self.elem_size * count;
+        let res = &self.data[self.pos..self.pos + len];
+        self.pos += len;
+        Some(res)
     }
 
     #[inline]

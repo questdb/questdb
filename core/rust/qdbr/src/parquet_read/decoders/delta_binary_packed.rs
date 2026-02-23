@@ -15,14 +15,14 @@ use crate::parquet_read::decoders::unpack::{unpack32, unpack64};
 use crate::parquet_read::ColumnChunkBuffers;
 
 #[derive(Debug, Default)]
-struct Miniblock {
-    data: *const u8,
+struct Miniblock<'a> {
+    data: &'a [u8],
     num_bits: u8,
 }
 
 struct MiniblockIterator<'a, U> {
     page_data: &'a [u8],
-    miniblocks_per_block: u64,
+    miniblocks_per_block: usize,
     // Number of blocks remaining to be read
     blocks_remaining: u64,
     // offset in data for the bidwidths field of the current/next block depending on the state of the iterator
@@ -32,7 +32,7 @@ struct MiniblockIterator<'a, U> {
     // offset of the next miniblock to decode
     miniblock_offset: usize,
     // index of the next miniblock to decode
-    miniblock_index: u64,
+    miniblock_index: usize,
     min_delta: U,
 }
 
@@ -44,9 +44,39 @@ where
     pub fn try_new(page_data: &'a [u8]) -> ParquetResult<(Self, U)> {
         let (block_size, offset) = uleb128::decode(page_data)
             .map_err(|_| fmt_err!(Layout, "failed to decode block size"))?;
+        if block_size == 0 {
+            return Err(fmt_err!(
+                Layout,
+                "delta binary packed block size must be greater than zero"
+            ));
+        }
         let page_data = &page_data[offset..];
         let (miniblocks_per_block, offset) = uleb128::decode(page_data)
             .map_err(|_| fmt_err!(Layout, "failed to decode miniblock count"))?;
+        if miniblocks_per_block == 0 {
+            return Err(fmt_err!(
+                Layout,
+                "delta binary packed miniblocks-per-block must be greater than zero"
+            ));
+        }
+        if block_size % miniblocks_per_block != 0 {
+            return Err(fmt_err!(
+                Layout,
+                "delta binary packed block size {block_size} is not divisible by miniblock count {miniblocks_per_block}"
+            ));
+        }
+        let miniblock_size: usize = (block_size / miniblocks_per_block)
+            .try_into()
+            .map_err(|_| fmt_err!(Layout, "delta binary packed miniblock size overflow"))?;
+        if miniblock_size == 0 || miniblock_size % 32 != 0 {
+            return Err(fmt_err!(
+                Layout,
+                "delta binary packed miniblock size {miniblock_size} must be a non-zero multiple of 32 values"
+            ));
+        }
+        let miniblocks_per_block: usize = miniblocks_per_block
+            .try_into()
+            .map_err(|_| fmt_err!(Layout, "delta binary packed miniblock count overflow"))?;
         let page_data = &page_data[offset..];
         let (value_count, offset) = uleb128::decode(page_data)
             .map_err(|_| fmt_err!(Layout, "failed to decode value count"))?;
@@ -57,8 +87,10 @@ where
 
         let blocks_remaining = if value_count > 1 {
             let blocks_values = value_count - 1; // the first value is not included in the blocks
-            let blocks_values = blocks_values + (block_size - 1) as u64; // add padding values to be able to decode the last block
-            blocks_values / block_size as u64
+            let blocks_values = blocks_values
+                .checked_add(block_size - 1)
+                .ok_or_else(|| fmt_err!(Layout, "delta binary packed block count overflow"))?; // add padding values to be able to decode the last block
+            blocks_values / block_size
         } else {
             0
         };
@@ -68,63 +100,86 @@ where
             miniblocks_per_block,
             blocks_remaining,
             block_bitwidths_offset: 0,
-            miniblock_size: (block_size / miniblocks_per_block) as usize,
+            miniblock_size,
             miniblock_offset: 0,
             miniblock_index: 0,
             min_delta: U::default(),
         };
-        s.advance_block(0);
+        s.advance_block(0)?;
         Ok((s, first_value.as_()))
     }
 
     #[inline]
-    pub fn advance_block(&mut self, offset: usize) {
+    pub fn advance_block(&mut self, offset: usize) -> ParquetResult<()> {
         if self.blocks_remaining == 0 {
-            return;
+            return Ok(());
         }
 
-        self.page_data = &self.page_data[offset..];
-        let (min_delta, offset) =
-            zigzag_leb128::decode(self.page_data).expect("failed to decode min delta");
+        self.page_data = self
+            .page_data
+            .get(offset..)
+            .ok_or_else(|| fmt_err!(Layout, "delta binary packed block offset out of bounds"))?;
+        let (min_delta, offset) = zigzag_leb128::decode(self.page_data)
+            .map_err(|_| fmt_err!(Layout, "failed to decode min delta"))?;
         self.min_delta = min_delta.as_();
         self.block_bitwidths_offset = offset;
-        self.miniblock_offset = offset + self.miniblocks_per_block as usize;
+        self.miniblock_offset = offset
+            .checked_add(self.miniblocks_per_block)
+            .ok_or_else(|| fmt_err!(Layout, "delta binary packed miniblock offset overflow"))?;
+        if self.miniblock_offset > self.page_data.len() {
+            return Err(fmt_err!(
+                Layout,
+                "delta binary packed block header exceeds page size"
+            ));
+        }
         self.miniblock_index = 0;
         self.blocks_remaining -= 1;
+        Ok(())
     }
-}
-
-impl<'a, U> Iterator for MiniblockIterator<'a, U>
-where
-    U: Default + WrappingAdd + Copy + 'static,
-    i64: AsPrimitive<U>,
-{
-    type Item = Miniblock;
 
     #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next_miniblock(&mut self) -> ParquetResult<Option<Miniblock<'a>>> {
         if self.miniblock_index == self.miniblocks_per_block {
             // The current block is exhausted. If there are no more blocks, we're done.
             if self.blocks_remaining == 0 {
-                return None;
+                return Ok(None);
             }
             // Advance lazily so the last miniblock in the previous block is decoded
             // with its own min_delta.
-            self.advance_block(self.miniblock_offset);
+            self.advance_block(self.miniblock_offset)?;
         }
 
+        let bitwidth_idx = self
+            .block_bitwidths_offset
+            .checked_add(self.miniblock_index)
+            .ok_or_else(|| fmt_err!(Layout, "delta binary packed bit width index overflow"))?;
+        let num_bits = *self
+            .page_data
+            .get(bitwidth_idx)
+            .ok_or_else(|| fmt_err!(Layout, "delta binary packed bit width out of bounds"))?;
+        let miniblock_bytes = self
+            .miniblock_size
+            .checked_mul(num_bits as usize)
+            .ok_or_else(|| fmt_err!(Layout, "delta binary packed miniblock byte size overflow"))?
+            / 8;
+        let next_miniblock_offset = self
+            .miniblock_offset
+            .checked_add(miniblock_bytes)
+            .ok_or_else(|| fmt_err!(Layout, "delta binary packed miniblock offset overflow"))?;
         let current = Miniblock {
-            data: unsafe { self.page_data.as_ptr().add(self.miniblock_offset) },
-            num_bits: self.page_data[self.block_bitwidths_offset + self.miniblock_index as usize]
-                as u8,
+            data: self
+                .page_data
+                .get(self.miniblock_offset..next_miniblock_offset)
+                .ok_or_else(|| {
+                    fmt_err!(Layout, "delta binary packed miniblock exceeds page size")
+                })?,
+            num_bits,
         };
 
-        let miniblock_offset =
-            self.miniblock_offset + (self.miniblock_size * current.num_bits as usize) / 8;
         self.miniblock_index += 1;
-        self.miniblock_offset = miniblock_offset;
+        self.miniblock_offset = next_miniblock_offset;
 
-        Some(current)
+        Ok(Some(current))
     }
 }
 
@@ -149,7 +204,7 @@ where
     consumed_initial_value: bool,
     values: [U; 32],
     value_index: usize,
-    miniblock: Miniblock,
+    miniblock: Miniblock<'a>,
     miniblock_pack_index: usize,
     packs_per_miniblock: usize,
 }
@@ -168,7 +223,7 @@ where
         let (mut miniblock_iterator, first_value) = MiniblockIterator::try_new(data)?;
 
         let packs_per_miniblock = miniblock_iterator.miniblock_size / 32;
-        let (miniblock, miniblock_pack_index) = match miniblock_iterator.next() {
+        let (miniblock, miniblock_pack_index) = match miniblock_iterator.next_miniblock()? {
             Some(miniblock) => (miniblock, 0),
             None => {
                 // No miniblocks to decode, use a default miniblock that requires to be skipped.
@@ -198,7 +253,7 @@ where
         // We need to decode the next pack of values in the miniblock
         if self.miniblock_pack_index == self.packs_per_miniblock {
             // We need to advance to the next miniblock
-            match self.iterator.next() {
+            match self.iterator.next_miniblock()? {
                 Some(miniblock) => {
                     self.miniblock = miniblock;
                     self.miniblock_pack_index = 0;
@@ -210,17 +265,34 @@ where
             }
         }
 
-        let num_bits = self.miniblock.num_bits;
-        let pack_size = 32 * num_bits as usize / 8; // division will be optimized by compiler since we're multiplying by 32.
-        let offset = (self.miniblock_pack_index * pack_size) as usize;
+        let num_bits = self.miniblock.num_bits as usize;
+        let max_num_bits = std::mem::size_of::<U>() * 8;
+        if num_bits > max_num_bits {
+            return Err(fmt_err!(
+                Layout,
+                "delta binary packed bit width {} exceeds {}-bit target width",
+                num_bits,
+                max_num_bits
+            ));
+        }
+        let pack_size = 32 * num_bits / 8; // division will be optimized by compiler since we're multiplying by 32.
+        let offset = self
+            .miniblock_pack_index
+            .checked_mul(pack_size)
+            .ok_or_else(|| fmt_err!(Layout, "delta binary packed pack offset overflow"))?;
+        let end = offset
+            .checked_add(pack_size)
+            .ok_or_else(|| fmt_err!(Layout, "delta binary packed pack end overflow"))?;
         let data =
-            unsafe { std::slice::from_raw_parts(self.miniblock.data.add(offset), pack_size) };
+            self.miniblock.data.get(offset..end).ok_or_else(|| {
+                fmt_err!(Layout, "delta binary packed pack exceeds miniblock size")
+            })?;
         self.miniblock_pack_index += 1;
 
         let values = self.values.as_mut_ptr();
-        match size_of::<U>() {
-            4 => unpack32(data, values.cast(), num_bits as usize),
-            8 => unpack64(data, values.cast(), num_bits as usize),
+        match std::mem::size_of::<U>() {
+            4 => unpack32(data, values.cast(), num_bits),
+            8 => unpack64(data, values.cast(), num_bits),
             _ => unreachable!("unsupported size"),
         }
 
@@ -237,6 +309,7 @@ where
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
         if !self.consumed_initial_value {
+            // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
             unsafe {
                 let out = self.buffers_ptr.add(self.buffers_offset);
                 *out = self.current_value.as_();
@@ -257,6 +330,7 @@ where
                 .min_delta
                 .wrapping_add(&self.values[self.value_index]),
         );
+        // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
         unsafe {
             self.buffers_ptr
                 .add(self.buffers_offset)
@@ -270,6 +344,7 @@ where
 
     #[inline]
     fn push_null(&mut self) -> ParquetResult<()> {
+        // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
         unsafe {
             *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
         }
@@ -279,8 +354,10 @@ where
 
     #[inline(always)]
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
+        // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
         let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
         for i in 0..count {
+            // SAFETY: `out` points to reserved output space and `i < count`.
             unsafe {
                 *out.add(i) = self.null_value;
             }
@@ -301,6 +378,7 @@ where
         let buffers_ptr = self.buffers_ptr;
 
         if !self.consumed_initial_value {
+            // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
             unsafe {
                 *buffers_ptr.add(buffers_offset) = current_value.as_();
             }
@@ -316,6 +394,7 @@ where
                     .min_delta
                     .wrapping_add(&self.values[value_index]),
             );
+            // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
             unsafe {
                 *buffers_ptr.add(buffers_offset) = current_value.as_();
             }
@@ -330,6 +409,7 @@ where
             for i in 0..32 {
                 current_value =
                     current_value.wrapping_add(&min_delta.wrapping_add(&self.values[i]));
+                // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
                 unsafe {
                     *buffers_ptr.add(buffers_offset + i) = current_value.as_();
                 }
@@ -345,6 +425,7 @@ where
             }
 
             let to_write = count.min(32 - value_index);
+            // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
             unsafe {
                 for i in 0..to_write {
                     current_value = current_value.wrapping_add(
@@ -370,10 +451,11 @@ where
 
     #[inline]
     fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        let needed = (self.buffers_offset + count) * size_of::<T>();
+        let needed = (self.buffers_offset + count) * std::mem::size_of::<T>();
         if self.buffers.data_vec.len() < needed {
             let additional = needed - self.buffers.data_vec.len();
             self.buffers.data_vec.reserve(additional)?;
+            // SAFETY: `needed <= capacity` after reserve; values are initialized before read.
             unsafe {
                 self.buffers.data_vec.set_len(needed);
             }
