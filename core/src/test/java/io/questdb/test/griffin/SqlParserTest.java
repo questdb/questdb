@@ -9793,6 +9793,38 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPushDownTimestampFilterThroughExcept() throws SqlException {
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/   "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/ ") except select-choose [ts2 ts] ts2 ts from (" +
+                        /**/   "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/ ")" +
+                        ")",
+                "select ts from (select ts1 ts from t1 except select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
+    public void testPushDownTimestampFilterThroughIntersect() throws SqlException {
+        assertQuery(
+                "select-choose ts from (" +
+                        /**/ "select-choose [ts1 ts] ts1 ts from (" +
+                        /**/   "select [ts1] from t1 timestamp (ts1) where ts1 in '2025-12-01T01;2h'" +
+                        /**/ ") intersect select-choose [ts2 ts] ts2 ts from (" +
+                        /**/   "select [ts2] from t2 timestamp (ts2) where ts2 in '2025-12-01T01;2h'" +
+                        /**/ ")" +
+                        ")",
+                "select ts from (select ts1 ts from t1 intersect select ts2 ts from t2) where ts in '2025-12-01T01;2h'",
+                modelOf("t1").timestamp("ts1"),
+                modelOf("t2").timestamp("ts2")
+        );
+    }
+
+    @Test
     public void testPushWhereThroughUnionAll() throws SqlException {
         assertQuery(
                 "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
@@ -12636,7 +12668,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testUnderTerminatedOver2() throws Exception {
-        assertSyntaxError("select a,b, f(c) over (partition by b order by ts", 47, "')' expected to close OVER clause");
+        assertSyntaxError("select a,b, f(c) over (partition by b order by ts", 47, "')' expected to close window specification");
     }
 
     @Test
@@ -13596,6 +13628,61 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("b", ColumnType.INT)
                         .col("a", ColumnType.INT)
                         .timestamp("ts")
+        );
+    }
+
+    // Join keyword as window name in WINDOW clause should fail
+    @Test
+    public void testWindowNameJoinKeywordInWindowClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER w from xyz WINDOW join AS (ORDER BY ts)",
+                37,
+                "SQL keywords have to be enclosed in double quotes",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    // SQL keyword as window name in OVER clause should fail
+    @Test
+    public void testWindowNameKeywordInOverClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER select from xyz",
+                19,
+                "SQL keywords have to be enclosed in double quotes",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    // SQL keyword as window name in WINDOW clause should fail
+    @Test
+    public void testWindowNameKeywordInWindowClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER w from xyz WINDOW select AS (ORDER BY ts)",
+                37,
+                "SQL keywords have to be enclosed in double quotes",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    // Number as window name should fail
+    @Test
+    public void testWindowNameNumberInOverClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER 42 from xyz",
+                19,
+                "identifier should start with a letter or '_'",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    // Number as window name in WINDOW clause should fail
+    @Test
+    public void testWindowNameNumberInWindowClause() throws Exception {
+        assertSyntaxError(
+                "select sum(x) OVER w from xyz WINDOW 42 AS (ORDER BY ts)",
+                37,
+                "identifier should start with a letter or '_'",
+                modelOf("xyz").col("x", ColumnType.INT).timestamp("ts")
         );
     }
 

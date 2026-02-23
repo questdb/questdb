@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 #![feature(allocator_api)]
+#![feature(portable_simd)]
 extern crate core;
 pub extern crate jni;
 

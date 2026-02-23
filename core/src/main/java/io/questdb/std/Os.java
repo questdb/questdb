@@ -391,6 +391,7 @@ public final class Os {
                 if (libRustStream == null) {
                     loadLib(prdLibRoot + rustLibName);
                 } else {
+                    System.err.println("Loading DEV Rust library: " + devRustLib);
                     loadLib(devRustLib, libRustStream);
                 }
             }

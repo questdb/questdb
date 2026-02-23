@@ -1606,21 +1606,22 @@ public class GroupByTest extends AbstractCairoTest {
                     """
                             Sort light
                               keys: [x, max, dateadd]
-                                VirtualRecord
-                                  functions: [x,max,dateadd('s',max::int,dateadd)]
-                                    GroupBy vectorized: false
-                                      keys: [x,dateadd,x1]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [x,max,dateadd('s',max::int,dateadd)]
+                                        GroupBy vectorized: false
+                                          keys: [x,dateadd,x1]
+                                          values: [max(y)]
+                                            SelectedRecord
+                                                Hash Join Light
+                                                  condition: t2.y=t1.y
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t2
+                                                        Frame forward scan on: t1
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
                             """
             );
 
@@ -2751,21 +2752,22 @@ public class GroupByTest extends AbstractCairoTest {
                     """
                             Sort light
                               keys: [x, max, dateadd]
-                                VirtualRecord
-                                  functions: [x,max,dateadd('s',max::int,dateadd)]
-                                    GroupBy vectorized: false
-                                      keys: [x,dateadd,x1]
-                                      values: [max(y)]
-                                        SelectedRecord
-                                            Hash Join Light
-                                              condition: t2.y=t1.y
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
-                                                Hash
+                                Materialize sort keys
+                                    VirtualRecord
+                                      functions: [x,max,dateadd('s',max::int,dateadd)]
+                                        GroupBy vectorized: false
+                                          keys: [x,dateadd,x1]
+                                          values: [max(y)]
+                                            SelectedRecord
+                                                Hash Join Light
+                                                  condition: t2.y=t1.y
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t2
+                                                        Frame forward scan on: t1
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
                             """
             );
 

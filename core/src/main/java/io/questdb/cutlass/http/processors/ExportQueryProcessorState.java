@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -33,6 +34,7 @@ import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
@@ -80,6 +82,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
+    private HTTPSerialParquetExporter serialParquetExporter;
+    long timeout;
+    private final ParquetWriteCallback writeCallback = new ParquetWriteCallback();
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CopyExportContext copyContext) {
         this.httpConnectionContext = httpConnectionContext;
@@ -126,6 +131,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         errorPosition = 0;
         serialExporterInit = false;
         task.clear();
+        writeCallback.of(null, null);
     }
 
     @Override
@@ -134,6 +140,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         recordCursorFactory = Misc.free(recordCursorFactory);
         pageFrameCursor = Misc.free(pageFrameCursor);
         task = Misc.free(task);
+        serialParquetExporter = null;
+        writeCallback.of(null, null);
     }
 
     public ExportModel getExportModel() {
@@ -152,6 +160,17 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         return createParquetOp;
     }
 
+    public HttpConnectionContext getHttpConnectionContext() {
+        return httpConnectionContext;
+    }
+
+    HTTPSerialParquetExporter getOrCreateSerialParquetExporter(CairoEngine engine) {
+        if (serialParquetExporter == null) {
+            serialParquetExporter = new HTTPSerialParquetExporter(engine);
+        }
+        return serialParquetExporter;
+    }
+
     public boolean isQueryCacheable() {
         return queryCacheable;
     }
@@ -162,6 +181,31 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public void setParquetTempTableCreate(CreateTableOperation createOp) {
         this.createParquetOp = createOp;
+    }
+
+    void initWriteCallback(ExportQueryProcessor processor) {
+        this.writeCallback.of(processor, this);
+    }
+
+    CopyExportRequestTask.StreamWriteParquetCallBack getWriteCallback() {
+        return writeCallback;
+    }
+
+    private static final class ParquetWriteCallback implements CopyExportRequestTask.StreamWriteParquetCallBack {
+        private ExportQueryProcessor processor;
+        private ExportQueryProcessorState state;
+
+        void of(ExportQueryProcessor processor, ExportQueryProcessorState state) {
+            this.processor = processor;
+            this.state = state;
+        }
+
+        @Override
+        public void onWrite(long dataPtr, long dataLen) throws Exception {
+            if (processor != null && state != null) {
+                processor.writeParquetData(state, dataPtr, dataLen);
+            }
+        }
     }
 
     private void releaseExportEntry() {

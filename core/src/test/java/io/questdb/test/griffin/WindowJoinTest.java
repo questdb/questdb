@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -79,6 +80,85 @@ public class WindowJoinTest extends AbstractCairoTest {
         includePrevailing = rnd.nextBoolean();
         leftConvertParquet = rnd.nextBoolean();
         rightConvertParquet = rnd.nextBoolean();
+    }
+
+    @Test
+    public void testWindowJoinSelfJoinWithVwapCalculation() throws Exception {
+        // Reproduces crash from demo.questdb.io where self-join on same table
+        // with EXCLUDE PREVAILING and VWAP calculation causes SIGSEGV in
+        // AsyncWindowJoinFastRecordCursorFactory.filterAndAggregateVect
+        // when accessing slave record via PageFrameMemoryRecord.getDouble
+        // Only run for one configuration to avoid duplicate testing
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        // Configure small page frames to trigger more frame crossings like in production
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // Create fx_trades-like table
+                        engine.execute(
+                                "create table fx_trades (" +
+                                        "  timestamp timestamp," +
+                                        "  symbol symbol," +
+                                        "  price double," +
+                                        "  quantity double," +
+                                        "  side symbol," +
+                                        "  order_id uuid" +
+                                        ") timestamp(timestamp) partition by day;",
+                                sqlExecutionContext
+                        );
+
+                        // Insert enough data to span multiple page frames (similar to demo.questdb.io)
+                        // The crash occurred with rowIndex=8947, frameIndex=6, so we need substantial data
+                        // Generate 2 million rows across multiple days to create multiple partitions and page frames
+                        engine.execute(
+                                "insert into fx_trades " +
+                                        "select " +
+                                        "  dateadd('s', x::int, '2024-01-01T00:00:00.000000Z')," +
+                                        "  rnd_symbol('EURUSD', 'GBPUSD', 'USDJPY')," +
+                                        "  1.0 + rnd_double() * 0.1," +
+                                        "  (rnd_int(1, 10, 0) * 10000)::double," +
+                                        "  rnd_symbol('buy', 'sell')," +
+                                        "  rnd_uuid4() " +
+                                        "from long_sequence(2000000)",
+                                sqlExecutionContext
+                        );
+
+                        // This is the failing query from demo.questdb.io
+                        // Self-join with EXCLUDE PREVAILING and VWAP calculation
+                        String query = "SELECT " +
+                                "    t.timestamp," +
+                                "    t.symbol," +
+                                "    t.price," +
+                                "    t.quantity," +
+                                "    t.side," +
+                                "    t.order_id," +
+                                "    sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m " +
+                                "FROM fx_trades t " +
+                                "WINDOW JOIN fx_trades w " +
+                                "    ON (t.symbol = w.symbol) " +
+                                "    RANGE BETWEEN 5 minutes PRECEDING AND 0 seconds FOLLOWING " +
+                                "    EXCLUDE PREVAILING " +
+                                "WHERE t.symbol = 'EURUSD' " +
+                                "ORDER BY t.timestamp " +
+                                "LIMIT 100";
+
+                        // Just execute the query - the crash happens during cursor iteration
+                        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            TestUtils.drainCursor(cursor);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test

@@ -97,7 +97,7 @@ namespace questdb::avx2 {
                     case data_type_t::f64: {
                         double value = instr.dpayload;
                         Vec dummy;
-                        if (!cache.findFloat(value, dummy)) {
+                        if (!cache.findFloat(value, type, dummy)) {
                             Vec reg = c.new_ymm("const_ymm_f_%f", value);
                             if (type == data_type_t::f32) {
                                 Mem mem = c.new_float_const(scope, static_cast<float>(value));
@@ -106,7 +106,7 @@ namespace questdb::avx2 {
                                 Mem mem = c.new_double_const(scope, value);
                                 c.vbroadcastsd(reg, mem);
                             }
-                            cache.addFloat(value, reg);
+                            cache.addFloat(value, type, reg);
                         }
                         break;
                     }
@@ -391,7 +391,7 @@ namespace questdb::avx2 {
         // Check cache for float constants
         if (type == data_type_t::f32 || type == data_type_t::f64) {
             Vec cached;
-            if (cache.findFloat(instr.dpayload, cached)) {
+            if (cache.findFloat(instr.dpayload, type, cached)) {
                 return {cached, type, data_kind_t::kConst};
             }
         }

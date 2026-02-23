@@ -136,6 +136,9 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             }
 
             try (TableReader reader = cairoEngine.getReader(tableToken)) {
+                // Enable streaming mode to use MADV_SEQUENTIAL/DONTNEED hints,
+                // releasing page cache after each partition is processed
+                reader.setStreamingMode(true);
                 final int timestampType = reader.getMetadata().getTimestampType();
                 final int partitionCount = reader.getPartitionCount();
                 final int partitionBy = reader.getPartitionedBy();
@@ -188,6 +191,7 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                                         .$(", partition=").$(nameSink)
                                         .$(", size=").$(parquetFileSize).$(']').$();
                                 entry.setFinishedPartitionCount(partitionIndex + 1);
+                                reader.closePartitionByIndex(partitionIndex);
                                 continue;
                             }
 
@@ -223,6 +227,8 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
                                     .$(", size=").$(parquetFileSize).$(']')
                                     .$();
                             entry.setFinishedPartitionCount(partitionIndex + 1);
+                            // Release page cache for processed partition
+                            reader.closePartitionByIndex(partitionIndex);
                         }
                     }
                 }
@@ -249,13 +255,18 @@ public class SQLSerialParquetExporter extends HTTPSerialParquetExporter implemen
             LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e).$(']').$();
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
-            if (tableToken != null && createOp != null) {
+            if (createOp != null) {
                 phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
                 entry.setPhase(phase);
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 try {
-                    fromParquet.trimTo(0);
-                    cairoEngine.dropTableOrViewOrMatView(fromParquet, tableToken);
+                    if (tableToken == null) {
+                        tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
+                    }
+                    if (tableToken != null) {
+                        fromParquet.trimTo(0);
+                        cairoEngine.dropTableOrViewOrMatView(fromParquet, tableToken);
+                    }
                     copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 } catch (CairoException e) {
                     // drop failure doesn't affect task continuation - log and proceed

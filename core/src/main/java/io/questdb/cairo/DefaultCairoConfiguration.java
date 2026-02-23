@@ -686,6 +686,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getParquetExportBatchSize() {
+        return 100_000;
+    }
+
+    @Override
     public int getParquetExportCompressionCodec() {
         return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
@@ -1116,6 +1121,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSortKeyMaterializationThreshold() {
+        return 3;
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return 1024;
     }
@@ -1258,6 +1268,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getTxnScoreboardEntryCount() {
         return 8192;
+    }
+
+    @Override
+    public int getUnorderedPageFrameReduceQueueCapacity() {
+        return 4096;
     }
 
     @Override

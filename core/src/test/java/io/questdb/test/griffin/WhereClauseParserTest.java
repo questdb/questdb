@@ -899,122 +899,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         );
     }
 
-    @Test
-    public void testDayFilterDateListWithDynamicInterval() throws Exception {
-        // Date list (comma-separated in brackets) with day filter in dynamic mode
-        // 2024-01-01 is Monday, 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
-        // #Mon should filter to only Monday (2024-01-01)
-        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]";
-
-        // Static only - date list with day filter
-        runWhereIntervalTest0(
-                "timestamp IN '[2024-01-01,2024-01-02,2024-01-03]#Mon'",
-                expected
-        );
-
-        // Dynamic: now() forces dynamic mode for the date list path
-        runWhereIntervalTest0(
-                "timestamp < dateadd('y', 100, now()) and timestamp IN '[2024-01-01,2024-01-02,2024-01-03]#Mon'",
-                expected
-        );
-    }
-
-    /**
-     * Test weekend filter with dynamic intervals.
-     */
-    @Test
-    public void testDayFilterWeekendWithDynamicInterval() throws Exception {
-        // 2024-01-01 is Monday, 2024-01-07 is Sunday
-        // #weekend should filter to Sat-Sun (06-07)
-        String expected = "[{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]";
-
-        // Static only
-        runWhereIntervalTest0(
-                "timestamp IN '2024-01-[01..07]#weekend'",
-                expected
-        );
-
-        // Dynamic
-        runWhereIntervalTest0(
-                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..07]#weekend'",
-                expected
-        );
-    }
-
-    /**
-     * Test day filter with dynamic intervals (now()).
-     * Day filter should be applied at runtime after the dynamic timestamp is resolved.
-     */
-    @Test
-    public void testDayFilterWithDynamicInterval() throws Exception {
-        // 2024-01-01 is Monday, 2024-01-02 is Tuesday
-        // #Mon should filter to only Monday
-        // Combined with now() makes it dynamic
-        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]";
-
-        // Static only
-        runWhereIntervalTest0(
-                "timestamp IN '2024-01-[01..02]#Mon'",
-                expected
-        );
-
-        // Dynamic: now() first
-        runWhereIntervalTest0(
-                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..02]#Mon'",
-                expected
-        );
-
-        // Dynamic: day filter first
-        runWhereIntervalTest0(
-                "timestamp IN '2024-01-[01..02]#Mon' and timestamp < dateadd('y', 100, now())",
-                expected
-        );
-    }
-
-    /**
-     * Test day filter with timezone and dynamic intervals.
-     */
-    @Test
-    public void testDayFilterWithTimezoneAndDynamicInterval() throws Exception {
-        // 2024-01-01 is Monday in +12:00 timezone
-        // After conversion: 2023-12-31 12:00 UTC to 2024-01-01 11:59 UTC
-        String expected = "[{lo=2023-12-31T12:00:00.000000Z, hi=2024-01-01T11:59:59.999999Z}]";
-
-        // Static only
-        runWhereIntervalTest0(
-                "timestamp IN '2024-01-[01..02]@+12:00#Mon'",
-                expected
-        );
-
-        // Dynamic
-        runWhereIntervalTest0(
-                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..02]@+12:00#Mon'",
-                expected
-        );
-    }
-
-    /**
-     * Test workday filter with dynamic intervals.
-     */
-    @Test
-    public void testDayFilterWorkdayWithDynamicInterval() throws Exception {
-        // 2024-01-01 is Monday, 2024-01-07 is Sunday
-        // #workday should filter Mon-Fri (01-05)
-        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]";
-
-        // Static only
-        runWhereIntervalTest0(
-                "timestamp IN '2024-01-[01..07]#workday'",
-                expected
-        );
-
-        // Dynamic
-        runWhereIntervalTest0(
-                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..07]#workday'",
-                expected
-        );
-    }
-
     /**
      * Test bracket expansion with a RESTRICTIVE interval that filters out some results.
      * This verifies that bracket-expanded intervals are properly intersected with other constraints.
@@ -1040,52 +924,63 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testComplexInterval1() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00;2d'", "[{lo=2015-02-23T10:00:00.000000Z, hi=2015-02-25T10:00:59.999999Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00;2d'",
+                "[{lo=2015-02-23T10:00:00.000000Z, hi=2015-02-25T09:59:59.999999Z}]");
     }
 
     @Test
     public void testComplexInterval1Varchar() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00;2d'::varchar", "[{lo=2015-02-23T10:00:00.000000Z, hi=2015-02-25T10:00:59.999999Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00;2d'::varchar",
+                "[{lo=2015-02-23T10:00:00.000000Z, hi=2015-02-25T09:59:59.999999Z}]");
     }
 
     @Test
     public void testComplexInterval2() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;7d'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-03-02T10:00:55.000000Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;7d'",
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-03-02T10:00:54.999999Z}]");
     }
 
     @Test
     public void testComplexInterval2Varchar() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;7d'::varchar", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-03-02T10:00:55.000000Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;7d'::varchar",
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-03-02T10:00:54.999999Z}]");
     }
 
     @Test
     public void testComplexInterval3() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;15s'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:10.000000Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;15s'",
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:09.999999Z}]");
     }
 
     @Test
     public void testComplexInterval3Varchar() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;15s'::varchar", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:10.000000Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;15s'::varchar",
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:09.999999Z}]");
     }
 
     @Test
     public void testComplexInterval4() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:30:55.000000Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m'",
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:30:54.999999Z}]");
     }
 
     @Test
     public void testComplexInterval4Varchar() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m'::varchar", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:30:55.000000Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m'::varchar",
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:30:54.999999Z}]");
     }
 
     @Test
     public void testComplexInterval5() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m' and timestamp != '2015-02-23T10:10:00.000Z'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:09:59.999999Z},{lo=2015-02-23T10:10:00.000001Z, hi=2015-02-23T10:30:55.000000Z}]");
+        runWhereTest(
+                "timestamp in '2015-02-23T10:00:55.000Z;30m' and timestamp != '2015-02-23T10:10:00.000Z'",
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:09:59.999999Z},{lo=2015-02-23T10:10:00.000001Z, hi=2015-02-23T10:30:54.999999Z}]");
     }
 
     @Test
     public void testComplexInterval5Varchar() throws Exception {
-        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m'::varchar and timestamp != '2015-02-23T10:10:00.000Z'::varchar", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:09:59.999999Z},{lo=2015-02-23T10:10:00.000001Z, hi=2015-02-23T10:30:55.000000Z}]");
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m'::varchar and timestamp != '2015-02-23T10:10:00.000Z'::varchar",
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:09:59.999999Z},{lo=2015-02-23T10:10:00.000001Z, hi=2015-02-23T10:30:54.999999Z}]");
     }
 
     @Test
@@ -1107,13 +1002,15 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testComplexNowWithInclusive() throws Exception {
         setCurrentMicros(24L * 3600 * 1000 * 1000);
-        runWhereIntervalTest0("now() >= timestamp and '1970-01-01T00:00:00.000Z' <= timestamp", "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+        runWhereIntervalTest0("now() >= timestamp and '1970-01-01T00:00:00.000Z' <= timestamp",
+                "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
     }
 
     @Test
     public void testComplexNowWithInclusiveVarchar() throws Exception {
         setCurrentMicros(24L * 3600 * 1000 * 1000);
-        runWhereIntervalTest0("now() >= timestamp and '1970-01-01T00:00:00.000Z'::varchar <= timestamp", "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+        runWhereIntervalTest0("now() >= timestamp and '1970-01-01T00:00:00.000Z'::varchar <= timestamp",
+                "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
     }
 
     @Test
@@ -1392,6 +1289,122 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertTrue(m.hasIntervalFilters());
         TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2015-05-10T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]"), intervalToString(m));
         assertFilter(m, "100 bid >");
+    }
+
+    @Test
+    public void testDayFilterDateListWithDynamicInterval() throws Exception {
+        // Date list (comma-separated in brackets) with day filter in dynamic mode
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
+        // #Mon should filter to only Monday (2024-01-01)
+        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]";
+
+        // Static only - date list with day filter
+        runWhereIntervalTest0(
+                "timestamp IN '[2024-01-01,2024-01-02,2024-01-03]#Mon'",
+                expected
+        );
+
+        // Dynamic: now() forces dynamic mode for the date list path
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '[2024-01-01,2024-01-02,2024-01-03]#Mon'",
+                expected
+        );
+    }
+
+    /**
+     * Test weekend filter with dynamic intervals.
+     */
+    @Test
+    public void testDayFilterWeekendWithDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday, 2024-01-07 is Sunday
+        // #weekend should filter to Sat-Sun (06-07)
+        String expected = "[{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-07T23:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..07]#weekend'",
+                expected
+        );
+
+        // Dynamic
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..07]#weekend'",
+                expected
+        );
+    }
+
+    /**
+     * Test day filter with dynamic intervals (now()).
+     * Day filter should be applied at runtime after the dynamic timestamp is resolved.
+     */
+    @Test
+    public void testDayFilterWithDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday, 2024-01-02 is Tuesday
+        // #Mon should filter to only Monday
+        // Combined with now() makes it dynamic
+        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..02]#Mon'",
+                expected
+        );
+
+        // Dynamic: now() first
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..02]#Mon'",
+                expected
+        );
+
+        // Dynamic: day filter first
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..02]#Mon' and timestamp < dateadd('y', 100, now())",
+                expected
+        );
+    }
+
+    /**
+     * Test day filter with timezone and dynamic intervals.
+     */
+    @Test
+    public void testDayFilterWithTimezoneAndDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday in +12:00 timezone
+        // After conversion: 2023-12-31 12:00 UTC to 2024-01-01 11:59 UTC
+        String expected = "[{lo=2023-12-31T12:00:00.000000Z, hi=2024-01-01T11:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..02]@+12:00#Mon'",
+                expected
+        );
+
+        // Dynamic
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..02]@+12:00#Mon'",
+                expected
+        );
+    }
+
+    /**
+     * Test workday filter with dynamic intervals.
+     */
+    @Test
+    public void testDayFilterWorkdayWithDynamicInterval() throws Exception {
+        // 2024-01-01 is Monday, 2024-01-07 is Sunday
+        // #workday should filter Mon-Fri (01-05)
+        String expected = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]";
+
+        // Static only
+        runWhereIntervalTest0(
+                "timestamp IN '2024-01-[01..07]#workday'",
+                expected
+        );
+
+        // Dynamic
+        runWhereIntervalTest0(
+                "timestamp < dateadd('y', 100, now()) and timestamp IN '2024-01-[01..07]#workday'",
+                expected
+        );
     }
 
     @Test
@@ -1809,7 +1822,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testEqualsEpochTimestamp() throws Exception {
-        runWhereTest("timestamp = 1424649600000000::timestamp", "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
+        runWhereTest("timestamp = 1424649600000000::timestamp",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
     }
 
     @Test
@@ -2645,7 +2659,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalCaseSensitivityIn() throws Exception {
         runWhereIntervalTest0("TIMESTAMP in '2015-02-23T10:00;2d'",
-                "[{lo=2015-02-23T10:00:00.000000Z, hi=2015-02-25T10:00:59.999999Z}]");
+                "[{lo=2015-02-23T10:00:00.000000Z, hi=2015-02-25T09:59:59.999999Z}]");
     }
 
     @Test
@@ -2749,60 +2763,60 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalSourceDay() throws Exception {
         runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;30m;2d;5'",
-                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:30:55.000000Z}," +
-                        "{lo=2015-02-25T10:00:55.000000Z, hi=2015-02-25T10:30:55.000000Z}," +
-                        "{lo=2015-02-27T10:00:55.000000Z, hi=2015-02-27T10:30:55.000000Z}," +
-                        "{lo=2015-03-01T10:00:55.000000Z, hi=2015-03-01T10:30:55.000000Z}," +
-                        "{lo=2015-03-03T10:00:55.000000Z, hi=2015-03-03T10:30:55.000000Z}]");
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:30:54.999999Z}," +
+                        "{lo=2015-02-25T10:00:55.000000Z, hi=2015-02-25T10:30:54.999999Z}," +
+                        "{lo=2015-02-27T10:00:55.000000Z, hi=2015-02-27T10:30:54.999999Z}," +
+                        "{lo=2015-03-01T10:00:55.000000Z, hi=2015-03-01T10:30:54.999999Z}," +
+                        "{lo=2015-03-03T10:00:55.000000Z, hi=2015-03-03T10:30:54.999999Z}]");
     }
 
     @Test
     public void testIntervalSourceHour() throws Exception {
-        runWhereCompareToModelTest("timestamp in '2015-02-23T10:00:55.000Z;10m;3h;10'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:10:55.000000Z}," +
-                "{lo=2015-02-23T13:00:55.000000Z, hi=2015-02-23T13:10:55.000000Z}," +
-                "{lo=2015-02-23T16:00:55.000000Z, hi=2015-02-23T16:10:55.000000Z}," +
-                "{lo=2015-02-23T19:00:55.000000Z, hi=2015-02-23T19:10:55.000000Z}," +
-                "{lo=2015-02-23T22:00:55.000000Z, hi=2015-02-23T22:10:55.000000Z}," +
-                "{lo=2015-02-24T01:00:55.000000Z, hi=2015-02-24T01:10:55.000000Z}," +
-                "{lo=2015-02-24T04:00:55.000000Z, hi=2015-02-24T04:10:55.000000Z}," +
-                "{lo=2015-02-24T07:00:55.000000Z, hi=2015-02-24T07:10:55.000000Z}," +
-                "{lo=2015-02-24T10:00:55.000000Z, hi=2015-02-24T10:10:55.000000Z}," +
-                "{lo=2015-02-24T13:00:55.000000Z, hi=2015-02-24T13:10:55.000000Z}]");
+        runWhereCompareToModelTest("timestamp in '2015-02-23T10:00:55.000Z;10m;3h;10'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:10:54.999999Z}," +
+                "{lo=2015-02-23T13:00:55.000000Z, hi=2015-02-23T13:10:54.999999Z}," +
+                "{lo=2015-02-23T16:00:55.000000Z, hi=2015-02-23T16:10:54.999999Z}," +
+                "{lo=2015-02-23T19:00:55.000000Z, hi=2015-02-23T19:10:54.999999Z}," +
+                "{lo=2015-02-23T22:00:55.000000Z, hi=2015-02-23T22:10:54.999999Z}," +
+                "{lo=2015-02-24T01:00:55.000000Z, hi=2015-02-24T01:10:54.999999Z}," +
+                "{lo=2015-02-24T04:00:55.000000Z, hi=2015-02-24T04:10:54.999999Z}," +
+                "{lo=2015-02-24T07:00:55.000000Z, hi=2015-02-24T07:10:54.999999Z}," +
+                "{lo=2015-02-24T10:00:55.000000Z, hi=2015-02-24T10:10:54.999999Z}," +
+                "{lo=2015-02-24T13:00:55.000000Z, hi=2015-02-24T13:10:54.999999Z}]");
     }
 
     @Test
     public void testIntervalSourceMin() throws Exception {
         runWhereCompareToModelTest("timestamp in '2015-02-23T10:00:55.000Z;15s;15m;5'",
-                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:10.000000Z}," +
-                        "{lo=2015-02-23T10:15:55.000000Z, hi=2015-02-23T10:16:10.000000Z}," +
-                        "{lo=2015-02-23T10:30:55.000000Z, hi=2015-02-23T10:31:10.000000Z}," +
-                        "{lo=2015-02-23T10:45:55.000000Z, hi=2015-02-23T10:46:10.000000Z}," +
-                        "{lo=2015-02-23T11:00:55.000000Z, hi=2015-02-23T11:01:10.000000Z}]");
+                "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:09.999999Z}," +
+                        "{lo=2015-02-23T10:15:55.000000Z, hi=2015-02-23T10:16:09.999999Z}," +
+                        "{lo=2015-02-23T10:30:55.000000Z, hi=2015-02-23T10:31:09.999999Z}," +
+                        "{lo=2015-02-23T10:45:55.000000Z, hi=2015-02-23T10:46:09.999999Z}," +
+                        "{lo=2015-02-23T11:00:55.000000Z, hi=2015-02-23T11:01:09.999999Z}]");
     }
 
     @Test
     public void testIntervalSourceMonth() throws Exception {
-        runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;2h;2M;3'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T12:00:55.000000Z}," +
-                "{lo=2015-04-23T10:00:55.000000Z, hi=2015-04-23T12:00:55.000000Z}," +
-                "{lo=2015-06-23T10:00:55.000000Z, hi=2015-06-23T12:00:55.000000Z}]");
+        runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;2h;2M;3'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T12:00:54.999999Z}," +
+                "{lo=2015-04-23T10:00:55.000000Z, hi=2015-04-23T12:00:54.999999Z}," +
+                "{lo=2015-06-23T10:00:55.000000Z, hi=2015-06-23T12:00:54.999999Z}]");
     }
 
     @Test
     public void testIntervalSourceSec() throws Exception {
-        runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;5s;30s;5'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:01:00.000000Z}," +
-                "{lo=2015-02-23T10:01:25.000000Z, hi=2015-02-23T10:01:30.000000Z}," +
-                "{lo=2015-02-23T10:01:55.000000Z, hi=2015-02-23T10:02:00.000000Z}," +
-                "{lo=2015-02-23T10:02:25.000000Z, hi=2015-02-23T10:02:30.000000Z}," +
-                "{lo=2015-02-23T10:02:55.000000Z, hi=2015-02-23T10:03:00.000000Z}]");
+        runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;5s;30s;5'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:00:59.999999Z}," +
+                "{lo=2015-02-23T10:01:25.000000Z, hi=2015-02-23T10:01:29.999999Z}," +
+                "{lo=2015-02-23T10:01:55.000000Z, hi=2015-02-23T10:01:59.999999Z}," +
+                "{lo=2015-02-23T10:02:25.000000Z, hi=2015-02-23T10:02:29.999999Z}," +
+                "{lo=2015-02-23T10:02:55.000000Z, hi=2015-02-23T10:02:59.999999Z}]");
     }
 
     @Test
     public void testIntervalSourceYear() throws Exception {
-        runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;1d;1y;5'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-24T10:00:55.000000Z}," +
-                "{lo=2016-02-23T10:00:55.000000Z, hi=2016-02-24T10:00:55.000000Z}," +
-                "{lo=2017-02-23T10:00:55.000000Z, hi=2017-02-24T10:00:55.000000Z}," +
-                "{lo=2018-02-23T10:00:55.000000Z, hi=2018-02-24T10:00:55.000000Z}," +
-                "{lo=2019-02-23T10:00:55.000000Z, hi=2019-02-24T10:00:55.000000Z}]");
+        runWhereCompareToModelTest("timestamp IN '2015-02-23T10:00:55.000Z;1d;1y;5'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-24T10:00:54.999999Z}," +
+                "{lo=2016-02-23T10:00:55.000000Z, hi=2016-02-24T10:00:54.999999Z}," +
+                "{lo=2017-02-23T10:00:55.000000Z, hi=2017-02-24T10:00:54.999999Z}," +
+                "{lo=2018-02-23T10:00:55.000000Z, hi=2018-02-24T10:00:54.999999Z}," +
+                "{lo=2019-02-23T10:00:55.000000Z, hi=2019-02-24T10:00:54.999999Z}]");
     }
 
     @Test
@@ -3867,7 +3881,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertFilter(m, null);
         // Should have 4 intervals: 3 from periodic + 1 from simple date
         TestUtils.assertEquals(
-                replaceTimestampSuffix("[{lo=2020-01-01T00:00:00.000000Z, hi=2020-01-02T23:59:59.999999Z},{lo=2020-02-01T00:00:00.000000Z, hi=2020-02-02T23:59:59.999999Z},{lo=2020-03-01T00:00:00.000000Z, hi=2020-03-02T23:59:59.999999Z},{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z}]"),
+                replaceTimestampSuffix("[{lo=2020-01-01T00:00:00.000000Z, hi=2020-01-01T23:59:59.999999Z},{lo=2020-02-01T00:00:00.000000Z, hi=2020-02-01T23:59:59.999999Z},{lo=2020-03-01T00:00:00.000000Z, hi=2020-03-01T23:59:59.999999Z},{lo=2020-06-01T00:00:00.000000Z, hi=2020-06-01T23:59:59.999999Z}]"),
                 intervalToString(m)
         );
     }

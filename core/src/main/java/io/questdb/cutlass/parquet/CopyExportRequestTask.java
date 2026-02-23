@@ -245,6 +245,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public void setUpStreamPartitionParquetExporter() {
         if (pageFrameCursor != null) {
+            // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
+            pageFrameCursor.setStreamingMode(true);
             streamPartitionParquetExporter.setUp();
         }
     }
@@ -255,6 +257,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.descending = descending;
+        // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
+        pageFrameCursor.setStreamingMode(true);
         streamPartitionParquetExporter.setUp();
     }
 
@@ -303,6 +307,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     }
 
     public class StreamPartitionParquetExporter implements Mutable, QuietCloseable {
+        // Buffer header size: [8 bytes data_len][8 bytes rows_written_to_row_groups]
+        private static final int BUFFER_HEADER_SIZE = 2 * Long.BYTES;
         private DirectIntList bloomFilterColumnIndexes = new DirectIntList(16, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
         private DirectLongList columnMetadata = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER, true);
@@ -310,6 +316,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         private long currentFrameRowCount = 0;
         private long currentPartitionIndex = -1;
         private boolean exportFinished = false;
+        // Cumulative count of rows written to Parquet row groups by Rust.
+        // Used to determine when partition memory can be safely released.
+        private long rowsWrittenToRowGroups = 0;
         private long streamExportCurrentPtr;
         private long streamExportCurrentSize;
         private long streamWriter = -1;
@@ -325,6 +334,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             closeWriter();
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
+            rowsWrittenToRowGroups = 0;
             totalRows = 0;
             freeOwnedPageFrameCursor();
             exportFinished = false;
@@ -347,8 +357,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             }
             long buffer = finishStreamingParquetWrite(streamWriter);
             exportFinished = true;
-            streamExportCurrentPtr = buffer + Long.BYTES;
+            streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
             streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+            rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
             assert writeCallback != null;
             writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
             clear();
@@ -370,6 +381,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             return currentPartitionIndex;
         }
 
+        public long getRowsWrittenToRowGroups() {
+            return rowsWrittenToRowGroups;
+        }
+
         public long getTotalRows() {
             return totalRows;
         }
@@ -381,8 +396,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                     long buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
                     if (buffer != 0) {
-                        streamExportCurrentPtr = buffer + Long.BYTES;
+                        streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
                         streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                        rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
                     } else {
                         streamExportCurrentPtr = 0;
                         streamExportCurrentSize = 0;
@@ -468,16 +484,22 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 columnData.clear();
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
-                for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                     long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                     final int columnType = metadata.getColumnType(i);
+                    final long pageAddress = frame.getPageAddress(i);
+
+                    // Assert alignment for SIMD operations in Rust parquet encoder
+                    assert pageAddress == 0 || isAlignedForColumnType(pageAddress, columnType)
+                            : "Unaligned address " + pageAddress + " for column type " + ColumnType.nameOf(columnType);
+
                     if (ColumnType.isSymbol(columnType)) {
                         SymbolMapReader symbolMapReader = (SymbolMapReader) frameCursor.getSymbolTable(i);
                         final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
                         final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
 
                         columnData.add(localColTop);
-                        columnData.add(frame.getPageAddress(i));
+                        columnData.add(pageAddress);
                         columnData.add(frame.getPageSize(i));
                         columnData.add(symbolValuesMem.addressOf(0));
                         columnData.add(symbolValuesMem.size());
@@ -485,7 +507,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                         columnData.add(symbolMapReader.getSymbolCount());
                     } else {
                         columnData.add(localColTop);
-                        columnData.add(frame.getPageAddress(i));
+                        columnData.add(pageAddress);
                         columnData.add(frame.getPageSize(i));
                         columnData.add(frame.getAuxPageAddress(i));
                         columnData.add(frame.getAuxPageSize(i));
@@ -496,8 +518,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
                 long buffer = writeStreamingParquetChunk(streamWriter, columnData.getAddress(), frameRowCount);
                 while (buffer != 0) {
-                    streamExportCurrentPtr = buffer + Long.BYTES;
+                    streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
                     streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                    rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
                     writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                     buffer = writeStreamingParquetChunk(
                             streamWriter,
@@ -508,7 +531,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             } else {
                 columnData.clear();
 
-                for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                     final int columnType = metadata.getColumnType(i);
                     if (ColumnType.isSymbol(columnType)) {
                         SymbolMapReader symbolMapReader = (SymbolMapReader) frameCursor.getSymbolTable(i);
@@ -533,8 +556,9 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                         frame.getParquetRowGroupHi()
                 );
                 while (buffer != 0) {
-                    streamExportCurrentPtr = buffer + Long.BYTES;
+                    streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
                     streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                    rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
                     writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                     buffer = writeStreamingParquetChunkFromRowGroup(
                             streamWriter,
@@ -552,6 +576,37 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             entry.setStreamingSendRowCount(totalRows);
             streamExportCurrentPtr = 0;
             streamExportCurrentSize = 0;
+        }
+
+        private static int getRequiredAlignmentForSimd(int columnType) {
+            switch (ColumnType.tagOf(columnType)) {
+                // Types using Simd<i64, 8> or Simd<f64, 8>
+                case ColumnType.LONG:
+                case ColumnType.DOUBLE:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.DATE:
+                    return 8;
+                // Types using Simd<i32, 16> or Simd<f32, 16>
+                case ColumnType.INT:
+                case ColumnType.FLOAT:
+                case ColumnType.SYMBOL:
+                    return 4;
+                // All other types use scalar paths - no SIMD alignment required
+                default:
+                    return 1;
+            }
+        }
+
+        /**
+         * Checks if the given address is properly aligned for SIMD operations.
+         * Only types that use SIMD in Rust parquet encoder require alignment:
+         * - LONG, DOUBLE, TIMESTAMP: 8-byte alignment (Simd<i64, 8>, Simd<f64, 8>)
+         * - INT, FLOAT, SYMBOL: 4-byte alignment (Simd<i32, 16>, Simd<f32, 16>)
+         * Other types (SHORT, BYTE, etc.) use scalar paths and don't require SIMD alignment.
+         */
+        private static boolean isAlignedForColumnType(long address, int columnType) {
+            int alignment = getRequiredAlignmentForSimd(columnType);
+            return alignment <= 1 || (address & (alignment - 1)) == 0;
         }
 
         private void closeWriter() {

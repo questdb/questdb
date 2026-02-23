@@ -28,6 +28,11 @@ import io.questdb.cairo.sql.Function;
 
 public interface ConstantFunction extends Function {
     @Override
+    default int getComplexity() {
+        return Function.COMPLEXITY_NONE;
+    }
+
+    @Override
     default boolean isConstant() {
         return true;
     }

@@ -60,6 +60,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final LongList pageSizes = new LongList();
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private final int sharedQueryWorkerCount;
+    // Track the lowest partition index that has not been released yet
+    private int lowestOpenPartitionIndex = 0;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
@@ -148,9 +150,10 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                         return result;
                     }
                     continue;
-                }
+                } else {
                 return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
             }
+        }
 
             final PartitionFrame partitionFrame = partitionFrameCursor.next(skipTarget);
             if (partitionFrame != null) {
@@ -196,6 +199,19 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public void releaseOpenPartitions() {
+        // Guard against being called before next() when no partitions need releasing.
+        if (lowestOpenPartitionIndex >= reenterPartitionIndex) {
+            return;
+        }
+        // Close all partitions from lowestOpenPartitionIndex up to (but not including) current partition
+        for (int i = lowestOpenPartitionIndex; i < reenterPartitionIndex; i++) {
+            reader.closePartitionByIndex(i);
+        }
+        lowestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    @Override
     public long size() {
         return partitionFrameCursor.size();
     }
@@ -210,6 +226,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         partitionFrameCursor.toTop();
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
+        lowestOpenPartitionIndex = 0;
         clearAddresses();
     }
 

@@ -481,6 +481,9 @@ pub struct StreamingParquetWriter {
     pending_partitions: Vec<Partition>,
     first_partition_start: usize,
     accumulated_rows: usize,
+    // Cumulative count of rows that have been fully written to row groups.
+    // Used by Java to determine when partition memory can be safely released.
+    rows_written_to_row_groups: usize,
     // Keep RowGroupBuffers alive while partitions reference their data.
     // Used by writeStreamingParquetChunkFromRowGroup to hold decoded parquet data.
     // Index corresponds to pending_partitions: Some(_) for FromRowGroup, None for writeChunk.
@@ -551,8 +554,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let allocator = unsafe { &*allocator_ptr };
         let encodings = crate::parquet_write::schema::to_encodings(&partition_template);
         let mut current_buffer = Box::new(Vec::with_capacity_in(8192, allocator.clone()));
+        // Reserve 16 bytes for header: [8 bytes data_len][8 bytes rows_written_to_row_groups]
         let buffer_writer = unsafe {
-            BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 8)
+            BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 16)
         };
         let bloom_filter_cols =
             build_bloom_filter_set(bloom_filter_column_indexes, bloom_filter_column_count);
@@ -585,6 +589,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             pending_partitions: Vec::new(),
             first_partition_start: 0,
             accumulated_rows: 0,
+            rows_written_to_row_groups: 0,
             pending_row_group_buffers: Vec::new(),
         })
     };
@@ -645,8 +650,11 @@ fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResu
             encoder.current_buffer.set_len(0);
         }
         write_pending_row_group(encoder)?;
-        let data_len = (encoder.current_buffer.len() - 8) as u64;
+        // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
+        let data_len = (encoder.current_buffer.len() - 16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+        encoder.current_buffer[8..16]
+            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
     } else {
         Ok(std::ptr::null())
@@ -691,6 +699,10 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
         first_start,
         last_partition_end,
     )?;
+
+    // Track rows written to row groups (always row_group_size for intermediate flushes)
+    encoder.rows_written_to_row_groups += row_group_size;
+
     let last_partition_rows = encoder.pending_partitions[last_partition_idx].columns[0].row_count;
 
     if last_partition_end >= last_partition_rows {
@@ -753,13 +765,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 encoder.first_partition_start,
                 last_partition_end,
             )?;
+
+            // Track remaining rows written in the final row group
+            encoder.rows_written_to_row_groups += encoder.accumulated_rows;
         }
 
         encoder
             .chunked_writer
             .finish(encoder.additional_data.clone())?;
-        let data_len = (encoder.current_buffer.len() - 8) as u64;
+        // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
+        let data_len = (encoder.current_buffer.len() - 16) as u64;
         encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+        encoder.current_buffer[8..16]
+            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
         Ok(encoder.current_buffer.as_ptr())
     };
 
