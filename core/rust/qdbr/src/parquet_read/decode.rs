@@ -796,7 +796,7 @@ impl ParquetDecoder {
                 .as_ref()
                 .and_then(|m| m.statistics.as_ref())
                 .and_then(|s| s.null_count)
-                .is_some_and(|c| c > 0);
+                .map_or(true, |c| c > 0);
             let bitset =
                 parquet2::bloom_filter::read_from_slice(column_metadata, file_data).unwrap_or(&[]);
 
@@ -826,6 +826,7 @@ impl ParquetDecoder {
                 column_metadata,
                 &physical_type,
                 &filter_desc,
+                has_nulls,
                 is_decimal,
             ) {
                 return Ok(true);
@@ -966,6 +967,7 @@ impl ParquetDecoder {
         column_metadata: &parquet2::metadata::ColumnChunkMetaData,
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
+        has_nulls: bool,
         is_decimal: bool,
     ) -> bool {
         let column_chunk = column_metadata.column_chunk();
@@ -978,7 +980,6 @@ impl ParquetDecoder {
             None => return false,
         };
 
-        let has_nulls = statistics.null_count.is_some_and(|c| c > 0);
         let min_bytes = statistics
             .min_value
             .as_deref()

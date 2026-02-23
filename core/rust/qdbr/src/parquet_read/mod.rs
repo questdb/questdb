@@ -236,7 +236,6 @@ mod tests {
         Ok((cursor.into_inner(), symbol_col_data.len()))
     }
 
-    // --- Helper: build a parquet file with a single Int64 column and bloom filters ---
     fn gen_i64_parquet_with_bloom(values: &[i64]) -> ParquetResult<Vec<u8>> {
         let col = Arc::new(
             Type::primitive_type_builder("val", PhysicalType::INT64)
