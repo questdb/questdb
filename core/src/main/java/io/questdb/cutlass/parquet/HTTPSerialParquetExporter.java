@@ -137,38 +137,20 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         } catch (PeerIsSlowToReadException e) {
             createOp = null;
             throw e;
-        } catch (SqlException e) {
-            LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-            Misc.free(factory);
-            clearExportResources();
-            copyExportContext.updateStatus(
-                    phase,
-                    circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                    null,
-                    Numbers.INT_NULL,
-                    e.getFlyweightMessage(),
-                    e.getErrorCode(),
-                    task.getTableName(),
-                    task.getCopyID()
-            );
-            throw e;
-        } catch (CairoException e) {
-            LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-            Misc.free(factory);
-            clearExportResources();
-            copyExportContext.updateStatus(
-                    phase,
-                    circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                    null,
-                    Numbers.INT_NULL,
-                    e.getFlyweightMessage(),
-                    e.getErrno(),
-                    task.getTableName(),
-                    task.getCopyID()
-            );
-            throw e;
         } catch (Throwable e) {
-            LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e).$(']').$();
+            CharSequence message;
+            int errno;
+            if (e instanceof SqlException se) {
+                message = se.getFlyweightMessage();
+                errno = se.getErrorCode();
+            } else if (e instanceof CairoException ce) {
+                message = ce.getFlyweightMessage();
+                errno = ce.getErrno();
+            } else {
+                message = e.getMessage();
+                errno = -1;
+            }
+            LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(message).$(']').$();
             Misc.free(factory);
             clearExportResources();
             copyExportContext.updateStatus(
@@ -176,8 +158,8 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
                     circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
                     null,
                     Numbers.INT_NULL,
-                    e.getMessage(),
-                    -1,
+                    message,
+                    errno,
                     task.getTableName(),
                     task.getCopyID()
             );
