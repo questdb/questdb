@@ -25,6 +25,7 @@
 package io.questdb.cutlass.parquet;
 
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -634,6 +635,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                         int columnIndex = meta.getColumnIndexQuiet(columnName);
                         if (columnIndex >= 0) {
                             indexes.add(columnIndex);
+                        } else {
+                            throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName);
                         }
                     }
                     start = i + 1;

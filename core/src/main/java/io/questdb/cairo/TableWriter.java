@@ -7121,6 +7121,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                         }
                         indexes.add(descriptorIndex);
+                    } else {
+                        throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName);
                     }
                 }
                 start = i + 1;
