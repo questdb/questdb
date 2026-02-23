@@ -270,6 +270,11 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
+        }
+
+        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             return getVarchar(rec, utf8SinkA, viewA);
         }
@@ -371,6 +376,11 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         @Override
         public Function getArg() {
             return value;
+        }
+
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
         }
 
         @Override

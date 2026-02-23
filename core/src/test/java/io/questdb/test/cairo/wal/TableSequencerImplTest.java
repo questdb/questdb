@@ -98,6 +98,50 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetCurrentWalId() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("int", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            // Get initial current WAL ID (should be 0 - no WALs allocated yet)
+            int currentWalId = engine.getTableSequencerAPI().getCurrentWalId(tableToken);
+            Assert.assertEquals("initial WAL ID should be 0", 0, currentWalId);
+
+            // Calling getCurrentWalId() multiple times should not increment
+            int currentWalId2 = engine.getTableSequencerAPI().getCurrentWalId(tableToken);
+            Assert.assertEquals("getCurrentWalId should not increment", currentWalId, currentWalId2);
+
+            // Now allocate a new WAL ID
+            int nextWalId1 = engine.getTableSequencerAPI().getNextWalId(tableToken);
+            Assert.assertEquals("first getNextWalId should return 1", 1, nextWalId1);
+
+            // getCurrentWalId should now return the allocated ID
+            currentWalId = engine.getTableSequencerAPI().getCurrentWalId(tableToken);
+            Assert.assertEquals("getCurrentWalId should return last allocated ID", nextWalId1, currentWalId);
+
+            // Allocate another WAL ID
+            int nextWalId2 = engine.getTableSequencerAPI().getNextWalId(tableToken);
+            Assert.assertEquals("second getNextWalId should return 2", 2, nextWalId2);
+
+            // getCurrentWalId should now return the new allocated ID
+            currentWalId = engine.getTableSequencerAPI().getCurrentWalId(tableToken);
+            Assert.assertEquals("getCurrentWalId should return last allocated ID", nextWalId2, currentWalId);
+
+            // Verify getCurrentWalId doesn't increment on multiple calls
+            int currentWalId3 = engine.getTableSequencerAPI().getCurrentWalId(tableToken);
+            int currentWalId4 = engine.getTableSequencerAPI().getCurrentWalId(tableToken);
+            Assert.assertEquals("getCurrentWalId should be stable", currentWalId3, currentWalId4);
+            Assert.assertEquals("getCurrentWalId should still be 2", 2, currentWalId4);
+        });
+    }
+
+    @Test
     public void testGetCursorDistressedSequencerRace() throws Exception {
         int readerCount = 2;
         CyclicBarrier barrier = new CyclicBarrier(readerCount + 1);
