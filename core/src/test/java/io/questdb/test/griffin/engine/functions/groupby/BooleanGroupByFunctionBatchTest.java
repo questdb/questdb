@@ -56,10 +56,24 @@ public class BooleanGroupByFunctionBatchTest {
         FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateBooleans(true, false, true);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertTrue(function.getBool(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testFirstBooleanBatchAccumulates() {
+        FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateBooleans(true, false);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateBooleans(false, true);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertTrue(function.getBool(value));
         }
     }
 
@@ -69,7 +83,7 @@ public class BooleanGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0, 0);
 
             Assert.assertFalse(function.getBool(value));
         }
@@ -90,9 +104,9 @@ public class BooleanGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateBooleans(false, true, false, true);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
-            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(3, value.getLong(0));
             Assert.assertTrue(function.getBool(value));
             Assert.assertTrue(function.supportsBatchComputation());
         }
@@ -105,9 +119,25 @@ public class BooleanGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateBooleans(false);
-            function.computeBatch(value, ptr, 1);
+            function.computeBatch(value, ptr, 1, 0);
 
             Assert.assertFalse(function.getBool(value));
+        }
+    }
+
+    @Test
+    public void testLastBooleanBatchAccumulates() {
+        LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            long ptr = allocateBooleans(true, false);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateBooleans(false, true);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertTrue(function.getBool(value));
         }
     }
 

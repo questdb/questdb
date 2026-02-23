@@ -58,7 +58,7 @@ public class ShortGroupByFunctionBatchTest {
         AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateShorts((short) 2, (short) 4, (short) 6);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(4.0, function.getDouble(value), 0.0);
             Assert.assertTrue(function.supportsBatchComputation());
@@ -78,10 +78,24 @@ public class ShortGroupByFunctionBatchTest {
         FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateShorts((short) 5, (short) 6, (short) 7);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(5, function.getShort(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testFirstShortBatchAccumulates() {
+        FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateShorts((short) 5, (short) 6);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateShorts((short) 7, (short) 8);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(5, function.getShort(value));
         }
     }
 
@@ -90,7 +104,7 @@ public class ShortGroupByFunctionBatchTest {
         FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateShorts(Short.MIN_VALUE, (short) 1);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertEquals(Short.MIN_VALUE, function.getShort(value));
         }
@@ -102,7 +116,7 @@ public class ShortGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0, 0);
 
             Assert.assertEquals(0, function.getShort(value));
         }
@@ -123,9 +137,9 @@ public class ShortGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateShorts((short) 11, (short) 22, (short) 33);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
-            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(2, value.getLong(0));
             Assert.assertEquals(33, function.getShort(value));
             Assert.assertTrue(function.supportsBatchComputation());
         }
@@ -138,9 +152,25 @@ public class ShortGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateShorts((short) 11, Short.MIN_VALUE);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertEquals(Short.MIN_VALUE, function.getShort(value));
+        }
+    }
+
+    @Test
+    public void testLastShortBatchAccumulates() {
+        LastShortGroupByFunction function = new LastShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            long ptr = allocateShorts((short) 11, (short) 22);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateShorts((short) 33, (short) 44);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(44, function.getShort(value));
         }
     }
 
@@ -156,13 +186,25 @@ public class ShortGroupByFunctionBatchTest {
     public void testSumShortBatch() {
         SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            value.putLong(0, 10);
-
             long ptr = allocateShorts((short) 1, (short) 2, (short) 3, (short) 4);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals(10L, function.getLong(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testSumShortBatchAccumulates() {
+        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateShorts((short) 1, (short) 2);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateShorts((short) 3, (short) 4);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(10L, function.getLong(value));
         }
     }
 
@@ -171,7 +213,7 @@ public class ShortGroupByFunctionBatchTest {
         SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateShorts((short) 0, (short) 0);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertEquals(0L, function.getLong(value));
         }
@@ -183,7 +225,7 @@ public class ShortGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             value.putLong(0, 55);
 
-            function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0, 0);
 
             Assert.assertEquals(55L, function.getLong(value));
         }

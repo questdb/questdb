@@ -39,15 +39,22 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Character.BYTES;
+            long offset = 0;
             for (; ptr < hi; ptr += Character.BYTES) {
                 char value = Unsafe.getUnsafe().getChar(ptr);
                 if (value != CharConstant.ZERO.getChar(null)) {
-                    mapValue.putChar(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null)) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putChar(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset++;
             }
         }
     }

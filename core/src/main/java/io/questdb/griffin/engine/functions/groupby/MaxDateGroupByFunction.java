@@ -45,9 +45,13 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            mapValue.putLong(valueIndex, Vect.maxLong(ptr, count));
+            final long batchMax = Vect.maxLong(ptr, count);
+            final long existing = mapValue.getDate(valueIndex);
+            if (batchMax > existing) {
+                mapValue.putDate(valueIndex, batchMax);
+            }
         }
     }
 

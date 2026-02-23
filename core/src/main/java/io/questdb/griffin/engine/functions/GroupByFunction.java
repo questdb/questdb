@@ -53,22 +53,27 @@ public interface GroupByFunction extends Function, Mutable {
      * {@link io.questdb.griffin.engine.groupby.GroupByColumnSink}, exposing the values in native
      * memory starting at {@code ptr}. Each entry has the fixed size implied by the function's
      * argument type. Implementations can use vectorised routines to consume the {@code count}
-     * consecutive values and must write the resulting aggregate into {@code mapValue}.
+     * consecutive values and must accumulate the result into {@code mapValue}.
+     * <p>
+     * This method may be called multiple times for the same group {@link MapValue} (e.g. once
+     * per page frame). Implementations must accumulate into the existing state set by
+     * {@link #setEmpty(MapValue)}, not overwrite it.
      * <p>
      * This method:
      * <ul>
-     *     <li>runs at most once per group {@link MapValue}, immediately after {@link #setEmpty(MapValue)};</li>
      *     <li>runs without a preceding {@link #computeFirst(MapValue, Record, long)} invocation;</li>
      *     <li>is not followed by {@link #merge(MapValue, MapValue)};</li>
-     *     <li>always receives a non-zero {@code ptr} pointing to readable memory;</li>
      *     <li>is used only when {@link #supportsBatchComputation()} returns {@code true}.</li>
      * </ul>
      *
-     * @param mapValue group state that must be updated with the aggregated result
-     * @param ptr      native memory address of the first buffered value for the group
-     * @param count    number of buffered values that can be read starting from {@code ptr}
+     * @param mapValue   group state that must be updated with the aggregated result
+     * @param ptr        native memory address of the first buffered value for the group, or 0 for
+     *                   no-arg functions (e.g. count(*))
+     * @param count      number of buffered values that can be read starting from {@code ptr}
+     * @param startRowId row id of the first record in the batch; the row id of the i-th
+     *                   record is {@code startRowId + i}
      */
-    default void computeBatch(MapValue mapValue, long ptr, int count) {
+    default void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         throw new UnsupportedOperationException();
     }
 

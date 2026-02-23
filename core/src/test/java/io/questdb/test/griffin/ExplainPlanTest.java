@@ -1895,6 +1895,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 ) timestamp (timestamp) PARTITION BY DAY""", "((select last(timestamp) as x, last(price) as btcusd " + "from trades " + "where symbol = 'BTC-USD' " + "and timestamp > dateadd('m', -30, now())) " + "timestamp(x))", """
                 SelectedRecord
                     Async JIT Group By workers: 1
+                      vectorized: false
                       values: [last(timestamp),last(price)]
                       filter: symbol='BTC-USD'
                         PageFrame
@@ -3093,6 +3094,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed11() throws Exception {
         assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b))", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a", """
                 Async Group By workers: 1
+                  vectorized: true
                   values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
                   filter: null
                     PageFrame
@@ -3105,6 +3107,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed12() throws Exception {
         assertPlan("create table a (gb geohash(4b), gs geohash(12b), gi geohash(24b), gl geohash(40b), i int)", "select first(gb), last(gb), first(gs), last(gs), first(gi), last(gi), first(gl), last(gl) from a where i > 42", """
                 Async JIT Group By workers: 1
+                  vectorized: false
                   values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]
                   filter: 42<i
                     PageFrame
@@ -3130,6 +3133,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed2() throws Exception {
         assertPlan("create table a (i int, d double)", "select min(d), max(d*d) from a", """
                 Async Group By workers: 1
+                  vectorized: true
                   values: [min(d),max(d*d)]
                   filter: null
                     PageFrame
@@ -3142,6 +3146,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed3() throws Exception {
         assertPlan("create table a (i int, d double)", "select max(d+1) from a", """
                 Async Group By workers: 1
+                  vectorized: false
                   values: [max(d+1)]
                   filter: null
                     PageFrame
@@ -3165,6 +3170,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed5() throws Exception {
         assertPlan("create table a (i int, d double)", "select first(10), last(d), avg(10), min(10), max(10) from a", """
                 Async Group By workers: 1
+                  vectorized: true
                   values: [first(10),last(d),avg(10),min(10),max(10)]
                   filter: null
                     PageFrame
@@ -3177,6 +3183,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testGroupByNotKeyed6() throws Exception {
         assertPlan("create table a (i int, d double)", "select max(i) from a where i < 10", """
                 Async JIT Group By workers: 1
+                  vectorized: false
                   values: [max(i)]
                   filter: i<10
                     PageFrame
@@ -5619,6 +5626,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x+10) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x+10)]
                       filter: null
                         PageFrame
@@ -5628,6 +5636,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10+x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10+x)]
                       filter: null
                         PageFrame
@@ -5848,6 +5857,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x*10)]
                       filter: null
                         PageFrame
@@ -5857,6 +5867,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10*x)]
                       filter: null
                         PageFrame
@@ -5873,6 +5884,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10.0) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x*10.0)]
                       filter: null
                         PageFrame
@@ -5882,6 +5894,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10.0*x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10.0*x)]
                       filter: null
                         PageFrame
@@ -6021,6 +6034,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(x-10)]
                       filter: null
                         PageFrame
@@ -6030,6 +6044,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
                     Async Group By workers: 1
+                      vectorized: true
                       values: [sum(x),sum(10-x)]
                       filter: null
                         PageFrame
@@ -6150,6 +6165,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // no where clause, distinct constant
             expected = """
                     Async Group By workers: 1
+                      vectorized: false
                       values: [count_distinct(10)]
                       filter: null
                         PageFrame
@@ -7541,6 +7557,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectCountDistinct7() throws Exception {
         String expected = """
                 Async JIT Group By workers: 1
+                  vectorized: false
                   values: [count_distinct(s)]
                   filter: s='foobar'
                     PageFrame
@@ -7555,6 +7572,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectCountDistinct8() throws Exception {
         String expected = """
                 Async Group By workers: 1
+                  vectorized: false
                   values: [count_distinct(s),first(s)]
                   filter: null
                     PageFrame

@@ -38,15 +38,22 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Double.BYTES;
+            long offset = 0;
             for (; ptr < hi; ptr += Double.BYTES) {
                 double value = Unsafe.getUnsafe().getDouble(ptr);
                 if (!Numbers.isNull(value)) {
-                    mapValue.putDouble(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getDouble(valueIndex + 1))) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putDouble(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset++;
             }
         }
     }

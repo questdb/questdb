@@ -44,7 +44,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             float acc = 0.0f;
             boolean hasFinite = false;
@@ -57,9 +57,12 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
                 }
             }
             if (hasFinite) {
-                mapValue.putFloat(valueIndex, acc);
-            } else {
-                mapValue.putFloat(valueIndex, Float.NaN);
+                final float existing = mapValue.getFloat(valueIndex);
+                if (Float.isFinite(existing)) {
+                    mapValue.putFloat(valueIndex, existing + acc);
+                } else {
+                    mapValue.putFloat(valueIndex, acc);
+                }
             }
         }
     }

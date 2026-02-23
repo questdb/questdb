@@ -62,10 +62,24 @@ public class FloatGroupByFunctionBatchTest {
         CountFloatGroupByFunction function = new CountFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateFloats(1.5f, Float.NaN, 2.5f, Float.POSITIVE_INFINITY, 3.5f);
-            function.computeBatch(value, ptr, 5);
+            function.computeBatch(value, ptr, 5, 0);
 
             Assert.assertEquals(3L, function.getLong(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testCountFloatBatchAccumulates() {
+        CountFloatGroupByFunction function = new CountFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateFloats(1.0f, Float.NaN);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateFloats(2.0f, 3.0f, Float.NaN);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals(3L, function.getLong(value));
         }
     }
 
@@ -74,7 +88,7 @@ public class FloatGroupByFunctionBatchTest {
         CountFloatGroupByFunction function = new CountFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateFloats(Float.NaN, Float.NaN, Float.NaN);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(0L, function.getLong(value));
         }
@@ -84,7 +98,7 @@ public class FloatGroupByFunctionBatchTest {
     public void testCountFloatBatchZeroCountKeepsZero() {
         CountFloatGroupByFunction function = new CountFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0, 0);
 
             Assert.assertEquals(0L, function.getLong(value));
         }
@@ -103,10 +117,24 @@ public class FloatGroupByFunctionBatchTest {
         FirstFloatGroupByFunction function = new FirstFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateFloats(5.5f, 6.6f, 7.7f);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(5.5f, function.getFloat(value), 0.000001f);
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testFirstFloatBatchAccumulates() {
+        FirstFloatGroupByFunction function = new FirstFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateFloats(5.5f, 6.6f);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateFloats(7.7f, 8.8f);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(5.5f, function.getFloat(value), 0.000001f);
         }
     }
 
@@ -115,7 +143,7 @@ public class FloatGroupByFunctionBatchTest {
         FirstFloatGroupByFunction function = new FirstFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateFloats(Float.NaN, 1.0f);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertTrue(Float.isNaN(function.getFloat(value)));
         }
@@ -127,7 +155,7 @@ public class FloatGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0, 0);
 
             Assert.assertTrue(Float.isNaN(function.getFloat(value)));
         }
@@ -156,10 +184,24 @@ public class FloatGroupByFunctionBatchTest {
         FirstNotNullFloatGroupByFunction function = new FirstNotNullFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateFloats(Float.NaN, 4.4f, Float.NaN);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(4.4f, function.getFloat(value), 0.0f);
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testFirstNotNullFloatBatchAccumulates() {
+        FirstNotNullFloatGroupByFunction function = new FirstNotNullFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateFloats(Float.NaN, 4.4f);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateFloats(5.5f, Float.NaN);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(4.4f, function.getFloat(value), 0.000001f);
         }
     }
 
@@ -170,11 +212,27 @@ public class FloatGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateFloats(11.0f, 22.0f, 33.0f);
-            function.computeBatch(value, ptr, 3);
+            function.computeBatch(value, ptr, 3, 0);
 
-            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(2, value.getLong(0));
             Assert.assertEquals(33.0f, function.getFloat(value), 0.000001f);
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testLastFloatBatchAccumulates() {
+        LastFloatGroupByFunction function = new LastFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            long ptr = allocateFloats(11.0f, 22.0f);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateFloats(33.0f, 44.0f);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(44.0f, function.getFloat(value), 0.000001f);
         }
     }
 
@@ -185,7 +243,7 @@ public class FloatGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateFloats(11.0f, Float.NaN);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertTrue(Float.isNaN(function.getFloat(value)));
         }
@@ -206,10 +264,26 @@ public class FloatGroupByFunctionBatchTest {
             function.setNull(value);
 
             long ptr = allocateFloats(Float.NaN, 1.5f, Float.NaN, 2.5f);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals(2.5f, function.getFloat(value), 0.0f);
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testLastNotNullFloatBatchAccumulates() {
+        LastNotNullFloatGroupByFunction function = new LastNotNullFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            long ptr = allocateFloats(1.5f, Float.NaN);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateFloats(Float.NaN, 2.5f);
+            function.computeBatch(value, ptr, 2, 2);
+
+            Assert.assertEquals(2.5f, function.getFloat(value), 0.000001f);
         }
     }
 
@@ -220,10 +294,24 @@ public class FloatGroupByFunctionBatchTest {
             value.putFloat(0, -999.0f);
 
             long ptr = allocateFloats(-10.0f, Float.NaN, 15.5f, 7.0f);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals(15.5f, function.getFloat(value), 0.000001f);
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testMaxFloatBatchAccumulates() {
+        MaxFloatGroupByFunction function = new MaxFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateFloats(1.0f, 5.0f);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateFloats(3.0f, 2.0f);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(5.0f, function.getFloat(value), 0.000001f);
         }
     }
 
@@ -232,7 +320,7 @@ public class FloatGroupByFunctionBatchTest {
         MaxFloatGroupByFunction function = new MaxFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateFloats(Float.NaN, Float.NaN);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertTrue(Float.isNaN(function.getFloat(value)));
         }
@@ -253,10 +341,24 @@ public class FloatGroupByFunctionBatchTest {
             value.putFloat(0, 999.0f);
 
             long ptr = allocateFloats(Float.NaN, 4.0f, 2.5f, 3.0f);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals(2.5f, function.getFloat(value), 0.000001f);
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testMinFloatBatchAccumulates() {
+        MinFloatGroupByFunction function = new MinFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateFloats(5.0f, 3.0f);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateFloats(4.0f, 1.0f);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(1.0f, function.getFloat(value), 0.000001f);
         }
     }
 
@@ -265,7 +367,7 @@ public class FloatGroupByFunctionBatchTest {
         MinFloatGroupByFunction function = new MinFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateFloats(Float.NaN, Float.NaN);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertTrue(Float.isNaN(function.getFloat(value)));
         }
@@ -283,13 +385,25 @@ public class FloatGroupByFunctionBatchTest {
     public void testSumFloatBatch() {
         SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            value.putFloat(0, 123.0f);
-
             long ptr = allocateFloats(1.0f, Float.NaN, 2.5f, 3.5f);
-            function.computeBatch(value, ptr, 4);
+            function.computeBatch(value, ptr, 4, 0);
 
             Assert.assertEquals(7.0f, function.getFloat(value), 0.000001f);
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testSumFloatBatchAccumulates() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateFloats(1.0f, 2.0f);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateFloats(3.0f, 4.0f);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(10.0f, function.getFloat(value), 0.000001f);
         }
     }
 
@@ -298,7 +412,7 @@ public class FloatGroupByFunctionBatchTest {
         SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             long ptr = allocateFloats(Float.NaN, Float.POSITIVE_INFINITY);
-            function.computeBatch(value, ptr, 2);
+            function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertTrue(Float.isNaN(function.getFloat(value)));
         }
@@ -310,7 +424,7 @@ public class FloatGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             value.putFloat(0, 55.0f);
 
-            function.computeBatch(value, 0, 0);
+            function.computeBatch(value, 0, 0, 0);
 
             Assert.assertEquals(55.0f, function.getFloat(value), 0.000001f);
         }

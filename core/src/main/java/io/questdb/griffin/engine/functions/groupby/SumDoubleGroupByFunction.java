@@ -45,10 +45,17 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            final double value = Vect.sumDouble(ptr, count);
-            mapValue.putDouble(valueIndex, value);
+            final double batchSum = Vect.sumDouble(ptr, count);
+            if (Numbers.isFinite(batchSum)) {
+                final double existing = mapValue.getDouble(valueIndex);
+                if (Numbers.isFinite(existing)) {
+                    mapValue.putDouble(valueIndex, existing + batchSum);
+                } else {
+                    mapValue.putDouble(valueIndex, batchSum);
+                }
+            }
         }
     }
 
