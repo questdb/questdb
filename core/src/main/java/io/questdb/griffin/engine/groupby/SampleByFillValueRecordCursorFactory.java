@@ -215,6 +215,14 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 placeholderFunctions.add(function);
             }
         }
+        if (fillIndex < fillValueCount) {
+            throw SqlException.position(fillValues.getQuick(fillIndex).position)
+                    .put("too many fill values for SAMPLE BY FILL: expected ")
+                    .put(fillIndex)
+                    .put(" values but ")
+                    .put(fillValueCount)
+                    .put(" provided");
+        }
         return placeholderFunctions;
     }
 
