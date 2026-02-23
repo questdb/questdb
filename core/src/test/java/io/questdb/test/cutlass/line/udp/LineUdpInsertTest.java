@@ -24,22 +24,14 @@
 
 package io.questdb.test.cutlass.line.udp;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
-import io.questdb.cutlass.line.AbstractLineSender;
-import io.questdb.cutlass.line.LineUdpSender;
-import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
-import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiver;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
+import io.questdb.client.cutlass.line.AbstractLineSender;
+import io.questdb.client.cutlass.line.LineUdpSender;
+import io.questdb.client.network.NetworkFacadeImpl;
+import io.questdb.cutlass.line.udp.*;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;

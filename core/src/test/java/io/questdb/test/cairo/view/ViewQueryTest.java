@@ -30,16 +30,18 @@ public class ViewQueryTest extends AbstractViewTest {
 
     @Test
     public void testCreateConstantView() throws Exception {
-        final String query1 = "select 42 as col";
-        createView(VIEW1, query1);
+        assertMemoryLeak(() -> {
+            final String query1 = "select 42 as col";
+            createView(VIEW1, query1);
 
-        assertQueryNoLeakCheck(
-                """
-                        col
-                        42
-                        """,
-                VIEW1
-        );
+            assertQueryNoLeakCheck(
+                    """
+                            col
+                            42
+                            """,
+                    VIEW1
+            );
+        });
     }
 
     @Test
@@ -1014,6 +1016,60 @@ public class ViewQueryTest extends AbstractViewTest {
                                                     Frame forward scan on: Részvény_áíóúüűöő
                             """,
                     VIEW1, VIEW2
+            );
+        });
+    }
+
+    @Test
+    public void testQueryViewInQuotes() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query1 = "select 42 as col";
+            createView(VIEW1, query1);
+
+            assertQueryNoLeakCheck(
+                    """
+                            col
+                            42
+                            """,
+                    "SELECT * FROM '" + VIEW1 + "'"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            col
+                            42
+                            """,
+                    "SELECT * FROM \"" + VIEW1 + "\""
+            );
+        });
+    }
+
+    @Test
+    public void testQueryViewInQuotesJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE " + TABLE1 + " (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + TABLE1 + " VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            drainWalQueue();
+            createView(VIEW1, "SELECT * FROM " + TABLE1);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv\tts1\tv1
+                            2024-01-01T00:00:00.000000Z\t1\t2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t2\t2024-01-02T00:00:00.000000Z\t2
+                            """,
+                    "SELECT * FROM " + TABLE1 + " JOIN '" + VIEW1 + "' ON (v)",
+                    "ts", false, false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv\tts1\tv1
+                            2024-01-01T00:00:00.000000Z\t1\t2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t2\t2024-01-02T00:00:00.000000Z\t2
+                            """,
+                    "SELECT * FROM " + TABLE1 + " JOIN \"" + VIEW1 + "\" ON (v)",
+                    "ts", false, false
             );
         });
     }

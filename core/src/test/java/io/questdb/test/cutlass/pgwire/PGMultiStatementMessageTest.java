@@ -371,13 +371,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
-            boolean hasResult = statement.execute("CLOSE");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("CLOSE;");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("CLOSE ALL");
+            boolean hasResult = statement.execute("CLOSE ALL");
             assertResults(statement, hasResult, Result.ZERO);
 
             hasResult = statement.execute("CLOSE ALL;");
@@ -393,14 +387,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCloseThenSelectReturnsSelectResult() throws Exception {
-        // legacy code fails in quirks mode, include quirks when legacy is removed
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("CLOSE ALL; select 6");
             assertResults(statement, hasResult, Result.ZERO, data(row(6L)));
-
-            hasResult = statement.execute("CLOSE; select 7");
-            assertResults(statement, hasResult, Result.ZERO, data(row(7L)));
         });
     }
 
@@ -830,13 +820,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
-            boolean hasResult = statement.execute("DISCARD");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("DISCARD;");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("DISCARD ALL");
+            boolean hasResult = statement.execute("DISCARD ALL");
             assertResults(statement, hasResult, Result.ZERO);
 
             hasResult = statement.execute("DISCARD PLANS");

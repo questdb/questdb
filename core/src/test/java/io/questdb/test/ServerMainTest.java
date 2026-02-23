@@ -664,6 +664,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.small.map.page.size\tQDB_CAIRO_SQL_SMALL_MAP_PAGE_SIZE\t32768\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sort.key.max.pages\tQDB_CAIRO_SQL_SORT_KEY_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sort.key.page.size\tQDB_CAIRO_SQL_SORT_KEY_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.sort.key.materialization.threshold\tQDB_CAIRO_SQL_SORT_KEY_MATERIALIZATION_THRESHOLD\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sort.light.value.max.pages\tQDB_CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sort.light.value.page.size\tQDB_CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sort.value.max.pages\tQDB_CAIRO_SQL_SORT_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
@@ -693,6 +694,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.table.registry.auto.reload.frequency\tQDB_CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY\t500\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.compaction.threshold\tQDB_CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD\t30\tdefault\tfalse\tfalse\n" +
                                     "cairo.ttl.use.wall.clock\tQDB_CAIRO_TTL_USE_WALL_CLOCK\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.unordered.page.frame.reduce.queue.capacity\tQDB_CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.vector.aggregate.queue.capacity\tQDB_CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.volumes\tQDB_CAIRO_VOLUMES\t\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.enabled\tQDB_CAIRO_WAL_APPLY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
@@ -1050,6 +1052,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.parquet.export.version\tQDB_CAIRO_PARQUET_EXPORT_VERSION\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.row.group.size\tQDB_CAIRO_PARQUET_EXPORT_ROW_GROUP_SIZE\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.data.page.size\tQDB_CAIRO_PARQUET_EXPORT_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.batch.size\tQDB_CAIRO_PARQUET_EXPORT_BATCH_SIZE\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.compression.codec\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC\tLZ4_RAW\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.compression.level\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.copy.report.frequency.lines\tQDB_CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES\t500000\tdefault\tfalse\ttrue\n" +

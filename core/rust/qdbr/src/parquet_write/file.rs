@@ -3,6 +3,9 @@ use std::collections::VecDeque;
 use std::io::Write;
 
 use crate::parquet::error::fmt_err;
+use crate::parquet_write::decimal::{
+    Decimal128, Decimal16, Decimal256, Decimal32, Decimal64, Decimal8,
+};
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::{KeyValue, SchemaDescriptor, SortingColumn};
@@ -1012,8 +1015,9 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Int => {
             let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<i32, i32>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -1032,8 +1036,9 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Long | ColumnTypeTag::Date => {
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<i64, i64>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
@@ -1043,6 +1048,7 @@ fn chunk_to_primitive_page(
         ColumnTypeTag::Timestamp => {
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             if column.designated_timestamp {
+                // Designated timestamp column is NOT NULL, no need for SIMD def level encoding
                 primitive::int_slice_to_page_notnull::<i64, i64>(
                     &data[lower_bound..upper_bound],
                     adjusted_column_top,
@@ -1051,8 +1057,9 @@ fn chunk_to_primitive_page(
                     encoding,
                 )
             } else {
-                primitive::int_slice_to_page_nullable::<i64, i64>(
-                    &data[lower_bound..upper_bound],
+                let slice = &data[lower_bound..upper_bound];
+                primitive::slice_to_page_simd(
+                    slice,
                     adjusted_column_top,
                     options,
                     primitive_type,
@@ -1102,20 +1109,24 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Float => {
             let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::float_slice_to_page_plain::<f32, f32>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
+                Encoding::Plain,
             )
         }
         ColumnTypeTag::Double => {
             let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::float_slice_to_page_plain::<f64, f64>(
-                &data[lower_bound..upper_bound],
+            let slice = &data[lower_bound..upper_bound];
+            primitive::slice_to_page_simd(
+                slice,
                 adjusted_column_top,
                 options,
                 primitive_type,
+                Encoding::Plain,
             )
         }
         ColumnTypeTag::Binary => {
@@ -1192,7 +1203,60 @@ fn chunk_to_primitive_page(
             "unexpected symbol type in primitive encoder for column {} (should be handled earlier)",
             column.name,
         )),
-        _ => todo!(),
+        ColumnTypeTag::Decimal8 => {
+            let data: &[Decimal8] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal16 => {
+            let data: &[Decimal16] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal32 => {
+            let data: &[Decimal32] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal64 => {
+            let data: &[Decimal64] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal128 => {
+            let data: &[Decimal128] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal256 => {
+            let data: &[Decimal256] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
     }
 }
 

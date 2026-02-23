@@ -1265,6 +1265,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 Misc.free(path);
                 LOG.info().$("closed [table=").$(tableToken).I$();
             }
+            // must happen after the WAL lock is released
+            notifyWalClosure();
             columnVersionReader = Misc.free(columnVersionReader);
         }
     }

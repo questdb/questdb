@@ -260,6 +260,7 @@ import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFacto
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
@@ -4793,7 +4794,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             executionContext.getMessageBus(),
                                             orderedMetadata,
                                             baseFactory,
-                                            reduceTaskFactory,
                                             filter,
                                             filterUsedColumnIndexes,
                                             compileWorkerFilterConditionally(
@@ -4842,10 +4842,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
 
+                        RecordCursorFactory sortBase = recordCursorFactory;
+                        if (recordCursorFactory instanceof VirtualRecordCursorFactory virtualFactory) {
+                            IntList materializedColIndices = null;
+                            IntList materializedColTypes = null;
+                            final int threshold = configuration.getSqlSortKeyMaterializationThreshold();
+                            for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
+                                int encoded = listColumnFilterA.getQuick(i);
+                                int colIdx = (encoded > 0 ? encoded : -encoded) - 1;
+                                int colType = metadata.getColumnType(colIdx);
+                                final short colTypeTag = ColumnType.tagOf(colType);
+                                if (ColumnType.isFixedSize(colTypeTag)
+                                        && colTypeTag != ColumnType.IPv4
+                                        && (ColumnType.sizeOf(colType) <= Long.BYTES
+                                        || colTypeTag == ColumnType.DECIMAL128
+                                        || colTypeTag == ColumnType.DECIMAL256)
+                                        && virtualFactory.getColumnComplexity(colIdx) > threshold) {
+                                    if (materializedColIndices == null) {
+                                        materializedColIndices = new IntList();
+                                        materializedColTypes = new IntList();
+                                    }
+                                    materializedColIndices.add(colIdx);
+                                    materializedColTypes.add(colType);
+                                }
+                            }
+                            if (materializedColIndices != null) {
+                                sortBase = new SortKeyMaterializingRecordCursorFactory(
+                                        configuration,
+                                        orderedMetadata,
+                                        recordCursorFactory,
+                                        materializedColIndices,
+                                        materializedColTypes
+                                );
+                            }
+                        }
+
                         return new SortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
-                                recordCursorFactory,
+                                sortBase,
                                 recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                                 listColumnFilterA.copy()
                         );
@@ -5107,7 +5142,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
-                        offsetFuncPos
+                        offsetFuncPos,
+                        sampleFromFunc,
+                        sampleToFunc
                 );
             }
 
@@ -5950,7 +5987,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 bindVarFunctions,
                                 filter,
                                 filterUsedColumnIndexes,
-                                reduceTaskFactory,
                                 compileWorkerFilterConditionally(
                                         executionContext,
                                         filter,
@@ -6011,7 +6047,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             filterExpr,
                                             factory.getMetadata()
                                     ),
-                                    reduceTaskFactory,
                                     executionContext.getSharedQueryWorkerCount()
                             ),
                             executionContext

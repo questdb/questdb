@@ -1221,16 +1221,18 @@ public class LimitTest extends AbstractCairoTest {
             execute(createTableDdl);
             execute(createTableDml);
 
-            String query = "select * from y order by timestamp, c limit :lo; :hi";
+            String query = "select * from y order by timestamp, c limit :lo, :hi";
 
             bindVariableService.setLong("lo", 2L);
             bindVariableService.setLong("hi", 5L);
 
             assertQueryAndCache(
                     """
-                            i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
-                            1\tmsft\t0.509\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.5243722859289777\t0.8072372\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ
-                            2\tgoogl\t0.423\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.5298405941762054\tnull\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t
+                            i	sym2	price	timestamp	b	c	d	e	f	g	ik	j	k	l	m	n
+                            3	googl	0.17400000000000002	2018-01-01T00:06:00.000000Z	false	W	0.8828228366697741	0.72300154	845	2015-08-26T10:57:26.275Z	VTJW	9029468389542245059	1970-01-01T00:33:20.000000Z	46	00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47	DSWUGSHOLNV
+                            4	ibm	0.148	2018-01-01T00:08:00.000000Z	true	I	0.3456897991538844	0.24008358	775	2015-08-03T15:58:03.335Z	VTJW	-8910603140262731534	1970-01-01T00:50:00.000000Z	24	00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a
+                            00000010 e7 0c 89	LJUMLGLHMLLEO
+                            5	googl	0.868	2018-01-01T00:10:00.000000Z	true	Z	0.4274704286353759	0.021189213	179			5746626297238459939	1970-01-01T01:06:40.000000Z	35	00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb	RGIIH
                             """,
                     query,
                     "timestamp",
@@ -1239,7 +1241,7 @@ public class LimitTest extends AbstractCairoTest {
             );
 
             assertPlanNoLeakCheck(query, """
-                    Sort light lo: :lo::long partiallySorted: true
+                    Sort light lo: :lo::long hi: :hi::long partiallySorted: true
                       keys: [timestamp, c]
                         PageFrame
                             Row forward scan
@@ -1250,7 +1252,7 @@ public class LimitTest extends AbstractCairoTest {
             bindVariableService.setLong("hi", 13L);
 
             assertPlanNoLeakCheck(query, """
-                    Sort light lo: :lo::long partiallySorted: true
+                    Sort light lo: :lo::long hi: :hi::long partiallySorted: true
                       keys: [timestamp, c]
                         PageFrame
                             Row forward scan
@@ -1259,16 +1261,15 @@ public class LimitTest extends AbstractCairoTest {
 
             assertQuery(
                     """
-                            i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn
-                            1\tmsft\t0.509\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.5243722859289777\t0.8072372\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ
-                            2\tgoogl\t0.423\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.5298405941762054\tnull\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t
-                            3\tgoogl\t0.17400000000000002\t2018-01-01T00:06:00.000000Z\tfalse\tW\t0.8828228366697741\t0.72300154\t845\t2015-08-26T10:57:26.275Z\tVTJW\t9029468389542245059\t1970-01-01T00:33:20.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV
-                            4\tibm\t0.148\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.3456897991538844\t0.24008358\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a
-                            00000010 e7 0c 89\tLJUMLGLHMLLEO
-                            5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.021189213\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH
-                            6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.13264287\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE
-                            7\tgoogl\t0.076\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.7606252634124595\t0.065787554\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ
-                            8\tibm\t0.543\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.4835256202036067\t0.8687886\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ
+                            i	sym2	price	timestamp	b	c	d	e	f	g	ik	j	k	l	m	n
+                            9	msft	0.623	2018-01-01T00:18:00.000000Z	false	I	0.8786111112537701	0.9966377	403	2015-08-19T00:36:24.375Z	CPSW	-8506266080452644687	1970-01-01T02:13:20.000000Z	6	00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t
+                            10	msft	0.509	2018-01-01T00:20:00.000000Z	true	I	0.49153268154777974	0.0024457574	195	2015-10-15T17:45:21.025Z		3987576220753016999	1970-01-01T02:30:00.000000Z	20	00000000 96 37 08 dd 98 ef 54 88 2a a2\t
+                            11	msft	0.578	2018-01-01T00:22:00.000000Z	true	P	0.7467013668130107	0.5794665	122	2015-11-25T07:36:56.937Z		2004830221820243556	1970-01-01T02:46:40.000000Z	45	00000000 a0 dd 44 11 e2 a3 24 4e 44 a8 0d fe 27 ec 53 13
+                            00000010 5d b2 15 e7	WGRMDGGIJYDVRV
+                            12	msft	0.661	2018-01-01T00:24:00.000000Z	true	O	0.01396079545983997	0.81360143	345	2015-08-18T10:31:42.373Z	VTJW	5045825384817367685	1970-01-01T03:03:20.000000Z	23	00000000 51 9d 5d 28 ac 02 2e fe 05 3b 94 5f ec d3 dc f8
+                            00000010 43	JCTIZKYFLUHZ
+                            13	ibm	0.704	2018-01-01T00:26:00.000000Z	true	K	0.036735155240002815	0.84058154	742	2015-05-03T18:49:03.996Z	PEHN	2568830294369411037	1970-01-01T03:20:00.000000Z	24	00000000 76 bc 45 24 cd 13 00 7c fb 01 19 ca f2 bf 84 5a
+                            00000010 6f 38 35\t
                             """,
                     query,
                     "timestamp",

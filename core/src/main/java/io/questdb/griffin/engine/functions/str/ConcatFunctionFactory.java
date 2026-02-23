@@ -264,6 +264,11 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_STRING_OP, MultiArgFunction.super.getComplexity());
+        }
+
+        @Override
         public CharSequence getStrA(Record rec) {
             sinkA.clear();
             getStr(rec, sinkA);

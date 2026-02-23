@@ -784,6 +784,46 @@ public class NanosFormatCompilerTest {
     }
 
     @Test
+    public void testNanosGreedySingleN() throws NumericException {
+        // Combined pattern: .SSSUUUN - single N followed by end-of-string should pad to 3 digits
+        // Input "7" should become 700 nanoseconds
+        assertNanos("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456700Z", "2014-04-03 04:32:49.1234567");
+
+        // Single digit: 1 -> 100
+        assertNanos("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456100Z", "2014-04-03 04:32:49.1234561");
+
+        // Two digits: 12 -> 120
+        assertNanos("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456120Z", "2014-04-03 04:32:49.12345612");
+
+        // Three digits: 123 -> 123 (no padding needed)
+        assertNanos("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456123Z", "2014-04-03 04:32:49.123456123");
+    }
+
+    @Test
+    public void testNanosGreedySingleNEmptyFraction() throws NumericException {
+        assertException("y-MM-dd HH:mm:ss.N", "2014-04-03 04:32:49.");
+    }
+
+    @Test
+    public void testNanosGreedySingleNNonDigitBoundary() throws NumericException {
+        // N = nanos, up to 3 digits
+        assertNanos("y-MM-dd HH:mm:ss.Nz", "2014-04-03T04:32:49.000000999Z", "2014-04-03 04:32:49.999Z");
+
+        // N = nanos, up to 9 digits
+        assertNanos("y-MM-dd HH:mm:ss.N+z", "2014-04-03T04:32:49.999000000Z", "2014-04-03 04:32:49.999Z");
+    }
+
+    @Test
+    public void testNanosGreedySingleNOverflow() throws NumericException {
+        assertException("y-MM-dd HH:mm:ss.N", "2014-04-03 04:32:49.1234");
+    }
+
+    @Test
+    public void testNanosGreedySingleNZero() throws NumericException {
+        assertNanos("y-MM-dd HH:mm:ss.N", "2014-04-03T04:32:49.000000000Z", "2014-04-03 04:32:49.0");
+    }
+
+    @Test
     public void testOperationUniqueness() {
 
         Assert.assertTrue(MicrosFormatCompiler.getOpCount() > 0);
