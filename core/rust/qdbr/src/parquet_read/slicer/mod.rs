@@ -417,14 +417,20 @@ impl<'a> DeltaBytesArraySlicer<'a> {
         let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
         let prefix = (&mut decoder)
             .take(row_count)
-            .map(|r| r.map(|v| v as i32).unwrap())
-            .collect::<Vec<_>>();
+            .map(|r| {
+                r.map(|v| v as i32)
+                    .map_err(|_| fmt_err!(Layout, "not enough prefix values to iterate"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut data_offset = decoder.consumed_bytes();
         let mut decoder = delta_bitpacked::Decoder::try_new(&values[decoder.consumed_bytes()..])?;
         let suffix = (&mut decoder)
-            .map(|r| r.map(|v| v as i32).unwrap())
-            .collect::<Vec<_>>();
+            .map(|r| {
+                r.map(|v| v as i32)
+                    .map_err(|_| fmt_err!(Layout, "not enough suffix values to iterate"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         data_offset += decoder.consumed_bytes();
 
         Ok(Self {
