@@ -422,6 +422,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     public int getVarcharSize(int columnIndex) {
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
         if (auxPageAddress != 0) {
+            if (frameFormat == PartitionFormat.PARQUET) {
+                return VarcharTypeDriver.getSliceValueSize(auxPageAddress, rowIndex(columnIndex));
+            }
             return VarcharTypeDriver.getValueSize(auxPageAddress, rowIndex(columnIndex));
         }
         return TableUtils.NULL_LEN;
@@ -488,7 +491,7 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
         if (auxPageAddress != 0) {
             if (frameFormat == PartitionFormat.PARQUET) {
-                return VarcharTypeDriver.getSliceValue(auxPageAddress, rowIndex, utf8View);
+                return VarcharTypeDriver.getSliceValue(auxPageAddress, rowIndex(columnIndex), utf8View);
             }
             final long auxPageLim = auxPageAddress + auxPageSizes.get(columnOffset + columnIndex);
             final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
