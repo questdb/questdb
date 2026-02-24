@@ -3170,7 +3170,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions = null;
         try {
-            if (factory.mayHasParquetFormatPartition(executionContext)) {
+            if (factory.mayHasParquetFormatPartition(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
                 ObjList<PushdownFilterExtractor.PushdownFilterCondition> tempConditions = pushdownFilterExtractor.extract(sqlNodeStack, filterExpr, factory.getMetadata());
                 if (tempConditions.size() != 0) {
                     pushdownFilterConditions = new ObjList<>(tempConditions);

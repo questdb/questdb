@@ -691,6 +691,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getParquetExportBloomFilterFpp() {
+        return 0.01;
+    }
+
+    @Override
     public int getParquetExportCompressionCodec() {
         return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
@@ -726,6 +731,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getParquetExportVersion() {
         return ParquetVersion.PARQUET_VERSION_V1;
+    }
+
+    @Override
+    public double getPartitionEncoderParquetBloomFilterFpp() {
+        return 0.01;
     }
 
     @Override
@@ -1546,6 +1556,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelReadParquetEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParquetRowGroupPruningEnabled() {
         return true;
     }
 

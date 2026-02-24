@@ -366,6 +366,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
     private final long parquetExportBatchSize;
+    private final double parquetExportBloomFilterFpp;
     private final int parquetExportCompressionCodec;
     private final int parquetExportCompressionLevel;
     private final int parquetExportCopyReportFrequencyLines;
@@ -375,6 +376,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean parquetExportStatisticsEnabled;
     private final CharSequence parquetExportTableNamePrefix;
     private final int parquetExportVersion;
+    private final double partitionEncoderParquetBloomFilterFpp;
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
     private final int partitionEncoderParquetDataPageSize;
@@ -478,6 +480,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
+    private final boolean sqlParquetRowGroupPruningEnabled;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
     private final int sqlQueryRegistryPoolSize;
@@ -1533,6 +1536,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.parquetExportTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX, "zzz.copy.");
             this.parquetExportCopyReportFrequencyLines = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES, 500_000);
             this.parquetExportVersion = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_VERSION, ParquetVersion.PARQUET_VERSION_V1);
+            this.parquetExportBloomFilterFpp = getDouble(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_BLOOM_FILTER_FPP, "0.01");
+            if (this.parquetExportBloomFilterFpp <= 0 || this.parquetExportBloomFilterFpp >= 1) {
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_PARQUET_EXPORT_BLOOM_FILTER_FPP.getPropertyPath(), "fpp must be between 0 and 1 (exclusive)");
+            }
             this.parquetExportStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_STATISTICS_ENABLED, true);
             this.parquetExportCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC, "LZ4_RAW"));
 
@@ -1950,6 +1957,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
+            this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
@@ -1973,6 +1981,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.configReloadEnabled = getBoolean(properties, env, PropertyKey.CONFIG_RELOAD_ENABLED, true);
 
         this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
+        this.partitionEncoderParquetBloomFilterFpp = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_BLOOM_FILTER_FPP, "0.01");
+        if (this.partitionEncoderParquetBloomFilterFpp <= 0 || this.partitionEncoderParquetBloomFilterFpp >= 1) {
+            throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_BLOOM_FILTER_FPP.getPropertyPath(), "fpp must be between 0 and 1 (exclusive)");
+        }
         this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
         this.partitionEncoderParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, "LZ4_RAW"));
         // Use raw array encoding in partition-to-parquet conversion for better performance.
@@ -3789,6 +3801,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public double getParquetExportBloomFilterFpp() {
+            return parquetExportBloomFilterFpp;
+        }
+
+        @Override
         public int getParquetExportCompressionCodec() {
             return parquetExportCompressionCodec;
         }
@@ -3821,6 +3838,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParquetExportVersion() {
             return parquetExportVersion;
+        }
+
+        @Override
+        public double getPartitionEncoderParquetBloomFilterFpp() {
+            return partitionEncoderParquetBloomFilterFpp;
         }
 
         @Override
@@ -4191,6 +4213,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlParquetFrameCacheCapacity() {
             return sqlParquetFrameCacheCapacity;
+        }
+
+        @Override
+        public boolean isSqlParquetRowGroupPruningEnabled() {
+            return sqlParquetRowGroupPruningEnabled;
         }
 
         @Override

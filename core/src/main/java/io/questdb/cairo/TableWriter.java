@@ -4214,7 +4214,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long bloomFilterColumnIndexesPtr = 0;
                 int bloomFilterColumnCount = 0;
-                double fpp = Double.isNaN(bloomFilterFpp) ? 0.01 : bloomFilterFpp;
+                double fpp = Double.isNaN(bloomFilterFpp) ? config.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
                 try {
                     if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {

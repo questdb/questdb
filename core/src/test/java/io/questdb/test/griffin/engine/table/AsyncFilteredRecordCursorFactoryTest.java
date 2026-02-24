@@ -1318,6 +1318,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isParquetRowGroupPruningEnabled() {
+            return sqlExecutionContext.isParquetRowGroupPruningEnabled();
+        }
+
+        @Override
         public boolean isParallelTopKEnabled() {
             return sqlExecutionContext.isParallelTopKEnabled();
         }
@@ -1436,6 +1441,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
             sqlExecutionContext.setParallelReadParquetEnabled(parallelReadParquetEnabled);
+        }
+
+        @Override
+        public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
+            sqlExecutionContext.setParquetRowGroupPruningEnabled(parquetRowGroupPruningEnabled);
         }
 
         @Override

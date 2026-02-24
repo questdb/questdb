@@ -317,6 +317,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         statisticsEnabled = configuration.isParquetExportStatisticsEnabled();
         parquetVersion = configuration.getParquetExportVersion();
         rawArrayEncoding = configuration.isParquetExportRawArrayEncoding();
+        bloomFilterFpp = configuration.getParquetExportBloomFilterFpp();
         partitionBy = -1;
         compressionLevelSet = false;
     }
