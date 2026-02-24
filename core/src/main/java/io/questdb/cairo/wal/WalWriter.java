@@ -123,7 +123,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
     private final Metrics metrics;
-    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final ObjList<Runnable> nullSetters;
     private final RecentWriteTracker recentWriteTracker;
     private final RowImpl row = new RowImpl();
@@ -132,11 +131,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final BoolList symbolMapNullFlagsChanged = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<DirectCharSequenceIntHashMap> symbolMaps = new ObjList<>();
-    private final boolean walTelemetryEnabled;
+    private final Telemetry<TelemetryWalTask> telemetryWal;
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
+    private final boolean walTelemetryEnabled;
     private long avgRecordSize;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
@@ -891,6 +891,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
                 if (walTelemetryEnabled) {
+                    final long minTs = (txnRowCount == 0 || txnMinTimestamp == Long.MAX_VALUE)
+                            ? Numbers.LONG_NULL
+                            : txnMinTimestamp;
+                    final long maxTs = (txnRowCount == 0 || txnMaxTimestamp < 0)
+                            ? Numbers.LONG_NULL
+                            : txnMaxTimestamp;
                     TelemetryWalTask.store(
                             telemetryWal,
                             TelemetryEvent.WAL_TXN_COMMITTED,
@@ -900,8 +906,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             txnRowCount,
                             txnRowCount,
                             0L,
-                            txnMinTimestamp,
-                            txnMaxTimestamp
+                            minTs,
+                            maxTs
                     );
                 }
                 final boolean hasReplaceRange = replaceRangeHiTs > replaceRangeLowTs;
