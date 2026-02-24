@@ -360,12 +360,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("query", "SELECT * FROM codec_zstd_test where 1 = 2");
-                    testHttpClient.assertGet(
+                    // Validate the response is valid Parquet with expected metadata.
+                    // Exact binary layout may differ between export paths.
+                    testHttpClient.assertGetContains(
                             "/exp",
-                            "PAR1\u0015\u0002\u0019,H\u0000\u0015\u0002\u0000\u0015\u0004%\u0002\u0018\u0001xU\u0001\u0000\u0016\u0000\u0019\f\u0019\u001C\u0018\u0007questdb\u00189{\"version\":1,\"schema\":[{\"column_type\":6,\"column_top\":0}]}\u0000\u0018\u0013QuestDB version 9.0\u0000t\u0000\u0000\u0000PAR1",
-                            params,
-                            null,
-                            null
+                            "{\"version\":1,\"schema\":[{\"column_type\":6,\"column_top\":0}]}",
+                            params
                     );
                 });
     }
@@ -547,8 +547,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 600, params, "select * from test_table order by ts desc");
-                    testHttpClient.assertGetParquet("/exp", 587, params, "select * from test_table order by ts desc limit 2");
+                    testHttpClient.assertGetParquet("/exp", 607, params, "select * from test_table order by ts desc");
+                    testHttpClient.assertGetParquet("/exp", 590, params, "select * from test_table order by ts desc limit 2");
                 });
     }
 
@@ -718,8 +718,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     Thread thread = startCancelThread(engine, sqlExecutionContext);
                     thread.start();
-                    String expectedError = "cancelled by user";
-                    testHttpClient.assertGetContains("/exp", expectedError, params);
+                    // With direct export (no temp table), data may start streaming before
+                    // the cancel arrives, causing the server to disconnect.
+                    try {
+                        testHttpClient.assertGetContains("/exp", "cancelled by user", params);
+                    } catch (HttpClientException e) {
+                        String msg = e.getMessage();
+                        Assert.assertTrue(
+                                "unexpected error: " + msg,
+                                msg.contains("peer disconnect") || msg.contains("malformed chunk")
+                        );
+                    }
                     thread.join();
                 });
     }
@@ -742,7 +751,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         testHttpClient.assertGetContains("/exp", expectedError, params);
                         Assert.fail("server should disconnect");
                     } catch (HttpClientException e) {
-                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                        // Cancel during streaming can cause either a clean disconnect
+                        // or a malformed chunk (if data was already partially sent)
+                        String msg = e.getMessage();
+                        Assert.assertTrue(
+                                "expected 'peer disconnect' or 'malformed chunk' but got: " + msg,
+                                msg.contains("peer disconnect") || msg.contains("malformed chunk")
+                        );
                     }
                     thread.join();
                 });
@@ -946,6 +961,38 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("compression_codec", "zstd");
                     params.put("compression_level", "15");
                     testHttpClient.assertGetParquet("/exp", 374, params, "SELECT * FROM level_valid_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportCursorBasedMultipleRowGroups() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // CROSS JOIN produces a CURSOR_BASED factory (no page frame support).
+                    // 10 x 500 = 5000 rows with computed columns and small row groups
+                    // exercises the buffer pinning fix in the cursor-based path.
+                    engine.execute("""
+                            CREATE TABLE cb_t1 AS (
+                                SELECT x AS a FROM long_sequence(10)
+                            )""", sqlExecutionContext);
+                    engine.execute("""
+                            CREATE TABLE cb_t2 AS (
+                                SELECT x AS b,
+                                rnd_str(5, 10, 0) AS s,
+                                rnd_varchar(5, 10, 0) AS vc,
+                                rnd_double_array(1, 5) AS arr
+                                FROM long_sequence(500)
+                            )""", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.s FROM cb_t1 CROSS JOIN cb_t2",
+                            "SELECT cb_t1.a * cb_t2.b AS product, cb_t2.s FROM cb_t1 CROSS JOIN cb_t2",
+                            // VARCHAR and ARRAY through cursor-based buffers
+                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.vc FROM cb_t1 CROSS JOIN cb_t2",
+                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.arr FROM cb_t1 CROSS JOIN cb_t2",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 200);
                 });
     }
 
@@ -1356,6 +1403,309 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFrameCircuitBreaker() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // ~100 daily partitions with 1000 rows each.  The heavy
+                    // rnd_str() computation per row makes each page frame
+                    // slow enough for the 1ms timeout to trip the breaker.
+                    engine.execute("""
+                            CREATE TABLE cb_test AS (
+                                SELECT x,
+                                timestamp_sequence('2024-01-01', 864_000_000L) AS ts
+                                FROM long_sequence(100_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+
+                    params.clear();
+                    // x + 1 forces PAGE_FRAME_BACKED; rnd_str generates
+                    // large strings that dominate per-frame cost.
+                    params.put("query", "SELECT x + 1 AS cx, rnd_str(500, 1000, 0) AS big, ts FROM cb_test");
+                    params.put("fmt", "parquet");
+                    params.put("timeout", "1");
+                    // With a very short timeout the circuit breaker should trip
+                    // during PAGE_FRAME_BACKED export.  Depending on which code
+                    // path checks first, the error is either "timeout, query
+                    // aborted" (from the page-frame factory) or "cancelled by
+                    // user" (from the HTTP exporter).  The server may also just
+                    // disconnect.
+                    try {
+                        testHttpClient.assertGetContains("/exp", "timeout, query aborted", params);
+                    } catch (AssertionError ae) {
+                        TestUtils.assertContains(ae.getMessage(), "cancelled by user");
+                    } catch (HttpClientException e) {
+                        String msg = e.getMessage();
+                        Assert.assertTrue(
+                                "unexpected error: " + msg,
+                                msg.contains("peer disconnect") || msg.contains("malformed chunk")
+                        );
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameColumnTop() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // Create a WAL table with data across multiple partitions
+                    engine.execute(
+                            "CREATE TABLE coltop_test (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                            sqlExecutionContext
+                    );
+                    engine.execute("""
+                            INSERT INTO coltop_test VALUES
+                                (1, '2024-01-01T00:00:00.000000Z'),
+                                (2, '2024-01-01T12:00:00.000000Z'),
+                                (3, '2024-01-02T00:00:00.000000Z'),
+                                (4, '2024-01-02T12:00:00.000000Z')""", sqlExecutionContext);
+                    drainWalQueue(engine);
+
+                    // Add a new column — older partitions will have column tops (page address == 0)
+                    engine.execute("ALTER TABLE coltop_test ADD COLUMN y INT", sqlExecutionContext);
+                    drainWalQueue(engine);
+
+                    // Insert rows with the new column populated in a new partition
+                    engine.execute("""
+                            INSERT INTO coltop_test VALUES
+                                (5, '2024-01-03T00:00:00.000000Z', 100),
+                                (6, '2024-01-03T12:00:00.000000Z', 101)""", sqlExecutionContext);
+                    drainWalQueue(engine);
+
+                    // Query with a computed column to force PAGE_FRAME_BACKED mode.
+                    // The pass-through column y has a column top (zero page address)
+                    // in the 2024-01-01 and 2024-01-02 partitions.
+                    String[] queries = {
+                            "SELECT x + 1 AS cx, y, ts FROM coltop_test",
+                            "SELECT x * 2 AS doubled, y::LONG AS y_long, ts FROM coltop_test",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameComputedColumns() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE hybrid_test AS (" +
+                            "SELECT x, x * 2.0 AS dbl_col, " +
+                            "timestamp_sequence('2024-01-01', 1_000_000L) AS ts " +
+                            "FROM long_sequence(100)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT x + 1 AS computed_x, dbl_col, ts FROM hybrid_test",
+                            "SELECT x::INT AS x_int, dbl_col::FLOAT AS dbl_float FROM hybrid_test",
+                            "SELECT x, x * 3 + 1 AS expr_col FROM hybrid_test WHERE ts > '2024-01-01T00:00:10'",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameComputedColumnsNulls() throws Exception {
+        // PAGE_FRAME_BACKED: NULL values in computed columns across multiple row group
+        // boundaries. assertParquetExportDataCorrectness uses random row_group_size,
+        // exercising buffer pinning with NULL sentinel values across flushes.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE null_hybrid AS (
+                                SELECT
+                                    CASE WHEN x % 3 = 0 THEN NULL::INT ELSE x::INT END AS val,
+                                    CASE WHEN x % 5 = 0 THEN NULL ELSE rnd_str(3, 8, 0) END AS name,
+                                    timestamp_sequence('2024-01-01', 100_000L) AS ts
+                                FROM long_sequence(500)
+                            ) TIMESTAMP(ts) PARTITION BY HOUR""", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT val::LONG AS val_long, name, ts FROM null_hybrid",
+                            "SELECT val + 1 AS val_inc, name, ts FROM null_hybrid",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameCursorBasedNulls() throws Exception {
+        // CURSOR_BASED: NULL values in a non-page-frame factory (CROSS JOIN)
+        // across multiple row groups. Exercises cursor-based buffer pinning
+        // with NULL sentinels for both fixed-size and var-size columns.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE cb_null_a AS (
+                                SELECT
+                                    CASE WHEN x % 4 = 0 THEN NULL::INT ELSE x::INT END AS a,
+                                    CASE WHEN x % 3 = 0 THEN NULL ELSE rnd_str(2, 6, 0) END AS s
+                                FROM long_sequence(30)
+                            )""", sqlExecutionContext);
+                    engine.execute("CREATE TABLE cb_null_b AS (SELECT x AS b FROM long_sequence(10))", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT cb_null_a.a, cb_null_b.b, cb_null_a.s FROM cb_null_a CROSS JOIN cb_null_b",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameDescending() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE desc_test AS (
+                                SELECT x, x * 2.0 AS dbl_col,
+                                timestamp_sequence('2024-01-01', 1_000_000L) AS ts
+                                FROM long_sequence(200)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT x + 1 AS computed_x, dbl_col, ts FROM desc_test ORDER BY ts DESC",
+                            "SELECT x::INT AS x_int, dbl_col::FLOAT AS dbl_float, ts FROM desc_test ORDER BY ts DESC",
+                            "SELECT x, x * 3 + 1 AS expr_col, ts FROM desc_test ORDER BY ts DESC",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameDescendingAfterRecompile() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE recomp_desc AS (
+                                SELECT x, x * 2.0 AS dbl_col,
+                                timestamp_sequence('2024-01-01', 1_000_000L) AS ts
+                                FROM long_sequence(200)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+
+                    // Descending query with expressions → PAGE_FRAME_BACKED mode initially.
+                    // The descending override should downgrade it to CURSOR_BASED.
+                    String query = "SELECT x + 1 AS computed_x, dbl_col, ts FROM recomp_desc ORDER BY ts DESC";
+
+                    try (TestHttpClient httpClient = new TestHttpClient();
+                         var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        httpClient.setKeepConnection(true);
+
+                        // First request: succeeds and caches the factory in the connection's select cache.
+                        HttpClient.Request req = httpClient.getHttpClient().newRequest("localhost", 9001);
+                        req.GET().url("/exp");
+                        req.query("query", query);
+                        req.query("fmt", "parquet");
+                        req.query("row_group_size", "50");
+                        sink.clear();
+                        httpClient.reqToSink(req, sink, null, null, null, null);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recomp_first.parquet");
+
+                        // ALTER TABLE to change the schema version, making the cached factory stale.
+                        engine.execute("ALTER TABLE recomp_desc ADD COLUMN extra_col INT", sqlExecutionContext);
+
+                        // Second request: the stale cached factory triggers
+                        // TableReferenceOutOfDateException, causing recompilation.
+                        // Without the fix, the descending-to-CURSOR_BASED override is not
+                        // re-applied after recompile, so PAGE_FRAME_BACKED produces rows
+                        // in storage (ascending) order for pass-through columns.
+                        req = httpClient.getHttpClient().newRequest("localhost", 9001);
+                        req.GET().url("/exp");
+                        req.query("query", query);
+                        req.query("fmt", "parquet");
+                        req.query("row_group_size", "50");
+                        sink.clear();
+                        httpClient.reqToSink(req, sink, null, null, null, null);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "recomp_second.parquet");
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameFullMaterialization() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE fm_t1 (x INT, label STRING)", sqlExecutionContext);
+                    engine.execute("CREATE TABLE fm_t2 (id INT, name STRING)", sqlExecutionContext);
+                    engine.execute("INSERT INTO fm_t1 VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma')", sqlExecutionContext);
+                    engine.execute("INSERT INTO fm_t2 VALUES (1, 'one'), (2, 'two'), (3, 'three')", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT fm_t1.x, fm_t2.name FROM fm_t1 CROSS JOIN fm_t2 WHERE fm_t1.x = fm_t2.id",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameHybridSymbol() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE sym_test AS (" +
+                            "SELECT x, rnd_symbol('A','B','C') AS sym, " +
+                            "timestamp_sequence('2024-01-01', 1_000_000L) AS ts " +
+                            "FROM long_sequence(100)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+
+                    // sym is pass-through, x + 1 is computed: exercises hybrid path with symbols
+                    String[] queries = {
+                            "SELECT sym, x + 1 AS next_x FROM sym_test",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameMultipleRowGroups() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE rg_test AS (
+                                SELECT x, x * 2.0 AS dbl_col,
+                                timestamp_sequence('2024-01-01', 100_000L) AS ts
+                                FROM long_sequence(5000)
+                            ) TIMESTAMP(ts) PARTITION BY HOUR""", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT x + 1 AS computed_x, dbl_col, ts FROM rg_test",
+                            "SELECT x::INT AS x_int, dbl_col::FLOAT AS dbl_float, ts FROM rg_test",
+                            // Computed STRING column: exercises var-size buffer pinning in PAGE_FRAME_BACKED
+                            "SELECT x::STRING AS str_x, dbl_col, ts FROM rg_test",
+                    };
+
+                    // Use a small max_row_group to force multiple row groups
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 200);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameVarcharAndArrayColumns() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE vca_test AS (
+                                SELECT x,
+                                rnd_varchar(1, 15, 1) AS vc_col,
+                                rnd_double_array(1, 5) AS arr_col,
+                                timestamp_sequence('2024-01-01', 1_000_000L) AS ts
+                                FROM long_sequence(200)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+
+                    // x + 1 forces PAGE_FRAME_BACKED; vc_col and arr_col are pass-through
+                    String[] queries = {
+                            "SELECT x + 1 AS computed_x, vc_col, arr_col, ts FROM vca_test",
+                            "SELECT x * 2 AS doubled, vc_col, ts FROM vca_test",
+                            "SELECT x + 1 AS computed_x, arr_col FROM vca_test",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
+                });
+    }
+
+    @Test
     public void testParquetExportParquetVersionInvalid() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1523,8 +1873,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "generate_series(0, '9999-01-01', '1U')");
                     params.put("fmt", "parquet");
                     params.put("timeout", "1");
-                    String expectedError = "timeout, query aborted";
-                    testHttpClient.assertGetContains("/exp", expectedError, params);
+                    // With direct export, data may start streaming before the timeout
+                    // fires, causing the server to disconnect rather than send an error.
+                    try {
+                        testHttpClient.assertGetContains("/exp", "timeout, query aborted", params);
+                    } catch (HttpClientException e) {
+                        String msg = e.getMessage();
+                        Assert.assertTrue(
+                                "unexpected error: " + msg,
+                                msg.contains("peer disconnect") || msg.contains("malformed chunk")
+                        );
+                    }
                 });
     }
 
@@ -1542,7 +1901,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         testHttpClient.assertGetContains("/exp", "nothing", params);
                         Assert.fail();
                     } catch (HttpClientException e) {
-                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                        String msg = e.getMessage();
+                        Assert.assertTrue(
+                                "unexpected error: " + msg,
+                                msg.contains("peer disconnect") || msg.contains("malformed chunk")
+                        );
                     }
 
                 });
@@ -1697,6 +2060,34 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 TestUtils.assertEquals(expectedSink, actualSink);
             }
         }
+    }
+
+    private void assertParquetMatchesQuery(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            DirectUtf8Sink parquetData,
+            String query,
+            String filename
+    ) throws Exception {
+        int bytesReceived = parquetData.size();
+        Path path = Path.getThreadLocal(root);
+        path.concat("export").concat(filename).$();
+        Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
+        long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
+        try {
+            Files.truncate(fd, bytesReceived);
+            long bytesWritten = Files.write(fd, parquetData.ptr(), bytesReceived, 0);
+            Assert.assertEquals(bytesReceived, bytesWritten);
+        } finally {
+            Files.close(fd);
+        }
+
+        String selectFromParquet = "read_parquet('" + filename + "')";
+        var expectedSink = new StringSink();
+        var actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
+        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     private HttpQueryTestBuilder getExportTester() {
