@@ -50,14 +50,14 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     private final PageFrameMemoryPool frameMemoryPool;
     // Cache for frame timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...] - avoids re-reading on repeated open()
     private final DirectLongList frameTimestampCache;
-    private final RecordMetadata metadata;
     private final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private int frameCount = 0;
     // Cursor's lifecycle is managed externally
     private PageFrameCursor frameCursor;
-    // Timestamp column index in the address cache; may differ from metadata.getTimestampIndex()
+    // Timestamp column index in the address cache; may differ from the original metadata index
     // when the cache is populated with logically-remapped page frames (e.g. SelectedPageFrame).
+    // Initialized from metadata in the constructor; may be overridden via of().
     private int timestampIndex;
     // Off-heap because it's per-frame and can be large unlike per-partition lists
     private DirectIntList framePartitionIndexes;
@@ -70,7 +70,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
             @NotNull RecordMetadata metadata
     ) {
         try {
-            this.metadata = metadata;
+            this.timestampIndex = metadata.getTimestampIndex();
             this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
@@ -102,7 +102,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
 
     @Override
     public int getTimestampIndex() {
-        return metadata.getTimestampIndex();
+        return timestampIndex;
     }
 
     @Override

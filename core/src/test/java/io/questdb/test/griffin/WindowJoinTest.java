@@ -2726,9 +2726,6 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
                     (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
                     "ORDER BY t.ts, t.sym";
-            StringSink planSink = new StringSink();
-            engine.print("EXPLAIN " + query, planSink, sqlExecutionContext);
-            System.out.println("PLAN:\n" + planSink);
             assertQueryNoLeakCheck(
                     "sym\tqty\tts\twindow_price\twindow_price0\n" +
                             "AX\t100.0\t1970-01-01T00:00:05.000000Z\t30.0\t30.0\n" +
