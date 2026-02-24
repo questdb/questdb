@@ -1058,11 +1058,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        final AlterOperationBuilder changeColumn = alterOperationBuilder.ofSymbolCapacityChange(
-                tableNamePosition,
-                tableToken,
-                tableMetadata.getTableId()
-        );
+        columnNames.clear();
+        if (columnName != null) {
+            columnNames.add(columnName);
+        }
+        securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, columnNames);
+
         final int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (!ColumnType.isSymbol(existingColumnType)) {
             throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName).put("' is not of symbol type");
@@ -1093,7 +1094,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
 
-        changeColumn.addColumnToList(
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change symbol capacity");
+        }
+
+        alterOperationBuilder.ofSymbolCapacityChange(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId()
+        );
+        alterOperationBuilder.addColumnToList(
                 columnName,
                 columnNamePosition,
                 ColumnType.SYMBOL,
@@ -1104,12 +1115,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 false // ignored
         );
 
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change symbol capacity");
-        }
-
-        securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
