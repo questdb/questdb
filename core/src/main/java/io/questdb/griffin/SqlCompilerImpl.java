@@ -1058,11 +1058,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        final AlterOperationBuilder changeColumn = alterOperationBuilder.ofSymbolCapacityChange(
-                tableNamePosition,
-                tableToken,
-                tableMetadata.getTableId()
-        );
+        columnNames.clear();
+        if (columnName != null) {
+            columnNames.add(columnName);
+        }
+        securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, columnNames);
+
         final int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (!ColumnType.isSymbol(existingColumnType)) {
             throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName).put("' is not of symbol type");
@@ -1093,7 +1094,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
 
-        changeColumn.addColumnToList(
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change symbol capacity");
+        }
+
+        alterOperationBuilder.ofSymbolCapacityChange(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId()
+        );
+        alterOperationBuilder.addColumnToList(
                 columnName,
                 columnNamePosition,
                 ColumnType.SYMBOL,
@@ -1104,12 +1115,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 false // ignored
         );
 
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !isSemicolon(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change symbol capacity");
-        }
-
-        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1880,6 +1885,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
                         // SET REFRESH LIMIT
+                        securityContext.authorizeAlterMatViewSetRefreshLimit(matViewToken);
                         final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
                         final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
                                 matViewNamePosition,
@@ -1890,6 +1896,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         compiledQuery.ofAlter(setRefreshLimit.build());
                     } else if (isImmediateKeyword(tok) || isManualKeyword(tok) || isEveryKeyword(tok) || isPeriodKeyword(tok)) {
                         // SET REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] ...
+                        securityContext.authorizeAlterMatViewSetRefreshType(matViewToken);
                         int refreshType = MatViewDefinition.REFRESH_TYPE_IMMEDIATE;
                         int every = 0;
                         char everyUnit = 0;
@@ -2049,7 +2056,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'immediate' or 'manual' or 'period' or 'every' or 'limit' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' or 'start' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
@@ -2262,6 +2269,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else if (isSetKeyword(tok)) {
                 tok = expectToken(lexer, "'param', 'ttl' or 'type'");
                 if (isParamKeyword(tok)) {
+                    securityContext.authorizeAlterTableSetParam(tableToken);
                     final int paramNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "param name");
                     final CharSequence paramName = GenericLexer.immutableOf(tok);
