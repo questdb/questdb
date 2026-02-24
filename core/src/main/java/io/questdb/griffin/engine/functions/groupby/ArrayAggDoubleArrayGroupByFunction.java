@@ -128,6 +128,9 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
         }
         if (newCount > capacity) {
             int newCapacity = Numbers.ceilPow2(newCount);
+            if (newCapacity < newCount) {
+                throw CairoException.nonCritical().put("array_agg: array exceeds maximum capacity");
+            }
             long oldSize = HEADER_SIZE + (long) capacity * Double.BYTES;
             long newSize = HEADER_SIZE + (long) newCapacity * Double.BYTES;
             ptr = allocator.realloc(ptr, oldSize, newSize);
@@ -224,6 +227,9 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
         }
         if (newCount > destCapacity) {
             int newCapacity = Numbers.ceilPow2(newCount);
+            if (newCapacity < newCount) {
+                throw CairoException.nonCritical().put("array_agg: merged array exceeds maximum capacity");
+            }
             long oldSize = HEADER_SIZE + (long) destCapacity * Double.BYTES;
             long newSize = HEADER_SIZE + (long) newCapacity * Double.BYTES;
             destPtr = allocator.realloc(destPtr, oldSize, newSize);
