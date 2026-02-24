@@ -3172,17 +3172,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             if (factory.mayHasParquetFormatPartition(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
                 ObjList<PushdownFilterExtractor.PushdownFilterCondition> tempConditions = pushdownFilterExtractor.extract(sqlNodeStack, filterExpr, factory.getMetadata());
-                if (tempConditions.size() != 0) {
-                    pushdownFilterConditions = new ObjList<>(tempConditions);
-                    for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
-                        PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
-                        ObjList<ExpressionNode> values = condition.getValues();
-                        for (int j = 0, m = values.size(); j < m; j++) {
-                            condition.addValueFunction(functionParser.parseFunction(values.getQuick(j), factory.getMetadata(), executionContext));
+                for (int i = 0, n = tempConditions.size(); i < n; i++) {
+                    PushdownFilterExtractor.PushdownFilterCondition condition = tempConditions.getQuick(i);
+                    ObjList<ExpressionNode> values = condition.getValues();
+                    boolean allConstant = true;
+                    for (int j = 0, m = values.size(); j < m; j++) {
+                        Function f = functionParser.parseFunction(values.getQuick(j), factory.getMetadata(), executionContext);
+                        condition.addValueFunction(f);
+                        if (!f.isConstantOrRuntimeConstant()) {
+                            allConstant = false;
                         }
                     }
+                    if (allConstant) {
+                        if (pushdownFilterConditions == null) {
+                            pushdownFilterConditions = new ObjList<>();
+                        }
+                        pushdownFilterConditions.add(condition);
+                    } else {
+                        Misc.free(condition);
+                    }
                 }
-                factory.setPushdownFilterCondition(pushdownFilterConditions);
+                if (pushdownFilterConditions != null) {
+                    factory.setPushdownFilterCondition(pushdownFilterConditions);
+                }
             }
 
             final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();

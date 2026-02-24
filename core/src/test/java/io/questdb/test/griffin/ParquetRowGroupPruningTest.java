@@ -1,0 +1,2070 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin;
+
+import io.questdb.PropertyKey;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
+import org.junit.Test;
+
+public class ParquetRowGroupPruningTest extends AbstractCairoTest {
+    @Before
+    public void setUp() {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10);
+        super.setUp();
+    }
+
+    @Test
+    public void testBloomFilterByte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (10, '2024-01-01T01:00:00.000000Z'),
+                    (100, '2024-01-01T02:00:00.000000Z'),
+                    (101, '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 50::byte",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            10
+                            """,
+                    "SELECT val FROM x WHERE val = 10::byte",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterChar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('A', '2024-01-01T00:00:00.000000Z'),
+                    ('M', '2024-01-01T01:00:00.000000Z'),
+                    ('Z', '2024-01-01T02:00:00.000000Z'),
+                    ('X', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 'G'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            M
+                            """,
+                    "SELECT val FROM x WHERE val = 'M'",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterDate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2020-01-01'::DATE, '2024-01-01T00:00:00.000000Z'),
+                    ('2020-06-15'::DATE, '2024-01-01T01:00:00.000000Z'),
+                    ('2020-12-31'::DATE, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            // within range but absent
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '2020-03-15'::DATE",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2020-06-15T00:00:00.000Z
+                            """,
+                    "SELECT val FROM x WHERE val = '2020-06-15'::DATE",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterDecimal128() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(30,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999999999.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '2500000000000.25'::DECIMAL(30,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5000000000000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '5000000000000.50'::DECIMAL(30,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== CHAR ====================
+
+    @Test
+    public void testBloomFilterDecimal16() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(4,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('10.10', '2024-01-01T00:00:00.000000Z'),
+                    ('50.50', '2024-01-01T01:00:00.000000Z'),
+                    ('99.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '30.30'::DECIMAL(4,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            50.50
+                            """,
+                    "SELECT val FROM x WHERE val = '50.50'::DECIMAL(4,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== INT ====================
+
+    @Test
+    public void testBloomFilterDecimal256() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(50,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('100000000000000000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('500000000000000000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('999999999999999999999.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '250000000000000000000.25'::DECIMAL(50,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            500000000000000000000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '500000000000000000000.50'::DECIMAL(50,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterDecimal32() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(8,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('50_000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('99_999.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '25000.25'::DECIMAL(8,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            50000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '50000.50'::DECIMAL(8,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterDecimal64() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '2500000.25'::DECIMAL(15,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5000000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '5000000.50'::DECIMAL(15,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== LONG ====================
+
+    @Test
+    public void testBloomFilterDecimal8() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1.1', '2024-01-01T00:00:00.000000Z'),
+                    ('5.5', '2024-01-01T01:00:00.000000Z'),
+                    ('9.9', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            // within range but absent
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '3.3'::DECIMAL(2,1)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5.5
+                            """,
+                    "SELECT val FROM x WHERE val = '5.5'::DECIMAL(2,1)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.11, '2024-01-01T00:00:00.000000Z'),
+                    (5.55, '2024-01-01T01:00:00.000000Z'),
+                    (9.99, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 3.33",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5.55
+                            """,
+                    "SELECT val FROM x WHERE val = 5.55",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== FLOAT ====================
+
+    @Test
+    public void testBloomFilterFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (5.0, '2024-01-01T01:00:00.000000Z'),
+                    (10.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 3.0::FLOAT",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5.0000
+                            """,
+                    "SELECT val FROM x WHERE val = 5.0::FLOAT",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1.1.1.1', '2024-01-01T00:00:00.000000Z'),
+                    ('10.0.0.1', '2024-01-01T01:00:00.000000Z'),
+                    ('192.168.1.1', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '5.5.5.5'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            10.0.0.1
+                            """,
+                    "SELECT val FROM x WHERE val = '10.0.0.1'",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== DOUBLE ====================
+
+    @Test
+    public void testBloomFilterInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 25_000",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            50000
+                            """,
+                    "SELECT val FROM x WHERE val = 50_000",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterIntInList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            // all values within range but absent
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val IN (2, 3, 4)",
+                    null, true, false
+            );
+            // mix of absent and present
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1
+                            """,
+                    "SELECT val FROM x WHERE val IN (1, 25_000)",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== DATE ====================
+
+    @Test
+    public void testBloomFilterLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (500_000, '2024-01-01T01:00:00.000000Z'),
+                    (1_000_000, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 250_000",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            500000
+                            """,
+                    "SELECT val FROM x WHERE val = 500_000",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== TIMESTAMP ====================
+
+    @Test
+    public void testBloomFilterLong128() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val LONG128, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (to_long128(0, 1), '2024-01-01T00:00:00.000000Z'),
+                    (to_long128(0, 50), '2024-01-01T01:00:00.000000Z'),
+                    (to_long128(0, 100), '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            // within range but absent -> bloom filter can prune
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = to_long128(0, 25)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            00000000-0000-0000-0000-000000000032
+                            """,
+                    "SELECT val FROM x WHERE val = to_long128(0, 50)",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== STRING ====================
+
+    @Test
+    public void testBloomFilterMultipleColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 'aaa', '2024-01-01T00:00:00.000000Z'),
+                    (50, 'mmm', '2024-01-01T01:00:00.000000Z'),
+                    (100, 'zzz', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'a,b')");
+
+            // both within range but absent
+            assertQueryNoLeakCheck(
+                    "a\tb\n",
+                    "SELECT a, b FROM x WHERE a = 25 AND b = 'ggg'",
+                    null, true, false
+            );
+            // one present, one absent
+            assertQueryNoLeakCheck(
+                    "a\tb\n",
+                    "SELECT a, b FROM x WHERE a = 1 AND b = 'ggg'",
+                    null, true, false
+            );
+            // both present
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb
+                            50\tmmm
+                            """,
+                    "SELECT a, b FROM x WHERE a = 50 AND b = 'mmm'",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (100, '2024-01-01T00:00:00.000000Z'),
+                    (200, '2024-01-01T01:00:00.000000Z'),
+                    (1000, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 500",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            200
+                            """,
+                    "SELECT val FROM x WHERE val = 200",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== SYMBOL ====================
+
+    @Test
+    public void testBloomFilterString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('aaa', '2024-01-01T00:00:00.000000Z'),
+                    ('mmm', '2024-01-01T01:00:00.000000Z'),
+                    ('zzz', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            // within range [aaa,zzz] but absent
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 'ggg'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            mmm
+                            """,
+                    "SELECT val FROM x WHERE val = 'mmm'",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== VARCHAR ====================
+
+    @Test
+    public void testBloomFilterSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('alpha', '2024-01-01T00:00:00.000000Z'),
+                    ('gamma', '2024-01-01T01:00:00.000000Z'),
+                    ('zeta', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 'delta'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            gamma
+                            """,
+                    "SELECT val FROM x WHERE val = 'gamma'",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2020-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    ('2020-06-15T12:00:00.000000Z', '2024-01-01T01:00:00.000000Z'),
+                    ('2020-12-31T23:59:59.999999Z', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '2020-03-15T00:00:00.000000Z'::TIMESTAMP",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2020-06-15T12:00:00.000000Z
+                            """,
+                    "SELECT val FROM x WHERE val = '2020-06-15T12:00:00.000000Z'::TIMESTAMP",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== IPv4 ====================
+
+    @Test
+    public void testBloomFilterUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:00.000000Z'),
+                    ('55555555-5555-5555-5555-555555555555', '2024-01-01T01:00:00.000000Z'),
+                    ('99999999-9999-9999-9999-999999999999', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '33333333-3333-3333-3333-333333333333'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            55555555-5555-5555-5555-555555555555
+                            """,
+                    "SELECT val FROM x WHERE val = '55555555-5555-5555-5555-555555555555'",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== UUID ====================
+
+    @Test
+    public void testBloomFilterVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('abc', '2024-01-01T00:00:00.000000Z'),
+                    ('mno', '2024-01-01T01:00:00.000000Z'),
+                    ('xyz', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 'ghi'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            mno
+                            """,
+                    "SELECT val FROM x WHERE val = 'mno'",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testBloomFilterWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x ADD COLUMN val INT");
+            execute("""
+                    INSERT INTO x VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 10),
+                    (4, '2024-01-01T03:00:00.000000Z', 100),
+                    (5, '2024-01-01T04:00:00.000000Z', 1000)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            // within range [10,1000] but absent
+            assertQueryNoLeakCheck(
+                    "id\tval\n",
+                    "SELECT id, val FROM x WHERE val = 50",
+                    null, true, false
+            );
+            // present
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            4\t100
+                            """,
+                    "SELECT id, val FROM x WHERE val = 100",
+                    null, true, false
+            );
+            // null from column top
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\tnull
+                            2\tnull
+                            """,
+                    "SELECT id, val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== COLUMN TOP ====================
+
+    @Test
+    public void testColumnTopDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x ADD COLUMN val DOUBLE");
+            execute("""
+                    INSERT INTO x VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 1.11),
+                    (4, '2024-01-01T03:00:00.000000Z', 2.22)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            3\t1.11
+                            """,
+                    "SELECT id, val FROM x WHERE val = 1.11",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\tnull
+                            2\tnull
+                            """,
+                    "SELECT id, val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testColumnTopInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            // add column after data exists -> column top for existing rows
+            execute("ALTER TABLE x ADD COLUMN val INT");
+            execute("""
+                    INSERT INTO x VALUES
+                    (4, '2024-01-01T03:00:00.000000Z', 100),
+                    (5, '2024-01-01T04:00:00.000000Z', 200)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // value in new column
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            4\t100
+                            """,
+                    "SELECT id, val FROM x WHERE val = 100",
+                    null, true, false
+            );
+            // null from column top
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            """,
+                    "SELECT id, val FROM x WHERE val = null",
+                    null, true, false
+            );
+            // non-existent value
+            assertQueryNoLeakCheck(
+                    "id\tval\n",
+                    "SELECT id, val FROM x WHERE val = 999",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testColumnTopLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x ADD COLUMN val LONG");
+            execute("""
+                    INSERT INTO x VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 100_000),
+                    (4, '2024-01-01T03:00:00.000000Z', 200_000)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            3\t100000
+                            """,
+                    "SELECT id, val FROM x WHERE val = 100_000",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\tnull
+                            2\tnull
+                            """,
+                    "SELECT id, val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testColumnTopString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x ADD COLUMN val STRING");
+            execute("""
+                    INSERT INTO x VALUES
+                    (4, '2024-01-01T03:00:00.000000Z', 'hello'),
+                    (5, '2024-01-01T04:00:00.000000Z', 'world')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            4\thello
+                            """,
+                    "SELECT id, val FROM x WHERE val = 'hello'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t
+                            2\t
+                            3\t
+                            """,
+                    "SELECT id, val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testColumnTopVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x ADD COLUMN val VARCHAR");
+            execute("""
+                    INSERT INTO x VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 'abc'),
+                    (4, '2024-01-01T03:00:00.000000Z', 'def')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            3\tabc
+                            """,
+                    "SELECT id, val FROM x WHERE val = 'abc'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            1\t
+                            2\t
+                            """,
+                    "SELECT id, val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== MULTIPLE CONDITIONS (AND) ====================
+
+    @Test
+    public void testInListWithNullDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.11, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    (3.33, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            3.33
+                            """,
+                    "SELECT val FROM x WHERE val IN (null, 3.33)",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== MIXED PARQUET AND NATIVE PARTITIONS ====================
+
+    @Test
+    public void testInListWithNullInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z'),
+                    (5, '2024-01-01T03:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // IN list contains null and a present value
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            3
+                            """,
+                    "SELECT val FROM x WHERE val IN (null, 3)",
+                    null, true, false
+            );
+            // IN list contains only null
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            """,
+                    "SELECT val FROM x WHERE val IN (null)",
+                    null, true, false
+            );
+            // IN list contains null and a non-existent value
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            """,
+                    "SELECT val FROM x WHERE val IN (null, 99)",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== IN LIST WITH NULL ====================
+
+    @Test
+    public void testInListWithNullLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (100_000, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    (300_000, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            300000
+                            """,
+                    "SELECT val FROM x WHERE val IN (null, 300_000)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testInListWithNullString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('aaa', '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    ('ccc', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            
+                            ccc
+                            """,
+                    "SELECT val FROM x WHERE val IN (null, 'ccc')",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testInListWithNullVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('hello', '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    ('world', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            
+                            world
+                            """,
+                    "SELECT val FROM x WHERE val IN (null, 'world')",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningByte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z'),
+                    (50, '2024-01-01T03:00:00.000000Z'),
+                    (100, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // value within range
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2
+                            """,
+                    "SELECT val FROM x WHERE val = 2",
+                    null, true, false
+            );
+            // value outside range (should be pruned)
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = -1",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningChar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('A', '2024-01-01T00:00:00.000000Z'),
+                    ('B', '2024-01-01T01:00:00.000000Z'),
+                    ('C', '2024-01-01T02:00:00.000000Z'),
+                    ('X', '2024-01-01T03:00:00.000000Z'),
+                    ('Z', '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            C
+                            """,
+                    "SELECT val FROM x WHERE val = 'C'",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== BLOOM FILTER COVERAGE ====================
+    // These tests exercise the bloom filter path specifically by querying values
+    // that fall WITHIN the min/max range but are NOT present in the data.
+    // Without bloom filter, these cannot be pruned by min/max alone.
+
+    @Test
+    public void testMinMaxPruningDate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2020-01-01'::DATE, '2024-01-01T00:00:00.000000Z'),
+                    ('2020-06-01'::DATE, '2024-01-01T01:00:00.000000Z'),
+                    ('2020-12-31'::DATE, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2020-06-01T00:00:00.000Z
+                            """,
+                    "SELECT val FROM x WHERE val = '2020-06-01'::DATE",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '2099-01-01'::DATE",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimal128() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(30,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999999999.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5000000000000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '5000000000000.50'::DECIMAL(30,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '100.10'::DECIMAL(30,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimal16() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(4,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('10.10', '2024-01-01T00:00:00.000000Z'),
+                    ('50.50', '2024-01-01T01:00:00.000000Z'),
+                    ('99.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            50.50
+                            """,
+                    "SELECT val FROM x WHERE val = '50.50'::DECIMAL(4,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '1.01'::DECIMAL(4,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimal256() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(50,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('100000000000000000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('500000000000000000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('999999999999999999999.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            500000000000000000000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '500000000000000000000.50'::DECIMAL(50,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '10.10'::DECIMAL(50,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimal32() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(8,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('50_000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('99_999.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            50000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '50000.50'::DECIMAL(8,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '100.10'::DECIMAL(8,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimal64() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5000000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '5000000.50'::DECIMAL(15,2)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '100.10'::DECIMAL(15,2)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimal8() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1.1', '2024-01-01T00:00:00.000000Z'),
+                    ('5.5', '2024-01-01T01:00:00.000000Z'),
+                    ('9.9', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5.5
+                            """,
+                    "SELECT val FROM x WHERE val = '5.5'::DECIMAL(2,1)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '0.1'::DECIMAL(2,1)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.11, '2024-01-01T00:00:00.000000Z'),
+                    (2.22, '2024-01-01T01:00:00.000000Z'),
+                    (3.33, '2024-01-01T02:00:00.000000Z'),
+                    (4.44, '2024-01-01T03:00:00.000000Z'),
+                    (5.55, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            3.33
+                            """,
+                    "SELECT val FROM x WHERE val = 3.33",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 99.99",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.5, '2024-01-01T00:00:00.000000Z'),
+                    (2.5, '2024-01-01T01:00:00.000000Z'),
+                    (3.5, '2024-01-01T02:00:00.000000Z'),
+                    (4.5, '2024-01-01T03:00:00.000000Z'),
+                    (5.5, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            3.5000
+                            """,
+                    "SELECT val FROM x WHERE val = 3.5::FLOAT",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 99.9::FLOAT",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1.1.1.1', '2024-01-01T00:00:00.000000Z'),
+                    ('10.0.0.1', '2024-01-01T01:00:00.000000Z'),
+                    ('192.168.1.1', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            10.0.0.1
+                            """,
+                    "SELECT val FROM x WHERE val = '10.0.0.1'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '255.255.255.255'",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (10_000, '2024-01-01T00:00:00.000000Z'),
+                    (20_000, '2024-01-01T01:00:00.000000Z'),
+                    (30_000, '2024-01-01T02:00:00.000000Z'),
+                    (40_000, '2024-01-01T03:00:00.000000Z'),
+                    (50_000, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            30000
+                            """,
+                    "SELECT val FROM x WHERE val = 30_000",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 99_999",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningIntInList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (10_000, '2024-01-01T00:00:00.000000Z'),
+                    (20_000, '2024-01-01T01:00:00.000000Z'),
+                    (30_000, '2024-01-01T02:00:00.000000Z'),
+                    (40_000, '2024-01-01T03:00:00.000000Z'),
+                    (50_000, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            10000
+                            50000
+                            """,
+                    "SELECT val FROM x WHERE val IN (10_000, 50_000)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val IN (99_998, 99_999)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (100_000, '2024-01-01T00:00:00.000000Z'),
+                    (200_000, '2024-01-01T01:00:00.000000Z'),
+                    (300_000, '2024-01-01T02:00:00.000000Z'),
+                    (400_000, '2024-01-01T03:00:00.000000Z'),
+                    (500_000, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            300000
+                            """,
+                    "SELECT val FROM x WHERE val = 300_000",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 999_999",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningLong128() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val LONG128, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (to_long128(0, 1), '2024-01-01T00:00:00.000000Z'),
+                    (to_long128(0, 50), '2024-01-01T01:00:00.000000Z'),
+                    (to_long128(0, 100), '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            00000000-0000-0000-0000-000000000032
+                            """,
+                    "SELECT val FROM x WHERE val = to_long128(0, 50)",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = to_long128(0, 999)",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (100, '2024-01-01T00:00:00.000000Z'),
+                    (200, '2024-01-01T01:00:00.000000Z'),
+                    (300, '2024-01-01T02:00:00.000000Z'),
+                    (400, '2024-01-01T03:00:00.000000Z'),
+                    (500, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            300
+                            """,
+                    "SELECT val FROM x WHERE val = 300",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 999",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('aaa', '2024-01-01T00:00:00.000000Z'),
+                    ('bbb', '2024-01-01T01:00:00.000000Z'),
+                    ('ccc', '2024-01-01T02:00:00.000000Z'),
+                    ('xxx', '2024-01-01T03:00:00.000000Z'),
+                    ('zzz', '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            ccc
+                            """,
+                    "SELECT val FROM x WHERE val = 'ccc'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 'not_exist'",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== CHAR BLOOM FILTER ====================
+
+    @Test
+    public void testMinMaxPruningSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('alpha', '2024-01-01T00:00:00.000000Z'),
+                    ('beta', '2024-01-01T01:00:00.000000Z'),
+                    ('gamma', '2024-01-01T02:00:00.000000Z'),
+                    ('delta', '2024-01-01T03:00:00.000000Z'),
+                    ('epsilon', '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            gamma
+                            """,
+                    "SELECT val FROM x WHERE val = 'gamma'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 'not_exist'",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== LONG128 ====================
+
+    @Test
+    public void testMinMaxPruningTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2020-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    ('2020-06-01T00:00:00.000000Z', '2024-01-01T01:00:00.000000Z'),
+                    ('2020-12-31T00:00:00.000000Z', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2020-06-01T00:00:00.000000Z
+                            """,
+                    "SELECT val FROM x WHERE val = '2020-06-01T00:00:00.000000Z'::TIMESTAMP",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '2099-01-01T00:00:00.000000Z'::TIMESTAMP",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:00.000000Z'),
+                    ('22222222-2222-2222-2222-222222222222', '2024-01-01T01:00:00.000000Z'),
+                    ('33333333-3333-3333-3333-333333333333', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            22222222-2222-2222-2222-222222222222
+                            """,
+                    "SELECT val FROM x WHERE val = '22222222-2222-2222-2222-222222222222'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 'ffffffff-ffff-ffff-ffff-ffffffffffff'",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== DECIMAL ====================
+
+    @Test
+    public void testMinMaxPruningVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('hello', '2024-01-01T00:00:00.000000Z'),
+                    ('world', '2024-01-01T01:00:00.000000Z'),
+                    ('foo', '2024-01-01T02:00:00.000000Z'),
+                    ('bar', '2024-01-01T03:00:00.000000Z'),
+                    ('baz', '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            foo
+                            """,
+                    "SELECT val FROM x WHERE val = 'foo'",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = 'not_exist'",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMixedParquetAndNativePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-02T00:00:00.000000Z'),
+                    (4, '2024-01-02T01:00:00.000000Z'),
+                    (5, '2024-01-03T00:00:00.000000Z')
+                    """);
+            // convert only first partition
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2
+                            """,
+                    "SELECT val FROM x WHERE val = 2",
+                    null, true, false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5
+                            """,
+                    "SELECT val FROM x WHERE val = 5",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleAndConditions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, b STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 'aaa', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'bbb', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'ccc', '2024-01-01T02:00:00.000000Z'),
+                    (1, 'bbb', '2024-01-01T03:00:00.000000Z'),
+                    (2, 'ccc', '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb
+                            1\tbbb
+                            """,
+                    "SELECT a, b FROM x WHERE a = 1 AND b = 'bbb'",
+                    null, true, false
+            );
+            // both conditions outside range
+            assertQueryNoLeakCheck(
+                    "a\tb\n",
+                    "SELECT a, b FROM x WHERE a = 99 AND b = 'zzz'",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNullPruningByte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            0
+                            """,
+                    "SELECT val FROM x WHERE val = 0",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNullPruningDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.11, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    (3.33, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            """,
+                    "SELECT val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNullPruningFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1.5, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    (3.5, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            """,
+                    "SELECT val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNullPruningInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            """,
+                    "SELECT val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNullPruningLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            """,
+                    "SELECT val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNullPruningShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (100, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    (300, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            0
+                            """,
+                    "SELECT val FROM x WHERE val = 0",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNullPruningString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('aaa', '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    ('ccc', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            
+                            """,
+                    "SELECT val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNullPruningUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    ('33333333-3333-3333-3333-333333333333', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            
+                            """,
+                    "SELECT val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testNullPruningVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('hello', '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T01:00:00.000000Z'),
+                    ('world', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            
+                            """,
+                    "SELECT val FROM x WHERE val = null",
+                    null, true, false
+            );
+        });
+    }
+
+    // ==================== PRUNING DISABLED ====================
+
+    @Test
+    public void testPruningDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            // disable pruning
+            sqlExecutionContext.setParquetRowGroupPruningEnabled(false);
+            try {
+                execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO x VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-01T01:00:00.000000Z'),
+                        (3, '2024-01-01T02:00:00.000000Z')
+                        """);
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+                // should still return correct results even without pruning
+                assertQueryNoLeakCheck(
+                        """
+                                val
+                                2
+                                """,
+                        "SELECT val FROM x WHERE val = 2",
+                        null, true, false
+                );
+                assertQueryNoLeakCheck(
+                        "val\n",
+                        "SELECT val FROM x WHERE val = 99",
+                        null, true, false
+                );
+            } finally {
+                sqlExecutionContext.setParquetRowGroupPruningEnabled(true);
+            }
+        });
+    }
+}

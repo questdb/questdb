@@ -77,7 +77,7 @@ public class PartitionDecoder implements QuietCloseable {
     public static native void destroyDecodeContext(long decodeContextPtr);
 
     /**
-     * Check if a row group can be skipped based on bloom filter conditions.
+     * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
      * <p>
      * Filter list format: 2 longs per filter
      * - Long 0: encoded(column_index, count) - lower 32 bits: column_index, upper 32 bits: count

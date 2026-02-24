@@ -45,10 +45,12 @@ import java.util.ArrayDeque;
  * to skip row groups that don't contain matching values.
  * <p>
  * Supported conditions:
- * 1. col = constant/bindVar (equality)
- * 2. col IN (constant/bindVar, ...) (IN list)
+ * 1. col = expr (equality, where expr is any expression)
+ * 2. col IN (expr, ...) (IN list)
  * <p>
  * Multiple AND conditions form multiple PushdownFilterCondition entries.
+ * Value expressions are validated later (after parsing into Functions)
+ * to ensure they are constant or runtime-constant.
  */
 public class PushdownFilterExtractor implements Mutable {
 
@@ -73,12 +75,6 @@ public class PushdownFilterExtractor implements Mutable {
 
     public ObjList<PushdownFilterCondition> getConditions() {
         return conditions;
-    }
-
-    private static boolean isValueNode(ExpressionNode node) {
-        return node != null
-                && (node.type == ExpressionNode.CONSTANT
-                || node.type == ExpressionNode.BIND_VARIABLE);
     }
 
     private void traverse(ArrayDeque<ExpressionNode> stack, ExpressionNode node, RecordMetadata metadata) {
@@ -112,10 +108,10 @@ public class PushdownFilterExtractor implements Mutable {
 
         ExpressionNode colNode;
         ExpressionNode valueNode;
-        if (node.lhs.type == ExpressionNode.LITERAL && isValueNode(node.rhs)) {
+        if (node.lhs.type == ExpressionNode.LITERAL && node.rhs.type != ExpressionNode.LITERAL) {
             colNode = node.lhs;
             valueNode = node.rhs;
-        } else if (node.rhs.type == ExpressionNode.LITERAL && isValueNode(node.lhs)) {
+        } else if (node.rhs.type == ExpressionNode.LITERAL && node.lhs.type != ExpressionNode.LITERAL) {
             colNode = node.rhs;
             valueNode = node.lhs;
         } else {
@@ -148,18 +144,12 @@ public class PushdownFilterExtractor implements Mutable {
 
         int valueCount;
         if (node.paramCount < 3) {
-            if (!isValueNode(node.rhs)) {
+            if (node.rhs == null) {
                 return;
             }
             valueCount = 1;
         } else {
             valueCount = node.paramCount - 1;
-            for (int i = 0; i < valueCount; i++) {
-                ExpressionNode valueNode = node.args.getQuick(i);
-                if (!isValueNode(valueNode)) {
-                    return;
-                }
-            }
         }
 
         int columnType = metadata.getColumnType(columnIndex);
@@ -178,6 +168,7 @@ public class PushdownFilterExtractor implements Mutable {
         conditions.add(condition);
     }
 
+    // Not pooled: conditions are passed to RecordCursorFactory and live for the duration of query execution.
     public static class PushdownFilterCondition implements QuietCloseable {
         private final CharSequence columnName;
         private final int columnType;
