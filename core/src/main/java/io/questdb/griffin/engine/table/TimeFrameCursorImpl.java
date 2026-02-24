@@ -264,6 +264,32 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public void seekEstimate(long timestamp) {
+        buildFrameCache();
+        if (frameCount == 0) {
+            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+            return;
+        }
+        int lo = 0, hi = frameCount - 1, result = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int partIdx = framePartitionIndexes.get(mid);
+            if (partitionCeilings.getQuick(partIdx) <= timestamp) {
+                result = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        if (result >= 0) {
+            int partIdx = framePartitionIndexes.get(result);
+            timeFrame.ofEstimate(result, partitionTimestamps.getQuick(partIdx), partitionCeilings.getQuick(partIdx));
+        } else {
+            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+        }
+    }
+
+    @Override
     public void toTop() {
         timeFrame.clear();
         if (!isFrameCacheBuilt) {

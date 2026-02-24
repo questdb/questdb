@@ -128,6 +128,21 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     void recordAtRowIndex(Record record, long rowIndex);
 
     /**
+     * Binary search for the last frame whose estimated hi timestamp is at or before
+     * the given timestamp. Positions the cursor at that frame without opening it.
+     * If no such frame exists, positions the cursor before the first frame
+     * (so that {@link #next()} returns frame 0).
+     * <p>
+     * The timestamp must be in the cursor's native timestamp space.
+     * <p>
+     * This is useful for ASOF-style lookups where we need to skip to the area
+     * near a target timestamp without scanning all preceding frames.
+     *
+     * @param timestamp the target timestamp to search for, in native timestamp space
+     */
+    void seekEstimate(long timestamp);
+
+    /**
      * Return the cursor to the beginning of the page frame.
      * Sets page address to first column.
      */
