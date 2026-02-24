@@ -369,6 +369,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         setPartitionParquetGenerated(partitionIndex, false);
     }
 
+    public void resetPartitionParquetGeneratedByRawIndex(int indexRaw) {
+        setPartitionParquetGeneratedByRawIndex(indexRaw, false);
+        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, -1L);
+    }
+
     public void resetPartitionParquetFormat(long timestamp) {
         setPartitionParquetFormat(timestamp, -1, false);
     }

@@ -6467,6 +6467,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
+                            txWriter.resetPartitionParquetGeneratedByRawIndex(partitionIndexRaw);
                             partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
                         }
                         txWriter.bumpPartitionTableVersion();
@@ -6476,6 +6477,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.bumpPartitionTableVersion();
                     }
                     txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                    if (partitionIndexRaw >= 0) {
+                        txWriter.resetPartitionParquetGeneratedByRawIndex(partitionIndexRaw);
+                    }
                 }
             }
         }
