@@ -10,8 +10,9 @@ use parquet::file::writer::SerializedFileWriter;
 use parquet::schema::types::Type;
 
 use common::{
-    decode_file, encode_decode_byte_array, generate_nulls, optional_byte_array_schema,
-    qdb_props_col_type, required_byte_array_schema, Encoding, Null, ALL_NULLS, COUNT, VERSIONS,
+    decode_file, decode_file_filtered, encode_decode_byte_array, encode_decode_byte_array_filtered,
+    every_other_row_filter, generate_nulls, optional_byte_array_schema, qdb_props_col_type,
+    required_byte_array_schema, Encoding, Null, ALL_NULLS, COUNT, VERSIONS,
 };
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 
@@ -68,6 +69,39 @@ fn assert_raw_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
     }
 }
 
+fn assert_raw_array_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: &[i64]) {
+    let filtered_count = rows_filter.len();
+    assert_eq!(aux.len(), filtered_count * 16, "filtered array aux size mismatch");
+
+    for (fi, &row) in rows_filter.iter().enumerate() {
+        let i = row as usize;
+        let aux_base = fi * 16;
+        let offset = u64::from_le_bytes(aux[aux_base..aux_base + 8].try_into().unwrap()) as usize;
+        let size =
+            u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
+
+        if nulls[i] {
+            assert_eq!(size, 0, "filtered row {fi} (orig {i}): null array should have size 0");
+        } else {
+            let orig = i; // the original row index determines the expected content
+            let len = (orig % 5) + 1;
+            let expected_size = len * 8;
+            assert_eq!(size, expected_size, "filtered row {fi} (orig {i}): array size mismatch");
+
+            let actual = &data[offset..offset + size];
+            for j in 0..len {
+                let expected_val = (orig * 10 + j) as f64;
+                let actual_val = f64::from_le_bytes(actual[j * 8..(j + 1) * 8].try_into().unwrap());
+                assert_eq!(
+                    actual_val.to_bits(),
+                    expected_val.to_bits(),
+                    "filtered row {fi} (orig {i}): array element {j} mismatch"
+                );
+            }
+        }
+    }
+}
+
 fn run_raw_array_test(name: &str, encoding: Encoding) {
     let col_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
     for version in &VERSIONS {
@@ -88,6 +122,17 @@ fn run_raw_array_test(name: &str, encoding: Encoding) {
             let props = qdb_props_col_type(col_type, *version, encoding);
             let (data, aux) = encode_decode_byte_array(&values, &nulls, schema, props);
             assert_raw_array(&nulls, &data, &aux);
+
+            // Filtered decode test
+            let rows_filter = every_other_row_filter(COUNT);
+            let schema_f = if matches!(null, Null::None) {
+                required_byte_array_schema("col", None)
+            } else {
+                optional_byte_array_schema("col", None)
+            };
+            let props_f = qdb_props_col_type(col_type, *version, encoding);
+            let (data_f, aux_f) = encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
+            assert_raw_array_filtered(&nulls, &data_f, &aux_f, &rows_filter);
         }
     }
 }
@@ -259,6 +304,44 @@ fn assert_double_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
     }
 }
 
+fn assert_double_array_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: &[i64]) {
+    let filtered_count = rows_filter.len();
+    assert_eq!(aux.len(), filtered_count * 16, "filtered array aux size mismatch");
+
+    for (fi, &row) in rows_filter.iter().enumerate() {
+        let i = row as usize;
+        let aux_base = fi * 16;
+        let offset = u64::from_le_bytes(aux[aux_base..aux_base + 8].try_into().unwrap()) as usize;
+        let size =
+            u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
+
+        if nulls[i] {
+            assert_eq!(size, 0, "filtered row {fi} (orig {i}): null array should have size 0");
+        } else {
+            let len = array_element_count(i);
+            let expected_size = 8 + 8 * len;
+            assert_eq!(size, expected_size, "filtered row {fi} (orig {i}): array size mismatch");
+
+            let arr = &data[offset..offset + size];
+            let elem_count = u32::from_le_bytes(arr[0..4].try_into().unwrap()) as usize;
+            let pad = u32::from_le_bytes(arr[4..8].try_into().unwrap());
+            assert_eq!(elem_count, len, "filtered row {fi} (orig {i}): element count mismatch");
+            assert_eq!(pad, 0, "filtered row {fi} (orig {i}): padding should be 0");
+
+            for j in 0..len {
+                let expected = array_element_value(i, j);
+                let actual =
+                    f64::from_le_bytes(arr[8 + j * 8..8 + (j + 1) * 8].try_into().unwrap());
+                assert_eq!(
+                    actual.to_bits(),
+                    expected.to_bits(),
+                    "filtered row {fi} (orig {i}): element {j} mismatch"
+                );
+            }
+        }
+    }
+}
+
 fn run_double_array_test(name: &str, encoding: Encoding) {
     let col_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
     for version in &VERSIONS {
@@ -286,6 +369,11 @@ fn run_double_array_test(name: &str, encoding: Encoding) {
             );
             let (data, aux) = decode_file(&buf);
             assert_double_array(&nulls, &data, &aux);
+
+            // Filtered decode test
+            let rows_filter = every_other_row_filter(COUNT);
+            let (data_f, aux_f) = decode_file_filtered(&buf, &rows_filter);
+            assert_double_array_filtered(&nulls, &data_f, &aux_f, &rows_filter);
         }
     }
 }
@@ -491,6 +579,53 @@ fn assert_double_2d_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
     }
 }
 
+fn assert_double_2d_array_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: &[i64]) {
+    let filtered_count = rows_filter.len();
+    assert_eq!(aux.len(), filtered_count * 16, "filtered 2d array aux size mismatch");
+
+    for (fi, &row) in rows_filter.iter().enumerate() {
+        let i = row as usize;
+        let aux_base = fi * 16;
+        let offset = u64::from_le_bytes(aux[aux_base..aux_base + 8].try_into().unwrap()) as usize;
+        let size =
+            u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
+
+        if nulls[i] {
+            assert_eq!(size, 0, "filtered row {fi} (orig {i}): null 2d array should have size 0");
+        } else {
+            let dim0 = array_2d_dim0(i);
+            let dim1 = array_2d_dim1(i);
+            let total_elements = dim0 * dim1;
+            let expected_size = 8 + 8 * total_elements;
+            assert_eq!(size, expected_size, "filtered row {fi} (orig {i}): 2d array size mismatch");
+
+            let arr = &data[offset..offset + size];
+            let actual_dim0 = u32::from_le_bytes(arr[0..4].try_into().unwrap()) as usize;
+            let actual_dim1 = u32::from_le_bytes(arr[4..8].try_into().unwrap()) as usize;
+            assert_eq!(actual_dim0, dim0, "filtered row {fi} (orig {i}): dim0 mismatch");
+            assert_eq!(actual_dim1, dim1, "filtered row {fi} (orig {i}): dim1 mismatch");
+
+            let mut elem_idx = 0;
+            for j in 0..dim0 {
+                for k in 0..dim1 {
+                    let expected = array_2d_element_value(i, j, k);
+                    let actual = f64::from_le_bytes(
+                        arr[8 + elem_idx * 8..8 + (elem_idx + 1) * 8]
+                            .try_into()
+                            .unwrap(),
+                    );
+                    assert_eq!(
+                        actual.to_bits(),
+                        expected.to_bits(),
+                        "filtered row {fi} (orig {i}): 2d element [{j}][{k}] mismatch"
+                    );
+                    elem_idx += 1;
+                }
+            }
+        }
+    }
+}
+
 const COUNT_2D: usize = 10_000;
 
 fn run_double_2d_array_test(name: &str, encoding: Encoding) {
@@ -520,6 +655,11 @@ fn run_double_2d_array_test(name: &str, encoding: Encoding) {
             );
             let (data, aux) = decode_file(&buf);
             assert_double_2d_array(&nulls, &data, &aux);
+
+            // Filtered decode test
+            let rows_filter = every_other_row_filter(COUNT_2D);
+            let (data_f, aux_f) = decode_file_filtered(&buf, &rows_filter);
+            assert_double_2d_array_filtered(&nulls, &data_f, &aux_f, &rows_filter);
         }
     }
 }

@@ -10,7 +10,8 @@ use parquet::{
 use qdb_core::col_type::{nulls, ColumnTypeTag};
 
 use common::{
-    decode_file, def_levels_from_nulls, encode_decode_byte_array, generate_nulls, non_null_only,
+    decode_file, decode_file_filtered, def_levels_from_nulls, encode_decode_byte_array,
+    encode_decode_byte_array_filtered, every_other_row_filter, generate_nulls, non_null_only,
     optional_byte_array_schema, qdb_props, required_byte_array_schema, write_parquet_column,
     Encoding, Null, ALL_NULLS, VERSIONS,
 };
@@ -300,6 +301,21 @@ fn test_decimal_int32_targets() {
                         data, expected,
                         "mismatch for {tag:?} / {encoding:?} / {null:?}"
                     );
+
+                    // Filtered decode test
+                    let rows_filter = every_other_row_filter(ROW_COUNT);
+                    let (data_f, aux_f) = decode_file_filtered(&parquet_buf, &rows_filter);
+                    assert!(aux_f.is_empty(), "filtered decimal primitive should not produce aux bytes");
+                    let mut expected_f = Vec::with_capacity(rows_filter.len() * target_size);
+                    for &r in &rows_filter {
+                        let i = r as usize;
+                        if nulls[i] {
+                            expected_f.extend_from_slice(decimal_null_bytes(target_size));
+                        } else {
+                            expected_f.extend_from_slice(&int32_to_target_bytes(values[i], target_size));
+                        }
+                    }
+                    assert_eq!(data_f, expected_f, "filtered mismatch for {tag:?} / {encoding:?} / {null:?}");
                 }
             }
         }
@@ -356,6 +372,21 @@ fn test_decimal_int64_target() {
                     data, expected,
                     "mismatch for Decimal64 / {encoding:?} / {null:?}"
                 );
+
+                // Filtered decode test
+                let rows_filter = every_other_row_filter(ROW_COUNT);
+                let (data_f, aux_f) = decode_file_filtered(&parquet_buf, &rows_filter);
+                assert!(aux_f.is_empty(), "filtered decimal primitive should not produce aux bytes");
+                let mut expected_f = Vec::with_capacity(rows_filter.len() * target_size);
+                for &r in &rows_filter {
+                    let i = r as usize;
+                    if nulls[i] {
+                        expected_f.extend_from_slice(decimal_null_bytes(target_size));
+                    } else {
+                        expected_f.extend_from_slice(&values[i].to_le_bytes());
+                    }
+                }
+                assert_eq!(data_f, expected_f, "filtered mismatch for Decimal64 / {encoding:?} / {null:?}");
             }
         }
     }
@@ -409,6 +440,21 @@ fn test_decimal_flba_all_target_sizes() {
                         data, expected,
                         "mismatch for {tag:?} / {encoding:?} / {null:?}"
                     );
+
+                    // Filtered decode test
+                    let rows_filter = every_other_row_filter(ROW_COUNT);
+                    let (data_f, aux_f) = decode_file_filtered(&parquet_buf, &rows_filter);
+                    assert!(aux_f.is_empty(), "filtered decimal FLBA should not produce aux bytes");
+                    let mut expected_f = Vec::with_capacity(rows_filter.len() * target_size);
+                    for &r in &rows_filter {
+                        let i = r as usize;
+                        if nulls[i] {
+                            expected_f.extend_from_slice(decimal_null_bytes(target_size));
+                        } else {
+                            expected_f.extend_from_slice(&be_to_qdb_decimal(&src_values[i], target_size));
+                        }
+                    }
+                    assert_eq!(data_f, expected_f, "filtered mismatch for {tag:?} / {encoding:?} / {null:?}");
                 }
             }
         }
@@ -466,6 +512,21 @@ fn test_decimal_flba_sign_extend_from_larger_source() {
                         data, expected,
                         "mismatch for FLBA sign-extension {tag:?} / {encoding:?} / {null:?}"
                     );
+
+                    // Filtered decode test
+                    let rows_filter = every_other_row_filter(ROW_COUNT);
+                    let (data_f, aux_f) = decode_file_filtered(&parquet_buf, &rows_filter);
+                    assert!(aux_f.is_empty(), "filtered decimal FLBA should not produce aux bytes");
+                    let mut expected_f = Vec::with_capacity(rows_filter.len() * target_size);
+                    for &r in &rows_filter {
+                        let i = r as usize;
+                        if nulls[i] {
+                            expected_f.extend_from_slice(decimal_null_bytes(target_size));
+                        } else {
+                            expected_f.extend_from_slice(&be_to_qdb_decimal(&src_values[i], target_size));
+                        }
+                    }
+                    assert_eq!(data_f, expected_f, "filtered mismatch for FLBA sign-extension {tag:?} / {encoding:?} / {null:?}");
                 }
             }
         }
@@ -527,6 +588,39 @@ fn test_decimal_byte_array_all_target_sizes() {
                         data, expected,
                         "mismatch for {tag:?} / {encoding:?} / {null:?}"
                     );
+
+                    // Filtered decode test
+                    let rows_filter = every_other_row_filter(ROW_COUNT);
+                    let schema_f = if matches!(null, Null::None) {
+                        required_byte_array_schema(
+                            "col",
+                            Some(LogicalType::Decimal {
+                                scale: 2,
+                                precision: 20,
+                            }),
+                        )
+                    } else {
+                        optional_byte_array_schema(
+                            "col",
+                            Some(LogicalType::Decimal {
+                                scale: 2,
+                                precision: 20,
+                            }),
+                        )
+                    };
+                    let props_f = qdb_props(tag, version, encoding);
+                    let (data_f, aux_f) = encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
+                    assert!(aux_f.is_empty(), "filtered decimal ByteArray should not produce aux bytes");
+                    let mut expected_f = Vec::with_capacity(rows_filter.len() * target_size);
+                    for &r in &rows_filter {
+                        let i = r as usize;
+                        if nulls[i] {
+                            expected_f.extend_from_slice(decimal_null_bytes(target_size));
+                        } else {
+                            expected_f.extend_from_slice(&be_to_qdb_decimal(&raw_values[i], target_size));
+                        }
+                    }
+                    assert_eq!(data_f, expected_f, "filtered mismatch for {tag:?} / {encoding:?} / {null:?}");
                 }
             }
         }

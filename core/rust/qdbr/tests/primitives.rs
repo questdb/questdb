@@ -15,8 +15,8 @@ use parquet::{
 use qdb_core::col_type::{self, nulls, ColumnTypeTag};
 
 use common::{
-    decode_file, generate_nulls, qdb_props, write_parquet_column, Encoding, Null, ALL_NULLS, COUNT,
-    VERSIONS,
+    decode_file, decode_file_filtered, every_other_row_filter, generate_nulls, qdb_props,
+    write_parquet_column, Encoding, Null, ALL_NULLS, COUNT, VERSIONS,
 };
 
 trait PrimitiveType {
@@ -125,6 +125,54 @@ fn run_primitive_test<T: PrimitiveType>(
     assert!(aux.is_empty());
 }
 
+fn run_primitive_test_filtered<T: PrimitiveType>(
+    version: WriterVersion,
+    encoding: Encoding,
+    null: Null,
+    repetition: Repetition,
+) {
+    let nulls = generate_nulls(COUNT, null);
+    let null_count = nulls.iter().filter(|x| **x).count();
+    let (parquet, native) = generate_data::<T>(COUNT - null_count);
+
+    let parquet_file = encode_data::<T>(&parquet, &nulls, version, encoding, repetition);
+    let rows_filter = every_other_row_filter(COUNT);
+
+    // Build expected: interleave values with null sentinels for the full row set,
+    // then select only the filtered (even-indexed) rows.
+    let mut full_expected: Vec<T::T> = Vec::with_capacity(COUNT);
+    let mut val_idx = 0;
+    for i in 0..COUNT {
+        if nulls[i] {
+            full_expected.push(T::NULL);
+        } else {
+            full_expected.push(native[val_idx]);
+            val_idx += 1;
+        }
+    }
+
+    // Select only filtered rows
+    let filtered_expected: Vec<T::T> = rows_filter.iter().map(|&r| full_expected[r as usize]).collect();
+    let (data, aux) = decode_file_filtered(&parquet_file, &rows_filter);
+
+    // The filtered data should have exactly rows_filter.len() elements
+    assert_eq!(
+        data.len(),
+        filtered_expected.len() * size_of::<T::T>(),
+        "filtered data size mismatch"
+    );
+
+    let actual = data.as_ptr().cast::<T::T>();
+    for (idx, &expected) in filtered_expected.iter().enumerate() {
+        let current = unsafe { std::ptr::read_unaligned(actual.add(idx)) };
+        assert!(
+            T::eq(current, expected),
+            "filtered mismatch at index {idx}: {current:?} != {expected:?}"
+        );
+    }
+    assert!(aux.is_empty());
+}
+
 fn run_all_combos<T: PrimitiveType>(name: &str) {
     for version in &VERSIONS {
         for encoding in T::ENCODINGS {
@@ -138,6 +186,7 @@ fn run_all_combos<T: PrimitiveType>(name: &str) {
                     "Testing {name} with version={version:?}, encoding={encoding:?}, null={null:?}"
                 );
                 run_primitive_test::<T>(*version, *encoding, *null, repetition);
+                run_primitive_test_filtered::<T>(*version, *encoding, *null, repetition);
             }
         }
     }

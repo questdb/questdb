@@ -4,8 +4,9 @@ use parquet::basic::LogicalType;
 use parquet::data_type::ByteArray;
 
 use common::{
-    encode_decode_byte_array, generate_nulls, optional_byte_array_schema, qdb_props,
-    required_byte_array_schema, Encoding, Null, ALL_NULLS, COUNT, VERSIONS,
+    encode_decode_byte_array, encode_decode_byte_array_filtered, every_other_row_filter,
+    generate_nulls, optional_byte_array_schema, qdb_props, required_byte_array_schema, Encoding,
+    Null, ALL_NULLS, COUNT, VERSIONS,
 };
 use qdb_core::col_type::ColumnTypeTag;
 
@@ -103,6 +104,64 @@ fn assert_varchar(nulls: &[bool], data: &[u8], aux: &[u8]) {
     }
 }
 
+fn assert_varchar_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: &[i64]) {
+    let filtered_count = rows_filter.len();
+    assert_eq!(aux.len(), filtered_count * 16, "filtered varchar aux size mismatch");
+
+    for (fi, &row) in rows_filter.iter().enumerate() {
+        let i = row as usize;
+        let aux_base = fi * 16;
+        let header_byte = aux[aux_base];
+
+        if nulls[i] {
+            assert_eq!(
+                header_byte & HEADER_FLAG_NULL,
+                HEADER_FLAG_NULL,
+                "filtered row {fi} (orig {i}): null varchar should have NULL flag set, got header {header_byte:#04x}"
+            );
+        } else {
+            let expected_str = expected_varchar_str(i);
+            let expected_bytes = expected_str.as_bytes();
+            let str_len = expected_bytes.len();
+
+            if str_len <= 9 {
+                assert_ne!(
+                    header_byte & HEADER_FLAG_INLINED,
+                    0,
+                    "filtered row {fi} (orig {i}): short varchar should have INLINED flag"
+                );
+                let inline_len = (header_byte >> HEADER_FLAGS_WIDTH) as usize;
+                assert_eq!(inline_len, str_len, "filtered row {fi} (orig {i}): inline length mismatch");
+                let inline_data = &aux[aux_base + 1..aux_base + 1 + str_len];
+                assert_eq!(inline_data, expected_bytes, "filtered row {fi} (orig {i}): inline data mismatch");
+            } else {
+                let header_u32 = u32::from_le_bytes([
+                    aux[aux_base],
+                    aux[aux_base + 1],
+                    aux[aux_base + 2],
+                    aux[aux_base + 3],
+                ]);
+                let stored_len = (header_u32 >> HEADER_FLAGS_WIDTH as u32) as usize;
+                assert_eq!(stored_len, str_len, "filtered row {fi} (orig {i}): overflow length mismatch");
+
+                let prefix = &aux[aux_base + 4..aux_base + 10];
+                assert_eq!(
+                    prefix,
+                    &expected_bytes[..6],
+                    "filtered row {fi} (orig {i}): overflow prefix mismatch"
+                );
+
+                let offset = read_offset(aux, aux_base + 10);
+                let actual_data = &data[offset..offset + str_len];
+                assert_eq!(
+                    actual_data, expected_bytes,
+                    "filtered row {fi} (orig {i}): overflow data mismatch"
+                );
+            }
+        }
+    }
+}
+
 fn run_varchar_test(name: &str, encoding: Encoding) {
     for version in &VERSIONS {
         for null in &ALL_NULLS {
@@ -122,6 +181,17 @@ fn run_varchar_test(name: &str, encoding: Encoding) {
             let props = qdb_props(ColumnTypeTag::Varchar, *version, encoding);
             let (data, aux) = encode_decode_byte_array(&values, &nulls, schema, props);
             assert_varchar(&nulls, &data, &aux);
+
+            // Filtered decode test
+            let rows_filter = every_other_row_filter(COUNT);
+            let schema_f = if matches!(null, Null::None) {
+                required_byte_array_schema("col", Some(LogicalType::String))
+            } else {
+                optional_byte_array_schema("col", Some(LogicalType::String))
+            };
+            let props_f = qdb_props(ColumnTypeTag::Varchar, *version, encoding);
+            let (data_f, aux_f) = encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
+            assert_varchar_filtered(&nulls, &data_f, &aux_f, &rows_filter);
         }
     }
 }

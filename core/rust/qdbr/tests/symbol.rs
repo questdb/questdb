@@ -5,9 +5,9 @@ use parquet::data_type::{ByteArray, ByteArrayType};
 use parquet::file::properties::WriterVersion;
 
 use common::{
-    decode_file, def_levels_from_nulls, generate_nulls, non_null_only, optional_byte_array_schema,
-    qdb_meta_with_format, required_byte_array_schema, write_parquet_column, Null, ALL_NULLS, COUNT,
-    VERSIONS,
+    decode_file, decode_file_filtered, def_levels_from_nulls, every_other_row_filter,
+    generate_nulls, non_null_only, optional_byte_array_schema, qdb_meta_with_format,
+    required_byte_array_schema, write_parquet_column, Null, ALL_NULLS, COUNT, VERSIONS,
 };
 use parquet::file::properties::WriterProperties;
 use parquet::format::KeyValue;
@@ -70,6 +70,46 @@ fn assert_symbol(non_null_values: &[ByteArray], nulls: &[bool], data: &[u8]) {
     }
 }
 
+fn assert_symbol_filtered(non_null_values: &[ByteArray], nulls: &[bool], data: &[u8], rows_filter: &[i64]) {
+    let filtered_count = rows_filter.len();
+    assert_eq!(
+        data.len(),
+        filtered_count * 4,
+        "filtered symbol data should be 4 bytes per filtered row"
+    );
+
+    // Build full expected dict indices (same as assert_symbol)
+    let mut dict: Vec<&[u8]> = Vec::new();
+    let mut full_indices: Vec<i32> = Vec::with_capacity(nulls.len());
+    let mut val_idx = 0;
+    for i in 0..nulls.len() {
+        if nulls[i] {
+            full_indices.push(i32::MIN);
+        } else {
+            let val = non_null_values[val_idx].data();
+            val_idx += 1;
+            let idx = if let Some(pos) = dict.iter().position(|d| *d == val) {
+                pos as i32
+            } else {
+                let pos = dict.len() as i32;
+                dict.push(val);
+                pos
+            };
+            full_indices.push(idx);
+        }
+    }
+
+    // Check only filtered rows
+    for (fi, &row) in rows_filter.iter().enumerate() {
+        let i = row as usize;
+        let actual = i32::from_le_bytes(data[fi * 4..(fi + 1) * 4].try_into().unwrap());
+        assert_eq!(
+            actual, full_indices[i],
+            "filtered row {fi} (orig {i}): symbol index mismatch"
+        );
+    }
+}
+
 fn run_symbol_test(name: &str) {
     for version in &VERSIONS {
         for null in &ALL_NULLS {
@@ -97,6 +137,12 @@ fn run_symbol_test(name: &str) {
             let (data, aux) = decode_file(&buf);
             assert!(aux.is_empty(), "symbol should have no aux data");
             assert_symbol(&non_null_values, &nulls, &data);
+
+            // Filtered decode test
+            let rows_filter = every_other_row_filter(COUNT);
+            let (data_f, aux_f) = decode_file_filtered(&buf, &rows_filter);
+            assert!(aux_f.is_empty(), "filtered symbol should have no aux data");
+            assert_symbol_filtered(&non_null_values, &nulls, &data_f, &rows_filter);
         }
     }
 }

@@ -115,6 +115,11 @@ pub fn write_parquet_column<T: DataType>(
     cursor.into_inner()
 }
 
+/// Build an every-other-row filter: [0, 2, 4, ...] for the given row count.
+pub fn every_other_row_filter(row_count: usize) -> Vec<i64> {
+    (0..row_count).step_by(2).map(|i| i as i64).collect()
+}
+
 /// Decode a single column from Parquet bytes using QuestDB's decoder.
 /// Returns (data_vec bytes, aux_vec bytes).
 pub fn decode_file(buf: &[u8]) -> (Vec<u8>, Vec<u8>) {
@@ -146,6 +151,56 @@ pub fn decode_file(buf: &[u8]) -> (Vec<u8>, Vec<u8>) {
         decoder
             .decode_row_group(&mut ctx, &mut rgb, &columns, rg_idx, 0, rg_size)
             .unwrap_or_else(|e| panic!("decode row group {rg_idx}: {e}"));
+
+        let bufs = &rgb.column_buffers()[0];
+        all_data.extend_from_slice(&bufs.data_vec);
+        all_aux.extend_from_slice(&bufs.aux_vec);
+    }
+
+    (all_data, all_aux)
+}
+
+/// Decode a single column from Parquet bytes using QuestDB's filtered decoder (skip mode).
+/// Only the rows specified in `rows_filter` (relative indices) are decoded.
+/// Returns (data_vec bytes, aux_vec bytes).
+pub fn decode_file_filtered(buf: &[u8], rows_filter: &[i64]) -> (Vec<u8>, Vec<u8>) {
+    let ta = TestAlloc::new();
+    let allocator = ta.allocator();
+
+    let buf_len = buf.len() as u64;
+    let mut reader = Cursor::new(buf);
+    let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)
+        .expect("ParquetDecoder::read");
+
+    assert_eq!(decoder.col_count, 1, "expected single column");
+    let col_type = decoder.columns[0]
+        .column_type
+        .expect("column type should be recognized");
+
+    let row_group_count = decoder.row_group_count;
+
+    let mut rgb = RowGroupBuffers::new(allocator);
+    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+
+    let columns = vec![(0i32, col_type)];
+
+    let mut all_data = Vec::new();
+    let mut all_aux = Vec::new();
+
+    for rg_idx in 0..row_group_count {
+        let rg_size = decoder.row_group_sizes[rg_idx as usize] as u32;
+        decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                rg_idx,
+                0,
+                rg_size,
+                rows_filter,
+            )
+            .unwrap_or_else(|e| panic!("decode row group filtered {rg_idx}: {e}"));
 
         let bufs = &rgb.column_buffers()[0];
         all_data.extend_from_slice(&bufs.data_vec);
@@ -271,4 +326,25 @@ pub fn encode_decode_byte_array(
         Arc::new(props),
     );
     decode_file(&buf)
+}
+
+/// Encode + decode a ByteArray column with the given values, nulls, schema, and props,
+/// then decode only the filtered rows.
+pub fn encode_decode_byte_array_filtered(
+    values: &[<ByteArrayType as DataType>::T],
+    nulls: &[bool],
+    schema: Type,
+    props: WriterProperties,
+    rows_filter: &[i64],
+) -> (Vec<u8>, Vec<u8>) {
+    let non_null_values = non_null_only(values, nulls);
+    let def_levels = def_levels_from_nulls(nulls);
+    let buf = write_parquet_column::<ByteArrayType>(
+        "col",
+        schema,
+        &non_null_values,
+        Some(&def_levels),
+        Arc::new(props),
+    );
+    decode_file_filtered(&buf, rows_filter)
 }

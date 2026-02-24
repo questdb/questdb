@@ -3,8 +3,9 @@ mod common;
 use parquet::data_type::ByteArray;
 
 use common::{
-    encode_decode_byte_array, generate_nulls, optional_byte_array_schema, qdb_props,
-    required_byte_array_schema, Encoding, Null, ALL_NULLS, COUNT, VERSIONS,
+    encode_decode_byte_array, encode_decode_byte_array_filtered, every_other_row_filter,
+    generate_nulls, optional_byte_array_schema, qdb_props, required_byte_array_schema, Encoding,
+    Null, ALL_NULLS, COUNT, VERSIONS,
 };
 use qdb_core::col_type::ColumnTypeTag;
 
@@ -48,6 +49,35 @@ fn assert_binary(nulls: &[bool], data: &[u8]) {
     assert_eq!(offset, data.len(), "binary data length mismatch");
 }
 
+fn assert_binary_filtered(nulls: &[bool], data: &[u8], rows_filter: &[i64]) {
+    let mut offset = 0;
+    for (fi, &row) in rows_filter.iter().enumerate() {
+        let i = row as usize;
+        if nulls[i] {
+            let len = i64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+            assert_eq!(len, -1, "filtered row {fi} (orig {i}): null binary should have length -1");
+            offset += 8;
+        } else {
+            let expected_bytes: Vec<u8> = (0..10).map(|j| ((i * 7 + j) % 256) as u8).collect();
+            let len = i64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+            assert_eq!(
+                len as usize,
+                expected_bytes.len(),
+                "filtered row {fi} (orig {i}): binary length mismatch"
+            );
+            offset += 8;
+            let actual = &data[offset..offset + expected_bytes.len()];
+            assert_eq!(
+                actual,
+                expected_bytes.as_slice(),
+                "filtered row {fi} (orig {i}): binary data mismatch"
+            );
+            offset += expected_bytes.len();
+        }
+    }
+    assert_eq!(offset, data.len(), "filtered binary data length mismatch");
+}
+
 fn run_binary_test(name: &str, encoding: Encoding) {
     for version in &VERSIONS {
         for null in &ALL_NULLS {
@@ -67,6 +97,17 @@ fn run_binary_test(name: &str, encoding: Encoding) {
             let props = qdb_props(ColumnTypeTag::Binary, *version, encoding);
             let (data, _aux) = encode_decode_byte_array(&values, &nulls, schema, props);
             assert_binary(&nulls, &data);
+
+            // Filtered decode test
+            let rows_filter = every_other_row_filter(COUNT);
+            let schema_f = if matches!(null, Null::None) {
+                required_byte_array_schema("col", None)
+            } else {
+                optional_byte_array_schema("col", None)
+            };
+            let props_f = qdb_props(ColumnTypeTag::Binary, *version, encoding);
+            let (data_f, _aux_f) = encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
+            assert_binary_filtered(&nulls, &data_f, &rows_filter);
         }
     }
 }
