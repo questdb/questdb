@@ -384,6 +384,93 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSeekEstimateSplitPartitions() throws Exception {
+        executeWithPool((engine, compiler, executionContext) -> {
+            // Create a table spanning 3 calendar-day partitions (Feb 3-5), then insert
+            // OOO data into the last partition to trigger a partition split.
+            execute(
+                    compiler,
+                    "CREATE TABLE x AS (" +
+                            "  SELECT timestamp_sequence('2020-02-03T13', 60 * 1_000_000L) ts" +
+                            "  FROM long_sequence(60 * 24 * 2 + 300)" +
+                            ") TIMESTAMP (ts) PARTITION BY DAY",
+                    executionContext
+            );
+            execute(
+                    compiler,
+                    "INSERT INTO x" +
+                            "  SELECT timestamp_sequence('2020-02-05T17:01', 60 * 1_000_000L) ts" +
+                            "  FROM long_sequence(50)",
+                    executionContext
+            );
+
+            try (RecordCursorFactory factory = engine.select("x", executionContext)) {
+                Assert.assertTrue(factory.supportsTimeFrameCursor());
+                try (TimeFrameCursor cursor = factory.getTimeFrameCursor(executionContext)) {
+                    TimeFrame frame = cursor.getTimeFrame();
+
+                    // Enumerate all frames, collecting their estimate ceilings.
+                    LongList ceilings = new LongList();
+                    boolean hasSplit = false;
+                    while (cursor.next()) {
+                        long hi = frame.getTimestampEstimateHi();
+                        if (ceilings.size() > 0 && ceilings.getLast() == hi) {
+                            hasSplit = true;
+                        }
+                        ceilings.add(hi);
+                    }
+                    int frameCount = ceilings.size();
+                    Assert.assertTrue("expected at least one split partition", hasSplit);
+                    Assert.assertTrue("expected more frames than partitions", frameCount > 3);
+
+                    // Seek before all frames
+                    cursor.seekEstimate(0);
+                    Assert.assertEquals(-1, frame.getFrameIndex());
+                    Assert.assertTrue(cursor.next());
+                    Assert.assertEquals(0, frame.getFrameIndex());
+
+                    // Seek after all frames
+                    cursor.seekEstimate(Long.MAX_VALUE);
+                    Assert.assertEquals(frameCount - 1, frame.getFrameIndex());
+                    Assert.assertFalse(cursor.next());
+
+                    // For split partitions, multiple frames share the same ceiling.
+                    // seekEstimate should return the LAST frame with that ceiling.
+                    for (int i = 0; i < frameCount; i++) {
+                        // Find the last frame with the same ceiling as frame i
+                        int lastWithSameCeiling = i;
+                        while (lastWithSameCeiling + 1 < frameCount
+                                && ceilings.getQuick(lastWithSameCeiling + 1) == ceilings.getQuick(i)) {
+                            lastWithSameCeiling++;
+                        }
+
+                        cursor.seekEstimate(ceilings.getQuick(i));
+                        Assert.assertEquals(
+                                "seekEstimate(" + ceilings.getQuick(i) + ") should find last frame with ceiling",
+                                lastWithSameCeiling,
+                                frame.getFrameIndex()
+                        );
+
+                        // next() should advance to the frame after the split group
+                        if (lastWithSameCeiling + 1 < frameCount) {
+                            Assert.assertTrue(cursor.next());
+                            Assert.assertEquals(lastWithSameCeiling + 1, frame.getFrameIndex());
+                        } else {
+                            Assert.assertFalse(cursor.next());
+                        }
+                    }
+
+                    // Seek to just before the first ceiling: no frame qualifies
+                    cursor.seekEstimate(ceilings.getQuick(0) - 1);
+                    Assert.assertEquals(-1, frame.getFrameIndex());
+                    Assert.assertTrue(cursor.next());
+                    Assert.assertEquals(0, frame.getFrameIndex());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTimeFrameBoundaries() throws Exception {
         final int[] partitionBys = new int[]{
                 PartitionBy.NONE,
