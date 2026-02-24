@@ -578,6 +578,8 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    int getSqlHorizonJoinMaxOffsets();
+
     /**
      * When the number of intervals exceeds this threshold during bracket expansion,
      * intervals are merged to prevent unbounded memory growth.
@@ -851,6 +853,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelGroupByEnabled();
+
+    boolean isSqlParallelHorizonJoinEnabled();
 
     boolean isSqlParallelReadParquetEnabled();
 

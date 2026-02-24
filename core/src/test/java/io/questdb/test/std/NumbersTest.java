@@ -172,6 +172,20 @@ public class NumbersTest {
     }
 
     @Test
+    public void testEncodeDecodeIntInLong() {
+        int[] testCases = new int[]{Integer.MIN_VALUE, Integer.MAX_VALUE, 0, -1, 1024, -1024, 0xffffff, -0xffffff};
+        for (int i = 0; i < testCases.length; i++) {
+            for (int j = 0; j < testCases.length; j++) {
+                int hi = testCases[i];
+                int lo = testCases[j];
+                long encoded = Numbers.encodeLowHighInts(lo, hi);
+                assertEquals(lo, Numbers.decodeLowInt(encoded));
+                assertEquals(hi, Numbers.decodeHighInt(encoded));
+            }
+        }
+    }
+
+    @Test
     public void testEncodeDecodeShortInInt() {
         short[] testCases = new short[]{Short.MIN_VALUE, Short.MAX_VALUE, 0, -1, 1024, -1024, 0xfff, -0xfff};
         for (int i = 0; i < testCases.length; i++) {
