@@ -24,9 +24,12 @@
 
 package io.questdb.test.cairo.fuzz;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -71,6 +74,11 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 0,      // replace
                 0       // symbolAccess
         );
+
+        // Randomize the row group size so the test is likely to produce
+        // multiple row groups across runs.
+        int rowGroupSize = 500 + rnd.nextInt(2000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
 
         int initialRowCount = 2000 + rnd.nextInt(5000);
         // O3 enabled, single partition, no IO failures.
@@ -128,6 +136,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             LOG.info()
                     .$("starting fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
+                    .$(", rowGroupSize=").$(rowGroupSize)
                     .$(", partitionTs=").$(partitionTs)
                     .$();
 
@@ -196,6 +205,26 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             // Verify WAL+Parquet table matches the non-WAL oracle.
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+            }
+
+            // Verify that no row group in the Parquet partition exceeds 2x the configured size.
+            try (TableReader reader = engine.getReader(walTable)) {
+                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                    if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                        continue;
+                    }
+                    reader.openPartition(i);
+                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
+                    PartitionDecoder.Metadata meta = decoder.metadata();
+                    int rgCount = meta.getRowGroupCount();
+                    for (int rg = 0; rg < rgCount; rg++) {
+                        int rgSize = meta.getRowGroupSize(rg);
+                        Assert.assertTrue(
+                                "row group " + rg + " has " + rgSize + " rows, exceeds 1.5x configured size " + rowGroupSize,
+                                rgSize <= rowGroupSize + rowGroupSize / 2
+                        );
+                    }
+                }
             }
         });
     }

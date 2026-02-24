@@ -22,7 +22,9 @@
  *
  ******************************************************************************/
 use crate::allocator::QdbAllocator;
-use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult};
+use crate::parquet::error::{
+    fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult,
+};
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{to_encodings, Partition};
@@ -85,11 +87,12 @@ impl ParquetUpdater {
             // In update mode, also capture raw footer bytes for incremental serialization.
             let (metadata, raw_footer_bytes, footer_size) =
                 read_metadata_with_footer_bytes(&mut reader, read_file_size)?;
-            let cache = FooterCache::from_footer_bytes(raw_footer_bytes)
-                .map_err(|e| ParquetError::with_descr(
+            let cache = FooterCache::from_footer_bytes(raw_footer_bytes).map_err(|e| {
+                ParquetError::with_descr(
                     ParquetErrorReason::Parquet2(parquet2::error::Error::oos(e.to_string())),
                     "could not build footer cache",
-                ))?;
+                )
+            })?;
             (metadata, Some(cache), footer_size)
         };
 
@@ -177,9 +180,9 @@ impl ParquetUpdater {
         )?;
 
         if self.is_rewrite {
-            self.parquet_file
-                .write(row_group)
-                .with_context(|_| format!("Failed to write row group {row_group_id} in rewrite mode"))
+            self.parquet_file.write(row_group).with_context(|_| {
+                format!("Failed to write row group {row_group_id} in rewrite mode")
+            })
         } else {
             // Track the old row group's bytes that will become dead space.
             let rg_idx = row_group_id as usize;
@@ -215,9 +218,9 @@ impl ParquetUpdater {
         )?;
 
         if self.is_rewrite {
-            self.parquet_file
-                .write(row_group)
-                .with_context(|_| format!("Failed to write row group at position {position} in rewrite mode"))
+            self.parquet_file.write(row_group).with_context(|_| {
+                format!("Failed to write row group at position {position} in rewrite mode")
+            })
         } else {
             self.parquet_file
                 .insert(row_group, position)
@@ -354,6 +357,23 @@ impl ParquetUpdater {
             qdb_meta.unused_bytes = self.accumulated_unused_bytes;
         }
 
+        // After an O3 merge, row group sizes change but the file-level
+        // column_top values remain stale from the original file.  The decoder
+        // uses column_top together with the *new* accumulated row group sizes
+        // to decide whether a row group is entirely before the column top and
+        // can be skipped (returning null ptr).  Stale column_top values may
+        // cause the decoder to incorrectly skip row groups that now contain
+        // actual data (from merged O3 rows).
+        //
+        // All merged/inserted row groups already embed null sentinels in their
+        // data with column_top=0, and copied row groups preserve their original
+        // null definitions in the page data.  Zeroing the file-level column_top
+        // is therefore safe: the decoder will read the (null) pages instead of
+        // skipping them, which is correct albeit slightly less optimal.
+        for col in &mut qdb_meta.schema {
+            col.column_top = 0;
+        }
+
         let qdb_meta_json = qdb_meta.serialize()?;
         let qdb_kv = KeyValue {
             key: QDB_META_KEY.to_string(),
@@ -418,9 +438,7 @@ impl ParquetUpdater {
                 decoder.columns[i]
                     .column_type
                     .map(|ct| (i as i32, ct))
-                    .ok_or_else(|| {
-                        fmt_err!(InvalidType, "unsupported column type at index {}", i)
-                    })
+                    .ok_or_else(|| fmt_err!(InvalidType, "unsupported column type at index {}", i))
             })
             .collect::<ParquetResult<_>>()?;
 
@@ -437,8 +455,7 @@ impl ParquetUpdater {
         )?;
 
         // Extract symbol tables from dictionary pages
-        let symbol_tables =
-            extract_symbol_tables(&self.file_metadata, &file_bytes, rg_idx)?;
+        let symbol_tables = extract_symbol_tables(&self.file_metadata, &file_bytes, rg_idx)?;
 
         // Build partition from decoded buffers
         let row_count = row_hi + 1 - row_lo;
@@ -486,15 +503,12 @@ fn extract_symbol_tables(
     let rg_meta = &file_metadata.row_groups[rg_idx];
     let num_cols = rg_meta.columns().len();
 
-    let qdb_meta = file_metadata
-        .key_value_metadata
-        .as_ref()
-        .and_then(|kvs| {
-            kvs.iter()
-                .find(|kv| kv.key == QDB_META_KEY)
-                .and_then(|kv| kv.value.as_ref())
-                .and_then(|v| QdbMeta::deserialize(v).ok())
-        });
+    let qdb_meta = file_metadata.key_value_metadata.as_ref().and_then(|kvs| {
+        kvs.iter()
+            .find(|kv| kv.key == QDB_META_KEY)
+            .and_then(|kv| kv.value.as_ref())
+            .and_then(|v| QdbMeta::deserialize(v).ok())
+    });
 
     let mut result = Vec::with_capacity(num_cols);
 
@@ -574,15 +588,11 @@ fn dict_page_to_qdb_symbol_table(
         if pos + 4 > buf.len() {
             return Err(fmt_err!(InvalidLayout, "truncated dictionary page"));
         }
-        let byte_len =
-            u32::from_le_bytes(buf[pos..pos + 4].try_into().unwrap()) as usize;
+        let byte_len = u32::from_le_bytes(buf[pos..pos + 4].try_into().unwrap()) as usize;
         pos += 4;
 
         if pos + byte_len > buf.len() {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "truncated dictionary page entry"
-            ));
+            return Err(fmt_err!(InvalidLayout, "truncated dictionary page entry"));
         }
         let utf8_bytes = &buf[pos..pos + byte_len];
         pos += byte_len;
@@ -621,13 +631,7 @@ fn build_partition_from_decoded(
     for col_idx in 0..num_cols {
         let column_type = decoder.columns[col_idx]
             .column_type
-            .ok_or_else(|| {
-                fmt_err!(
-                    InvalidType,
-                    "unsupported column type at index {}",
-                    col_idx
-                )
-            })?;
+            .ok_or_else(|| fmt_err!(InvalidType, "unsupported column type at index {}", col_idx))?;
 
         let col_buf = &col_bufs[col_idx];
         let schema_col = &file_metadata.schema_descr.columns()[col_idx];
@@ -638,9 +642,8 @@ fn build_partition_from_decoded(
 
         // SAFETY: these slices reference data in row_group_bufs / symbol_tables
         // which outlive the partition usage in replace_row_group.
-        let primary_data = unsafe {
-            std::slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size)
-        };
+        let primary_data =
+            unsafe { std::slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size) };
 
         let (secondary_data, sym_offsets): (&[u8], &[u64]) =
             if column_type.tag() == ColumnTypeTag::Symbol {
@@ -651,10 +654,7 @@ fn build_partition_from_decoded(
                 }
             } else {
                 let aux = unsafe {
-                    std::slice::from_raw_parts(
-                        col_buf.aux_ptr as *const u8,
-                        col_buf.aux_size,
-                    )
+                    std::slice::from_raw_parts(col_buf.aux_ptr as *const u8, col_buf.aux_size)
                 };
                 (aux, &[])
             };
@@ -662,9 +662,7 @@ fn build_partition_from_decoded(
         let column = Column {
             id: col_id,
             // SAFETY: name is from file_metadata which outlives the partition usage
-            name: unsafe {
-                std::mem::transmute::<&str, &'static str>(field_info.name.as_str())
-            },
+            name: unsafe { std::mem::transmute::<&str, &'static str>(field_info.name.as_str()) },
             data_type: column_type,
             row_count,
             column_top: 0,
@@ -679,10 +677,7 @@ fn build_partition_from_decoded(
         columns.push(column);
     }
 
-    Ok(Partition {
-        table: "slice".to_string(),
-        columns,
-    })
+    Ok(Partition { table: "slice".to_string(), columns })
 }
 
 #[cfg(test)]
