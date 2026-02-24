@@ -850,7 +850,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlAsOfJoinLookAhead() {
-        return 100;
+        return 64;
     }
 
     @Override
@@ -963,6 +963,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlHashJoinValuePageSize() {
         return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
+    public int getSqlHorizonJoinMaxOffsets() {
+        return 10_000;
     }
 
     @Override
@@ -1121,6 +1126,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSortKeyMaterializationThreshold() {
+        return 3;
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return 1024;
     }
@@ -1263,6 +1273,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getTxnScoreboardEntryCount() {
         return 8192;
+    }
+
+    @Override
+    public int getUnorderedPageFrameReduceQueueCapacity() {
+        return 4096;
     }
 
     @Override
@@ -1536,6 +1551,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelTopKEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelHorizonJoinEnabled() {
         return true;
     }
 

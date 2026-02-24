@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -84,6 +85,35 @@ public class AsyncFilterUtils {
                 task.getFrameRowCount()
         );
         rows.setPos(hi);
+    }
+
+    public static void applyCompiledFilter(
+            @NotNull CompiledFilter compiledFilter,
+            @NotNull MemoryCARW bindVarMemory,
+            @NotNull ObjList<Function> bindVarFunctions,
+            @NotNull PageFrameMemory frameMemory,
+            @NotNull PageFrameAddressCache pageAddressCache,
+            @NotNull DirectLongList dataAddresses,
+            @NotNull DirectLongList auxAddresses,
+            @NotNull DirectLongList filteredRows,
+            long frameRowCount
+    ) {
+        PageFrameReduceTask.populateJitAddresses(frameMemory, pageAddressCache, dataAddresses, auxAddresses);
+
+        if (filteredRows.getCapacity() < frameRowCount) {
+            filteredRows.setCapacity(frameRowCount);
+        }
+
+        long hi = compiledFilter.call(
+                dataAddresses.getAddress(),
+                dataAddresses.size(),
+                auxAddresses.getAddress(),
+                bindVarMemory.getAddress(),
+                bindVarFunctions.size(),
+                filteredRows.getAddress(),
+                frameRowCount
+        );
+        filteredRows.setPos(hi);
     }
 
     public static void applyFilter(
