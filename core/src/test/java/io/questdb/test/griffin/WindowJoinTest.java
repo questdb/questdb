@@ -83,85 +83,6 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowJoinSelfJoinWithVwapCalculation() throws Exception {
-        // Reproduces crash from demo.questdb.io where self-join on same table
-        // with EXCLUDE PREVAILING and VWAP calculation causes SIGSEGV in
-        // AsyncWindowJoinFastRecordCursorFactory.filterAndAggregateVect
-        // when accessing slave record via PageFrameMemoryRecord.getDouble
-        // Only run for one configuration to avoid duplicate testing
-        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
-        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
-        // Configure small page frames to trigger more frame crossings like in production
-        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, "true");
-        assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, compiler, sqlExecutionContext) -> {
-                        // Create fx_trades-like table
-                        engine.execute(
-                                "create table fx_trades (" +
-                                        "  timestamp timestamp," +
-                                        "  symbol symbol," +
-                                        "  price double," +
-                                        "  quantity double," +
-                                        "  side symbol," +
-                                        "  order_id uuid" +
-                                        ") timestamp(timestamp) partition by day;",
-                                sqlExecutionContext
-                        );
-
-                        // Insert enough data to span multiple page frames (similar to demo.questdb.io)
-                        // The crash occurred with rowIndex=8947, frameIndex=6, so we need substantial data
-                        // Generate 2 million rows across multiple days to create multiple partitions and page frames
-                        engine.execute(
-                                "insert into fx_trades " +
-                                        "select " +
-                                        "  dateadd('s', x::int, '2024-01-01T00:00:00.000000Z')," +
-                                        "  rnd_symbol('EURUSD', 'GBPUSD', 'USDJPY')," +
-                                        "  1.0 + rnd_double() * 0.1," +
-                                        "  (rnd_int(1, 10, 0) * 10000)::double," +
-                                        "  rnd_symbol('buy', 'sell')," +
-                                        "  rnd_uuid4() " +
-                                        "from long_sequence(2000000)",
-                                sqlExecutionContext
-                        );
-
-                        // This is the failing query from demo.questdb.io
-                        // Self-join with EXCLUDE PREVAILING and VWAP calculation
-                        String query = "SELECT " +
-                                "    t.timestamp," +
-                                "    t.symbol," +
-                                "    t.price," +
-                                "    t.quantity," +
-                                "    t.side," +
-                                "    t.order_id," +
-                                "    sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m " +
-                                "FROM fx_trades t " +
-                                "WINDOW JOIN fx_trades w " +
-                                "    ON (t.symbol = w.symbol) " +
-                                "    RANGE BETWEEN 5 minutes PRECEDING AND 0 seconds FOLLOWING " +
-                                "    EXCLUDE PREVAILING " +
-                                "WHERE t.symbol = 'EURUSD' " +
-                                "ORDER BY t.timestamp " +
-                                "LIMIT 100";
-
-                        // Just execute the query - the crash happens during cursor iteration
-                        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
-                             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            TestUtils.drainCursor(cursor);
-                        }
-                    },
-                    configuration,
-                    LOG
-            );
-        });
-    }
-
-    @Test
     public void testAggregateNotTrivialColumn() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -2749,6 +2670,130 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinFilterTimestampFilter() throws Exception {
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:05.000000Z', 'AX', 100.0),
+                                ('1970-01-02T00:00:05.000000Z', 'AX', 200.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:04.000000Z', 'AX', 10.0),
+                                ('1970-01-01T00:00:06.000000Z', 'AX', 20.0),
+                                ('1970-01-02T00:00:04.000000Z', 'AX', 30.0),
+                                ('1970-01-02T00:00:06.000000Z', 'AX', 40.0)
+                            """
+            );
+
+            // With INCLUDE PREVAILING, the "prevailing" price (last price at or before the
+            // trade timestamp) is included even if outside the window range. For the day-2
+            // trade, the prevailing price is 20.0 (from 1970-01-01T00:00:06Z).
+            String expectedDay2Price = includePrevailing ? "20.0" : "null";
+
+            // Interval filter on the slave table.
+            assertQueryNoLeakCheck(
+                    "sym\tqty\tts\twindow_price\n" +
+                            "AX\t100.0\t1970-01-01T00:00:05.000000Z\t30.0\n" +
+                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\n",
+                    "SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN (prices WHERE ts IN '1970-01-01') p " +
+                            "ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
+                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts, t.sym",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // Same query, but with reordered columns in the slave subquery.
+            // This exercises SelectedConcurrentTimeFrameCursor.
+            String query = "SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price, sum(p.price0) AS window_price0 " +
+                    "FROM trades t " +
+                    "WINDOW JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') p " +
+                    "ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
+                    (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts, t.sym";
+            assertQueryNoLeakCheck(
+                    "sym\tqty\tts\twindow_price\twindow_price0\n" +
+                            "AX\t100.0\t1970-01-01T00:00:05.000000Z\t30.0\t30.0\n" +
+                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\t" + expectedDay2Price + "\n",
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinFilterTimestampFilterSequential() throws Exception {
+        // Force the sequential (non-parallel) window join path to exercise
+        // SelectedTimeFrameCursor.getTimestampIndex() which returns hardcoded 0.
+        // When the slave subquery reorders columns so that the timestamp is NOT
+        // at position 0, the helper's binary search reads the wrong column.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:05.000000Z', 'AX', 100.0),
+                                ('1970-01-02T00:00:05.000000Z', 'AX', 200.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:04.000000Z', 'AX', 10.0),
+                                ('1970-01-01T00:00:06.000000Z', 'AX', 20.0),
+                                ('1970-01-02T00:00:04.000000Z', 'AX', 30.0),
+                                ('1970-01-02T00:00:06.000000Z', 'AX', 40.0)
+                            """
+            );
+
+            String expectedDay2Price = includePrevailing ? "20.0" : "null";
+
+            // The sequential SelectedTimeFrameCursor.getTimestampIndex() returns hardcoded 0,
+            // but the timestamp is at position 3 in the projection (price, price0, sym, ts).
+            // The binary search reads the price column as a timestamp, producing wrong results.
+            // With INCLUDE PREVAILING, the second row should return 20.0 (prevailing price
+            // from day 1), but the buggy binary search returns null.
+            assertQueryNoLeakCheck(
+                    "sym\tqty\tts\twindow_price\twindow_price0\n" +
+                            "AX\t100.0\t1970-01-01T00:00:05.000000Z\t30.0\t30.0\n" +
+                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\t" + expectedDay2Price + "\n",
+                    "SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price, sum(p.price0) AS window_price0 " +
+                            "FROM trades t " +
+                            "WINDOW JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') p " +
+                            "ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
+                            (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                            "ORDER BY t.ts, t.sym",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinNoOtherCondition() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -3338,6 +3383,145 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "ts",
                     true,
                     false
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinSelfJoinWithAggregatesInSelectAndWhere() throws Exception {
+        // Reproducer for: https://demo.questdb.io error "Invalid column: price" at position 0
+        // Query: SELECT t.timestamp, t.order_id, t.symbol, t.side, t.price AS fill_price,
+        //        sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, ...
+        //        FROM fx_trades t WINDOW JOIN fx_trades w ON (t.symbol = w.symbol)
+        //        RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING EXCLUDE PREVAILING
+        //        WHERE t.symbol = 'EURUSD' ORDER BY t.timestamp LIMIT 100
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fx_trades (" +
+                    "timestamp TIMESTAMP, " +
+                    "symbol SYMBOL, " +
+                    "side SYMBOL, " +
+                    "price DOUBLE, " +
+                    "quantity DOUBLE, " +
+                    "order_id UUID" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("INSERT INTO fx_trades VALUES " +
+                    "('2025-01-01T00:00:00.000000Z', 'EURUSD', 'buy', 1.05, 1000, rnd_uuid4())," +
+                    "('2025-01-01T00:01:00.000000Z', 'EURUSD', 'sell', 1.051, 500, rnd_uuid4())," +
+                    "('2025-01-01T00:02:00.000000Z', 'EURUSD', 'buy', 1.052, 750, rnd_uuid4())," +
+                    "('2025-01-01T00:03:00.000000Z', 'GBPUSD', 'buy', 1.25, 1000, rnd_uuid4())," +
+                    "('2025-01-01T00:04:00.000000Z', 'EURUSD', 'sell', 1.053, 250, rnd_uuid4())," +
+                    "('2025-01-01T00:05:00.000000Z', 'EURUSD', 'buy', 1.054, 600, rnd_uuid4())");
+            drainWalQueue();
+
+            // Self-join with aggregates and WHERE clause - this was reproducing the "Invalid column: price" error
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\torder_id\tsymbol\tside\tfill_price\tvwap_5m\tslippage_bps
+                            2025-01-01T00:00:00.000000Z\t0010cde8-12ce-40ee-8010-a928bb8b9650\tEURUSD\tbuy\t1.05\tnull\tnull
+                            2025-01-01T00:01:00.000000Z\t9f9b2131-d49f-4d1d-ab81-39815c50d341\tEURUSD\tsell\t1.051\t1.05\t9.523809523808474
+                            2025-01-01T00:02:00.000000Z\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\tEURUSD\tbuy\t1.052\t1.0503333333333333\t15.867978419549715
+                            2025-01-01T00:04:00.000000Z\te8beef38-cd7b-43d8-9b2d-34586f6275fa\tEURUSD\tsell\t1.053\t1.050888888888889\t20.088813702684046
+                            2025-01-01T00:05:00.000000Z\t322a2198-864b-4b14-b97f-a69eb8fec6cc\tEURUSD\tbuy\t1.054\t1.0511\t27.590143659025067
+                            """,
+                    "SELECT " +
+                            "t.timestamp, " +
+                            "t.order_id, " +
+                            "t.symbol, " +
+                            "t.side, " +
+                            "t.price AS fill_price, " +
+                            "sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, " +
+                            "(t.price - sum(w.price * w.quantity) / sum(w.quantity)) " +
+                            "    / (sum(w.price * w.quantity) / sum(w.quantity)) * 10000 AS slippage_bps " +
+                            "FROM fx_trades t " +
+                            "WINDOW JOIN fx_trades w " +
+                            "    ON (t.symbol = w.symbol) " +
+                            "    RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING " +
+                            "    EXCLUDE PREVAILING " +
+                            "WHERE t.symbol = 'EURUSD' " +
+                            "ORDER BY t.timestamp " +
+                            "LIMIT 100",
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinSelfJoinWithVwapCalculation() throws Exception {
+        // Reproduces crash from demo.questdb.io where self-join on same table
+        // with EXCLUDE PREVAILING and VWAP calculation causes SIGSEGV in
+        // AsyncWindowJoinFastRecordCursorFactory.filterAndAggregateVect
+        // when accessing slave record via PageFrameMemoryRecord.getDouble
+        // Only run for one configuration to avoid duplicate testing
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        // Configure small page frames to trigger more frame crossings like in production
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // Create fx_trades-like table
+                        engine.execute(
+                                "create table fx_trades (" +
+                                        "  timestamp timestamp," +
+                                        "  symbol symbol," +
+                                        "  price double," +
+                                        "  quantity double," +
+                                        "  side symbol," +
+                                        "  order_id uuid" +
+                                        ") timestamp(timestamp) partition by day;",
+                                sqlExecutionContext
+                        );
+
+                        // Insert enough data to span multiple page frames (similar to demo.questdb.io)
+                        // The crash occurred with rowIndex=8947, frameIndex=6, so we need substantial data
+                        // Generate 2 million rows across multiple days to create multiple partitions and page frames
+                        engine.execute(
+                                "insert into fx_trades " +
+                                        "select " +
+                                        "  dateadd('s', x::int, '2024-01-01T00:00:00.000000Z')," +
+                                        "  rnd_symbol('EURUSD', 'GBPUSD', 'USDJPY')," +
+                                        "  1.0 + rnd_double() * 0.1," +
+                                        "  (rnd_int(1, 10, 0) * 10000)::double," +
+                                        "  rnd_symbol('buy', 'sell')," +
+                                        "  rnd_uuid4() " +
+                                        "from long_sequence(2000000)",
+                                sqlExecutionContext
+                        );
+
+                        // This is the failing query from demo.questdb.io
+                        // Self-join with EXCLUDE PREVAILING and VWAP calculation
+                        String query = "SELECT " +
+                                "    t.timestamp," +
+                                "    t.symbol," +
+                                "    t.price," +
+                                "    t.quantity," +
+                                "    t.side," +
+                                "    t.order_id," +
+                                "    sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m " +
+                                "FROM fx_trades t " +
+                                "WINDOW JOIN fx_trades w " +
+                                "    ON (t.symbol = w.symbol) " +
+                                "    RANGE BETWEEN 5 minutes PRECEDING AND 0 seconds FOLLOWING " +
+                                "    EXCLUDE PREVAILING " +
+                                "WHERE t.symbol = 'EURUSD' " +
+                                "ORDER BY t.timestamp " +
+                                "LIMIT 100";
+
+                        // Just execute the query - the crash happens during cursor iteration
+                        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            TestUtils.drainCursor(cursor);
+                        }
+                    },
+                    configuration,
+                    LOG
             );
         });
     }
@@ -4450,66 +4634,6 @@ public class WindowJoinTest extends AbstractCairoTest {
                 }
             }
         }
-    }
-
-    @Test
-    public void testWindowJoinSelfJoinWithAggregatesInSelectAndWhere() throws Exception {
-        // Reproducer for: https://demo.questdb.io error "Invalid column: price" at position 0
-        // Query: SELECT t.timestamp, t.order_id, t.symbol, t.side, t.price AS fill_price,
-        //        sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, ...
-        //        FROM fx_trades t WINDOW JOIN fx_trades w ON (t.symbol = w.symbol)
-        //        RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING EXCLUDE PREVAILING
-        //        WHERE t.symbol = 'EURUSD' ORDER BY t.timestamp LIMIT 100
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE fx_trades (" +
-                    "timestamp TIMESTAMP, " +
-                    "symbol SYMBOL, " +
-                    "side SYMBOL, " +
-                    "price DOUBLE, " +
-                    "quantity DOUBLE, " +
-                    "order_id UUID" +
-                    ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
-            execute("INSERT INTO fx_trades VALUES " +
-                    "('2025-01-01T00:00:00.000000Z', 'EURUSD', 'buy', 1.05, 1000, rnd_uuid4())," +
-                    "('2025-01-01T00:01:00.000000Z', 'EURUSD', 'sell', 1.051, 500, rnd_uuid4())," +
-                    "('2025-01-01T00:02:00.000000Z', 'EURUSD', 'buy', 1.052, 750, rnd_uuid4())," +
-                    "('2025-01-01T00:03:00.000000Z', 'GBPUSD', 'buy', 1.25, 1000, rnd_uuid4())," +
-                    "('2025-01-01T00:04:00.000000Z', 'EURUSD', 'sell', 1.053, 250, rnd_uuid4())," +
-                    "('2025-01-01T00:05:00.000000Z', 'EURUSD', 'buy', 1.054, 600, rnd_uuid4())");
-            drainWalQueue();
-
-            // Self-join with aggregates and WHERE clause - this was reproducing the "Invalid column: price" error
-            assertQueryNoLeakCheck(
-                    """
-                            timestamp\torder_id\tsymbol\tside\tfill_price\tvwap_5m\tslippage_bps
-                            2025-01-01T00:00:00.000000Z\t0010cde8-12ce-40ee-8010-a928bb8b9650\tEURUSD\tbuy\t1.05\tnull\tnull
-                            2025-01-01T00:01:00.000000Z\t9f9b2131-d49f-4d1d-ab81-39815c50d341\tEURUSD\tsell\t1.051\t1.05\t9.523809523808474
-                            2025-01-01T00:02:00.000000Z\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\tEURUSD\tbuy\t1.052\t1.0503333333333333\t15.867978419549715
-                            2025-01-01T00:04:00.000000Z\te8beef38-cd7b-43d8-9b2d-34586f6275fa\tEURUSD\tsell\t1.053\t1.050888888888889\t20.088813702684046
-                            2025-01-01T00:05:00.000000Z\t322a2198-864b-4b14-b97f-a69eb8fec6cc\tEURUSD\tbuy\t1.054\t1.0511\t27.590143659025067
-                            """,
-                    "SELECT " +
-                            "t.timestamp, " +
-                            "t.order_id, " +
-                            "t.symbol, " +
-                            "t.side, " +
-                            "t.price AS fill_price, " +
-                            "sum(w.price * w.quantity) / sum(w.quantity) AS vwap_5m, " +
-                            "(t.price - sum(w.price * w.quantity) / sum(w.quantity)) " +
-                            "    / (sum(w.price * w.quantity) / sum(w.quantity)) * 10000 AS slippage_bps " +
-                            "FROM fx_trades t " +
-                            "WINDOW JOIN fx_trades w " +
-                            "    ON (t.symbol = w.symbol) " +
-                            "    RANGE BETWEEN 5 minutes PRECEDING AND 1 microseconds PRECEDING " +
-                            "    EXCLUDE PREVAILING " +
-                            "WHERE t.symbol = 'EURUSD' " +
-                            "ORDER BY t.timestamp " +
-                            "LIMIT 100",
-                    "timestamp",
-                    false,
-                    false
-            );
-        });
     }
 
     private void prepareTable() throws SqlException {
