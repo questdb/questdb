@@ -54,7 +54,9 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (arg.getLong(record) != Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+            if (mapValue.getLong(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

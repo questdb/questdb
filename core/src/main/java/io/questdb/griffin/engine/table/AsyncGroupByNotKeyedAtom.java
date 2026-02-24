@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -55,27 +54,17 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
 public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    private final ObjList<Function> bindVarFunctions;
-    private final MemoryCARW bindVarMemory;
-    private final CompiledFilter compiledFilter;
-    private final IntHashSet filterUsedColumnIndexes;
-    private final ObjList<PageFrameFilteredNoRandomAccessMemoryRecord> frameFilteredMemoryRecords = new ObjList<>();
+    private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
-    private final Function ownerFilter;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final SimpleMapValue ownerMapValue;
-    private final PageFrameFilteredNoRandomAccessMemoryRecord ownerPageFrameFilteredNoRandomAccessMemoryRecord = new PageFrameFilteredNoRandomAccessMemoryRecord();
-    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<GroupByAllocator> perWorkerAllocators;
-    private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SimpleMapValue> perWorkerMapValues;
-    private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
     public AsyncGroupByNotKeyedAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -94,52 +83,53 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
-        final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
-            this.compiledFilter = compiledFilter;
-            this.bindVarMemory = bindVarMemory;
-            this.bindVarFunctions = bindVarFunctions;
-            this.ownerFilter = ownerFilter;
-            this.filterUsedColumnIndexes = filterUsedColumnIndexes;
-            this.perWorkerFilters = perWorkerFilters;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+
+            this.filterCtx = new AsyncFilterContext(
+                    configuration,
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    ownerFilter,
+                    filterUsedColumnIndexes,
+                    perWorkerFilters,
+                    workerCount,
+                    workerCount,
+                    1,
+                    1
+            );
 
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerFunctionUpdaters = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                perWorkerFunctionUpdaters = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerFunctionUpdaters = null;
             }
-            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
             ownerMapValue = new SimpleMapValue(valueCount);
-            perWorkerMapValues = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
+            perWorkerMapValues = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 perWorkerMapValues.extendAndSet(i, new SimpleMapValue(valueCount));
-                frameFilteredMemoryRecords.extendAndSet(i, new PageFrameFilteredNoRandomAccessMemoryRecord());
             }
 
             ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerAllocators = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
+                perWorkerAllocators = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
                     final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
                     perWorkerAllocators.extendAndSet(i, workerAllocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerAllocator);
                 }
             } else {
                 perWorkerAllocators = null;
-            }
-
-            perWorkerSelectivityStats = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
-                perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
 
             clear();
@@ -165,17 +155,11 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
         Misc.clear(ownerAllocator);
         Misc.clearObjList(perWorkerAllocators);
-        ownerSelectivityStats.clear();
-        Misc.clearObjList(perWorkerSelectivityStats);
+        filterCtx.clear();
     }
 
     @Override
     public void close() {
-        Misc.free(compiledFilter);
-        Misc.free(bindVarMemory);
-        Misc.freeObjList(bindVarFunctions);
-        Misc.free(ownerFilter);
-        Misc.freeObjList(perWorkerFilters);
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
         Misc.free(ownerMapValue);
@@ -185,29 +169,11 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+        Misc.free(filterCtx);
     }
 
-    public ObjList<Function> getBindVarFunctions() {
-        return bindVarFunctions;
-    }
-
-    public MemoryCARW getBindVarMemory() {
-        return bindVarMemory;
-    }
-
-    public CompiledFilter getCompiledFilter() {
-        return compiledFilter;
-    }
-
-    public Function getFilter(int slotId) {
-        if (slotId == -1 || perWorkerFilters == null) {
-            return ownerFilter;
-        }
-        return perWorkerFilters.getQuick(slotId);
-    }
-
-    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
-        return filterUsedColumnIndexes;
+    public AsyncFilterContext getFilterContext() {
+        return filterCtx;
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
@@ -229,40 +195,14 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return ownerMapValue;
     }
 
-    public PageFrameFilteredNoRandomAccessMemoryRecord getPageFrameFilteredMemoryRecord(int slotId) {
-        if (slotId == -1) {
-            return ownerPageFrameFilteredNoRandomAccessMemoryRecord;
-        }
-        return frameFilteredMemoryRecords.getQuick(slotId);
-    }
-
     // Thread-unsafe, should be used by query owner thread only.
     public ObjList<SimpleMapValue> getPerWorkerMapValues() {
         return perWorkerMapValues;
     }
 
-    public SelectivityStats getSelectivityStats(int slotId) {
-        if (slotId == -1) {
-            return ownerSelectivityStats;
-        }
-        return perWorkerSelectivityStats.getQuick(slotId);
-    }
-
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        if (ownerFilter != null) {
-            ownerFilter.init(symbolTableSource, executionContext);
-        }
-
-        if (perWorkerFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext, ownerFilter);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        filterCtx.initFilters(symbolTableSource, executionContext);
 
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
@@ -274,11 +214,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
-        }
-
-        if (bindVarFunctions != null) {
-            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 
@@ -312,19 +247,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
     }
 
-    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {
-        if (!isParquetFrame) {
-            return false;
-        }
-        if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
-            return false;
-        }
-        return getSelectivityStats(slotId).shouldUseLateMaterialization();
-    }
-
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(ownerFilter);
+        filterCtx.toPlan(sink);
     }
 
     public void toTop() {

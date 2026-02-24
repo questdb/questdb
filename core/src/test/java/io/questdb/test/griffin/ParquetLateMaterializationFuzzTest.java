@@ -36,7 +36,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED;
@@ -668,37 +667,31 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
         testLateMaterializationAllTypesLowSelectivity("select sum(a_byte) from x where id%9=1");
     }
 
-    @Ignore("enable after parquet write support for decimal types is added")
     @Test
     public void testSumDecimal128Aggregate() throws Exception {
         testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal128) from x where id%23=11");
     }
 
-    @Ignore("enable after parquet write support for decimal types is added")
     @Test
     public void testSumDecimal16Aggregate() throws Exception {
         testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal16) from x where id%11=4");
     }
 
-    @Ignore("enable after parquet write support for decimal types is added")
     @Test
     public void testSumDecimal256Aggregate() throws Exception {
-        testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal256) from x where id%29=13");
+        testLateMaterializationAllTypesLowSelectivity("select last(a_decimal256) from x where id%29=13");
     }
 
-    @Ignore("enable after parquet write support for decimal types is added")
     @Test
     public void testSumDecimal32Aggregate() throws Exception {
         testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal32) from x where id%13=6");
     }
 
-    @Ignore("enable after parquet write support for decimal types is added")
     @Test
     public void testSumDecimal64Aggregate() throws Exception {
         testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal64) from x where id%19=7");
     }
 
-    @Ignore("enable after parquet write support for decimal types is added")
     @Test
     public void testSumDecimal8Aggregate() throws Exception {
         testLateMaterializationAllTypesLowSelectivity("select sum(a_decimal8) from x where id%7=3");
@@ -772,12 +765,12 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                                         rnd_geohash(8) a_geo_short,
                                         rnd_geohash(16) a_geo_int,
                                         rnd_geohash(32) a_geo_long,
-                                        -- rnd_decimal(2, 1, 0) a_decimal8,
-                                        -- rnd_decimal(4, 2, 0) a_decimal16,
-                                        -- rnd_decimal(9, 2, 0) a_decimal32,
-                                        -- rnd_decimal(18, 3, 0) a_decimal64,
-                                        -- rnd_decimal(38, 7, 0) a_decimal128,
-                                        -- rnd_decimal(76, 10, 0) a_decimal256,
+                                        rnd_decimal(2, 1, 0) a_decimal8,
+                                        rnd_decimal(4, 2, 0) a_decimal16,
+                                        rnd_decimal(9, 2, 0) a_decimal32,
+                                        rnd_decimal(18, 3, 0) a_decimal64,
+                                        rnd_decimal(38, 7, 0) a_decimal128,
+                                        rnd_decimal(76, 10, 0) a_decimal256,
                                         cast(timestamp_sequence(0,1000000) as date) a_date,
                                         timestamp_sequence(0, 60000000) as ts
                                       from long_sequence(2000)

@@ -28,14 +28,13 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
 
-abstract class ArithmeticDecimal64Function extends Decimal64Function implements BinaryFunction {
+abstract class ArithmeticDecimal64Function extends Decimal64Function implements ArithmeticBinaryFunction {
     protected final Decimal64 decimal = new Decimal64();
     protected final Function left;
     protected final int precision;

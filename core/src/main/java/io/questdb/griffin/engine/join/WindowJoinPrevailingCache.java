@@ -107,7 +107,7 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
             do {
                 frameIndex = slaveTimeFrameHelper.getTimeFrameIndex();
                 // actual row index doesn't matter here due to the later recordAtRowIndex() call
-                slaveTimeFrameHelper.recordAt(Rows.toRowID(frameIndex, 0));
+                slaveTimeFrameHelper.recordAt(frameIndex, 0);
 
                 long rowLo = slaveTimeFrameHelper.getTimeFrameRowLo();
                 long rowHi = slaveTimeFrameHelper.getTimeFrameRowHi();
