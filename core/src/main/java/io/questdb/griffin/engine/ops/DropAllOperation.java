@@ -14,7 +14,6 @@ import org.jetbrains.annotations.Nullable;
  */
 public class DropAllOperation implements Operation {
     public static final DropAllOperation INSTANCE = new DropAllOperation();
-    private final DoneOperationFuture future = new DoneOperationFuture();
 
     protected DropAllOperation() {
     }
@@ -28,7 +27,7 @@ public class DropAllOperation implements Operation {
         try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
             compiler.execute(this, sqlExecutionContext);
         }
-        return future;
+        return ImmutableDoneOperationFuture.INSTANCE;
     }
 
     @Override
@@ -38,7 +37,7 @@ public class DropAllOperation implements Operation {
 
     @Override
     public OperationFuture getOperationFuture() {
-        return future;
+        return ImmutableDoneOperationFuture.INSTANCE;
     }
 
     public void onTableOrViewOrMatViewDropped(DdlListener ddlListener, String tableName) {
