@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -131,7 +132,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     BitmapIndexUtils.getKeyEntryOffset(0),
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
-                    -1
+                    Files.POSIX_MADV_RANDOM
             );
             this.clock = configuration.getMillisecondClock();
 
@@ -148,7 +149,9 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
                     valueMemSize,
                     valueMemSize,
-                    MemoryTag.MMAP_INDEX_READER
+                    MemoryTag.MMAP_INDEX_READER,
+                    CairoConfiguration.O_NONE,
+                    Files.POSIX_MADV_RANDOM
             );
         } catch (Throwable e) {
             close();

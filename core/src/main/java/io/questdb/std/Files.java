@@ -68,11 +68,16 @@ public final class Files {
     public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
+    // Set to true to disable mmap cache reuse for MADV_RANDOM and keep the legacy behavior.
+    public static final String MADVISE_RANDOM_MMAP_CACHE_DISABLED_SYSTEM_PROPERTY =
+            "questdb.experimental.mmap.madvise.random.cache.disabled";
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private static final FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = MmapCache.INSTANCE;
     public static boolean ASYNC_MUNMAP_ENABLED = false;
     public static boolean FS_CACHE_ENABLED = true;
+    public static boolean MADVISE_RANDOM_MMAP_CACHE_ENABLED =
+            !Boolean.getBoolean(MADVISE_RANDOM_MMAP_CACHE_DISABLED_SYSTEM_PROPERTY);
 
     // Maximum recursion depth when deleting the database directory.
     // Recursion starts at depth 0 for the root directory (e.g., "db").
@@ -332,9 +337,16 @@ public final class Files {
         return lock(toOsFd(fd));
     }
 
+    public static boolean isMadviseMmapCacheable(int advise) {
+        return advise == POSIX_MADV_RANDOM && MADVISE_RANDOM_MMAP_CACHE_ENABLED;
+    }
+
     public static void madvise(long address, long len, int advise) {
-        if (Os.isLinux() && mmapCache.isSingleUse(address)) {
-            madvise0(address, len, advise);
+        if (Os.isLinux() && advise > -1) {
+            // Shared mappings can only use MADV_RANDOM. Other hints need single-use mappings.
+            if (mmapCache.isSingleUse(address) || isMadviseMmapCacheable(advise)) {
+                madvise0(address, len, advise);
+            }
         }
     }
 
