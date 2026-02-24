@@ -112,8 +112,13 @@ public class MemoryPMARWImpl extends MemoryPARWImpl implements MemoryMARW {
         this.closeFdOnClose = true;
         setExtendSegmentSize(extendSegmentSize);
         fd = TableUtils.openFileRWOrFail(ff, name, opts);
-        if (size > 0) {
-            jumpTo(size);
+        try {
+            if (size > 0) {
+                jumpTo(size);
+            }
+        } catch (Throwable e) {
+            close(false);
+            throw e;
         }
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
@@ -128,8 +133,13 @@ public class MemoryPMARWImpl extends MemoryPARWImpl implements MemoryMARW {
         this.memoryTag = memoryTag;
         this.madviseOpts = -1;
         setExtendSegmentSize(ff.getMapPageSize());
-        if (size > 0) {
-            jumpTo(size);
+        try {
+            if (size > 0) {
+                jumpTo(size);
+            }
+        } catch (Throwable e) {
+            close(false);
+            throw e;
         }
     }
 
@@ -143,8 +153,13 @@ public class MemoryPMARWImpl extends MemoryPARWImpl implements MemoryMARW {
         this.memoryTag = memoryTag;
         this.madviseOpts = -1;
         setExtendSegmentSize(extendSegmentSize);
-        if (size > 0) {
-            jumpTo(size);
+        try {
+            if (size > 0) {
+                jumpTo(size);
+            }
+        } catch (Throwable e) {
+            close(false);
+            throw e;
         }
     }
 
@@ -156,8 +171,13 @@ public class MemoryPMARWImpl extends MemoryPARWImpl implements MemoryMARW {
         this.closeFdOnClose = true;
         this.madviseOpts = -1;
         setExtendSegmentSize(extendSegmentSize);
-        if (offset > 0) {
-            jumpTo(offset);
+        try {
+            if (offset > 0) {
+                jumpTo(offset);
+            }
+        } catch (Throwable e) {
+            close(false);
+            throw e;
         }
     }
 

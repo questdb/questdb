@@ -145,15 +145,23 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     @Override
     public void close() {
         if (keyMem.isOpen()) {
-            if (keyCount > -1) {
-                keyMem.setSize(keyMemSize());
+            try {
+                if (keyCount > -1) {
+                    keyMem.setSize(keyMemSize());
+                }
+            } catch (CairoException e) {
+                LOG.error().$("could not truncate key memory on close").$((Throwable) e).$();
             }
             Misc.free(keyMem);
         }
 
         if (valueMem.isOpen()) {
-            if (valueMemSize > -1) {
-                valueMem.setSize(valueMemSize);
+            try {
+                if (valueMemSize > -1) {
+                    valueMem.setSize(valueMemSize);
+                }
+            } catch (CairoException e) {
+                LOG.error().$("could not truncate value memory on close").$((Throwable) e).$();
             }
             Misc.free(valueMem);
         }
