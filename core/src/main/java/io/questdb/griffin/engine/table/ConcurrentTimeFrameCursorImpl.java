@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
@@ -246,27 +247,14 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
 
     @Override
     public void seekEstimate(long timestamp) {
-        if (frameCount == 0) {
-            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
-            return;
-        }
-        int lo = 0, hi = frameCount - 1, result = -1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            int partIdx = framePartitionIndexes.get(mid);
-            if (partitionCeilings.getQuick(partIdx) <= timestamp) {
-                result = mid;
-                lo = mid + 1;
-            } else {
-                hi = mid - 1;
-            }
-        }
-        if (result >= 0) {
-            int partIdx = framePartitionIndexes.get(result);
-            timeFrame.ofEstimate(result, partitionTimestamps.getQuick(partIdx), partitionCeilings.getQuick(partIdx));
-        } else {
-            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
-        }
+        TimeFrameCursor.findSeekEstimate(
+                timestamp,
+                frameCount,
+                framePartitionIndexes,
+                partitionCeilings,
+                partitionTimestamps,
+                timeFrame
+        );
     }
 
     @Override

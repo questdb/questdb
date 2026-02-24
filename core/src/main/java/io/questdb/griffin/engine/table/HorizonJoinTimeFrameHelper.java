@@ -303,10 +303,10 @@ public class HorizonJoinTimeFrameHelper {
         if (rowLo == Long.MIN_VALUE) {
             // Use seekEstimate to binary-search to the target's vicinity,
             // avoiding O(N) linear scan through all preceding frames.
-            final long nativeTargetTs = slaveTsScale != 1
-                    ? (targetTimestamp > 0 && targetTimestamp > Long.MAX_VALUE / slaveTsScale ? Long.MAX_VALUE : targetTimestamp * slaveTsScale)
-                    : targetTimestamp;
-            timeFrameCursor.seekEstimate(nativeTargetTs);
+            // Convert from common (nanosecond) space back to native slave space for seekEstimate.
+            // scaleTimestamp() multiplies native → nanos, so the reverse is division.
+            final long nativeTargetTimestamp = slaveTsScale == 1 ? targetTimestamp : targetTimestamp / slaveTsScale;
+            timeFrameCursor.seekEstimate(nativeTargetTimestamp);
             if (timeFrame.getFrameIndex() >= 0 && timeFrameCursor.open() > 0) {
                 final long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
                 if (frameTsHi <= targetTimestamp) {
