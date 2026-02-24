@@ -303,7 +303,8 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             while (ptr < hi) {
                 if (!eol && !rollBufferUnusable && !useLineRollBuf && !delayedOutQuote && ptr < hi - 7) {
                     long word = Unsafe.getUnsafe().getLong(ptr);
-                    long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
+                    long zeroBytesWord = SwarUtils.markZeroBytes(word)
+                            | SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
                             | SwarUtils.markZeroBytes(word ^ MASK_CR)
                             | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
                             | SwarUtils.markZeroBytes(word ^ getDelimiterMask());
@@ -328,6 +329,15 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                 }
 
                 final byte b = Unsafe.getUnsafe().getByte(ptr++);
+                if (b == 0) {
+                    if (!ignoreEolOnce) {
+                        LOG.error().$("invalid byte 0x00 [table=").$safe(tableName).$(", line=").$(lineCount).$(']')
+                                .$();
+                        errorCount++;
+                        ignoreEolOnce = true;
+                        this.fieldIndex = 0;
+                    }
+                }
                 this.ascii &= b > 0;
 
                 if (checkState(ptr, b)) {
