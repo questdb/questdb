@@ -15,12 +15,12 @@ use crate::parquet_read::decoders::unpack::{unpack32, unpack64};
 use crate::parquet_read::ColumnChunkBuffers;
 
 #[derive(Debug, Default)]
-struct Miniblock<'a> {
-    data: &'a [u8],
-    num_bits: u8,
+pub(crate) struct Miniblock<'a> {
+    pub(crate) data: &'a [u8],
+    pub(crate) num_bits: u8,
 }
 
-struct MiniblockIterator<'a, U> {
+pub(crate) struct MiniblockIterator<'a, U> {
     page_data: &'a [u8],
     miniblocks_per_block: usize,
     // Number of blocks remaining to be read
@@ -28,12 +28,12 @@ struct MiniblockIterator<'a, U> {
     // offset in data for the bidwidths field of the current/next block depending on the state of the iterator
     block_bitwidths_offset: usize,
     // miniblock size in number of values, this is constant across all blocks
-    miniblock_size: usize,
+    pub(crate) miniblock_size: usize,
     // offset of the next miniblock to decode
     miniblock_offset: usize,
     // index of the next miniblock to decode
     miniblock_index: usize,
-    min_delta: U,
+    pub(crate) min_delta: U,
 }
 
 impl<'a, U> MiniblockIterator<'a, U>
@@ -109,6 +109,40 @@ where
         Ok((s, first_value.as_()))
     }
 
+    pub(crate) fn get_end_pointer(&self) -> ParquetResult<*const u8> {
+        let mut block_remaining = self.blocks_remaining;
+        let mut page_data = self.page_data;
+        let miniblocks_per_block = self.miniblocks_per_block as usize;
+        let mut miniblock_index = self.miniblock_index as usize;
+        let block_bitwidths_offset = self.block_bitwidths_offset;
+        let mut miniblock_offset = self.miniblock_offset;
+        let miniblock_size = self.miniblock_size;
+
+        // Skip the remaining miniblocks in the current block
+        while miniblock_index < miniblocks_per_block {
+            let num_bits = page_data[block_bitwidths_offset + miniblock_index] as u8;
+            miniblock_offset += (self.miniblock_size * num_bits as usize) / 8;
+            miniblock_index += 1;
+        }
+
+        // Skip the remaining blocks
+        while block_remaining > 0 {
+            page_data = &page_data[miniblock_offset..];
+            let (_min_delta, offset) = zigzag_leb128::decode(page_data)
+                .map_err(|_| fmt_err!(Layout, "failed to decode min delta"))?;
+            page_data = &page_data[offset..];
+            miniblock_offset = miniblocks_per_block;
+            block_remaining -= 1;
+
+            for i in 0..miniblocks_per_block {
+                let num_bits = page_data[i] as u8;
+                miniblock_offset += (miniblock_size * num_bits as usize) / 8;
+            }
+        }
+
+        Ok(unsafe { page_data.as_ptr().add(miniblock_offset) })
+    }
+
     #[inline]
     pub fn advance_block(&mut self, offset: usize) -> ParquetResult<()> {
         if self.blocks_remaining == 0 {
@@ -138,7 +172,7 @@ where
     }
 
     #[inline]
-    fn next_miniblock(&mut self) -> ParquetResult<Option<Miniblock<'a>>> {
+    pub(crate) fn next_miniblock(&mut self) -> ParquetResult<Option<Miniblock<'a>>> {
         if self.miniblock_index == self.miniblocks_per_block {
             // The current block is exhausted. If there are no more blocks, we're done.
             if self.blocks_remaining == 0 {

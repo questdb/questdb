@@ -29,7 +29,7 @@ pub mod bench {
     };
     pub use super::string::string_to_page;
     pub use super::symbol::symbol_to_pages;
-    pub use super::varchar::varchar_to_page;
+    pub use super::varchar::{varchar_to_dict_pages, varchar_to_page};
 }
 
 pub trait Nullable {

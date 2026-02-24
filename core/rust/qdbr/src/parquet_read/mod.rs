@@ -63,6 +63,8 @@ pub struct ColumnChunkBuffers {
     pub aux_size: usize,
     pub aux_ptr: *mut u8,
     pub aux_vec: AcVec<u8>,
+
+    pub page_buffers: Vec<Vec<u8>>,
 }
 
 #[repr(C)]
@@ -104,6 +106,7 @@ mod tests {
                 column_type: ColumnTypeTag::Symbol.into_type(),
                 column_top: 0,
                 format: None, // It should error because this is missing.
+                ascii: None,
             },
         );
 

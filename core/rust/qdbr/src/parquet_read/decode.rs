@@ -3,6 +3,7 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, RawArrayColumnSink, StringColumnSink, VarcharColumnSink,
+    VarcharSliceColumnSink, VarcharSliceSpillSink,
 };
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decode::decimal::{
@@ -14,8 +15,9 @@ use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConve
 use crate::parquet_read::decoders::{
     int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
     BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder,
-    FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
-    RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
+    DeltaLAVarcharSliceDecoder, FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder,
+    RleBooleanDecoder, RleDictVarcharSliceDecoder, RleDictionaryDecoder,
+    RleLocalIsGlobalSymbolDictDecoder,
 };
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
@@ -69,6 +71,7 @@ impl ColumnChunkBuffers {
             aux_vec: AcVec::new_in(allocator),
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
+            page_buffers: Vec::new(),
         }
     }
 
@@ -92,6 +95,8 @@ impl ColumnChunkBuffers {
         self.aux_vec.clear();
         self.aux_size = 0;
         self.aux_ptr = ptr::null_mut();
+
+        self.page_buffers.clear();
     }
 }
 
@@ -1195,6 +1200,60 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
+                    Ok(true)
+                }
+                (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::VarcharSlice) => {
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut DeltaLAVarcharSliceDecoder::try_new(
+                            values_buffer,
+                            bufs,
+                            col_info.ascii.unwrap_or(false),
+                        )?,
+                    )?;
+                    Ok(true)
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    ColumnTypeTag::VarcharSlice,
+                ) => {
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut RleDictVarcharSliceDecoder::try_new(
+                            values_buffer,
+                            dict_page,
+                            bufs,
+                            col_info.ascii.unwrap_or(false),
+                        )?,
+                    )?;
+                    Ok(true)
+                }
+                (Encoding::Plain, _, ColumnTypeTag::VarcharSlice) => {
+                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut VarcharSliceColumnSink::new(
+                            &mut slicer,
+                            bufs,
+                            col_info.ascii.unwrap_or(false),
+                        ),
+                    )?;
+                    Ok(true)
+                }
+                (Encoding::DeltaByteArray, _, ColumnTypeTag::VarcharSlice) => {
+                    let mut slicer =
+                        DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
+                    let mut spill_sink = VarcharSliceSpillSink::new(
+                        &mut slicer,
+                        bufs,
+                        col_info.ascii.unwrap_or(false),
+                    );
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut spill_sink)?;
+                    // fixup_pointers deferred to end-of-chunk (see decode_column_chunk)
                     Ok(true)
                 }
                 (Encoding::RleDictionary, Some(dict_page), ColumnTypeTag::Symbol) => {
@@ -2314,7 +2373,12 @@ mod tests {
 
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type.unwrap();
-            let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+            let col_info = QdbMetaCol {
+                column_type,
+                column_top: 0,
+                format: None,
+                ascii: None,
+            };
             for row_group_index in 0..row_group_count {
                 decoder
                     .decode_column_chunk(
@@ -2367,7 +2431,12 @@ mod tests {
             for row_hi in row_lo + 1..row_group_size {
                 for column_index in 0..column_count {
                     let column_type = decoder.columns[column_index].column_type.unwrap();
-                    let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
+                    let col_info = QdbMetaCol {
+                        column_type,
+                        column_top: 0,
+                        format: None,
+                        ascii: None,
+                    };
                     for row_group_index in 0..row_group_count {
                         decoder
                             .decode_column_chunk(
@@ -2437,6 +2506,7 @@ mod tests {
                                 column_type: ColumnTypeTag::Boolean.into_type(),
                                 column_top: 0,
                                 format: None,
+                                ascii: None,
                             },
                         )
                         .unwrap();
@@ -2657,7 +2727,7 @@ mod tests {
                         0,
                         row_group_size,
                         column_index,
-                        QdbMetaCol { column_type, column_top: 0, format },
+                        QdbMetaCol { column_type, column_top: 0, format, ascii: None },
                     )
                     .unwrap();
 
@@ -3713,6 +3783,7 @@ mod tests {
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -3753,6 +3824,7 @@ mod tests {
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         let rows_filter = vec![1i64];
@@ -3801,6 +3873,7 @@ mod tests {
             column_type: ColumnTypeTag::Decimal64.into_type(),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, 1).unwrap();
@@ -3842,6 +3915,7 @@ mod tests {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
             decode_page(
                 &page,
@@ -3895,6 +3969,7 @@ mod tests {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -3939,6 +4014,7 @@ mod tests {
             column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -3983,6 +4059,7 @@ mod tests {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
             decode_page_filtered::<true>(
                 &page,
@@ -4019,6 +4096,7 @@ mod tests {
             column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
             column_top: 0,
             format: None,
+            ascii: None,
         };
 
         decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4056,6 +4134,7 @@ mod tests {
                 column_type: ColumnType::new(tag, 0),
                 column_top: 0,
                 format: None,
+                ascii: None,
             };
 
             decode_page(&page, None, &mut bufs, col_info, 0, values.len()).unwrap();
@@ -4103,6 +4182,7 @@ mod tests {
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
+                    ascii: None,
                 };
 
                 decode_page_filtered::<false>(
@@ -4158,6 +4238,7 @@ mod tests {
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
+                    ascii: None,
                 };
                 decode_page(
                     &page,
@@ -4209,6 +4290,7 @@ mod tests {
                     column_type: ColumnType::new(tag, 0),
                     column_top: 0,
                     format: None,
+                    ascii: None,
                 };
                 decode_page_filtered::<true>(
                     &page,

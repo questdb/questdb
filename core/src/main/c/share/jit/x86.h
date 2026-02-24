@@ -45,7 +45,8 @@ namespace questdb::x86 {
                 // Only cache fixed-size column addresses (not variable-size like string/binary/varchar)
                 if (type != data_type_t::string_header &&
                     type != data_type_t::binary_header &&
-                    type != data_type_t::varchar_header) {
+                    type != data_type_t::varchar_header &&
+                    type != data_type_t::varchar_slice_header) {
                     auto column_idx = static_cast<int32_t>(instr.ipayload.lo);
                     if (!cache.has(column_idx)) {
                         Gp column_address = c.new_gp64("col_addr_%d", column_idx);
@@ -180,6 +181,27 @@ namespace questdb::x86 {
         return {header, data_type_t::i64, data_kind_t::kMemory};
     }
 
+    // Reads the length (i32) from the VarcharSlice aux vector.
+    // VarcharSlice aux format: [length(i32), reserved(u32), pointer(u64)]
+    // Aux entry size is 16 bytes (same as varchar). Null is indicated by length == -1.
+    jit_value_t read_mem_varchar_slice_header(Compiler &c,
+                                              int32_t column_idx,
+                                              const Gp &varsize_aux_ptr,
+                                              const Gp &input_index) {
+        Gp varsize_aux_address = c.new_gp64("varsize_aux_address");
+        c.mov(varsize_aux_address, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+
+        Gp header_offset = c.new_gp64("header_offset");
+        c.mov(header_offset, input_index);
+        auto header_shift = type_shift(data_type_t::i128); // << 4 (16 bytes per entry)
+        c.sal(header_offset, header_shift);
+
+        Gp header = c.new_gp32("header");
+        c.mov(header, ptr(varsize_aux_address, header_offset, 0, 0, 4));
+
+        return {header, data_type_t::i32, data_kind_t::kMemory};
+    }
+
     jit_value_t read_mem(
             Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr,
             const Gp &varsize_aux_ptr, const Gp &input_index,
@@ -188,6 +210,9 @@ namespace questdb::x86 {
     ) {
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
+        }
+        if (type == data_type_t::varchar_slice_header) {
+            return read_mem_varchar_slice_header(c, column_idx, varsize_aux_ptr, input_index);
         }
 
         uint32_t header_size;

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::mem;
 
 use super::util::ExactSizedIter;
@@ -7,9 +8,11 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_primitive_def_levels, BinaryMaxMinStats,
 };
+use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::{delta_bitpacked, Encoding};
-use parquet2::page::Page;
+use parquet2::page::{DictPage, Page};
 use parquet2::schema::types::PrimitiveType;
+use parquet2::write::DynIter;
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;
 const HEADER_FLAG_ASCII: u8 = 1 << 1;
@@ -132,6 +135,113 @@ pub fn varchar_to_page(
     .map(Page::Data)
 }
 
+pub fn varchar_to_dict_pages(
+    aux: &[[u8; 16]],
+    data: &[u8],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let num_rows = column_top + aux.len();
+    let aux: &[AuxEntryInlined] = unsafe { mem::transmute(aux) };
+
+    // Extract UTF-8 slices (same logic as varchar_to_page)
+    let mut null_count = 0usize;
+    let utf8_slices: Vec<Option<&[u8]>> = aux
+        .iter()
+        .map(|entry| {
+            if is_null(entry.header) {
+                null_count += 1;
+                None
+            } else if is_inlined(entry.header) {
+                let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
+                Some(&entry.chars[..size])
+            } else {
+                let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
+                let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
+                let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
+                assert!(
+                    offset + size <= data.len(),
+                    "Data corruption in VARCHAR column"
+                );
+                Some(&data[offset..][..size])
+            }
+        })
+        .collect();
+
+    // Build dictionary: deduplicate strings
+    let mut dict_map: HashMap<&[u8], u32> = HashMap::new();
+    let mut dict_entries: Vec<&[u8]> = Vec::new();
+    for slice in &utf8_slices {
+        if let Some(s) = slice {
+            if !dict_map.contains_key(s) {
+                let key = dict_entries.len() as u32;
+                dict_map.insert(s, key);
+                dict_entries.push(s);
+            }
+        }
+    }
+
+    // Build dict buffer (length-prefixed UTF-8)
+    let mut dict_buffer = Vec::new();
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+        dict_buffer.extend_from_slice(entry);
+        stats.update(entry);
+    }
+
+    // Encode data page: def levels + RLE-encoded keys
+    let mut data_buffer = vec![];
+    let total_null_count = column_top + null_count;
+
+    let def_levels =
+        (0..num_rows).map(|i| i >= column_top && utf8_slices[i - column_top].is_some());
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let max_key = if dict_entries.is_empty() {
+        0u32
+    } else {
+        (dict_entries.len() - 1) as u32
+    };
+    let bits_per_key = super::util::bit_width(max_key as u64);
+    let non_null_len = aux.len() - null_count;
+    let keys = utf8_slices.iter().filter_map(|s| s.map(|v| dict_map[v]));
+    let keys = ExactSizedIter::new(keys, non_null_len);
+    data_buffer.push(bits_per_key);
+    encode_u32(&mut data_buffer, keys, non_null_len, bits_per_key as u32)?;
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        total_null_count,
+        definition_levels_byte_length,
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(total_null_count))
+        } else {
+            None
+        },
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+        false,
+    )?;
+
+    let uniq_vals = if dict_buffer.is_empty() {
+        0
+    } else {
+        dict_entries.len()
+    };
+    let dict_page = DictPage::new(dict_buffer, uniq_vals, false);
+
+    Ok(DynIter::new(
+        [Page::Dict(dict_page), Page::Data(data_page)]
+            .into_iter()
+            .map(Ok),
+    ))
+}
+
 fn encode_plain(
     utf8_slices: &[Option<&[u8]>],
     buffer: &mut Vec<u8>,
@@ -171,6 +281,21 @@ fn is_null(header: u8) -> bool {
 #[inline(always)]
 fn is_inlined(header: u8) -> bool {
     (header & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED
+}
+
+/// Check if all non-null varchar values in the aux vector have the ASCII flag set.
+/// Uses the per-value flags already stored in QuestDB's internal varchar format.
+pub fn is_column_ascii(aux: &[[u8; 16]]) -> bool {
+    for entry in aux.iter() {
+        let header = entry[0];
+        if header & HEADER_FLAG_NULL != 0 {
+            continue;
+        }
+        if header & HEADER_FLAG_ASCII == 0 {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn append_varchar(
@@ -226,6 +351,57 @@ fn append_offset(aux_mem: &mut AcVec<u8>, offset: usize) -> ParquetResult<()> {
     assert!(offset < VARCHAR_MAX_COLUMN_SIZE);
     aux_mem.extend_from_slice(&(offset as u16).to_le_bytes())?;
     aux_mem.extend_from_slice(&((offset >> 16) as u32).to_le_bytes())?;
+    Ok(())
+}
+
+/// Writes a VarcharSlice aux entry: (len as i32, flags as u32, ptr as u64)
+/// The `ascii` flag is stored as bit 0 of the flags field.
+pub fn append_varchar_slice(
+    aux_mem: &mut AcVec<u8>,
+    value: &[u8],
+    ascii: bool,
+) -> ParquetResult<()> {
+    let len = value.len() as i32;
+    let flags: u32 = if ascii || len == 0 { 1 } else { 0 };
+    aux_mem.reserve(16)?;
+    // SAFETY: We reserved enough space for 16 bytes, and we only write to the reserved space.
+    unsafe {
+        let addr = aux_mem.as_mut_ptr().add(aux_mem.len()).cast::<u64>();
+        // Write len and flags as a single write of 8 bytes, then write the pointer as another 8 bytes.
+        std::ptr::write_unaligned(addr, ((flags as u64) << 32) | (len as u32 as u64));
+        std::ptr::write_unaligned(addr.add(1), value.as_ptr() as u64);
+        aux_mem.set_len(aux_mem.len() + 16);
+    }
+    Ok(())
+}
+
+/// Writes a null VarcharSlice aux entry: (-1i32, 0u32, 0u64)
+pub fn append_varchar_slice_null(aux_mem: &mut AcVec<u8>) -> ParquetResult<()> {
+    aux_mem.reserve(16)?;
+    unsafe {
+        let addr = aux_mem.as_mut_ptr().add(aux_mem.len()).cast::<u64>();
+        // Write len and flags as a single write of 8 bytes, then write the pointer as another 8 bytes.
+        std::ptr::write_unaligned(addr, (0u64 << 32) | (-1i32 as u32 as u64));
+        std::ptr::write_unaligned(addr.add(1), 0u64);
+        aux_mem.set_len(aux_mem.len() + 16);
+    }
+    Ok(())
+}
+
+/// Writes count null VarcharSlice aux entries
+pub fn append_varchar_slice_nulls(aux_mem: &mut AcVec<u8>, count: usize) -> ParquetResult<()> {
+    let len = count
+        .checked_mul(16)
+        .ok_or_else(|| fmt_err!(Layout, "append_varchar_slice_nulls overflow"))?;
+    aux_mem.reserve(len)?;
+    unsafe {
+        let addr = aux_mem.as_mut_ptr().add(aux_mem.len()).cast::<u64>();
+        for i in 0..count {
+            std::ptr::write_unaligned(addr.add(i * 2), (0u64 << 32) | (-1i32 as u32 as u64));
+            std::ptr::write_unaligned(addr.add(i * 2 + 1), 0u64);
+        }
+        aux_mem.set_len(aux_mem.len() + len);
+    }
     Ok(())
 }
 

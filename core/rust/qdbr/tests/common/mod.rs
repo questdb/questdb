@@ -6,7 +6,10 @@ use std::{
 };
 
 use parquet::{
-    basic::{Encoding as ParquetEncoding, LogicalType, Repetition, Type as PhysicalType},
+    basic::{
+        Compression as ParquetCompression, Encoding as ParquetEncoding, LogicalType, Repetition,
+        Type as PhysicalType,
+    },
     data_type::{ByteArrayType, DataType},
     file::{
         properties::{WriterProperties, WriterVersion},
@@ -218,6 +221,14 @@ pub fn qdb_meta(tag: ColumnTypeTag) -> String {
     )
 }
 
+/// Build QDB metadata JSON for a column type tag with an explicit ASCII flag.
+pub fn qdb_meta_ascii(tag: ColumnTypeTag, ascii: bool) -> String {
+    format!(
+        r#"{{"version":1,"schema":[{{"column_type":{},"column_top":0,"ascii":{}}}]}}"#,
+        tag as u8, ascii
+    )
+}
+
 /// Build QDB metadata JSON for a column type with format field (e.g. Symbol).
 pub fn qdb_meta_with_format(col_type: ColumnType, format: u8) -> String {
     format!(
@@ -250,13 +261,57 @@ pub fn qdb_props(
     qdb_props_with_json(qdb_json, version, encoding)
 }
 
+/// Build writer properties with QDB metadata including an ASCII flag.
+pub fn qdb_props_ascii(
+    tag: ColumnTypeTag,
+    version: WriterVersion,
+    encoding: Encoding,
+    ascii: bool,
+) -> WriterProperties {
+    let qdb_json = qdb_meta_ascii(tag, ascii);
+    qdb_props_with_json(qdb_json, version, encoding)
+}
+
+/// Build writer properties with QDB metadata including an ASCII flag and compression.
+pub fn qdb_props_compressed_ascii(
+    tag: ColumnTypeTag,
+    version: WriterVersion,
+    encoding: Encoding,
+    compression: ParquetCompression,
+    ascii: bool,
+) -> WriterProperties {
+    let qdb_json = qdb_meta_ascii(tag, ascii);
+    qdb_props_with_json_compressed(qdb_json, version, encoding, compression)
+}
+
 fn qdb_props_with_json(
     qdb_json: String,
     version: WriterVersion,
     encoding: Encoding,
 ) -> WriterProperties {
+    qdb_props_with_json_compressed(qdb_json, version, encoding, ParquetCompression::UNCOMPRESSED)
+}
+
+/// Build writer properties with QDB metadata, encoding, and compression.
+pub fn qdb_props_compressed(
+    tag: ColumnTypeTag,
+    version: WriterVersion,
+    encoding: Encoding,
+    compression: ParquetCompression,
+) -> WriterProperties {
+    let qdb_json = qdb_meta(tag);
+    qdb_props_with_json_compressed(qdb_json, version, encoding, compression)
+}
+
+fn qdb_props_with_json_compressed(
+    qdb_json: String,
+    version: WriterVersion,
+    encoding: Encoding,
+    compression: ParquetCompression,
+) -> WriterProperties {
     let props = WriterProperties::builder()
         .set_writer_version(version)
+        .set_compression(compression)
         .set_key_value_metadata(Some(vec![KeyValue::new("questdb".to_string(), qdb_json)]));
     match encoding {
         Encoding::Plain => props
