@@ -94,7 +94,7 @@ where
 }
 
 const MINIMUM_BLOOM_FILTER_BYTES: usize = 32;
-const MAXIMUM_BLOOM_FILTER_BYTES: usize = 128 * 1024 * 1024; // 128MB
+const MAXIMUM_BLOOM_FILTER_BYTES: usize = 4 * 1024 * 1024; // 4MB
 
 /// Calculate optimal bloom filter size using the Split Block Bloom Filter formula.
 /// This matches Apache Arrow/Parquet's implementation.

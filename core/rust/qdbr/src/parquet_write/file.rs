@@ -294,6 +294,24 @@ pub fn create_row_group(
     let compression = options.compression;
     let num_columns = partition.columns.len();
 
+    // Collect unique hash values for bloom filter construction.
+    //
+    // We use HashSet to collect hashes rather than writing directly to a bloom filter
+    // bitset because the optimal bloom filter size depends on NDV,
+    // which is unknown before scanning the data. Alternative approaches:
+    //
+    // - Pre-allocate using row_count as NDV estimate: wastes space for low-cardinality
+    //   columns (e.g., status column with 3 values in 1M rows -> 1.25MB vs 32 bytes)
+    // - HyperLogLog for NDV estimation: requires two passes over the data
+    // - DuckDB approach: only create bloom filters for dictionary-encoded columns
+    //   where NDV equals dictionary size
+    //
+    // Note: Symbol columns could be optimized by passing symbolMapSize as NDV, but the
+    // benefit is limited since symbol columns are typically low-cardinality (means small HashSet).
+    //
+    // Memory overhead: ~20 bytes per distinct value (HashSet<u64>).
+    // For a typical row group of 1M rows with 1M distinct values: ~20MB per column.
+    // This is acceptable as it's temporary memory released after row group is written.
     let bloom_hashes: BloomHashes = (0..num_columns)
         .map(|col_idx| {
             if options.bloom_filter_columns.contains(&col_idx) {
@@ -385,7 +403,9 @@ pub fn create_row_group_from_partitions(
 
     let compression = options.compression;
 
-    // Create bloom hash sets upfront
+    // Collect unique hash values for bloom filter construction.
+    // See comment in create_row_group() for rationale on using HashSet vs direct bloom
+    // filter writing. Memory: ~20 bytes per distinct value, ~20MB for 1M unique values.
     let bloom_hashes: BloomHashes = (0..num_columns)
         .map(|col_idx| {
             if options.bloom_filter_columns.contains(&col_idx) {
