@@ -81,10 +81,6 @@ public class CopyExportContext {
         this.copyIDSupplier = engine.getConfiguration().getCopyIDSupplier();
     }
 
-    public static boolean canStreamExportParquet(RecordCursorFactory factory) throws SqlException {
-        return factory.supportsPageFrameCursor();
-    }
-
     public ExportTaskEntry assignExportEntry(
             SecurityContext securityContext,
             @NotNull CharSequence sqlText,
