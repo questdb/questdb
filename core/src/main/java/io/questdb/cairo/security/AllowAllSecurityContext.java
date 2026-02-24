@@ -47,6 +47,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterMatViewSetRefreshType(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
 
@@ -60,6 +68,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeAlterTableAlterColumnType(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
+    public void authorizeAlterTableAlterSymbolCapacity(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
     }
 
     @Override
@@ -95,6 +107,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableSetParam(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableSetType(TableToken tableToken) {
     }
 
@@ -104,6 +120,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    }
+
+    @Override
+    public void authorizeDatabaseBackup() {
     }
 
     @Override
@@ -167,10 +187,6 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSystemAdmin() {
-    }
-
-    @Override
-    public void authorizeDatabaseBackup() {
     }
 
     @Override

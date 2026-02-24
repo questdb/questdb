@@ -31,42 +31,48 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 
-public class HTTPSerialParquetExporter {
+public class HTTPSerialParquetExporter extends BaseParquetExporter {
     private static final Log LOG = LogFactory.getLog(HTTPSerialParquetExporter.class);
-    protected final CopyExportContext copyExportContext;
-    protected final ExportProgressReporter insertSelectReporter = new ExportProgressReporter();
-    protected final SqlExecutionContextImpl sqlExecutionContext;
-    protected SqlExecutionCircuitBreaker circuitBreaker;
-    protected CopyExportRequestTask task;
+    // Streaming export state (persists across PeerIsSlowToReadException resumes).
+    // Borrowed from ExportQueryProcessorState via setup methods; not owned.
+    private ParquetExportMode exportMode;
+    private RecordCursor fullCursor;
+    private HybridColumnMaterializer materializer;
+    private DirectLongList materializerColumnData;
+    private PageFrameCursor streamingPfc;
 
     public HTTPSerialParquetExporter(CairoEngine engine) {
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.copyExportContext = engine.getCopyExportContext();
+        super(engine);
     }
 
-    public void of(CopyExportRequestTask task) {
-        this.task = task;
-        this.circuitBreaker = task.getCircuitBreaker();
-        sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);
+    /**
+     * Frees resources held by the direct export path (materializer, column data, cursors).
+     * Must be called when the connection drops or the state is cleared.
+     */
+    public void clearExportResources() {
+        exportMode = null;
+        fullCursor = Misc.free(fullCursor);
+        streamingPfc = Misc.free(streamingPfc);
+        materializer = null;
+        materializerColumnData = null;
     }
 
     public CopyExportRequestTask.Phase process() throws Exception {
@@ -80,7 +86,8 @@ public class HTTPSerialParquetExporter {
 
         try {
             createOp = task.getCreateOp();
-            if (createOp != null && task.getPageFrameCursor() == null) {
+            if (createOp != null) {
+                // TEMP_TABLE path: create temp table and populate with data
                 insertSelectReporter.of(circuitBreaker, entry, task.getCopyID(), task.getTableName());
                 createOp.setCopyDataProgressReporter(insertSelectReporter);
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
@@ -122,76 +129,48 @@ public class HTTPSerialParquetExporter {
             // start streaming export
             phase = CopyExportRequestTask.Phase.STREAM_SENDING_DATA;
             entry.setPhase(phase);
-            processStreamExport();
+            assert exportMode != null;
+            switch (exportMode) {
+                case PAGE_FRAME_BACKED, CURSOR_BASED -> processHybridStreamExport();
+                case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> processStreamExport();
+            }
         } catch (PeerIsSlowToReadException e) {
             createOp = null;
             throw e;
-        } catch (SqlException e) {
-            LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-            Misc.free(factory);
-            copyExportContext.updateStatus(
-                    phase,
-                    circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                    null,
-                    Numbers.INT_NULL,
-                    e.getFlyweightMessage(),
-                    e.getErrorCode(),
-                    task.getTableName(),
-                    task.getCopyID()
-            );
-            throw e;
-        } catch (CairoException e) {
-            LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-            Misc.free(factory);
-            copyExportContext.updateStatus(
-                    phase,
-                    circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                    null,
-                    Numbers.INT_NULL,
-                    e.getFlyweightMessage(),
-                    e.getErrno(),
-                    task.getTableName(),
-                    task.getCopyID()
-            );
-            throw e;
         } catch (Throwable e) {
-            LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e).$(']').$();
+            CharSequence message;
+            int errno;
+            if (e instanceof SqlException se) {
+                message = se.getFlyweightMessage();
+                errno = se.getErrorCode();
+            } else if (e instanceof CairoException ce) {
+                message = ce.getFlyweightMessage();
+                errno = ce.getErrno();
+            } else {
+                message = e.getMessage();
+                errno = -1;
+            }
+            LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(message).$(']').$();
             Misc.free(factory);
+            clearExportResources();
             copyExportContext.updateStatus(
                     phase,
                     circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
                     null,
                     Numbers.INT_NULL,
-                    e.getMessage(),
-                    -1,
+                    message,
+                    errno,
                     task.getTableName(),
                     task.getCopyID()
             );
             throw e;
         } finally {
             if (createOp != null) {
-                phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
-                entry.setPhase(phase);
-                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 task.getStreamPartitionParquetExporter().freeOwnedPageFrameCursor();
-                try {
-                    if (tableToken == null) {
-                        tableToken = cairoEngine.getTableTokenIfExists(task.getTableName());
-                    }
-                    if (tableToken != null) {
-                        cairoEngine.dropTableOrViewOrMatView(Path.getThreadLocal(""), tableToken);
-                    }
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                } catch (CairoException e) {
-                    // drop failure doesn't affect task continuation - log and proceed
-                    LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                } catch (Throwable e) {
-                    LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getMessage()).$(']').$();
-                    copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
-                }
+                dropTempTable(entry, tableToken);
             }
         }
+        clearExportResources();
         phase = CopyExportRequestTask.Phase.SUCCESS;
         copyExportContext.updateStatus(
                 phase,
@@ -207,6 +186,52 @@ public class HTTPSerialParquetExporter {
         return phase;
     }
 
+    public void setExportMode(ParquetExportMode exportMode) {
+        this.exportMode = exportMode;
+    }
+
+    public void setupCursorBasedExport(RecordCursor cursor, HybridColumnMaterializer materializer, DirectLongList materializerColumnData) {
+        this.fullCursor = cursor;
+        this.materializer = materializer;
+        this.materializerColumnData = materializerColumnData;
+    }
+
+    public void setupPageFrameBackedExport(PageFrameCursor pfc, HybridColumnMaterializer materializer, DirectLongList materializerColumnData) {
+        this.streamingPfc = pfc;
+        this.materializer = materializer;
+        this.materializerColumnData = materializerColumnData;
+    }
+
+    private void processHybridStreamExport() throws Exception {
+        boolean isPageFrameBacked = exportMode == ParquetExportMode.PAGE_FRAME_BACKED;
+        CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
+        if (circuitBreaker.checkIfTripped()) {
+            LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
+            throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+        }
+        if (exporter.onResume()) {
+            LOG.debug().$("hybrid stream export progress (resume) [id=").$hexPadded(task.getCopyID())
+                    .$(", exported totalRows=").$(exporter.getTotalRows())
+                    .$(']').$();
+        } else {
+            copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        }
+
+        long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
+        drainHybridFrames(
+                exporter, materializer, materializerColumnData,
+                isPageFrameBacked ? streamingPfc : null,
+                isPageFrameBacked ? null : fullCursor,
+                batchSize, CopyExportRequestTask.Phase.STREAM_SENDING_DATA
+        );
+
+        long totalRows = exporter.getTotalRows();
+        copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
+        LOG.info().$("hybrid stream export completed [id=").$hexPadded(task.getCopyID())
+                .$(", totalRows=").$(totalRows)
+                .$(']').$();
+    }
+
     private void processStreamExport() throws Exception {
         PageFrameCursor pageFrameCursor = task.getPageFrameCursor();
         assert pageFrameCursor != null;
@@ -216,7 +241,7 @@ public class HTTPSerialParquetExporter {
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
         if (exporter.onResume()) {
-            LOG.info().$("stream export progress (resume) [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("stream export progress (resume) [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInFrame=").$(exporter.getCurrentFrameRowCount())
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(", partitionIndex=").$(exporter.getCurrentPartitionIndex())
@@ -248,7 +273,7 @@ public class HTTPSerialParquetExporter {
                 previousRowsWritten = currentRowsWritten;
             }
 
-            LOG.info().$("stream export progress [id=").$hexPadded(task.getCopyID())
+            LOG.debug().$("stream export progress [id=").$hexPadded(task.getCopyID())
                     .$(", rowsInFrame=").$(rowsInFrame)
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(", partitionIndex=").$(partitionIndex)
@@ -262,4 +287,5 @@ public class HTTPSerialParquetExporter {
                 .$(", totalRows=").$(totalRows)
                 .$(']').$();
     }
+
 }
