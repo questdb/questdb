@@ -27,10 +27,17 @@ fn generate_values(count: usize) -> Vec<ByteArray> {
 }
 
 /// Read VarcharSlice aux entry fields at the given row index.
-/// Returns (length: i32, reserved: u32, pointer: u64).
-fn read_aux_entry(aux: &[u8], row: usize) -> (i32, u32, u64) {
+/// Returns (header: u32, reserved: u32, pointer: u64).
+///
+/// Header format (VARCHAR-compatible):
+///   NULL:     0x00000004 (bit 2 set)
+///   Non-null: (length << 4) | flags
+///     bit 0 = 1 (always set for non-null)
+///     bit 1 = ASCII flag
+///     bit 2 = 0 (null flag, never set for non-null)
+fn read_aux_entry(aux: &[u8], row: usize) -> (u32, u32, u64) {
     let base = row * VARCHAR_SLICE_AUX_SIZE;
-    let length = i32::from_le_bytes([aux[base], aux[base + 1], aux[base + 2], aux[base + 3]]);
+    let header = u32::from_le_bytes([aux[base], aux[base + 1], aux[base + 2], aux[base + 3]]);
     let reserved =
         u32::from_le_bytes([aux[base + 4], aux[base + 5], aux[base + 6], aux[base + 7]]);
     let ptr = u64::from_le_bytes([
@@ -43,7 +50,7 @@ fn read_aux_entry(aux: &[u8], row: usize) -> (i32, u32, u64) {
         aux[base + 14],
         aux[base + 15],
     ]);
-    (length, reserved, ptr)
+    (header, reserved, ptr)
 }
 
 /// Represents a known valid memory range for pointer verification.
@@ -66,16 +73,16 @@ impl MemRange {
     }
 }
 
-const ASCII_FLAG: u32 = 1;
+/// NULL header sentinel: bit 2 set (= VARCHAR_HEADER_FLAG_NULL = 4).
+const SLICE_NULL_HEADER: u32 = 4;
 
 /// Verify VarcharSlice aux buffer in-place while the underlying buffers are still alive.
 ///
 /// For each row, verifies:
-/// - NULL rows: length == -1, flags == 0, pointer == 0
-/// - Non-NULL rows: length matches expected, pointer valid, and column-level ASCII flag correct
+/// - NULL rows: header == 4 (SLICE_NULL_HEADER), reserved == 0, pointer == 0
+/// - Non-NULL rows: header encodes correct length and ascii flag, pointer valid
 ///
-/// The `ascii` parameter is the column-level ASCII flag from metadata. All non-null entries
-/// should have flags matching this column-level flag (not per-value).
+/// The `ascii` parameter is the column-level ASCII flag from metadata.
 ///
 /// `valid_ranges` contains the memory ranges where pointers may legitimately point
 /// (file buffer, data_vec, page_buffers). Every non-null, non-empty pointer must fall
@@ -97,19 +104,17 @@ fn assert_varchar_slice_aux(
         aux.len()
     );
 
-    let expected_flags = if ascii { ASCII_FLAG } else { 0 };
-
     for i in 0..row_count {
-        let (length, reserved, ptr) = read_aux_entry(aux, i);
+        let (header, reserved, ptr) = read_aux_entry(aux, i);
 
         if nulls[i] {
             assert_eq!(
-                length, -1,
-                "row {i}: null varchar_slice should have length == -1, got {length}"
+                header, SLICE_NULL_HEADER,
+                "row {i}: null varchar_slice should have header == {SLICE_NULL_HEADER}, got {header}"
             );
             assert_eq!(
                 reserved, 0,
-                "row {i}: null varchar_slice flags should be 0, got {reserved}"
+                "row {i}: null varchar_slice reserved should be 0, got {reserved}"
             );
             assert_eq!(
                 ptr, 0,
@@ -120,15 +125,34 @@ fn assert_varchar_slice_aux(
             let expected_bytes = expected_str.as_bytes();
             let str_len = expected_bytes.len();
 
+            // Verify header: (len << 4) | flags
+            let decoded_len = (header >> 4) as usize;
             assert_eq!(
-                length as usize, str_len,
-                "row {i}: varchar_slice length mismatch, expected {str_len}, got {length}"
+                decoded_len, str_len,
+                "row {i}: varchar_slice length mismatch, expected {str_len}, got {decoded_len}"
             );
-            // Column-level ASCII flag: all non-null entries should have the same flag
+            // bit 0 must always be set for non-null
+            assert_ne!(
+                header & 1, 0,
+                "row {i}: non-null varchar_slice header bit 0 must be set, got header={header:#x}"
+            );
+            // bit 2 (null flag) must be clear for non-null
             assert_eq!(
-                reserved, expected_flags,
-                "row {i}: varchar_slice flags mismatch, expected {expected_flags}, got {reserved} \
-                 (ascii={ascii}, value={expected_str:?})"
+                header & 4, 0,
+                "row {i}: non-null varchar_slice header bit 2 (null) must be clear, got header={header:#x}"
+            );
+            // Check ASCII flag (bit 1)
+            let expected_ascii = ascii || str_len == 0;
+            let actual_ascii = (header & 2) != 0;
+            assert_eq!(
+                actual_ascii, expected_ascii,
+                "row {i}: varchar_slice ASCII flag mismatch, expected {expected_ascii}, got {actual_ascii} \
+                 (header={header:#x}, value={expected_str:?})"
+            );
+            // Reserved field must be zero
+            assert_eq!(
+                reserved, 0,
+                "row {i}: varchar_slice reserved should be 0, got {reserved}"
             );
 
             if str_len > 0 {

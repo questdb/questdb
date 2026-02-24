@@ -113,7 +113,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // Bind variables and deferred symbols
     public static final int VAR = 3;
     public static final int VARCHAR_HEADER_TYPE = 9;
-    public static final int VARCHAR_SLICE_HEADER_TYPE = 10;
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
     private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
@@ -337,8 +336,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.LONG128, ColumnType.UUID -> I16_TYPE;
             case ColumnType.STRING -> STRING_HEADER_TYPE;
             case ColumnType.BINARY -> BINARY_HEADER_TYPE;
-            case ColumnType.VARCHAR -> VARCHAR_HEADER_TYPE;
-            case ColumnType.VARCHAR_SLICE -> VARCHAR_SLICE_HEADER_TYPE;
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> VARCHAR_HEADER_TYPE;
             default -> UNDEFINED_CODE;
         };
     }
@@ -406,7 +404,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private static boolean isVarSizeType(int type) {
-        return type == STRING_HEADER_TYPE || type == BINARY_HEADER_TYPE || type == VARCHAR_HEADER_TYPE || type == VARCHAR_SLICE_HEADER_TYPE;
+        return type == STRING_HEADER_TYPE || type == BINARY_HEADER_TYPE || type == VARCHAR_HEADER_TYPE;
     }
 
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
@@ -1154,9 +1152,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case VARCHAR_HEADER_TYPE: // varchar headers are stored in aux vector
                 putOperand(offset, IMM, I8_TYPE, VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL);
                 break;
-            case VARCHAR_SLICE_HEADER_TYPE: // varchar slice: null is -1 (i32)
-                putOperand(offset, IMM, I4_TYPE, -1);
-                break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
         }
@@ -1498,8 +1493,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private static final int I8_INDEX = 4;
         private static final int STRING_HEADER_INDEX = 7;
         private static final int VARCHAR_HEADER_INDEX = 9;
-        private static final int VARCHAR_SLICE_HEADER_INDEX = 10;
-        private static final int TYPES_COUNT = VARCHAR_SLICE_HEADER_INDEX + 1;
+        private static final int TYPES_COUNT = VARCHAR_HEADER_INDEX + 1;
 
         private final byte[] sizes = new byte[TYPES_COUNT];
 
@@ -1531,7 +1525,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
          * (i.e., has no AVX2 vectorized memory read implementation).
          */
         public boolean requiresScalar() {
-            return sizes[VARCHAR_SLICE_HEADER_INDEX] > 0;
+            return false;
         }
 
         public boolean hasMixedSizes() {
@@ -1581,7 +1575,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case STRING_HEADER_INDEX -> STRING_HEADER_TYPE;
                 case BINARY_HEADER_INDEX -> BINARY_HEADER_TYPE;
                 case VARCHAR_HEADER_INDEX -> VARCHAR_HEADER_TYPE;
-                case VARCHAR_SLICE_HEADER_INDEX -> VARCHAR_SLICE_HEADER_TYPE;
                 default -> UNDEFINED_CODE;
             };
         }
@@ -1598,7 +1591,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case STRING_HEADER_TYPE -> STRING_HEADER_INDEX;
                 case BINARY_HEADER_TYPE -> BINARY_HEADER_INDEX;
                 case VARCHAR_HEADER_TYPE -> VARCHAR_HEADER_INDEX;
-                case VARCHAR_SLICE_HEADER_TYPE -> VARCHAR_SLICE_HEADER_INDEX;
                 default -> -1;
             };
         }
@@ -1610,7 +1602,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return switch (typeCode) {
                 case I1_TYPE -> 1;
                 case I2_TYPE -> 2;
-                case I4_TYPE, F4_TYPE, VARCHAR_SLICE_HEADER_TYPE -> 4;
+                case I4_TYPE, F4_TYPE -> 4;
                 case I8_TYPE, F8_TYPE, STRING_HEADER_TYPE, BINARY_HEADER_TYPE, VARCHAR_HEADER_TYPE -> 8;
                 case I16_TYPE -> 16;
                 default -> 0;

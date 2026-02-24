@@ -354,41 +354,55 @@ fn append_offset(aux_mem: &mut AcVec<u8>, offset: usize) -> ParquetResult<()> {
     Ok(())
 }
 
-/// Writes a VarcharSlice aux entry: (len as i32, flags as u32, ptr as u64)
-/// The `ascii` flag is stored as bit 0 of the flags field.
+/// Writes a VarcharSlice aux entry using a VARCHAR-compatible header format.
+///
+/// Header (bytes 0-3, i32):
+///   Non-null: (len << 4) | (ascii ? 0b11 : 0b01)
+///     bit 0 = 1 (always set for non-null, guarantees header is odd, never == 4)
+///     bit 1 = ASCII flag
+///     bit 2 = 0 (null flag, never set for non-null)
+///     bits 4-31 = string byte length
+///   Null: see `append_varchar_slice_null`
+///
+/// Bytes 4-7 (u32): reserved, always 0
+/// Bytes 8-15 (u64): pointer to string data
 pub fn append_varchar_slice(
     aux_mem: &mut AcVec<u8>,
     value: &[u8],
     ascii: bool,
 ) -> ParquetResult<()> {
-    let len = value.len() as i32;
-    let flags: u32 = if ascii || len == 0 { 1 } else { 0 };
+    let len = value.len() as u32;
+    let header: u32 = (len << 4) | if ascii || len == 0 { 3 } else { 1 };
     aux_mem.reserve(16)?;
     // SAFETY: We reserved enough space for 16 bytes, and we only write to the reserved space.
     unsafe {
         let addr = aux_mem.as_mut_ptr().add(aux_mem.len()).cast::<u64>();
-        // Write len and flags as a single write of 8 bytes, then write the pointer as another 8 bytes.
-        std::ptr::write_unaligned(addr, ((flags as u64) << 32) | (len as u32 as u64));
+        // Write header (bytes 0-3) + reserved zero (bytes 4-7) as a single u64.
+        std::ptr::write_unaligned(addr, header as u64);
         std::ptr::write_unaligned(addr.add(1), value.as_ptr() as u64);
         aux_mem.set_len(aux_mem.len() + 16);
     }
     Ok(())
 }
 
-/// Writes a null VarcharSlice aux entry: (-1i32, 0u32, 0u64)
+/// Writes a null VarcharSlice aux entry: header=4 (VARCHAR_HEADER_FLAG_NULL), ptr=0.
 pub fn append_varchar_slice_null(aux_mem: &mut AcVec<u8>) -> ParquetResult<()> {
     aux_mem.reserve(16)?;
     unsafe {
         let addr = aux_mem.as_mut_ptr().add(aux_mem.len()).cast::<u64>();
-        // Write len and flags as a single write of 8 bytes, then write the pointer as another 8 bytes.
-        std::ptr::write_unaligned(addr, (0u64 << 32) | (-1i32 as u32 as u64));
+        // Bytes 0-3: header = 4 (null flag, bit 2 set), bytes 4-7: 0.
+        std::ptr::write_unaligned(addr, SLICE_NULL_HEADER as u64);
         std::ptr::write_unaligned(addr.add(1), 0u64);
         aux_mem.set_len(aux_mem.len() + 16);
     }
     Ok(())
 }
 
-/// Writes count null VarcharSlice aux entries
+/// VARCHAR_HEADER_FLAG_NULL: null sentinel for VarcharSlice header (bit 2 set).
+/// Matches the VARCHAR null check in the JIT: i64(bytes 0-7) == 4.
+pub const SLICE_NULL_HEADER: u32 = 4;
+
+/// Writes count null VarcharSlice aux entries (header=4, ptr=0 each).
 pub fn append_varchar_slice_nulls(aux_mem: &mut AcVec<u8>, count: usize) -> ParquetResult<()> {
     let len = count
         .checked_mul(16)
@@ -397,7 +411,7 @@ pub fn append_varchar_slice_nulls(aux_mem: &mut AcVec<u8>, count: usize) -> Parq
     unsafe {
         let addr = aux_mem.as_mut_ptr().add(aux_mem.len()).cast::<u64>();
         for i in 0..count {
-            std::ptr::write_unaligned(addr.add(i * 2), (0u64 << 32) | (-1i32 as u32 as u64));
+            std::ptr::write_unaligned(addr.add(i * 2), SLICE_NULL_HEADER as u64);
             std::ptr::write_unaligned(addr.add(i * 2 + 1), 0u64);
         }
         aux_mem.set_len(aux_mem.len() + len);

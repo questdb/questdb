@@ -10,6 +10,7 @@ use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::delta_binary_packed::{Miniblock, MiniblockIterator};
 use crate::parquet_read::decoders::unpack::unpack32;
 use crate::parquet_read::ColumnChunkBuffers;
+use crate::parquet_write::varchar::SLICE_NULL_HEADER;
 
 const AUX_ENTRY_SIZE: usize = 16;
 
@@ -23,7 +24,7 @@ pub struct DeltaLAVarcharSliceDecoder<'a> {
     data: *const u8,
     data_len: usize,
     pos: usize,
-    ascii_flags: u64,
+    ascii: bool,
     // Delta decoder state
     iterator: MiniblockIterator<'a, i32>,
     current_value: i32,
@@ -55,14 +56,12 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
             None => (Miniblock::default(), packs_per_miniblock),
         };
 
-        let ascii_flags: u64 = if ascii { 1u64 << 32 } else { 0 };
-
         Ok(Self {
             data: unsafe { data.as_ptr().add(data_offset) },
             data_len: data.len() - data_offset,
             pos: 0,
             buffers,
-            ascii_flags,
+            ascii,
             iterator,
             current_value: first_value,
             consumed_initial: false,
@@ -139,22 +138,24 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
         Ok(value_ptr)
     }
 
-    /// Write a single VarcharSlice aux entry: (len as i32, flags as u32, ptr as u64)
+    /// Write a single VarcharSlice aux entry using VARCHAR-compatible header format.
     #[inline(always)]
     fn write_aux_entry(&self, aux_ptr: *mut u8, value_ptr: *const u8, len: i32) {
+        let len_u = len as u32;
+        let header: u32 = (len_u << 4) | if self.ascii || len_u == 0 { 3 } else { 1 };
         unsafe {
             let addr = aux_ptr.cast::<u64>();
-            std::ptr::write_unaligned(addr, self.ascii_flags | (len as u32 as u64));
+            std::ptr::write_unaligned(addr, header as u64);
             std::ptr::write_unaligned(addr.add(1), value_ptr as u64);
         }
     }
 
-    /// Write a null VarcharSlice aux entry: (-1i32, 0u32, 0u64)
+    /// Write a null VarcharSlice aux entry: header=4 (VARCHAR_HEADER_FLAG_NULL), ptr=0.
     #[inline(always)]
     fn write_null_entry(aux_ptr: *mut u8) {
         unsafe {
             let addr = aux_ptr.cast::<u64>();
-            std::ptr::write_unaligned(addr, -1i32 as u32 as u64);
+            std::ptr::write_unaligned(addr, SLICE_NULL_HEADER as u64);
             std::ptr::write_unaligned(addr.add(1), 0u64);
         }
     }
@@ -233,7 +234,7 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
         let mut pos = self.pos;
         let data = self.data;
         let data_len = self.data_len;
-        let ascii_flags = self.ascii_flags;
+        let ascii = self.ascii;
 
         // Inline bounds check macro for the hot loop
         macro_rules! checked_advance {
@@ -287,9 +288,11 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
                 current_value = current_value.wrapping_add(min_delta.wrapping_add(self.values[i]));
                 let len = current_value;
                 let value_ptr = checked_advance!(len, pos);
+                let len_u = len as u32;
+                let header: u32 = (len_u << 4) | if ascii || len_u == 0 { 3 } else { 1 };
                 unsafe {
                     let addr = aux_ptr.add(i * AUX_ENTRY_SIZE).cast::<u64>();
-                    std::ptr::write_unaligned(addr, ascii_flags | (len as u32 as u64));
+                    std::ptr::write_unaligned(addr, header as u64);
                     std::ptr::write_unaligned(addr.add(1), value_ptr as u64);
                 }
             }

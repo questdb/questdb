@@ -245,12 +245,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static Utf8Sequence getSliceValue(long auxAddr, long rowNum, Utf8SplitString utf8SplitView) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int length = Unsafe.getUnsafe().getInt(auxEntry);
-        if (length < 0) {
+        int header = Unsafe.getUnsafe().getInt(auxEntry);
+        if ((header & VARCHAR_HEADER_FLAG_NULL) != 0) {
             return null;
         }
-        int flags = Unsafe.getUnsafe().getInt(auxEntry + 4);
-        boolean ascii = (flags & 1) != 0;
+        int length = header >>> 4;
+        boolean ascii = (header & 2) != 0;
         long ptr = Unsafe.getUnsafe().getLong(auxEntry + 8);
         return utf8SplitView.of(ptr, ptr, ptr + length, length, ascii);
     }
@@ -260,11 +260,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static int getSliceValueSize(long auxAddr, long rowNum) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
-        int length = Unsafe.getUnsafe().getInt(auxEntry);
-        if (length < 0) {
+        int header = Unsafe.getUnsafe().getInt(auxEntry);
+        if ((header & VARCHAR_HEADER_FLAG_NULL) != 0) {
             return TableUtils.NULL_LEN;
         }
-        return length;
+        return header >>> 4;
     }
 
     public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {

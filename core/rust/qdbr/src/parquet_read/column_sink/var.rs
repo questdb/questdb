@@ -497,19 +497,18 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
         let value = self.slicer.next();
-        let ascii_flag: u32 = if self.ascii { ASCII_FLAG } else { 0 };
         let offset = self.buffers.data_vec.len();
         self.buffers.data_vec.extend_from_slice(value)?;
-        // Write (len as i32, SPILL_MARKER | ascii_flag, offset as u64).
-        // The spill marker (bit 31) distinguishes spill entries (offsets needing fixup)
-        // from non-spill entries (absolute pointers). The ASCII flag (bit 0) is preserved
-        // through the fixup pass when the spill marker is cleared.
-        let len = value.len() as i32;
-        let flags = SPILL_MARKER | ascii_flag;
-        self.buffers.aux_vec.extend_from_slice(&len.to_le_bytes())?;
+        // Write (header as u32, SPILL_MARKER as u32, offset as u64).
+        // The header uses the VARCHAR-compatible format: (len << 4) | flags.
+        // The spill marker (bit 31 of bytes 4-7) distinguishes spill entries
+        // (offsets needing fixup) from non-spill entries (absolute pointers).
+        let len = value.len() as u32;
+        let header: u32 = (len << 4) | if self.ascii || len == 0 { 3 } else { 1 };
+        let combined = (SPILL_MARKER as u64) << 32 | (header as u64);
         self.buffers
             .aux_vec
-            .extend_from_slice(&flags.to_le_bytes())?;
+            .extend_from_slice(&combined.to_le_bytes())?;
         self.buffers
             .aux_vec
             .extend_from_slice(&(offset as u64).to_le_bytes())?;
@@ -557,7 +556,7 @@ impl<'a, T: DataPageSlicer> VarcharSliceSpillSink<'a, T> {
 /// data_vec may reallocate between pages, so converting offsets to pointers
 /// before all pages are decoded would produce stale pointers.
 ///
-/// Only entries with the spill marker (bytes 4-7 == SPILL_MARKER) are touched.
+/// Only entries with the spill marker (bit 31 of bytes 4-7) are touched.
 /// Non-spill entries from other encodings already contain absolute pointers and
 /// are left unchanged. This is safe even when a chunk mixes DeltaByteArray
 /// pages with Plain/DeltaLength/RleDictionary pages.
@@ -579,9 +578,9 @@ pub fn fixup_varchar_slice_spill_pointers(bufs: &mut ColumnChunkBuffers) {
             // absolute pointer. Skip.
             continue;
         }
-        // Clear the spill marker (bit 31), preserving the ASCII flag (bit 0)
-        let flags = marker & !SPILL_MARKER;
-        aux[entry_offset + 4..entry_offset + 8].copy_from_slice(&flags.to_le_bytes());
+        // Clear bytes 4-7 entirely. The ASCII flag is now in the header (bytes 0-3),
+        // so we zero out the reserved field.
+        aux[entry_offset + 4..entry_offset + 8].copy_from_slice(&0u32.to_le_bytes());
         // Read offset from bytes 8..16
         let offset = u64::from_le_bytes([
             aux[entry_offset + 8],
@@ -599,4 +598,3 @@ pub fn fixup_varchar_slice_spill_pointers(bufs: &mut ColumnChunkBuffers) {
     }
 }
 
-const ASCII_FLAG: u32 = 1;

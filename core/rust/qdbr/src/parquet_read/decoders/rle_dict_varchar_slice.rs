@@ -11,6 +11,7 @@ use crate::parquet_read::decoders::dictionary::BaseVarDictDecoder;
 use crate::parquet_read::decoders::{RepeatN, RleIterator};
 use crate::parquet_read::page::DictPage;
 use crate::parquet_read::ColumnChunkBuffers;
+use crate::parquet_write::varchar::SLICE_NULL_HEADER;
 
 use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
@@ -36,16 +37,16 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
         ascii: bool,
     ) -> ParquetResult<Self> {
         let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
-        let ascii_flags: u64 = if ascii { 1u64 << 32 } else { 0 };
 
         let mut dict_aux = Vec::with_capacity(dict_decoder.dict_values.len());
         for &value in &dict_decoder.dict_values {
             let len = value.len() as u32;
+            let header: u32 = (len << 4) | if ascii || len == 0 { 3 } else { 1 };
             let ptr = value.as_ptr() as u64;
-            dict_aux.push([ascii_flags | len as u64, ptr]);
+            dict_aux.push([header as u64, ptr]);
         }
 
-        let null_entry = [(-1i32 as u32) as u64, 0u64];
+        let null_entry = [SLICE_NULL_HEADER as u64, 0u64];
         let dict_len = dict_decoder.dict_values.len() as u32;
 
         let num_bits = *buffer
