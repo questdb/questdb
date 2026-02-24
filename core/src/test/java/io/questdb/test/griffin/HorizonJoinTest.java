@@ -646,7 +646,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """,
                     "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
                             "FROM trades AS t " +
-                            "HORIZON JOIN (prices WHERE ts in '1970-01-01') AS p ON (t.sym = p.sym) " +
+                            "HORIZON JOIN (prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
                             "RANGE FROM 0s TO 2s STEP 1s AS h " +
                             "ORDER BY sec_offs",
                     null,
@@ -665,7 +665,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """,
                     "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), avg(p.price0), sum(t.qty) " +
                             "FROM trades AS t " +
-                            "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts in '1970-01-01') AS p ON (t.sym = p.sym) " +
+                            "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
                             "RANGE FROM 0s TO 2s STEP 1s AS h " +
                             "ORDER BY sec_offs",
                     null,

@@ -55,15 +55,15 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     private int frameCount = 0;
     // Cursor's lifecycle is managed externally
     private PageFrameCursor frameCursor;
-    // Timestamp column index in the address cache; may differ from the original metadata index
-    // when the cache is populated with logically-remapped page frames (e.g. SelectedPageFrame).
-    // Initialized from metadata in the constructor; may be overridden via of().
-    private int timestampIndex;
     // Off-heap because it's per-frame and can be large unlike per-partition lists
     private DirectIntList framePartitionIndexes;
     private LongList frameRowCounts;
     private LongList partitionCeilings;
     private LongList partitionTimestamps;
+    // Timestamp column index in the address cache; may differ from the original metadata index
+    // when the cache is populated with logically-remapped page frames (e.g. SelectedPageFrame).
+    // Initialized from metadata in the constructor; may be overridden via of().
+    private int timestampIndex;
 
     public ConcurrentTimeFrameCursorImpl(
             @NotNull CairoConfiguration configuration,
