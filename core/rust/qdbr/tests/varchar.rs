@@ -22,8 +22,28 @@ fn read_offset(aux: &[u8], base: usize) -> usize {
 
 fn generate_values(count: usize) -> Vec<ByteArray> {
     (0..count)
-        .map(|i| ByteArray::from(format!("val_{i:04}").as_str()))
+        .map(|i| {
+            if i % 7 == 0 {
+                // >9 bytes: exercises the overflow (non-inlined) storage path
+                ByteArray::from(format!("overflow_value_{i:06}").as_str())
+            } else if i % 11 == 0 {
+                // Multi-byte UTF-8: exercises UTF-8 handling
+                ByteArray::from(format!("caf\u{00e9}_{i}").as_str())
+            } else {
+                ByteArray::from(format!("val_{i:04}").as_str())
+            }
+        })
         .collect()
+}
+
+fn expected_varchar_str(i: usize) -> String {
+    if i % 7 == 0 {
+        format!("overflow_value_{i:06}")
+    } else if i % 11 == 0 {
+        format!("caf\u{00e9}_{i}")
+    } else {
+        format!("val_{i:04}")
+    }
 }
 
 fn assert_varchar(nulls: &[bool], data: &[u8], aux: &[u8]) {
@@ -41,7 +61,7 @@ fn assert_varchar(nulls: &[bool], data: &[u8], aux: &[u8]) {
                 "row {i}: null varchar should have NULL flag set, got header {header_byte:#04x}"
             );
         } else {
-            let expected_str = format!("val_{i:04}");
+            let expected_str = expected_varchar_str(i);
             let expected_bytes = expected_str.as_bytes();
             let str_len = expected_bytes.len();
 

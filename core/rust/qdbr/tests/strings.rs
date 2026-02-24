@@ -11,8 +11,28 @@ use qdb_core::col_type::ColumnTypeTag;
 
 fn generate_values(count: usize) -> Vec<ByteArray> {
     (0..count)
-        .map(|i| ByteArray::from(format!("str_{i:04}").as_str()))
+        .map(|i| {
+            if i % 11 == 0 {
+                // Multi-byte UTF-8: 2-byte chars in UTF-8, single code unit in UTF-16
+                ByteArray::from(format!("caf\u{00e9}_{i}").as_str())
+            } else if i % 13 == 0 {
+                // Characters outside BMP: requires surrogate pair in UTF-16
+                ByteArray::from(format!("emoji\u{1F600}_{i}").as_str())
+            } else {
+                ByteArray::from(format!("str_{i:04}").as_str())
+            }
+        })
         .collect()
+}
+
+fn expected_str_value(i: usize) -> String {
+    if i % 11 == 0 {
+        format!("caf\u{00e9}_{i}")
+    } else if i % 13 == 0 {
+        format!("emoji\u{1F600}_{i}")
+    } else {
+        format!("str_{i:04}")
+    }
 }
 
 fn assert_string(nulls: &[bool], data: &[u8], aux: &[u8]) {
@@ -31,7 +51,7 @@ fn assert_string(nulls: &[bool], data: &[u8], aux: &[u8]) {
             assert_eq!(len, -1, "row {i}: null string should have length -1");
             data_offset += 4;
         } else {
-            let expected_str = format!("str_{i:04}");
+            let expected_str = expected_str_value(i);
             let utf16_chars: Vec<u16> = expected_str.encode_utf16().collect();
             let utf16_char_count = utf16_chars.len();
 

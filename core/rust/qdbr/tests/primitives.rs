@@ -364,6 +364,23 @@ impl PrimitiveType for DateInt32 {
     }
 }
 
+// --- Int32-backed Char type (stored as u16/i16, read from Int32) ---
+
+struct Char;
+
+impl PrimitiveType for Char {
+    type T = i16;
+    type U = Int32Type;
+    const NULL: Self::T = nulls::SHORT;
+    const TAG: ColumnTypeTag = ColumnTypeTag::Char;
+
+    fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        // Generate valid char code points (printable ASCII range)
+        let v = (s % 95 + 32) as i16;
+        (v as i32, v)
+    }
+}
+
 // --- Float-backed types ---
 
 struct Float;
@@ -491,6 +508,34 @@ impl PrimitiveType for Long256 {
     }
 }
 
+// --- UUID type (FixedLenByteArray(16) with UUID logical type, byte-swapped) ---
+
+struct Uuid;
+
+impl PrimitiveType for Uuid {
+    type T = u128;
+    type U = FixedLenByteArrayType;
+    const NULL: Self::T = nulls::UUID;
+    const TAG: ColumnTypeTag = ColumnTypeTag::Uuid;
+    const ENCODINGS: &[Encoding] = &[Encoding::Plain];
+    const FIXED_LEN: Option<i32> = Some(16);
+    const LOGICAL_TYPE: Option<LogicalType> = Some(LogicalType::Uuid);
+
+    fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
+        let s = rnd(s);
+        // Parquet stores UUIDs as big-endian bytes.
+        // The decoder reads the raw bytes as u128 (native/LE) then applies u128::from_be(),
+        // which is equivalent to u128::from_be_bytes(raw_bytes).
+        let hi = (s as u64).wrapping_add(7777);
+        let lo = s as u64;
+        let mut raw_bytes = [0u8; 16];
+        raw_bytes[0..8].copy_from_slice(&hi.to_be_bytes());
+        raw_bytes[8..16].copy_from_slice(&lo.to_be_bytes());
+        let expected = u128::from_be_bytes(raw_bytes);
+        (FixedLenByteArray::from(raw_bytes.to_vec()), expected)
+    }
+}
+
 // --- Int96-backed types ---
 
 struct TimestampInt96;
@@ -612,6 +657,16 @@ fn test_long128() {
 #[test]
 fn test_long256() {
     run_all_combos::<Long256>("Long256");
+}
+
+#[test]
+fn test_char() {
+    run_all_combos::<Char>("Char");
+}
+
+#[test]
+fn test_uuid() {
+    run_all_combos::<Uuid>("Uuid");
 }
 
 #[test]
