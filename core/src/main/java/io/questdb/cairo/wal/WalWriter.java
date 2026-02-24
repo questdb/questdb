@@ -891,12 +891,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
                 if (walTelemetryEnabled) {
-                    final long minTs = (txnRowCount == 0 || txnMinTimestamp == Long.MAX_VALUE)
-                            ? Numbers.LONG_NULL
-                            : txnMinTimestamp;
-                    final long maxTs = (txnRowCount == 0 || txnMaxTimestamp < 0)
-                            ? Numbers.LONG_NULL
-                            : txnMaxTimestamp;
+                    final long minTs = txnRowCount > 0 ? txnMinTimestamp : Numbers.LONG_NULL;
+                    final long maxTs = txnRowCount > 0 ? txnMaxTimestamp : Numbers.LONG_NULL;
                     TelemetryWalTask.store(
                             telemetryWal,
                             TelemetryEvent.WAL_TXN_COMMITTED,
