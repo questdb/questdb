@@ -616,6 +616,113 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinFilterTimestampFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
+                                ('1970-01-02T00:00:01.000000Z', 'AX', 11)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            // Interval filter on the slave table.
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t10.0\t5.0
+                            1\t10.0\t5.0
+                            2\t10.0\t5.0
+                            """,
+                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN (prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                            "ORDER BY sec_offs",
+                    null,
+                    true,
+                    true
+            );
+
+            // Same query, but with reordered columns in the slave subquery.
+            // This exercises SelectedConcurrentTimeFrameCursor.
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tavg1\tsum
+                            0\t10.0\t10.0\t5.0
+                            1\t10.0\t10.0\t5.0
+                            2\t10.0\t10.0\t5.0
+                            """,
+                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), avg(p.price0), sum(t.qty) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                            "ORDER BY sec_offs",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinFilterTimestampFilterSequential() throws Exception {
+        // Force the sequential (non-parallel) horizon join path to exercise
+        // SelectedTimeFrameCursor.getTimestampIndex(). When the slave subquery
+        // reorders columns so that the timestamp is NOT at position 0, the
+        // helper's binary search reads the wrong column.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
+                                ('1970-01-02T00:00:01.000000Z', 'AX', 11)
+                            """
+            );
+
+            // Reordered columns: timestamp moves from position 0 to position 3.
+            // With the bug, the binary search reads the price column as a timestamp.
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tavg1\tsum
+                            0\t10.0\t10.0\t5.0
+                            1\t10.0\t10.0\t5.0
+                            2\t10.0\t10.0\t5.0
+                            """,
+                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), avg(p.price0), sum(t.qty) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                            "ORDER BY sec_offs",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyFunctionsFreedOnClose() throws Exception {
         // alloc() allocates native memory that is freed in close().
         // If keyFunctions are not freed in factory._close(), assertMemoryLeak() detects the leak.
