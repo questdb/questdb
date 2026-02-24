@@ -236,7 +236,11 @@ stages:
 
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
               OBJECTS="--object $COVERAGE_DIR/libquestdbr.so --object $COVERAGE_DIR/questdbr-test-binary"
-              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '/azp/_work/[0-9]+/s' | head -n 1 || true)
+              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
+              if [ -z "$ORIG_PATH" ]; then
+                echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
+                exit 1
+              fi
               PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
               echo "Objects args: $OBJECTS"
 

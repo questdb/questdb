@@ -3,6 +3,9 @@ use std::collections::VecDeque;
 use std::io::Write;
 
 use crate::parquet::error::fmt_err;
+use crate::parquet_write::decimal::{
+    Decimal128, Decimal16, Decimal256, Decimal32, Decimal64, Decimal8,
+};
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::{KeyValue, SchemaDescriptor, SortingColumn};
@@ -1200,7 +1203,60 @@ fn chunk_to_primitive_page(
             "unexpected symbol type in primitive encoder for column {} (should be handled earlier)",
             column.name,
         )),
-        _ => todo!(),
+        ColumnTypeTag::Decimal8 => {
+            let data: &[Decimal8] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal16 => {
+            let data: &[Decimal16] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal32 => {
+            let data: &[Decimal32] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal64 => {
+            let data: &[Decimal64] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal128 => {
+            let data: &[Decimal128] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal256 => {
+            let data: &[Decimal256] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_page_plain(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
     }
 }
 

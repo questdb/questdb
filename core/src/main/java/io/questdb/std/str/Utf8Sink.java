@@ -314,6 +314,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
+    default Utf8Sink putQuotedEscapedStr(@NotNull CharSequence cs) {
+        putAscii('"').escapeJsonStr(cs).putAscii('"');
+        return this;
+    }
+
     /**
      * Encodes the given UTF-16 string or its fragment to UTF-8 and appends it
      * to this sink.

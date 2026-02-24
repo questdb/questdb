@@ -48,6 +48,14 @@ public interface QuaternaryFunction extends Function {
         getFunc3().cursorClosed();
     }
 
+    @Override
+    default int getComplexity() {
+        return Function.addComplexity(
+                Function.addComplexity(getFunc0().getComplexity(), getFunc1().getComplexity()),
+                Function.addComplexity(getFunc2().getComplexity(), getFunc3().getComplexity())
+        );
+    }
+
     Function getFunc0();
 
     Function getFunc1();

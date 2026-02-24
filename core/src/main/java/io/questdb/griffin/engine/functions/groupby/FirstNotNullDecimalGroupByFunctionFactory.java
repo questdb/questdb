@@ -95,9 +95,10 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 // srcRowId is non-null at this point since we know that the value is non-null
-                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+                destValue.getDecimal128(valueIndex + 1, decimal128);
+                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || decimal128.isNull()) {
                     destValue.putLong(valueIndex, srcRowId);
-
+                    srcValue.getDecimal128(valueIndex + 1, decimal128);
                     destValue.putDecimal128(valueIndex + 1, decimal128);
                 }
             }
@@ -129,7 +130,7 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 // srcRowId is non-null at this point since we know that the value is non-null
-                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getDecimal16(valueIndex + 1) == Decimals.DECIMAL16_NULL) {
                     destValue.putLong(valueIndex, srcRowId);
                     destValue.putShort(valueIndex + 1, srcVal);
                 }
@@ -163,8 +164,10 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 // srcRowId is non-null at this point since we know that the value is non-null
-                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+                destValue.getDecimal256(valueIndex + 1, decimal256);
+                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || decimal256.isNull()) {
                     destValue.putLong(valueIndex, srcRowId);
+                    srcValue.getDecimal256(valueIndex + 1, decimal256);
                     destValue.putDecimal256(valueIndex + 1, decimal256);
                 }
             }
@@ -196,7 +199,7 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 // srcRowId is non-null at this point since we know that the value is non-null
-                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getDecimal32(valueIndex + 1) == Decimals.DECIMAL32_NULL) {
                     destValue.putLong(valueIndex, srcRowId);
                     destValue.putInt(valueIndex + 1, srcVal);
                 }
@@ -229,7 +232,7 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 // srcRowId is non-null at this point since we know that the value is non-null
-                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || Decimal64.isNull(destValue.getDecimal64(valueIndex + 1))) {
                     destValue.putLong(valueIndex, srcRowId);
                     destValue.putLong(valueIndex + 1, srcVal);
                 }
@@ -262,7 +265,7 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 // srcRowId is non-null at this point since we know that the value is non-null
-                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+                if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getDecimal8(valueIndex + 1) == Decimals.DECIMAL8_NULL) {
                     destValue.putLong(valueIndex, srcRowId);
                     destValue.putByte(valueIndex + 1, srcVal);
                 }

@@ -48,6 +48,11 @@ public interface BinaryFunction extends Function {
         getRight().cursorClosed();
     }
 
+    @Override
+    default int getComplexity() {
+        return Function.addComplexity(getLeft().getComplexity(), getRight().getComplexity());
+    }
+
     /**
      * Returns the left (first) argument of this binary function.
      *
