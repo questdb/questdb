@@ -521,6 +521,24 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         final Function elseB = getElseFunction(valueType, elseBranch);
         final int branchCount = strKeys.size();
+
+        // When there's a single WHEN branch, no NULL branch, INT return type, and
+        // both THEN/ELSE are constants, compile into a direct int comparison.
+        // Example: CASE sym WHEN 'buy' THEN 1 ELSE -1 END
+        if (branchCount == 1
+                && nullFunc == null
+                && ColumnType.tagOf(valueType) == ColumnType.INT
+                && keyBranches.getQuick(0).isConstant()
+                && elseB.isConstant()
+        ) {
+            return new SymbolSwitchConstIntFunction(
+                    keyFunction,
+                    strKeys.getQuick(0),
+                    keyBranches.getQuick(0).getInt(null),
+                    elseB.getInt(null)
+            );
+        }
+
         final SymbolPicker picker;
         if (branchCount == 1) {
             picker = new SymbolSwitchSinglePicker(
@@ -631,6 +649,79 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 sink.val(",null,").val(nullFunc);
             }
             sink.val(',').val(elseFunc).val(')');
+        }
+    }
+
+    /**
+     * Inlined CASE for symbol-keyed single-branch switch with constant int results.
+     * Compiles {@code CASE symbol WHEN 'value' THEN int_const ELSE int_const END}
+     * into a direct int comparison without picker/CaseFunction virtual dispatch.
+     * <p>
+     * NULL key handling: {@code SymbolTable.VALUE_IS_NULL} (INT_NULL) never equals
+     * a valid resolved key (>= 0) or VALUE_NOT_FOUND (-2), so NULL naturally maps
+     * to the else value without an explicit check.
+     */
+    private static class SymbolSwitchConstIntFunction extends IntFunction {
+        private final double doubleElseValue;
+        private final double doubleThenValue;
+        private final int elseValue;
+        private final SymbolFunction keyFunction;
+        private final String strKey;
+        private final int thenValue;
+        private int resolvedKey;
+
+        SymbolSwitchConstIntFunction(
+                SymbolFunction keyFunction,
+                String strKey,
+                int thenValue,
+                int elseValue
+        ) {
+            this.keyFunction = keyFunction;
+            this.strKey = strKey;
+            this.thenValue = thenValue;
+            this.elseValue = elseValue;
+            this.doubleThenValue = thenValue;
+            this.doubleElseValue = elseValue;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? doubleThenValue : doubleElseValue;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? thenValue : elseValue;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? thenValue : elseValue;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            keyFunction.init(symbolTableSource, executionContext);
+            final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
+            assert symbolTable != null;
+            resolvedKey = symbolTable.keyOf(strKey);
+        }
+
+        @Override
+        public boolean supportsParallelism() {
+            return keyFunction.supportsParallelism();
+        }
+
+        @Override
+        public boolean supportsRandomAccess() {
+            return keyFunction.supportsRandomAccess();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("switch(").val(keyFunction)
+                    .val(",'").val(strKey).val("',").val(thenValue)
+                    .val(',').val(elseValue).val(')');
         }
     }
 

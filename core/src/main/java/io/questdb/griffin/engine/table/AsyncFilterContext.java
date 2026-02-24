@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
-import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
+import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -53,13 +53,13 @@ public class AsyncFilterContext implements Closeable {
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
     private final IntHashSet filterUsedColumnIndexes;
-    private final ObjList<PageFrameFilteredNoRandomAccessMemoryRecord> frameFilteredMemoryRecords;
+    private final ObjList<PageFrameFilteredMemoryRecord> frameFilteredMemoryRecords;
     private final DirectLongList ownerAuxAddresses;
     private final DirectLongList ownerDataAddresses;
     private final Function ownerFilter;
     private final DirectLongList ownerFilteredRows;
     private final PageFrameMemoryPool ownerMemoryPool;
-    private final PageFrameFilteredNoRandomAccessMemoryRecord ownerPageFrameFilteredNoRandomAccessMemoryRecord;
+    private final PageFrameFilteredMemoryRecord ownerPageFrameFilteredMemoryRecord;
     private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<DirectLongList> perWorkerAuxAddresses;
     private final ObjList<DirectLongList> perWorkerDataAddresses;
@@ -115,13 +115,13 @@ public class AsyncFilterContext implements Closeable {
             }
 
             if (filteredMemoryRecordCount > 0) {
-                ownerPageFrameFilteredNoRandomAccessMemoryRecord = new PageFrameFilteredNoRandomAccessMemoryRecord();
+                ownerPageFrameFilteredMemoryRecord = new PageFrameFilteredMemoryRecord();
                 frameFilteredMemoryRecords = new ObjList<>(filteredMemoryRecordCount);
                 for (int i = 0; i < filteredMemoryRecordCount; i++) {
-                    frameFilteredMemoryRecords.extendAndSet(i, new PageFrameFilteredNoRandomAccessMemoryRecord());
+                    frameFilteredMemoryRecords.extendAndSet(i, new PageFrameFilteredMemoryRecord());
                 }
             } else {
-                ownerPageFrameFilteredNoRandomAccessMemoryRecord = null;
+                ownerPageFrameFilteredMemoryRecord = null;
                 frameFilteredMemoryRecords = null;
             }
         } catch (Throwable th) {
@@ -155,7 +155,7 @@ public class AsyncFilterContext implements Closeable {
         if (frameFilteredMemoryRecords != null) {
             Misc.freeObjList(frameFilteredMemoryRecords);
         }
-        Misc.free(ownerPageFrameFilteredNoRandomAccessMemoryRecord);
+        Misc.free(ownerPageFrameFilteredMemoryRecord);
     }
 
     public DirectLongList getAuxAddresses(int slotId) {
@@ -213,9 +213,9 @@ public class AsyncFilterContext implements Closeable {
         return ownerMemoryPool;
     }
 
-    public PageFrameFilteredNoRandomAccessMemoryRecord getPageFrameFilteredMemoryRecord(int slotId) {
+    public PageFrameFilteredMemoryRecord getPageFrameFilteredMemoryRecord(int slotId) {
         if (slotId == -1) {
-            return ownerPageFrameFilteredNoRandomAccessMemoryRecord;
+            return ownerPageFrameFilteredMemoryRecord;
         }
         return frameFilteredMemoryRecords.getQuick(slotId);
     }
