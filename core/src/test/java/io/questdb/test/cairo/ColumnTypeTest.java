@@ -153,7 +153,8 @@ public class ColumnTypeTest {
                 ColumnType.REGCLASS,
                 ColumnType.REGPROCEDURE,
                 ColumnType.ARRAY_STRING,
-                ColumnType.PARAMETER
+                ColumnType.PARAMETER,
+                ColumnType.VARCHAR_SLICE
         );
 
         short allTypesLowerBoundInc = ColumnType.UNDEFINED + 1;
