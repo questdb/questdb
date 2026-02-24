@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -54,7 +53,7 @@ public class IPv4MinusIPv4FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    static class Func extends LongFunction implements BinaryFunction {
+    static class Func extends LongFunction implements ArithmeticBinaryFunction {
         private final Function left;
         private final Function right;
 

@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal256LoaderFunctionFactory;
 import io.questdb.std.Decimal128;
@@ -36,7 +35,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
 
-abstract class ArithmeticDecimal256Function extends DecimalFunction implements BinaryFunction {
+abstract class ArithmeticDecimal256Function extends DecimalFunction implements ArithmeticBinaryFunction {
     protected final Decimal256 decimal = new Decimal256();
     protected final Function left;
     protected final int precision;

@@ -254,10 +254,11 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortLightValueMaxPages());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlHashJoinValuePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlHashJoinValueMaxPages());
+        Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlHorizonJoinMaxOffsets());
         Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlLatestByRowCount());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlHashJoinLightValuePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlHashJoinLightValueMaxPages());
-        Assert.assertEquals(100, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
@@ -1975,6 +1976,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1027, configuration.getSqlSortLightValueMaxPages());
         Assert.assertEquals(8 * 1024 * 1024, configuration.getSqlHashJoinValuePageSize());
         Assert.assertEquals(1024, configuration.getSqlHashJoinValueMaxPages());
+        Assert.assertEquals(5000, configuration.getSqlHorizonJoinMaxOffsets());
         Assert.assertEquals(10000, configuration.getSqlLatestByRowCount());
         Assert.assertEquals(2 * 1024 * 1024, configuration.getSqlHashJoinLightValuePageSize());
         Assert.assertEquals(1025, configuration.getSqlHashJoinLightValueMaxPages());
@@ -2131,7 +2133,7 @@ public class PropServerConfigurationTest {
                     if (!key.contains(".") || key.startsWith("http.redirect") || key.contains(" ")
                             || key.startsWith("replication") || key.startsWith("acl") || key.contains("tls")
                             || key.startsWith("cold.storage") || key.startsWith("native.")
-                            || key.startsWith("backup.")) { // Enterprise confs
+                            || key.startsWith("backup.") || key.startsWith("checkpoint.history.")) { // Enterprise confs
                         continue;
                     }
                     properties.clear();
