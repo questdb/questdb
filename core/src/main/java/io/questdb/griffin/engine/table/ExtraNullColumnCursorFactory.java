@@ -129,7 +129,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
         if (timeFrameCursor == null) {
-            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess());
+            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex());
         }
         return timeFrameCursor.of(baseCursor);
     }
@@ -493,9 +493,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         private final int columnSplit;
         private final ExtraNullColumnRecord recordA;
         private final ExtraNullColumnRecord recordB;
+        private final int selectedTimestampIndex;
         private TimeFrameCursor baseCursor;
 
-        public ExtraNullColumnTimeFrameCursor(int columnSplit, boolean supportsRandomAccess) {
+        public ExtraNullColumnTimeFrameCursor(int columnSplit, boolean supportsRandomAccess, int selectedTimestampIndex) {
+            this.selectedTimestampIndex = selectedTimestampIndex;
             this.recordA = new ExtraNullColumnRecord(columnSplit);
             if (supportsRandomAccess) {
                 this.recordB = new ExtraNullColumnRecord(columnSplit);
@@ -540,7 +542,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public int getTimestampIndex() {
-            return 0;
+            return selectedTimestampIndex;
         }
 
         @Override

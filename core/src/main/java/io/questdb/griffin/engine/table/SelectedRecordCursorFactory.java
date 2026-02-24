@@ -155,7 +155,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             return baseCursor;
         }
         if (timeFrameCursor == null) {
-            timeFrameCursor = new SelectedTimeFrameCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
+            timeFrameCursor = new SelectedTimeFrameCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex());
         }
         return timeFrameCursor.of(baseCursor);
     }
@@ -517,10 +517,12 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         private final IntList columnCrossIndex;
         private final SelectedRecord recordA;
         private final SelectedRecord recordB;
+        private final int selectedTimestampIndex;
         private TimeFrameCursor baseCursor;
 
-        public SelectedTimeFrameCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
+        public SelectedTimeFrameCursor(IntList columnCrossIndex, boolean supportsRandomAccess, int selectedTimestampIndex) {
             this.columnCrossIndex = columnCrossIndex;
+            this.selectedTimestampIndex = selectedTimestampIndex;
             this.recordA = new SelectedRecord(columnCrossIndex);
             if (supportsRandomAccess) {
                 this.recordB = new SelectedRecord(columnCrossIndex);
@@ -564,7 +566,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public int getTimestampIndex() {
-            return 0;
+            return selectedTimestampIndex;
         }
 
         @Override
