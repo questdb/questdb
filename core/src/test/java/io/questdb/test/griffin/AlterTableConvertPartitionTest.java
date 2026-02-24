@@ -113,6 +113,155 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertAllPartitionsWithBloomFilterColumns() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "testConvertWithBloom";
+            createTable(
+                    tableName,
+                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')"
+            );
+
+            execute("alter table " + tableName + " convert partition to parquet list '2024-06-10' with (bloom_filter_columns = 'id')");
+            assertPartitionExists(tableName, "2024-06-10.3");
+        });
+    }
+
+    @Test
+    public void testConvertAllPartitionsWithBloomFilterColumnsAndFpp() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "testConvertWithBloomAndFpp";
+            createTable(
+                    tableName,
+                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')"
+            );
+
+            execute("alter table " + tableName + " convert partition to parquet list '2024-06-10' with (bloom_filter_columns = 'id', fpp = '0.05')");
+            assertPartitionExists(tableName, "2024-06-10.3");
+        });
+    }
+
+    @Test
+    public void testConvertAllPartitionsWithBloomFilterFpp() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "testConvertWithFpp";
+            createTable(
+                    tableName,
+                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')"
+            );
+
+            execute("alter table " + tableName + " convert partition to parquet list '2024-06-10' with (fpp = '0.01')");
+            assertPartitionExists(tableName, "2024-06-10.3");
+        });
+    }
+
+    @Test
+    public void testConvertAllPartitionsWithBloomFilterWhereClause() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "testConvertWithBloomWhere";
+            createTable(
+                    tableName,
+                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(4, '2024-06-15T00:00:00.000000Z')"
+            );
+
+            execute("alter table " + tableName + " convert partition to parquet where timestamp > 0 with (bloom_filter_columns = 'id', fpp = '0.1')");
+            assertPartitionExists(tableName, "2024-06-10.6");
+            assertPartitionExists(tableName, "2024-06-11.4");
+            assertPartitionExists(tableName, "2024-06-12.5");
+        });
+    }
+
+    @Test
+    public void testConvertAllPartitionsWithBloomFilterWithClauseErrors() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = "x";
+            createTable(
+                    tableName,
+                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')"
+            );
+
+            // missing '('
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with bloom_filter_columns",
+                    66,
+                    "'(' expected"
+            );
+
+            // unknown option
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (unknown_option = 'val')",
+                    67,
+                    "bloom_filter_columns or fpp expected"
+            );
+
+            // missing '=' after bloom_filter_columns
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (bloom_filter_columns 'id')",
+                    88,
+                    "'=' expected"
+            );
+
+            // missing '=' after fpp
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (fpp '0.05')",
+                    71,
+                    "'=' expected"
+            );
+
+            // fpp = 0 (out of range)
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (fpp = 0)",
+                    73,
+                    "fpp must be between 0 and 1 (exclusive)"
+            );
+
+            // fpp = 1 (out of range)
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (fpp = 1)",
+                    73,
+                    "fpp must be between 0 and 1 (exclusive)"
+            );
+
+            // fpp = 1.5 (out of range)
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (fpp = '1.5')",
+                    73,
+                    "fpp must be between 0 and 1 (exclusive)"
+            );
+
+            // fpp = non-numeric
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (fpp = abc)",
+                    73,
+                    "invalid fpp value"
+            );
+
+            // non-existent bloom filter column
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (bloom_filter_columns = 'nonexistent')",
+                    90,
+                    "bloom filter column not found [column=nonexistent]"
+            );
+
+            // bad delimiter (missing ',' or ')')
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (bloom_filter_columns = 'id' fpp = 0.05)",
+                    95,
+                    "',' or ')' expected"
+            );
+        });
+    }
+
+    @Test
     public void testConvertLastPartition() throws Exception {
         final long rows = 10;
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {

@@ -4690,7 +4690,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (!Chars.equals(tok, '=')) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                 }
-                tok = expectToken(lexer, "fpp value");
+                tok = GenericLexer.unquote(expectToken(lexer, "fpp value"));
                 try {
                     fpp = Numbers.parseDouble(tok);
                     if (fpp <= 0 || fpp >= 1) {
