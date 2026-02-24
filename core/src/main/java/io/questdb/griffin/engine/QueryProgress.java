@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
@@ -347,6 +348,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
+    }
+
+    @Override
+    public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        return base.newTimeFrameCursor();
     }
 
     @Override

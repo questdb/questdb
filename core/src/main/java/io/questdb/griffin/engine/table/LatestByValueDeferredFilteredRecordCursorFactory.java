@@ -46,7 +46,7 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes, columnSizeShifts);
+        super(metadata, partitionFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes, columnSizeShifts);
         this.configuration = configuration;
     }
 

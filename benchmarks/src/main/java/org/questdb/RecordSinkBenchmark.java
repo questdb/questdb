@@ -84,10 +84,8 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 3, time = 1)
 @Fork(value = 1, jvmArgs = {"-Xms2G", "-Xmx2G"})
 public class RecordSinkBenchmark {
-
     private static final int BATCH_SIZE = 10000;
     private static final int RANDOM_SEED = 42;
-
     // Column types to randomly choose from (simple types that don't need special handling)
     private static final int[] SIMPLE_TYPES = {
             ColumnType.INT,
@@ -99,10 +97,8 @@ public class RecordSinkBenchmark {
             ColumnType.BOOLEAN,
             ColumnType.TIMESTAMP
     };
-
     @Param({"10", "50", "100", "200", "500", "1000", "2000", "3000", "4000", "5000", "6000"})
     private int columnCount;
-
     @Param({"BYTECODE", "CHUNKED", "LOOP"})
     private String implementation;
     private MockRecord record;
@@ -158,6 +154,7 @@ public class RecordSinkBenchmark {
                     }
                 };
                 sink = RecordSinkFactory.getInstance(
+                        configNoChunking,
                         new BytecodeAssembler(),
                         types,
                         columnFilter,
@@ -166,7 +163,6 @@ public class RecordSinkBenchmark {
                         null,
                         null,
                         null,
-                        configNoChunking,
                         Integer.MAX_VALUE  // Very high limit to force single-method
                 );
                 break;
@@ -179,6 +175,7 @@ public class RecordSinkBenchmark {
                     }
                 };
                 sink = RecordSinkFactory.getInstance(
+                        configWithChunking,
                         new BytecodeAssembler(),
                         types,
                         columnFilter,
@@ -187,7 +184,6 @@ public class RecordSinkBenchmark {
                         null,
                         null,
                         null,
-                        configWithChunking,
                         RecordSinkFactory.DEFAULT_METHOD_SIZE_LIMIT
                 );
                 break;
