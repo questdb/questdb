@@ -222,6 +222,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getInactiveReaderMaxOpenPartitions());
         Assert.assertEquals(120_000, configuration.getCairoConfiguration().getInactiveReaderTTL());
         Assert.assertEquals(600_000, configuration.getCairoConfiguration().getInactiveWriterTTL());
+        Assert.assertFalse(configuration.getCairoConfiguration().getBitmapIndexReaderPagedEnabled());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getBitmapIndexReaderPagedMaxPages());
+        Assert.assertEquals(128L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getBitmapIndexReaderPagedPageSize());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getIndexValueBlockSize());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getMaxSwapFileCount());
         Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
@@ -1123,6 +1126,38 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testInvalidPagedBitmapReaderConfig() throws Exception {
+        final Properties properties = new Properties();
+
+        properties.setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath(), "3m");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath());
+        }
+
+        properties.setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath(), "2k");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath());
+        }
+
+        properties.setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath(), "4k");
+        properties.setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES.getPropertyPath(), "1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES.getPropertyPath());
+        }
+
+        properties.setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES.getPropertyPath(), "2");
+    }
+
+    @Test
     public void testInvalidTimestampLocale() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("log.timestamp.locale", "jp");
@@ -1949,6 +1984,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(42, configuration.getInactiveReaderMaxOpenPartitions());
         Assert.assertEquals(600_000, configuration.getInactiveReaderTTL());
         Assert.assertEquals(400_000, configuration.getInactiveWriterTTL());
+        Assert.assertTrue(configuration.getBitmapIndexReaderPagedEnabled());
+        Assert.assertEquals(4, configuration.getBitmapIndexReaderPagedMaxPages());
+        Assert.assertEquals(32L * Numbers.SIZE_1MB, configuration.getBitmapIndexReaderPagedPageSize());
         Assert.assertEquals(1024, configuration.getIndexValueBlockSize());
         Assert.assertEquals(23, configuration.getMaxSwapFileCount());
         Assert.assertEquals(509, configuration.getMkDirMode());

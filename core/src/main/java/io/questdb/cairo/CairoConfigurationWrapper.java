@@ -437,6 +437,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getBitmapIndexReaderPagedEnabled() {
+        return getDelegate().getBitmapIndexReaderPagedEnabled();
+    }
+
+    @Override
+    public int getBitmapIndexReaderPagedMaxPages() {
+        return getDelegate().getBitmapIndexReaderPagedMaxPages();
+    }
+
+    @Override
+    public long getBitmapIndexReaderPagedPageSize() {
+        return getDelegate().getBitmapIndexReaderPagedPageSize();
+    }
+
+    @Override
     public int getIndexValueBlockSize() {
         return getDelegate().getIndexValueBlockSize();
     }

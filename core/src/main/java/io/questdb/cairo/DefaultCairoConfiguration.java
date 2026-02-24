@@ -457,6 +457,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getBitmapIndexReaderPagedEnabled() {
+        return false;
+    }
+
+    @Override
+    public int getBitmapIndexReaderPagedMaxPages() {
+        return 64;
+    }
+
+    @Override
+    public long getBitmapIndexReaderPagedPageSize() {
+        return 128L * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public int getIndexValueBlockSize() {
         return 256;
     }

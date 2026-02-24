@@ -317,6 +317,12 @@ public interface CairoConfiguration {
 
     long getInactiveWriterTTL();
 
+    boolean getBitmapIndexReaderPagedEnabled();
+
+    int getBitmapIndexReaderPagedMaxPages();
+
+    long getBitmapIndexReaderPagedPageSize();
+
     int getIndexValueBlockSize();
 
     long getInsertModelBatchSize();

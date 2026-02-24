@@ -282,6 +282,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveViewWalWriterTTL;
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
+    private final boolean bitmapIndexReaderPagedEnabled;
+    private final int bitmapIndexReaderPagedMaxPages;
+    private final long bitmapIndexReaderPagedPageSize;
     private final int indexValueBlockSize;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final String installRoot;
@@ -1474,6 +1477,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inactiveWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_WAL_INACTIVE_WRITER_TTL, 120_000);
             this.inactiveViewWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_VIEW_WAL_INACTIVE_WRITER_TTL, 60_000);
             this.ttlUseWallClock = getBoolean(properties, env, PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, true);
+            this.bitmapIndexReaderPagedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_ENABLED, false);
+            this.bitmapIndexReaderPagedPageSize = getLongSize(properties, env, PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE, 128L * Numbers.SIZE_1MB);
+            if (bitmapIndexReaderPagedPageSize <= 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath() + " must be > 0");
+            }
+            if (!Numbers.isPow2(bitmapIndexReaderPagedPageSize)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath() + " must be a power of two");
+            }
+            if (bitmapIndexReaderPagedPageSize % Files.PAGE_SIZE != 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath() + " must be a multiple of " + Files.PAGE_SIZE);
+            }
+            this.bitmapIndexReaderPagedMaxPages = getInt(properties, env, PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES, 64);
+            if (bitmapIndexReaderPagedMaxPages < 2) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES.getPropertyPath() + " must be >= 2");
+            }
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
@@ -3633,6 +3651,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getInactiveWriterTTL() {
             return inactiveWriterTTL;
+        }
+
+        @Override
+        public boolean getBitmapIndexReaderPagedEnabled() {
+            return bitmapIndexReaderPagedEnabled;
+        }
+
+        @Override
+        public int getBitmapIndexReaderPagedMaxPages() {
+            return bitmapIndexReaderPagedMaxPages;
+        }
+
+        @Override
+        public long getBitmapIndexReaderPagedPageSize() {
+            return bitmapIndexReaderPagedPageSize;
         }
 
         @Override

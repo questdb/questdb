@@ -181,6 +181,8 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                             final long keyMemorySize = indexReader.getKeyMemorySize();
                             indexKeyPages += touchMemory(pageSize, keyBaseAddress, keyMemorySize);
 
+                            // This native path assumes DIR_BACKWARD returns a contiguous reader.
+                            // If backward reader mode becomes paged, this call site must be adapted.
                             final long valueBaseAddress = indexReader.getValueBaseAddress();
                             final long valueMemorySize = indexReader.getValueMemorySize();
                             indexValuePages += touchMemory(pageSize, valueBaseAddress, valueMemorySize);

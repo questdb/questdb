@@ -967,14 +967,26 @@ public class TableReader implements Closeable, SymbolTableSource {
                     );
                     bitmapIndexes.setQuick(globalIndex, reader);
                 } else {
-                    reader = new BitmapIndexFwdReader(
-                            configuration,
-                            path,
-                            metadata.getColumnName(columnIndex),
-                            columnNameTxn,
-                            partitionTxn,
-                            getColumnTop(columnBase, columnIndex)
-                    );
+                    final CharSequence columnName = metadata.getColumnName(columnIndex);
+                    if (shouldUsePagedForwardReader()) {
+                        reader = new BitmapIndexFwdReaderPaged(
+                                configuration,
+                                path,
+                                columnName,
+                                columnNameTxn,
+                                partitionTxn,
+                                getColumnTop(columnBase, columnIndex)
+                        );
+                    } else {
+                        reader = new BitmapIndexFwdReader(
+                                configuration,
+                                path,
+                                columnName,
+                                columnNameTxn,
+                                partitionTxn,
+                                getColumnTop(columnBase, columnIndex)
+                        );
+                    }
                     bitmapIndexes.setQuick(globalIndex + 1, reader);
                 }
             } finally {
@@ -982,6 +994,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
         return reader;
+    }
+
+    private boolean shouldUsePagedForwardReader() {
+        return configuration.getBitmapIndexReaderPagedEnabled();
     }
 
     private void createNewColumnList(int columnCount, TableReaderMetadataTransitionIndex transitionIndex, int columnCountShl) {
