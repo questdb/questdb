@@ -295,8 +295,11 @@ impl<'a> DeltaLengthArraySlicer<'a> {
         let lengths: Vec<_> = decoder
             .by_ref()
             .take(row_count)
-            .map(|r| r.map(|v| v as i32).unwrap())
-            .collect::<Vec<_>>();
+            .map(|r| {
+                r.map(|v| v as i32)
+                    .map_err(|_| fmt_err!(Layout, "not enough length values to iterate"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let data_offset = decoder.consumed_bytes();
         Ok(Self {
