@@ -1404,13 +1404,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
 
         if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
-            // The partition is active; conversion is currently unsupported.
-            LOG.info()
-                    .$("skipping active partition as it cannot be converted to parquet format [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
-            return true;
+            if (!tableToken.isWal()) {
+                // The partition is active; conversion is unsupported for non-WAL tables.
+                LOG.info()
+                        .$("skipping active partition as it cannot be converted to parquet format [table=")
+                        .$(tableToken)
+                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                        .I$();
+                return true;
+            }
         }
 
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
@@ -1621,12 +1623,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // remove old partition dir
         safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
-
-        if (lastPartitionConverted) {
-            // Open last partition as read-only
-            openPartition(partitionTimestamp, txWriter.getTransientRowCount());
-            setAppendPosition(txWriter.getTransientRowCount(), false);
-        }
         return true;
     }
 
@@ -5473,7 +5469,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!o3InError) {
             updateO3ColumnTops();
         }
-        if (!isEmptyTable() && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)) {
+        if (!isEmptyTable()
+                && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
+                && !isLastPartitionParquet()) {
             openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
         }
 
@@ -5484,7 +5482,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             // Set append position if this commit did not result in full table truncate
             // which is possible with replace commits.
-            if (txWriter.getTransientRowCount() > 0) {
+            if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
                 setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
             }
         } catch (Throwable e) {
@@ -5999,7 +5997,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (performRecovery) {
             performRecovery();
         }
-        txWriter.initLastPartition(ts);
+        if (!isLastPartitionParquet()) {
+            txWriter.initLastPartition(ts);
+        }
     }
 
     private boolean isEmptyTable() {
@@ -6014,6 +6014,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // No columns, doesn't matter
         return false;
+    }
+
+    private boolean isLastPartitionParquet() {
+        int partitionCount = txWriter.getPartitionCount();
+        return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
     }
 
     private void lock() {
@@ -6949,6 +6954,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void openLastPartitionAndSetAppendPosition(long ts) {
+        if (isLastPartitionParquet()) {
+            return;
+        }
         openPartition(ts, txWriter.getTransientRowCount() + txWriter.getLagRowCount());
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
     }
@@ -7310,8 +7318,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         srcNameTxn = txWriter.getTxn() - 1;
                     }
 
+                    // check partition read-only state
+                    final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
+                    final boolean isParquet = partitionIndexRaw > -1 && txWriter.isPartitionParquetByRawIndex(partitionIndexRaw);
+
                     // We're appending onto the last (active) partition.
-                    final boolean append = last && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
+                    // Cannot append to parquet partitions — they must go through the O3 merge path.
+                    final boolean append = last && !isParquet && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
                             // If it's replace commit, the append is only possible if the last partition data is
                             // before the replace range.
                             && (!isCommitReplaceMode() || o3TimestampMin > txWriter.getMaxTimestamp());
@@ -7321,10 +7334,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // Final partition size after current insertions.
                     long newPartitionSize = srcDataMax + srcOooBatchRowSize;
-
-                    // check partition read-only state
-                    final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
-                    final boolean isParquet = partitionIndexRaw > -1 && txWriter.isPartitionParquetByRawIndex(partitionIndexRaw);
 
                     pCount++;
 
@@ -7680,7 +7689,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setMaxTimestamp(o3TimestampMin);
                 // Add the partition to the list of partitions with 0 size.
                 txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
-            } else {
+            } else if (!isLastPartitionParquet()) {
                 throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
                         .put(path).put(']');
             }
@@ -7709,7 +7718,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
+                boolean lastPartitionIsParquet = isLastPartitionParquet();
                 boolean needFullCommit = forceFullCommit
+                        // Last partition is parquet, cannot store LAG in native column files
+                        || lastPartitionIsParquet
                         // Too many rows in LAG
                         || totalUncommitted > maxLagRows
                         // Can commit without O3 and LAG has just enough rows
@@ -7720,9 +7732,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // this is to bring the latency of data visibility inline with user expectations
                         || (wallClockMicros - lastWalCommitTimestampMicros > configuration.getCommitLatency());
 
-                boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
+                boolean canFastCommit = !lastPartitionIsParquet && indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
-                boolean canFastCommitNew = applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
+                boolean canFastCommitNew = !lastPartitionIsParquet && applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
 
                 // Fast commit of existing LAG data is possible but will not be possible after current transaction is added to the lag.
                 // Also fast LAG commit will not cause O3 with the current transaction.

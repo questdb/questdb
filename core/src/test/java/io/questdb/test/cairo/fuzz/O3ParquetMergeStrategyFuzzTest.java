@@ -228,4 +228,156 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
         });
     }
+
+    @Test
+    public void testMultiRoundO3OnAllParquetPartitions() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+
+        // Data-only fuzz: no schema changes, drops, or truncations.
+        setFuzzProbabilities(
+                0,      // cancelRow
+                0,      // notSet
+                0,      // null
+                0,      // rollback
+                0,      // colAdd
+                0,      // colRemove
+                0,      // colRename
+                0,      // colTypeChange
+                1.0,    // dataAdd
+                0.5,    // equalTs
+                0,      // partitionDrop
+                0,      // truncate
+                0,      // tableDrop
+                0,      // setTtl
+                0,      // replace
+                0       // symbolAccess
+        );
+
+        int rowGroupSize = 500 + rnd.nextInt(2000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+
+        int initialRowCount = 2000 + rnd.nextInt(5000);
+        fuzzer.setFuzzCounts(
+                true,           // isO3
+                5000,           // fuzzRowCount
+                30,             // transactionCount
+                20,             // strLen
+                10,             // symbolStrLenMax
+                20,             // symbolCountMax
+                initialRowCount,
+                1,              // partitionCount
+                -1,             // parallelWalCount (unused)
+                0               // ioFailureCount
+        );
+
+        assertMemoryLeak(() -> {
+            String walTable = getTestName();
+            fuzzer.createInitialTableWal(walTable, initialRowCount);
+            drainWalQueue();
+
+            String oracleTable = walTable + "_oracle";
+            fuzzer.createInitialTableNonWal(oracleTable, null);
+
+            // Convert the last (and only) partition to Parquet — all partitions are now parquet.
+            final long partitionTs;
+            StringSink partName = new StringSink();
+            try (TableReader reader = engine.getReader(walTable)) {
+                Assert.assertEquals("expected exactly 1 partition", 1, reader.getPartitionCount());
+                partitionTs = reader.getPartitionTimestampByIndex(0);
+                PartitionBy.setSinkForPartition(
+                        partName,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        partitionTs
+                );
+            }
+            execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
+            drainWalQueue();
+
+            long dayEnd = partitionTs + DAY_MICROS;
+
+            int rounds = 3 + rnd.nextInt(8);
+            LOG.info()
+                    .$("starting all-parquet fuzz: initialRowCount=").$(initialRowCount)
+                    .$(", rounds=").$(rounds)
+                    .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", partitionTs=").$(partitionTs)
+                    .$();
+
+            for (int round = 0; round < rounds; round++) {
+                long start, end;
+                int pattern = rnd.nextInt(5);
+
+                switch (pattern) {
+                    case 0 -> {
+                        long center = partitionTs + rnd.nextLong(DAY_MICROS);
+                        long halfSpan = 1 + rnd.nextLong(Math.max(1, DAY_MICROS / 20));
+                        start = Math.max(partitionTs, center - halfSpan);
+                        end = Math.min(dayEnd, center + halfSpan);
+                    }
+                    case 1 -> {
+                        start = partitionTs;
+                        end = dayEnd;
+                    }
+                    case 2 -> {
+                        start = partitionTs;
+                        end = partitionTs + DAY_MICROS / 2;
+                    }
+                    case 3 -> {
+                        start = partitionTs + DAY_MICROS / 2;
+                        end = dayEnd;
+                    }
+                    default -> {
+                        long a = partitionTs + rnd.nextLong(DAY_MICROS);
+                        long b = partitionTs + rnd.nextLong(DAY_MICROS);
+                        start = Math.min(a, b);
+                        end = Math.max(a, b) + 1;
+                    }
+                }
+
+                if (start >= end) {
+                    end = start + 1;
+                }
+
+                LOG.info()
+                        .$("round ").$(round)
+                        .$(": pattern=").$(pattern)
+                        .$(", start=").$(start)
+                        .$(", end=").$(end)
+                        .$();
+
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(walTable, rnd, start, end);
+                try {
+                    fuzzer.applyNonWal(transactions, oracleTable, rnd);
+                    fuzzer.applyWal(transactions, walTable, 1, rnd);
+                } finally {
+                    Misc.freeObjListAndClear(transactions);
+                }
+                drainWalQueue();
+            }
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+            }
+
+            try (TableReader reader = engine.getReader(walTable)) {
+                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                    if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                        continue;
+                    }
+                    reader.openPartition(i);
+                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
+                    PartitionDecoder.Metadata meta = decoder.metadata();
+                    int rgCount = meta.getRowGroupCount();
+                    for (int rg = 0; rg < rgCount; rg++) {
+                        int rgSize = meta.getRowGroupSize(rg);
+                        Assert.assertTrue(
+                                "row group " + rg + " has " + rgSize + " rows, exceeds 1.5x configured size " + rowGroupSize,
+                                rgSize <= rowGroupSize + rowGroupSize / 2
+                        );
+                    }
+                }
+            }
+        });
+    }
 }
