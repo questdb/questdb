@@ -76,9 +76,9 @@ public class WalTelemetryTest extends AbstractCairoTest {
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
             // event 109 = WAL_TXN_COMMITTED: first has 2 rows with timestamps, second has 0 rows with NULL timestamps
             assertSql("""
-                    created	event	tableId	walId	seqTxn	rowCount	physicalRowCount	latency	minTimestamp	maxTimestamp
-                    1970-01-01T00:00:00.005000Z	109	5	1	1	2	2	0.0	2022-02-24T00:00:00.000000Z	2022-02-24T00:00:01.000000Z
-                    1970-01-01T00:00:00.005000Z	109	5	1	2	0	0	0.0\t\t
+                    created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\tminTimestamp\tmaxTimestamp
+                    1970-01-01T00:00:00.005000Z\t109\t5\t1\t1\t2\t2\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:01.000000Z
+                    1970-01-01T00:00:00.005000Z\t109\t5\t1\t2\t0\t0\t0.0\t\t
                     """, sysPrefix + TelemetryWalTask.TABLE_NAME + " WHERE event = 109");
         });
     }
@@ -124,19 +124,19 @@ public class WalTelemetryTest extends AbstractCairoTest {
 
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
             assertSql("""
-                    created	event	tableId	walId	seqTxn	rowCount	physicalRowCount	latency	minTimestamp	maxTimestamp
-                    1970-01-01T00:00:00.004000Z	109	5	1	1	5	5	0.0	2022-02-24T00:00:00.000000Z	2022-02-24T00:00:04.000000Z
-                    1970-01-01T00:00:00.004000Z	109	5	1	2	1	1	0.0	2022-02-24T01:00:00.000000Z	2022-02-24T01:00:00.000000Z
-                    1970-01-01T00:00:00.004000Z	103	5	1	1	-1	-1	2.0	2022-02-24T00:00:00.000000Z	2022-02-24T00:00:04.000000Z
-                    1970-01-01T00:00:00.004000Z	105	5	1	1	5	5	0.0	2022-02-24T00:00:00.000000Z	2022-02-24T00:00:04.000000Z
-                    1970-01-01T00:00:00.004000Z	103	5	1	2	-1	-1	1.0	2022-02-24T01:00:00.000000Z	2022-02-24T01:00:00.000000Z
-                    1970-01-01T00:00:00.004000Z	105	5	1	2	1	1	0.0	2022-02-24T01:00:00.000000Z	2022-02-24T01:00:00.000000Z
+                    created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\tminTimestamp\tmaxTimestamp
+                    1970-01-01T00:00:00.004000Z\t109\t5\t1\t1\t5\t5\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
+                    1970-01-01T00:00:00.004000Z\t109\t5\t1\t2\t1\t1\t0.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
+                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t1\t-1\t-1\t2.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
+                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:04.000000Z
+                    1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
+                    1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0\t2022-02-24T01:00:00.000000Z\t2022-02-24T01:00:00.000000Z
                     """, sysPrefix + TelemetryWalTask.TABLE_NAME);
 
             assertSql("""
-                    created	event	origin
-                    1970-01-01T00:00:00.001000Z	100	1
-                    1970-01-01T00:00:00.004000Z	101	1
+                    created\tevent\torigin
+                    1970-01-01T00:00:00.001000Z\t100\t1
+                    1970-01-01T00:00:00.004000Z\t101\t1
                     """, TelemetryTask.TABLE_NAME + " where event >= 0");
         });
     }
