@@ -25,14 +25,14 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.griffin.engine.table.AsyncGroupByAtom;
+import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.Mutable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class GroupByMergeShardTask implements Mutable {
-    private AsyncGroupByAtom atom;
+    private GroupByShardingContext shardingCtx;
     private AtomicBooleanCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
     private int shardIndex = -1;
@@ -41,14 +41,14 @@ public class GroupByMergeShardTask implements Mutable {
     @Override
     public void clear() {
         shardIndex = -1;
-        atom = null;
+        shardingCtx = null;
         circuitBreaker = null;
         doneLatch = null;
         startedCounter = null;
     }
 
-    public AsyncGroupByAtom getAtom() {
-        return atom;
+    public GroupByShardingContext getShardingContext() {
+        return shardingCtx;
     }
 
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {
@@ -71,13 +71,13 @@ public class GroupByMergeShardTask implements Mutable {
             AtomicBooleanCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
-            AsyncGroupByAtom atom,
+            GroupByShardingContext shardingCtx,
             int shardIndex
     ) {
         this.circuitBreaker = circuitBreaker;
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
-        this.atom = atom;
+        this.shardingCtx = shardingCtx;
         this.shardIndex = shardIndex;
     }
 }

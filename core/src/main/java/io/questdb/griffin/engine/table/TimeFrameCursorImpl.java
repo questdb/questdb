@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PageFrame;
@@ -42,12 +41,17 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.std.IntList;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
 /**
  * Thread-unsafe time frame cursor.
@@ -58,32 +62,44 @@ import org.jetbrains.annotations.NotNull;
 public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
-    private final IntList framePartitionIndexes = new IntList();
+    // Off-heap because it's per-frame and can be large unlike per-partition lists
+    private final DirectIntList framePartitionIndexes;
     private final LongList frameRowCounts = new LongList();
+    // Cache for frame timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...] - avoids re-reading on repeated open()
+    private final DirectLongList frameTimestampCache;
     private final RecordMetadata metadata;
+    private final LongList partitionCeilings = new LongList();
+    private final LongList partitionTimestamps = new LongList();
     private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private int frameCount = 0;
     private PageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
-    private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
-    private int partitionHi;
     private TableReader reader;
 
     public TimeFrameCursorImpl(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata
     ) {
-        this.metadata = metadata;
-        this.frameAddressCache = new PageFrameAddressCache();
-        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        try {
+            this.metadata = metadata;
+            this.frameAddressCache = new PageFrameAddressCache();
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+            this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
+            this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
         Misc.free(frameAddressCache);
+        Misc.free(framePartitionIndexes);
+        Misc.free(frameTimestampCache);
         frameCursor = Misc.free(frameCursor);
     }
 
@@ -94,7 +110,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         if (frameIndex == -1) {
             return null;
         }
-        int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+        int partitionIndex = framePartitionIndexes.get(frameIndex);
         return reader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
     }
 
@@ -132,10 +148,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                     .put(", frameCount=").put(frameCount).put(']');
         }
 
-        int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
-        long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
-        long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
-        timeFrame.ofEstimate(frameIndex, timestampLo, estimatePartitionHi(partitionCeilMethod, timestampLo, maxTimestampHi));
+        int partitionIndex = framePartitionIndexes.get(frameIndex);
+        long timestampLo = partitionTimestamps.getQuick(partitionIndex);
+        timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
     }
 
     @Override
@@ -149,10 +164,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
         int frameIndex = timeFrame.getFrameIndex();
         if (++frameIndex < frameCount) {
-            int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
-            long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
-            long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
-            timeFrame.ofEstimate(frameIndex, timestampLo, estimatePartitionHi(partitionCeilMethod, timestampLo, maxTimestampHi));
+            int partitionIndex = framePartitionIndexes.get(frameIndex);
+            long timestampLo = partitionTimestamps.getQuick(partitionIndex);
+            timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
             return true;
         }
         // Update frame index in case of subsequent prev() call.
@@ -167,11 +181,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         reader = frameCursor.getTableReader();
         recordA.of(frameCursor);
         recordB.of(frameCursor);
-        partitionHi = reader.getPartitionCount();
-        partitionCeilMethod = PartitionBy.getPartitionCeilMethod(
-                reader.getMetadata().getTimestampType(),
-                reader.getPartitionedBy()
-        );
+        populatePartitionTimestamps(frameCursor, partitionTimestamps, partitionCeilings);
         isFrameCacheBuilt = false;
         toTop();
         return this;
@@ -185,11 +195,24 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         }
         final long rowCount = frameRowCounts.getQuick(frameIndex);
         if (rowCount > 0) {
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
+            final int cacheOffset = frameIndex * 2;
+            long timestampLo = frameTimestampCache.get(cacheOffset);
+            long timestampHi;
+            if (timestampLo != Numbers.LONG_NULL) {
+                // Cache hit - use cached timestamps
+                timestampHi = frameTimestampCache.get(cacheOffset + 1);
+            } else {
+                // Cache miss - read timestamps directly from frame memory
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
+                timestampLo = Unsafe.getUnsafe().getLong(timestampAddress);
+                timestampHi = Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8);
+                frameTimestampCache.set(cacheOffset, timestampLo);
+                frameTimestampCache.set(cacheOffset + 1, timestampHi);
+            }
             timeFrame.ofOpen(
-                    Unsafe.getUnsafe().getLong(timestampAddress),
-                    Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8) + 1,
+                    timestampLo,
+                    timestampHi + 1,
                     0,
                     rowCount
             );
@@ -210,10 +233,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
         int frameIndex = timeFrame.getFrameIndex();
         if (--frameIndex >= 0) {
-            int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
-            long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
-            long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
-            timeFrame.ofEstimate(frameIndex, timestampLo, estimatePartitionHi(partitionCeilMethod, timestampLo, maxTimestampHi));
+            int partitionIndex = framePartitionIndexes.get(frameIndex);
+            long timestampLo = partitionTimestamps.getQuick(partitionIndex);
+            timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
             return true;
         }
         // Update frame index in case of subsequent next() call.
@@ -229,6 +251,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public void recordAt(Record record, int frameIndex, long rowIndex) {
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(rowIndex);
+    }
+
+    @Override
     public void recordAtRowIndex(Record record, long rowIndex) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryRecord.setRowIndex(rowIndex);
@@ -241,6 +270,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             frameCount = 0;
             frameCursor.toTop();
             framePartitionIndexes.clear();
+            frameTimestampCache.clear();
             frameRowCounts.clear();
         }
     }
@@ -249,6 +279,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         // TODO(puzpuzpuz): building page frame cache assumes opening all partitions;
         //                  we should open partitions lazily
         if (!isFrameCacheBuilt) {
+            framePartitionIndexes.reopen();
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
                 framePartitionIndexes.add(frame.getPartitionIndex());
@@ -256,6 +287,16 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                 frameAddressCache.add(frameCount++, frame);
             }
             isFrameCacheBuilt = true;
+            // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
+            // Note: setCapacity is safe to call on a closed list - it will allocate memory
+            final int cacheSize = 2 * frameCount;
+            if (cacheSize > 0) {
+                frameTimestampCache.setCapacity(cacheSize);
+                frameTimestampCache.clear();
+                for (int i = 0; i < cacheSize; i++) {
+                    frameTimestampCache.set(i, Numbers.LONG_NULL);
+                }
+            }
         }
     }
 
