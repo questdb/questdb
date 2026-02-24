@@ -610,7 +610,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.hash.join.light.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.value.max.pages\tQDB_CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.asof.join.lookahead\tQDB_CAIRO_SQL_ASOF_JOIN_LOOKAHEAD\t100\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.asof.join.lookahead\tQDB_CAIRO_SQL_ASOF_JOIN_LOOKAHEAD\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.asof.join.short.circuit.cache.capacity\tQDB_CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY\t10000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.sql.asof.join.evacuation.threshold\tQDB_CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD\t10000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.sql.insert.model.pool.capacity\tQDB_CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
@@ -642,6 +642,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.parallel.filter.pretouch.threshold\tQDB_CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD\t0.05\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.dispatch.limit\tQDB_CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.topk.enabled\tQDB_CAIRO_SQL_PARALLEL_TOPK_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.horizon.join.enabled\tQDB_CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.horizon.join.max.offsets\tQDB_CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.window.join.enabled\tQDB_CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
@@ -1081,34 +1083,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testTelemetryTableUpgrade() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
-                put(PropertyKey.TELEMETRY_TABLE_TTL_WEEKS.getEnvVarName(), "1");
-            }})) {
-                serverMain.start();
-                TableToken tableToken = serverMain.getEngine().verifyTableName(TelemetryTask.TABLE_NAME);
-                try (TableMetadata meta = serverMain.getEngine().getTableMetadata(tableToken)) {
-                    int ttl = meta.getTtlHoursOrMonths();
-                    Assert.assertEquals(7 * 24, ttl);
-                }
-            }
-
-            // UPGRADE
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
-                put(PropertyKey.TELEMETRY_TABLE_TTL_WEEKS.getEnvVarName(), "4");
-            }})) {
-                serverMain.start();
-                TableToken tableToken = serverMain.getEngine().verifyTableName(TelemetryTask.TABLE_NAME);
-                try (TableMetadata meta = serverMain.getEngine().getTableMetadata(tableToken)) {
-                    int ttl = meta.getTtlHoursOrMonths();
-                    Assert.assertEquals(4 * 7 * 24, ttl);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testShowParametersSecretFromFileViaEnvVar() throws Exception {
         assertMemoryLeak(() -> {
             // Create a temporary file containing the secret password
@@ -1189,6 +1163,34 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     """,
                             actualSink
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTelemetryTableUpgrade() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.TELEMETRY_TABLE_TTL_WEEKS.getEnvVarName(), "1");
+            }})) {
+                serverMain.start();
+                TableToken tableToken = serverMain.getEngine().verifyTableName(TelemetryTask.TABLE_NAME);
+                try (TableMetadata meta = serverMain.getEngine().getTableMetadata(tableToken)) {
+                    int ttl = meta.getTtlHoursOrMonths();
+                    Assert.assertEquals(7 * 24, ttl);
+                }
+            }
+
+            // UPGRADE
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.TELEMETRY_TABLE_TTL_WEEKS.getEnvVarName(), "4");
+            }})) {
+                serverMain.start();
+                TableToken tableToken = serverMain.getEngine().verifyTableName(TelemetryTask.TABLE_NAME);
+                try (TableMetadata meta = serverMain.getEngine().getTableMetadata(tableToken)) {
+                    int ttl = meta.getTtlHoursOrMonths();
+                    Assert.assertEquals(4 * 7 * 24, ttl);
                 }
             }
         });
