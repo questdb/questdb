@@ -37,6 +37,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Utility class for Parquet row group bloom filter pushdown.
@@ -49,6 +50,7 @@ public final class ParquetRowGroupFilter {
     public static final long FILTER_BUFFER_PAGE_SIZE = 4096;
     public static final int LONGS_PER_FILTER = 2;
     private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
+    private static int rowGroupsSkipped;
 
     /**
      * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
@@ -240,7 +242,11 @@ public final class ParquetRowGroupFilter {
             if (filterCount == 0) {
                 return false;
             }
-            return decoder.canSkipRowGroup(rowGroupIndex, filterList);
+            boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList);
+            if (skip) {
+                rowGroupsSkipped++;
+            }
+            return skip;
         } catch (Throwable e) {
             LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", e=").$(e).$(']').$();
             return false;
@@ -249,5 +255,15 @@ public final class ParquetRowGroupFilter {
 
     public static long encodeColumnAndCount(int columnIndex, int count) {
         return (columnIndex & 0xFFFFFFFFL) | ((long) count << 32);
+    }
+
+    @TestOnly
+    public static int getRowGroupsSkipped() {
+        return rowGroupsSkipped;
+    }
+
+    @TestOnly
+    public static void resetRowGroupsSkipped() {
+        rowGroupsSkipped = 0;
     }
 }
