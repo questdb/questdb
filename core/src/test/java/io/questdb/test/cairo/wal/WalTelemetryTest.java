@@ -92,9 +92,9 @@ public class WalTelemetryTest extends AbstractCairoTest {
                     """, sysPrefix + TelemetryWalTask.TABLE_NAME);
 
             assertSql("""
-                    created\tevent\torigin
-                    1970-01-01T00:00:00.001000Z\t100\t1
-                    1970-01-01T00:00:00.004000Z\t101\t1
+                    created	event	origin
+                    1970-01-01T00:00:00.001000Z	100	1
+                    1970-01-01T00:00:00.004000Z	101	1
                     """, TelemetryTask.TABLE_NAME + " where event >= 0");
         });
     }

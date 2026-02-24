@@ -911,7 +911,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     );
                 }
                 final boolean hasReplaceRange = replaceRangeHiTs > replaceRangeLowTs;
-                // Reduce the logging if telementry is enabled all the information is saved in sys.telemetry_wal
+                // Reduce logging when telemetry is enabled; all the information is saved in sys.telemetry_wal
                 LogRecord logLine = hasReplaceRange || !walTelemetryEnabled ? LOG.info() : LOG.debug();
                 try {
                     logLine.$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)

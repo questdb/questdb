@@ -422,7 +422,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                                 if (hasNext) {
                                     final long start = microClock.getTicks();
-                                    walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, Long.MIN_VALUE, Long.MIN_VALUE);
+                                    walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, Numbers.LONG_NULL, Numbers.LONG_NULL);
                                     writer.setSeqTxn(seqTxn);
                                     try {
                                         final TableMetadataChange metadataChangeOp = structuralChangeCursor.next();
@@ -440,7 +440,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         writer.setSeqTxn(seqTxn - 1);
                                         throw th;
                                     }
-                                    walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start, Long.MIN_VALUE, Long.MIN_VALUE);
+                                    walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start, Numbers.LONG_NULL, Numbers.LONG_NULL);
                                 } else {
                                     // Something messed up in sequencer.
                                     // There is a transaction in WAL but no structure change record.
@@ -702,9 +702,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 try (WalEventReader eventReader = walEventReader) {
                     final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, Long.MIN_VALUE, Long.MIN_VALUE);
+                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, Numbers.LONG_NULL, Numbers.LONG_NULL);
                     processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
-                    walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start, Long.MIN_VALUE, Long.MIN_VALUE);
+                    walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start, Numbers.LONG_NULL, Numbers.LONG_NULL);
                     lastCommittedRows = 0;
                     return 1;
                 }
