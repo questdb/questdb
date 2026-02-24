@@ -68,6 +68,139 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFillNone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
+                    ('1970-01-01T00:00:20.000000Z', ARRAY[3.0, 4.0])
+                    """);
+            assertSql(
+                    "ts\tarr\n" +
+                            "1970-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
+                            "1970-01-01T00:00:20.000000Z\t[3.0,4.0]\n",
+                    "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(NONE)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
+                    ('1970-01-01T00:00:20.000000Z', 'a', ARRAY[3.0, 4.0])
+                    """);
+            assertSql(
+                    "ts\tgrp\tarr\n" +
+                            "1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\n" +
+                            "1970-01-01T00:00:10.000000Z\ta\tnull\n" +
+                            "1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]\n",
+                    "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(NULL)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillNullAlignToCalendar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
+                    ('1970-01-01T00:00:20.000000Z', ARRAY[3.0, 4.0])
+                    """);
+            assertSql(
+                    "ts\tarr\n" +
+                            "1970-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
+                            "1970-01-01T00:00:10.000000Z\tnull\n" +
+                            "1970-01-01T00:00:20.000000Z\t[3.0,4.0]\n",
+                    "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillNullFromTo() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
+                    ('1970-01-01T00:00:20.000000Z', ARRAY[3.0, 4.0])
+                    """);
+            assertSql(
+                    "ts\tarr\n" +
+                            "1970-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
+                            "1970-01-01T00:00:10.000000Z\tnull\n" +
+                            "1970-01-01T00:00:20.000000Z\t[3.0,4.0]\n" +
+                            "1970-01-01T00:00:30.000000Z\tnull\n",
+                    "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FROM '1970-01-01T00:00:00.000000Z' TO '1970-01-01T00:00:40.000000Z' FILL(NULL)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillNullNotKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('1970-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
+                    ('1970-01-01T00:00:20.000000Z', ARRAY[3.0, 4.0])
+                    """);
+            assertSql(
+                    "ts\tarr\n" +
+                            "1970-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
+                            "1970-01-01T00:00:10.000000Z\tnull\n" +
+                            "1970-01-01T00:00:20.000000Z\t[3.0,4.0]\n",
+                    "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(NULL)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillPrev() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
+                    ('1970-01-01T00:00:20.000000Z', 'a', ARRAY[3.0, 4.0])
+                    """);
+            assertSql(
+                    "ts\tgrp\tarr\n" +
+                            "1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\n" +
+                            "1970-01-01T00:00:10.000000Z\ta\t[1.0,2.0]\n" +
+                            "1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]\n",
+                    "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(PREV)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
+                    ('1970-01-01T00:00:20.000000Z', 'a', ARRAY[3.0, 4.0])
+                    """);
+            assertSql(
+                    "ts\tgrp\tarr\n" +
+                            "1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\n" +
+                            "1970-01-01T00:00:10.000000Z\ta\tnull\n" +
+                            "1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]\n",
+                    "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)"
+            );
+        });
+    }
+
+    @Test
     public void testNullArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (arr double[])");
