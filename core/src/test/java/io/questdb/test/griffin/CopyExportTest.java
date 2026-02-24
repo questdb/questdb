@@ -339,14 +339,14 @@ public class CopyExportTest extends AbstractCairoTest {
         );
 
         assertException(
-                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp 1.5;",
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp '1.5';",
                 70,
                 "bloom_filter_fpp must be between 0 and 1 (exclusive)"
         );
 
         assertException(
-                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp -0.1;",
-                71,
+                "copy test_table to 'test_table'  with format parquet bloom_filter_fpp '-0.1';",
+                70,
                 "bloom_filter_fpp must be between 0 and 1 (exclusive)"
         );
 

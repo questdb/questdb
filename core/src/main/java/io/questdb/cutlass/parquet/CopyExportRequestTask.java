@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.std.DirectIntList;
@@ -77,6 +78,34 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private boolean statisticsEnabled;
     private String tableName;
     private @Nullable StreamWriteParquetCallBack writeCallback;
+
+    public static void validateBloomFilterColumns(@Nullable CharSequence columns, RecordMetadata meta, int position) throws SqlException {
+        if (columns == null || columns.isEmpty()) {
+            return;
+        }
+        int start = 0;
+        int len = columns.length();
+        for (int i = 0; i <= len; i++) {
+            if (i == len || columns.charAt(i) == ',') {
+                int nameStart = start;
+                int nameEnd = i;
+                while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
+                    nameStart++;
+                }
+                while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
+                    nameEnd--;
+                }
+                if (nameStart < nameEnd) {
+                    CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                    if (meta.getColumnIndexQuiet(columnName) < 0) {
+                        throw SqlException.$(position > 0 ? position + start : 0,
+                                "bloom_filter_columns contains non-existent column: ").put(columnName);
+                    }
+                }
+                start = i + 1;
+            }
+        }
+    }
 
     @Override
     public void clear() {

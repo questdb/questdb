@@ -34,7 +34,6 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyExportContext;
@@ -143,7 +142,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             } else if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
                 TableToken token = executionContext.getTableTokenIfExists(tableName);
                 try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(token)) {
-                    validateBloomFilterColumns(bloomFilterColumns, meta, bloomFilterColumnsPosition);
+                    CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, meta, bloomFilterColumnsPosition);
                 }
             }
 
@@ -231,31 +230,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Copy");
-    }
-
-    private static void validateBloomFilterColumns(CharSequence columns, RecordMetadata meta, int position) throws SqlException {
-        int start = 0;
-        int len = columns.length();
-        for (int i = 0; i <= len; i++) {
-            if (i == len || columns.charAt(i) == ',') {
-                int nameStart = start;
-                int nameEnd = i;
-                while (nameStart < nameEnd && Character.isWhitespace(columns.charAt(nameStart))) {
-                    nameStart++;
-                }
-                while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
-                    nameEnd--;
-                }
-                if (nameStart < nameEnd) {
-                    CharSequence columnName = columns.subSequence(nameStart, nameEnd);
-                    if (meta.getColumnIndexQuiet(columnName) < 0) {
-                        throw SqlException.$(position > 0 ? position + start : 0,
-                                "bloom_filter_columns contains non-existent column: ").put(columnName);
-                    }
-                }
-                start = i + 1;
-            }
-        }
     }
 
     private void of(
