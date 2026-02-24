@@ -1274,6 +1274,54 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryWithComputedColumnsDescending() throws Exception {
+        // Descending order + VirtualRecordCursorFactory with computed columns.
+        // The COPY path uses ascending page frame order for the hybrid path,
+        // so the result is in ascending order. This test verifies data correctness
+        // with small row_group_size forcing multiple row group flushes.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE desc_comp AS (
+                        SELECT x, x * 2.0 AS dbl_col,
+                        timestamp_sequence('2024-01-01', 1_000_000L) AS ts
+                        FROM long_sequence(100)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT x + 1 AS cx, dbl_col, ts FROM desc_comp) TO 'desc_comp_output' WITH FORMAT parquet row_group_size 20",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "desc_comp_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("count\n100\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "desc_comp_output.parquet')");
+                        // Verify computed column values at boundaries
+                        assertSql("""
+                                        cx\tdbl_col
+                                        2\t2.0
+                                        """,
+                                "SELECT cx, dbl_col FROM read_parquet('" + exportRoot + File.separator + "desc_comp_output.parquet') WHERE cx = 2"
+                        );
+                        assertSql("""
+                                        cx\tdbl_col
+                                        101\t200.0
+                                        """,
+                                "SELECT cx, dbl_col FROM read_parquet('" + exportRoot + File.separator + "desc_comp_output.parquet') WHERE cx = 101"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyQueryWithComputedColumnsMultipleRowGroups() throws Exception {
         // PAGE_FRAME_BACKED: computed columns + small row_group_size forces
         // multiple row group flushes and exercises buffer pinning.
@@ -1354,6 +1402,51 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryWithComputedNullValuesMultipleRowGroups() throws Exception {
+        // PAGE_FRAME_BACKED: NULL values in computed columns spanning multiple row group
+        // boundaries exercise buffer pinning with NULL sentinel values across flushes.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE null_rg AS (
+                        SELECT
+                            CASE WHEN x % 3 = 0 THEN NULL::INT ELSE x::INT END AS val,
+                            CASE WHEN x % 5 = 0 THEN NULL ELSE rnd_str(3, 8, 0) END AS name,
+                            timestamp_sequence('2024-01-01', 100_000L) AS ts
+                        FROM long_sequence(1000)
+                    ) TIMESTAMP(ts) PARTITION BY HOUR""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT val::LONG AS val_long, name, ts FROM null_rg) TO 'null_rg_output' WITH FORMAT parquet row_group_size 50",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "null_rg_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("count\n1000\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "null_rg_output.parquet')");
+                        // Verify NULL count matches original
+                        assertSql("null_count\n333\n",
+                                "SELECT count(*) AS null_count FROM read_parquet('" + exportRoot + File.separator + "null_rg_output.parquet') WHERE val_long IS NULL");
+                        // Verify non-NULL values preserved correctly
+                        assertSql("""
+                                        val_long
+                                        1
+                                        2
+                                        """,
+                                "SELECT val_long FROM read_parquet('" + exportRoot + File.separator + "null_rg_output.parquet') WHERE val_long IS NOT NULL ORDER BY val_long LIMIT 2");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyQueryWithComputedSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (x INT, name STRING)");
@@ -1420,6 +1513,45 @@ public class CopyExportTest extends AbstractCairoTest {
                         );
                         assertSql("count\n5000\n",
                                 "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "cb_rg_output.parquet')");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithCursorBasedNullsMultipleRowGroups() throws Exception {
+        // CURSOR_BASED: NULL values across multiple row group boundaries in a
+        // non-page-frame factory (CROSS JOIN). Exercises cursor-based buffer
+        // pinning with NULL sentinels for both fixed-size and var-size columns.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE cb_null_t1 AS (
+                        SELECT
+                            CASE WHEN x % 4 = 0 THEN NULL::INT ELSE x::INT END AS a,
+                            CASE WHEN x % 3 = 0 THEN NULL ELSE rnd_str(2, 6, 0) END AS s
+                        FROM long_sequence(50)
+                    )""");
+            execute("CREATE TABLE cb_null_t2 AS (SELECT x AS b FROM long_sequence(10))");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT cb_null_t1.a, cb_null_t2.b, cb_null_t1.s FROM cb_null_t1 CROSS JOIN cb_null_t2) TO 'cb_null_rg_output' WITH FORMAT parquet row_group_size 50",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "cb_null_rg_output.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("count\n500\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "cb_null_rg_output.parquet')");
+                        // Every 4th value of a is NULL: 50 rows * 10 = 500, 12 NULLs per set of 50 * 10 = 120
+                        assertSql("null_count\n120\n",
+                                "SELECT count(*) AS null_count FROM read_parquet('" + exportRoot + File.separator + "cb_null_rg_output.parquet') WHERE a IS NULL");
                     });
 
             testCopyExport(stmt, test);

@@ -790,38 +790,6 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testParquetExportCursorBasedMultipleRowGroups() throws Exception {
-        getExportTester()
-                .run((engine, sqlExecutionContext) -> {
-                    // CROSS JOIN produces a CURSOR_BASED factory (no page frame support).
-                    // 10 x 500 = 5000 rows with computed columns and small row groups
-                    // exercises the buffer pinning fix in the cursor-based path.
-                    engine.execute("""
-                            CREATE TABLE cb_t1 AS (
-                                SELECT x AS a FROM long_sequence(10)
-                            )""", sqlExecutionContext);
-                    engine.execute("""
-                            CREATE TABLE cb_t2 AS (
-                                SELECT x AS b,
-                                rnd_str(5, 10, 0) AS s,
-                                rnd_varchar(5, 10, 0) AS vc,
-                                rnd_double_array(1, 5) AS arr
-                                FROM long_sequence(500)
-                            )""", sqlExecutionContext);
-
-                    String[] queries = {
-                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.s FROM cb_t1 CROSS JOIN cb_t2",
-                            "SELECT cb_t1.a * cb_t2.b AS product, cb_t2.s FROM cb_t1 CROSS JOIN cb_t2",
-                            // VARCHAR and ARRAY through cursor-based buffers
-                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.vc FROM cb_t1 CROSS JOIN cb_t2",
-                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.arr FROM cb_t1 CROSS JOIN cb_t2",
-                    };
-
-                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 200);
-                });
-    }
-
-    @Test
     public void testParquetExportCompressionCode() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -993,6 +961,38 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("compression_codec", "zstd");
                     params.put("compression_level", "15");
                     testHttpClient.assertGetParquet("/exp", 374, params, "SELECT * FROM level_valid_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportCursorBasedMultipleRowGroups() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // CROSS JOIN produces a CURSOR_BASED factory (no page frame support).
+                    // 10 x 500 = 5000 rows with computed columns and small row groups
+                    // exercises the buffer pinning fix in the cursor-based path.
+                    engine.execute("""
+                            CREATE TABLE cb_t1 AS (
+                                SELECT x AS a FROM long_sequence(10)
+                            )""", sqlExecutionContext);
+                    engine.execute("""
+                            CREATE TABLE cb_t2 AS (
+                                SELECT x AS b,
+                                rnd_str(5, 10, 0) AS s,
+                                rnd_varchar(5, 10, 0) AS vc,
+                                rnd_double_array(1, 5) AS arr
+                                FROM long_sequence(500)
+                            )""", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.s FROM cb_t1 CROSS JOIN cb_t2",
+                            "SELECT cb_t1.a * cb_t2.b AS product, cb_t2.s FROM cb_t1 CROSS JOIN cb_t2",
+                            // VARCHAR and ARRAY through cursor-based buffers
+                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.vc FROM cb_t1 CROSS JOIN cb_t2",
+                            "SELECT cb_t1.a + cb_t2.b AS sum_ab, cb_t2.arr FROM cb_t1 CROSS JOIN cb_t2",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 200);
                 });
     }
 
@@ -1503,6 +1503,55 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFrameComputedColumnsNulls() throws Exception {
+        // PAGE_FRAME_BACKED: NULL values in computed columns across multiple row group
+        // boundaries. assertParquetExportDataCorrectness uses random row_group_size,
+        // exercising buffer pinning with NULL sentinel values across flushes.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE null_hybrid AS (
+                                SELECT
+                                    CASE WHEN x % 3 = 0 THEN NULL::INT ELSE x::INT END AS val,
+                                    CASE WHEN x % 5 = 0 THEN NULL ELSE rnd_str(3, 8, 0) END AS name,
+                                    timestamp_sequence('2024-01-01', 100_000L) AS ts
+                                FROM long_sequence(500)
+                            ) TIMESTAMP(ts) PARTITION BY HOUR""", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT val::LONG AS val_long, name, ts FROM null_hybrid",
+                            "SELECT val + 1 AS val_inc, name, ts FROM null_hybrid",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameCursorBasedNulls() throws Exception {
+        // CURSOR_BASED: NULL values in a non-page-frame factory (CROSS JOIN)
+        // across multiple row groups. Exercises cursor-based buffer pinning
+        // with NULL sentinels for both fixed-size and var-size columns.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE cb_null_a AS (
+                                SELECT
+                                    CASE WHEN x % 4 = 0 THEN NULL::INT ELSE x::INT END AS a,
+                                    CASE WHEN x % 3 = 0 THEN NULL ELSE rnd_str(2, 6, 0) END AS s
+                                FROM long_sequence(30)
+                            )""", sqlExecutionContext);
+                    engine.execute("CREATE TABLE cb_null_b AS (SELECT x AS b FROM long_sequence(10))", sqlExecutionContext);
+
+                    String[] queries = {
+                            "SELECT cb_null_a.a, cb_null_b.b, cb_null_a.s FROM cb_null_a CROSS JOIN cb_null_b",
+                    };
+
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length * 3, 50);
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameDescending() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1956,34 +2005,6 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         return req.send();
     }
 
-    private void assertParquetMatchesQuery(
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            DirectUtf8Sink parquetData,
-            String query,
-            String filename
-    ) throws Exception {
-        int bytesReceived = parquetData.size();
-        Path path = Path.getThreadLocal(root);
-        path.concat("export").concat(filename).$();
-        Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
-        long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
-        try {
-            Files.truncate(fd, bytesReceived);
-            long bytesWritten = Files.write(fd, parquetData.ptr(), bytesReceived, 0);
-            Assert.assertEquals(bytesReceived, bytesWritten);
-        } finally {
-            Files.close(fd);
-        }
-
-        String selectFromParquet = "read_parquet('" + filename + "')";
-        var expectedSink = new StringSink();
-        var actualSink = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-        TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
-        TestUtils.assertEquals(expectedSink, actualSink);
-    }
-
     private void assertParquetExportDataCorrectness(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -2039,6 +2060,34 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 TestUtils.assertEquals(expectedSink, actualSink);
             }
         }
+    }
+
+    private void assertParquetMatchesQuery(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            DirectUtf8Sink parquetData,
+            String query,
+            String filename
+    ) throws Exception {
+        int bytesReceived = parquetData.size();
+        Path path = Path.getThreadLocal(root);
+        path.concat("export").concat(filename).$();
+        Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
+        long fd = Files.openRW(path.$(), CairoConfiguration.O_NONE);
+        try {
+            Files.truncate(fd, bytesReceived);
+            long bytesWritten = Files.write(fd, parquetData.ptr(), bytesReceived, 0);
+            Assert.assertEquals(bytesReceived, bytesWritten);
+        } finally {
+            Files.close(fd);
+        }
+
+        String selectFromParquet = "read_parquet('" + filename + "')";
+        var expectedSink = new StringSink();
+        var actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
+        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     private HttpQueryTestBuilder getExportTester() {
