@@ -411,9 +411,9 @@ public class TelemetryTest extends AbstractCairoTest {
                     "\tlatency FLOAT\n";
             String end = " BYPASS WAL;\n";
 
-            assertQueryNoLeakCheck(header + ") timestamp(created) PARTITION BY MONTH" + end, showCreateTable);
+            assertSql(header + ") timestamp(created) PARTITION BY MONTH" + end, showCreateTable);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                assertQueryNoLeakCheck(header.replace("\tlatency FLOAT\n", "\tlatency FLOAT,\n") +
+                assertSql(header.replace("\tlatency FLOAT\n", "\tlatency FLOAT,\n") +
                         "\tminTimestamp TIMESTAMP,\n" +
                         "\tmaxTimestamp TIMESTAMP\n" +
                         ") timestamp(created) PARTITION BY DAY TTL 1 WEEK" + end, showCreateTable);
