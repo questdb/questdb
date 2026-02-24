@@ -246,11 +246,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
         let bloom_filter_cols =
             build_bloom_filter_set(bloom_filter_column_indexes, bloom_filter_column_count);
-        let bloom_fpp = if bloom_filter_fpp > 0.0 {
-            bloom_filter_fpp
-        } else {
-            0.01
-        };
 
         let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
         let mut file = file.with_context(|_| {
@@ -276,7 +271,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_data_page_size(data_page_size)
             .with_sorting_columns(sorting_columns)
             .with_bloom_filter_columns(bloom_filter_cols)
-            .with_bloom_filter_fpp(bloom_fpp)
+            .with_bloom_filter_fpp(bloom_filter_fpp)
             .finish(partition)
             .map(|_| ())
             .context("ParquetWriter::finish failed")

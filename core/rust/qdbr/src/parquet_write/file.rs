@@ -48,7 +48,7 @@ pub struct WriteOptions {
     pub raw_array_encoding: bool,
     /// Set of column indices that should have bloom filters written
     pub bloom_filter_columns: HashSet<usize>,
-    /// False positive probability for bloom filters (default 0.01)
+    /// False positive probability for bloom filters
     pub bloom_filter_fpp: f64,
 }
 

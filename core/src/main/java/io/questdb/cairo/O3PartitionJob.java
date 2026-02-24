@@ -129,10 +129,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
                 final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
+                final double bloomFilterFpp = cairoConfiguration.getPartitionEncoderParquetBloomFilterFpp();
 
                 // partitionUpdater is the owner of the partitionDecoder descriptor
                 final int opts = cairoConfiguration.getWriterFileOpenOpts();
-                final double bloomFilterFpp = 0.01; // TODO: add to CairoConfiguration
                 partitionUpdater.of(
                         path.$(),
                         opts,

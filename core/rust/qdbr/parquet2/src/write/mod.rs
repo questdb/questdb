@@ -33,8 +33,7 @@ pub struct WriteOptions {
     pub write_statistics: bool,
     /// Which Parquet version to use
     pub version: Version,
-    /// False positive probability for bloom filters (default 0.01).
-    /// Set to 0.0 to disable bloom filter writing.
+    /// False positive probability for bloom filters
     pub bloom_filter_fpp: f64,
 }
 

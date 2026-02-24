@@ -166,7 +166,7 @@ impl ParquetUpdater {
             data_page_size: self.data_page_size,
             raw_array_encoding: self.raw_array_encoding,
             bloom_filter_columns: self.bloom_filter_columns.clone(),
-            bloom_filter_fpp: 0.01,
+            bloom_filter_fpp: self.parquet_file.options().bloom_filter_fpp,
         }
     }
 }

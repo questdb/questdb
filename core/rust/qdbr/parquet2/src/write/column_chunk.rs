@@ -59,16 +59,11 @@ where
     let bloom_filter_offset = {
         let bloom_ref = bloom_hashes;
         if let Some(bloom_arc) = bloom_ref {
-            let fpp = if bloom_filter_fpp <= 0.0 || bloom_filter_fpp >= 1.0 {
-                DEFAULT_BLOOM_FILTER_FPP
-            } else {
-                bloom_filter_fpp
-            };
             let hashes = bloom_arc.lock().unwrap();
             if hashes.is_empty() {
                 None
             } else {
-                let bitset_size = bloom_filter_bitset_size(hashes.len(), fpp);
+                let bitset_size = bloom_filter_bitset_size(hashes.len(), bloom_filter_fpp);
                 let mut bitset = vec![0u8; bitset_size];
                 for &hash in hashes.iter() {
                     bloom_filter::insert(&mut bitset, hash);
@@ -98,7 +93,6 @@ where
     Ok((column_chunk, specs, bytes_written))
 }
 
-const DEFAULT_BLOOM_FILTER_FPP: f64 = 0.01;
 const MINIMUM_BLOOM_FILTER_BYTES: usize = 32;
 const MAXIMUM_BLOOM_FILTER_BYTES: usize = 128 * 1024 * 1024; // 128MB
 
@@ -109,12 +103,6 @@ fn bloom_filter_bitset_size(ndv: usize, fpp: f64) -> usize {
     if ndv == 0 {
         return MINIMUM_BLOOM_FILTER_BYTES;
     }
-    let fpp = if fpp <= 0.0 || fpp >= 1.0 {
-        DEFAULT_BLOOM_FILTER_FPP
-    } else {
-        fpp
-    };
-
     // Split Block Bloom Filter formula: m = -8 * ndv / ln(1 - fpp^(1/8))
     let num_bits = -8.0 * (ndv as f64) / (1.0 - fpp.powf(1.0 / 8.0)).ln();
 
