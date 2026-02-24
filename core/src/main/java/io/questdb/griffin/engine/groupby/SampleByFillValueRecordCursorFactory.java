@@ -167,7 +167,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 }
                 default -> {
                     if (ColumnType.isArray(type)) {
-                        yield NullConstant.NULL;
+                        throw SqlException.$(fillNode.position, "FILL with constant value is not supported for array columns, use FILL(NULL)");
                     }
                     throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
                 }

@@ -182,22 +182,23 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFillValue() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('1970-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]),
-                    ('1970-01-01T00:00:20.000000Z', 'a', ARRAY[3.0, 4.0])
-                    """);
-            assertSql(
-                    "ts\tgrp\tarr\n" +
-                            "1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\ta\tnull\n" +
-                            "1970-01-01T00:00:20.000000Z\ta\t[3.0,4.0]\n",
-                    "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)"
-            );
-        });
+    public void testSampleByFillLinearRejectsArrayColumns() throws Exception {
+        assertException(
+                "SELECT ts, last(arr) arr FROM tab SAMPLE BY 10s FILL(LINEAR)",
+                "CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
+                11,
+                "support for LINEAR fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testSampleByFillValueRejectsArrayColumns() throws Exception {
+        assertException(
+                "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)",
+                "CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
+                58,
+                "FILL with constant value is not supported for array columns, use FILL(NULL)"
+        );
     }
 
     @Test
