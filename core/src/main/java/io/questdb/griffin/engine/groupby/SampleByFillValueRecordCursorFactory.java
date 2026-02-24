@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
@@ -164,8 +165,12 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     }
                     yield TimestampConstant.newInstance(timestampDriver.parseQuotedLiteral(fillNode.token), type);
                 }
-                default ->
-                        throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+                default -> {
+                    if (ColumnType.isArray(type)) {
+                        yield NullConstant.NULL;
+                    }
+                    throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+                }
             };
         } catch (NumericException e) {
             throw SqlException.position(fillNode.position).put("invalid fill value: ").put(fillNode.token);
