@@ -1134,6 +1134,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         try {
             metadata.loadMetadata();
             return metadata;
+        } catch (CairoException ex) {
+            metadata.close();
+            throw CairoException.critical(ex.errno).put("metadata read error [table=").put(tableToken)
+                    .put(", error=").put(ex.getFlyweightMessage()).put(']');
         } catch (Throwable th) {
             metadata.close();
             throw th;

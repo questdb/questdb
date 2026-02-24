@@ -2039,6 +2039,7 @@ public class TableReaderTest extends AbstractCairoTest {
             try (TableReader ignored = getReader(tableToken)) {
                 Assert.fail();
             } catch (CairoException ex) {
+                ex.printStackTrace();
                 TestUtils.assertContains(ex.getFlyweightMessage(), "metadata read error [table=" + tableName);
             }
         });

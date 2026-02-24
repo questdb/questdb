@@ -260,11 +260,13 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             blockFileReader.of(path);
             TableMetadataFileBlock.read(blockFileReader, holder, path);
             // Close reader after reading - we have all data in holder
-            blockFileReader.close();
             readFromHolder(holder);
-        } catch (Throwable e) {
+        }
+        catch (Throwable e) {
             clear();
             throw e;
+        } finally {
+            blockFileReader.close();
         }
     }
 
