@@ -204,6 +204,110 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         base.close();
     }
 
+    static final class ExtraNullColumnConcurrentTimeFrameCursor implements ConcurrentTimeFrameCursor {
+        private final int columnSplit;
+        private final ConcurrentTimeFrameCursor delegate;
+        private final ExtraNullColumnRecord extraNullColumnRecord;
+        private final int selectedTimestampIndex;
+
+        ExtraNullColumnConcurrentTimeFrameCursor(
+                ConcurrentTimeFrameCursor delegate,
+                int columnSplit,
+                int selectedTimestampIndex
+        ) {
+            this.delegate = delegate;
+            this.columnSplit = columnSplit;
+            this.selectedTimestampIndex = selectedTimestampIndex;
+            this.extraNullColumnRecord = new ExtraNullColumnRecord(columnSplit);
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+
+        @Override
+        public Record getRecord() {
+            return extraNullColumnRecord;
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return columnIndex < columnSplit ? delegate.getSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
+        }
+
+        @Override
+        public TimeFrame getTimeFrame() {
+            return delegate.getTimeFrame();
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return selectedTimestampIndex;
+        }
+
+        @Override
+        public void jumpTo(int frameIndex) {
+            delegate.jumpTo(frameIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return columnIndex < columnSplit ? delegate.newSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
+        }
+
+        @Override
+        public boolean next() {
+            return delegate.next();
+        }
+
+        @Override
+        public ConcurrentTimeFrameCursor of(
+                TablePageFrameCursor frameCursor,
+                PageFrameAddressCache frameAddressCache,
+                DirectIntList framePartitionIndexes,
+                LongList frameRowCounts,
+                LongList partitionTimestamps,
+                LongList partitionCeilings,
+                int frameCount,
+                int timestampIndex
+        ) {
+            delegate.of(frameCursor, frameAddressCache, framePartitionIndexes, frameRowCounts, partitionTimestamps, partitionCeilings, frameCount, selectedTimestampIndex);
+            extraNullColumnRecord.of(delegate.getRecord());
+            return this;
+        }
+
+        @Override
+        public long open() {
+            return delegate.open();
+        }
+
+        @Override
+        public boolean prev() {
+            return delegate.prev();
+        }
+
+        @Override
+        public void recordAt(Record record, long rowId) {
+            delegate.recordAt(((ExtraNullColumnRecord) record).getBaseRecord(), rowId);
+        }
+
+        @Override
+        public void recordAt(Record record, int frameIndex, long rowIndex) {
+            delegate.recordAt(((ExtraNullColumnRecord) record).getBaseRecord(), frameIndex, rowIndex);
+        }
+
+        @Override
+        public void recordAtRowIndex(Record record, long rowIndex) {
+            delegate.recordAtRowIndex(((ExtraNullColumnRecord) record).getBaseRecord(), rowIndex);
+        }
+
+        @Override
+        public void toTop() {
+            delegate.toTop();
+        }
+    }
+
     private static class ExtraNullColumnPageFrame implements PageFrame {
         private final int columnCount;
         private final int columnSplit;
@@ -316,11 +420,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public TableReader getTableReader() {
-            return baseCursor.getTableReader();
-        }
-
-        @Override
         public long getRemainingRowsInInterval() {
             return baseCursor.getRemainingRowsInInterval();
         }
@@ -328,6 +427,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public StaticSymbolTable getSymbolTable(int columnIndex) {
             return columnIndex < columnSplit ? baseCursor.getSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
+        }
+
+        @Override
+        public TableReader getTableReader() {
+            return baseCursor.getTableReader();
         }
 
         @Override
@@ -351,6 +455,9 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
             return this;
         }
 
+        // This wrapper is initialized via of(TablePageFrameCursor), not via of(PartitionFrameCursor, ...).
+        // The base factory's getPageFrameCursor() handles partition-level initialization internally,
+        // then we wrap the already-initialized result.
         @Override
         public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) {
             throw new UnsupportedOperationException();
@@ -491,110 +598,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public void toTop() {
             baseCursor.toTop();
-        }
-    }
-
-    static final class ExtraNullColumnConcurrentTimeFrameCursor implements ConcurrentTimeFrameCursor {
-        private final int columnSplit;
-        private final ConcurrentTimeFrameCursor delegate;
-        private final ExtraNullColumnRecord extraNullColumnRecord;
-        private final int selectedTimestampIndex;
-
-        ExtraNullColumnConcurrentTimeFrameCursor(
-                ConcurrentTimeFrameCursor delegate,
-                int columnSplit,
-                int selectedTimestampIndex
-        ) {
-            this.delegate = delegate;
-            this.columnSplit = columnSplit;
-            this.selectedTimestampIndex = selectedTimestampIndex;
-            this.extraNullColumnRecord = new ExtraNullColumnRecord(columnSplit);
-        }
-
-        @Override
-        public void close() {
-            delegate.close();
-        }
-
-        @Override
-        public Record getRecord() {
-            return extraNullColumnRecord;
-        }
-
-        @Override
-        public StaticSymbolTable getSymbolTable(int columnIndex) {
-            return columnIndex < columnSplit ? delegate.getSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
-        }
-
-        @Override
-        public TimeFrame getTimeFrame() {
-            return delegate.getTimeFrame();
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return selectedTimestampIndex;
-        }
-
-        @Override
-        public void jumpTo(int frameIndex) {
-            delegate.jumpTo(frameIndex);
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return columnIndex < columnSplit ? delegate.newSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
-        }
-
-        @Override
-        public boolean next() {
-            return delegate.next();
-        }
-
-        @Override
-        public ConcurrentTimeFrameCursor of(
-                TablePageFrameCursor frameCursor,
-                PageFrameAddressCache frameAddressCache,
-                DirectIntList framePartitionIndexes,
-                LongList frameRowCounts,
-                LongList partitionTimestamps,
-                LongList partitionCeilings,
-                int frameCount,
-                int timestampIndex
-        ) {
-            delegate.of(frameCursor, frameAddressCache, framePartitionIndexes, frameRowCounts, partitionTimestamps, partitionCeilings, frameCount, selectedTimestampIndex);
-            extraNullColumnRecord.of(delegate.getRecord());
-            return this;
-        }
-
-        @Override
-        public long open() {
-            return delegate.open();
-        }
-
-        @Override
-        public boolean prev() {
-            return delegate.prev();
-        }
-
-        @Override
-        public void recordAt(Record record, long rowId) {
-            delegate.recordAt(((ExtraNullColumnRecord) record).getBaseRecord(), rowId);
-        }
-
-        @Override
-        public void recordAt(Record record, int frameIndex, long rowIndex) {
-            delegate.recordAt(((ExtraNullColumnRecord) record).getBaseRecord(), frameIndex, rowIndex);
-        }
-
-        @Override
-        public void recordAtRowIndex(Record record, long rowIndex) {
-            delegate.recordAtRowIndex(((ExtraNullColumnRecord) record).getBaseRecord(), rowIndex);
-        }
-
-        @Override
-        public void toTop() {
-            delegate.toTop();
         }
     }
 }

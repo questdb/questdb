@@ -2719,6 +2719,65 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             // Same query, but with reordered columns in the slave subquery.
             // This exercises SelectedConcurrentTimeFrameCursor.
+            String query = "SELECT t.sym, t.qty, t.ts, sum(p.price) AS window_price, sum(p.price0) AS window_price0 " +
+                    "FROM trades t " +
+                    "WINDOW JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') p " +
+                    "ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 2 second PRECEDING AND 2 second FOLLOWING " +
+                    (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
+                    "ORDER BY t.ts, t.sym";
+            StringSink planSink = new StringSink();
+            engine.print("EXPLAIN " + query, planSink, sqlExecutionContext);
+            System.out.println("PLAN:\n" + planSink);
+            assertQueryNoLeakCheck(
+                    "sym\tqty\tts\twindow_price\twindow_price0\n" +
+                            "AX\t100.0\t1970-01-01T00:00:05.000000Z\t30.0\t30.0\n" +
+                            "AX\t200.0\t1970-01-02T00:00:05.000000Z\t" + expectedDay2Price + "\t" + expectedDay2Price + "\n",
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinFilterTimestampFilterSequential() throws Exception {
+        // Force the sequential (non-parallel) window join path to exercise
+        // SelectedTimeFrameCursor.getTimestampIndex() which returns hardcoded 0.
+        // When the slave subquery reorders columns so that the timestamp is NOT
+        // at position 0, the helper's binary search reads the wrong column.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:05.000000Z', 'AX', 100.0),
+                                ('1970-01-02T00:00:05.000000Z', 'AX', 200.0)
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:04.000000Z', 'AX', 10.0),
+                                ('1970-01-01T00:00:06.000000Z', 'AX', 20.0),
+                                ('1970-01-02T00:00:04.000000Z', 'AX', 30.0),
+                                ('1970-01-02T00:00:06.000000Z', 'AX', 40.0)
+                            """
+            );
+
+            String expectedDay2Price = includePrevailing ? "20.0" : "null";
+
+            // The sequential SelectedTimeFrameCursor.getTimestampIndex() returns hardcoded 0,
+            // but the timestamp is at position 3 in the projection (price, price0, sym, ts).
+            // The binary search reads the price column as a timestamp, producing wrong results.
+            // With INCLUDE PREVAILING, the second row should return 20.0 (prevailing price
+            // from day 1), but the buggy binary search returns null.
             assertQueryNoLeakCheck(
                     "sym\tqty\tts\twindow_price\twindow_price0\n" +
                             "AX\t100.0\t1970-01-01T00:00:05.000000Z\t30.0\t30.0\n" +
@@ -2732,7 +2791,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "ORDER BY t.ts, t.sym",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }

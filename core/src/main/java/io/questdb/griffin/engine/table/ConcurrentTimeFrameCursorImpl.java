@@ -108,7 +108,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public void jumpTo(int frameIndex) {
         if (frameIndex >= frameCount || frameIndex < 0) {
-            throw CairoException.nonCritical().put("frame index out of bounds. [frameIndex=]").put(frameIndex)
+            throw CairoException.nonCritical().put("frame index out of bounds. [frameIndex=").put(frameIndex)
                     .put(", frameCount=").put(frameCount).put(']');
         }
 
