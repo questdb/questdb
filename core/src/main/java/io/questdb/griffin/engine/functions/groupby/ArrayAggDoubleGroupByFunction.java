@@ -187,6 +187,9 @@ public class ArrayAggDoubleGroupByFunction extends ArrayFunction implements Grou
         }
         if (newCount > destCapacity) {
             int newCapacity = Numbers.ceilPow2(newCount);
+            if (newCapacity < newCount) {
+                throw CairoException.nonCritical().put("array_agg: merged array exceeds maximum capacity");
+            }
             long oldSize = HEADER_SIZE + (long) destCapacity * Double.BYTES;
             long newSize = HEADER_SIZE + (long) newCapacity * Double.BYTES;
             destPtr = allocator.realloc(destPtr, oldSize, newSize);
