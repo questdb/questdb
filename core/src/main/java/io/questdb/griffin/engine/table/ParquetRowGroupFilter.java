@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
@@ -46,6 +48,7 @@ public final class ParquetRowGroupFilter {
     public static final int FILTER_BUFFER_MAX_PAGES = 16;
     public static final long FILTER_BUFFER_PAGE_SIZE = 4096;
     public static final int LONGS_PER_FILTER = 2;
+    private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
 
     /**
      * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
@@ -65,179 +68,183 @@ public final class ParquetRowGroupFilter {
             DirectLongList filterList,
             MemoryCARWImpl filterValues
     ) {
-        if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
-            return false;
-        }
-        filterList.clear();
-        filterList.reopen();
-        filterValues.clear();
-        PartitionDecoder.Metadata metadata = decoder.metadata();
-
-        for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
-            final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
-            final ObjList<Function> valueFunctions = condition.getValueFunctions();
-            final int valueCount = valueFunctions.size();
-            if (valueCount == 0) {
-                continue;
+        try {
+            if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
+                return false;
             }
+            filterList.clear();
+            filterList.reopen();
+            filterValues.clear();
+            PartitionDecoder.Metadata metadata = decoder.metadata();
 
-            int columnIndex = metadata.getColumnIndex(condition.getColumnName());
-            if (columnIndex < 0) {
-                continue;
-            }
-            final int columnType = condition.getColumnType();
-            final long valuesOffset = filterValues.getAppendOffset();
-            boolean supported = true;
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.BYTE:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putInt(valueFunctions.getQuick(j).getByte(null));
-                    }
-                    break;
-                case ColumnType.SHORT:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putInt(valueFunctions.getQuick(j).getShort(null));
-                    }
-                    break;
-                case ColumnType.CHAR:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putInt(valueFunctions.getQuick(j).getChar(null));
-                    }
-                    break;
-                case ColumnType.INT:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putInt(valueFunctions.getQuick(j).getInt(null));
-                    }
-                    break;
-                // don't support timestamp because it may be the value is interval.
-                case ColumnType.TIMESTAMP:
-                    boolean allTimestamp = true;
-                    for (int j = 0; j < valueCount; j++) {
-                        if (!ColumnType.isTimestamp(valueFunctions.getQuick(j).getType())) {
-                            allTimestamp = false;
+            for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
+                final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
+                final ObjList<Function> valueFunctions = condition.getValueFunctions();
+                final int valueCount = valueFunctions.size();
+                if (valueCount == 0) {
+                    continue;
+                }
+
+                int columnIndex = metadata.getColumnIndex(condition.getColumnName());
+                if (columnIndex < 0) {
+                    continue;
+                }
+                final int columnType = condition.getColumnType();
+                final long valuesOffset = filterValues.getAppendOffset();
+                boolean supported = true;
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.BYTE:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putInt(valueFunctions.getQuick(j).getByte(null));
+                        }
+                        break;
+                    case ColumnType.SHORT:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putInt(valueFunctions.getQuick(j).getShort(null));
+                        }
+                        break;
+                    case ColumnType.CHAR:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putInt(valueFunctions.getQuick(j).getChar(null));
+                        }
+                        break;
+                    case ColumnType.INT:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putInt(valueFunctions.getQuick(j).getInt(null));
+                        }
+                        break;
+                    // don't support timestamp because it may be the value is interval.
+                    case ColumnType.TIMESTAMP:
+                        boolean allTimestamp = true;
+                        for (int j = 0; j < valueCount; j++) {
+                            if (!ColumnType.isTimestamp(valueFunctions.getQuick(j).getType())) {
+                                allTimestamp = false;
+                                break;
+                            }
+                        }
+                        if (!allTimestamp) {
+                            supported = false;
                             break;
                         }
-                    }
-                    if (!allTimestamp) {
-                        supported = false;
+                        // fallthrough
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putLong(valueFunctions.getQuick(j).getLong(null));
+                        }
+                        break;
+                    case ColumnType.FLOAT:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putFloat(valueFunctions.getQuick(j).getFloat(null));
+                        }
+                        break;
+                    case ColumnType.DOUBLE:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putDouble(valueFunctions.getQuick(j).getDouble(null));
+                        }
+                        break;
+                    case ColumnType.IPv4:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putInt(valueFunctions.getQuick(j).getIPv4(null));
+                        }
+                        break;
+                    case ColumnType.DECIMAL8:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putByte(valueFunctions.getQuick(j).getDecimal8(null));
+                        }
+                        break;
+                    case ColumnType.DECIMAL16:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putShort(Short.reverseBytes(valueFunctions.getQuick(j).getDecimal16(null)));
+                        }
+                        break;
+                    case ColumnType.DECIMAL32:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putInt(Integer.reverseBytes(valueFunctions.getQuick(j).getDecimal32(null)));
+                        }
+                        break;
+                    case ColumnType.DECIMAL64:
+                        for (int j = 0; j < valueCount; j++) {
+                            filterValues.putLong(Long.reverseBytes(valueFunctions.getQuick(j).getDecimal64(null)));
+                        }
+                        break;
+                    case ColumnType.DECIMAL128: {
+                        Decimal128 d = Misc.getThreadLocalDecimal128();
+                        for (int j = 0; j < valueCount; j++) {
+                            valueFunctions.getQuick(j).getDecimal128(null, d);
+                            filterValues.putLong(Long.reverseBytes(d.getHigh()));
+                            filterValues.putLong(Long.reverseBytes(d.getLow()));
+                        }
                         break;
                     }
-                    // fallthrough
-                case ColumnType.LONG:
-                case ColumnType.DATE:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putLong(valueFunctions.getQuick(j).getLong(null));
+                    case ColumnType.DECIMAL256: {
+                        Decimal256 d = Misc.getThreadLocalDecimal256();
+                        for (int j = 0; j < valueCount; j++) {
+                            valueFunctions.getQuick(j).getDecimal256(null, d);
+                            filterValues.putLong(Long.reverseBytes(d.getHh()));
+                            filterValues.putLong(Long.reverseBytes(d.getHl()));
+                            filterValues.putLong(Long.reverseBytes(d.getLh()));
+                            filterValues.putLong(Long.reverseBytes(d.getLl()));
+                        }
+                        break;
                     }
-                    break;
-                case ColumnType.FLOAT:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putFloat(valueFunctions.getQuick(j).getFloat(null));
-                    }
-                    break;
-                case ColumnType.DOUBLE:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putDouble(valueFunctions.getQuick(j).getDouble(null));
-                    }
-                    break;
-                case ColumnType.IPv4:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putInt(valueFunctions.getQuick(j).getIPv4(null));
-                    }
-                    break;
-                case ColumnType.DECIMAL8:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putByte(valueFunctions.getQuick(j).getDecimal8(null));
-                    }
-                    break;
-                case ColumnType.DECIMAL16:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putShort(Short.reverseBytes(valueFunctions.getQuick(j).getDecimal16(null)));
-                    }
-                    break;
-                case ColumnType.DECIMAL32:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putInt(Integer.reverseBytes(valueFunctions.getQuick(j).getDecimal32(null)));
-                    }
-                    break;
-                case ColumnType.DECIMAL64:
-                    for (int j = 0; j < valueCount; j++) {
-                        filterValues.putLong(Long.reverseBytes(valueFunctions.getQuick(j).getDecimal64(null)));
-                    }
-                    break;
-                case ColumnType.DECIMAL128: {
-                    Decimal128 d = Misc.getThreadLocalDecimal128();
-                    for (int j = 0; j < valueCount; j++) {
-                        valueFunctions.getQuick(j).getDecimal128(null, d);
-                        filterValues.putLong(Long.reverseBytes(d.getHigh()));
-                        filterValues.putLong(Long.reverseBytes(d.getLow()));
-                    }
-                    break;
-                }
-                case ColumnType.DECIMAL256: {
-                    Decimal256 d = Misc.getThreadLocalDecimal256();
-                    for (int j = 0; j < valueCount; j++) {
-                        valueFunctions.getQuick(j).getDecimal256(null, d);
-                        filterValues.putLong(Long.reverseBytes(d.getHh()));
-                        filterValues.putLong(Long.reverseBytes(d.getHl()));
-                        filterValues.putLong(Long.reverseBytes(d.getLh()));
-                        filterValues.putLong(Long.reverseBytes(d.getLl()));
-                    }
-                    break;
-                }
-                case ColumnType.UUID:
-                    for (int j = 0; j < valueCount; j++) {
-                        long lo = valueFunctions.getQuick(j).getLong128Lo(null);
-                        long hi = valueFunctions.getQuick(j).getLong128Hi(null);
-                        if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
+                    case ColumnType.UUID:
+                        for (int j = 0; j < valueCount; j++) {
+                            long lo = valueFunctions.getQuick(j).getLong128Lo(null);
+                            long hi = valueFunctions.getQuick(j).getLong128Hi(null);
+                            if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
+                                filterValues.putLong(lo);
+                                filterValues.putLong(hi);
+                            } else {
+                                filterValues.putLong(Long.reverseBytes(hi));
+                                filterValues.putLong(Long.reverseBytes(lo));
+                            }
+                        }
+                        break;
+                    case ColumnType.LONG128:
+                        for (int j = 0; j < valueCount; j++) {
+                            long lo = valueFunctions.getQuick(j).getLong128Lo(null);
+                            long hi = valueFunctions.getQuick(j).getLong128Hi(null);
                             filterValues.putLong(lo);
                             filterValues.putLong(hi);
-                        } else {
-                            filterValues.putLong(Long.reverseBytes(hi));
-                            filterValues.putLong(Long.reverseBytes(lo));
                         }
-                    }
-                    break;
-                case ColumnType.LONG128:
-                    for (int j = 0; j < valueCount; j++) {
-                        long lo = valueFunctions.getQuick(j).getLong128Lo(null);
-                        long hi = valueFunctions.getQuick(j).getLong128Hi(null);
-                        filterValues.putLong(lo);
-                        filterValues.putLong(hi);
-                    }
-                    break;
-                case ColumnType.STRING:
-                case ColumnType.SYMBOL:
-                case ColumnType.VARCHAR:
-                    for (int j = 0; j < valueCount; j++) {
-                        Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
-                        if (utf8 != null) {
-                            int len = utf8.size();
-                            filterValues.putInt(len);
-                            filterValues.putVarchar(utf8);
-                        } else {
-                            filterValues.putInt(-1);
+                        break;
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                    case ColumnType.VARCHAR:
+                        for (int j = 0; j < valueCount; j++) {
+                            Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
+                            if (utf8 != null) {
+                                int len = utf8.size();
+                                filterValues.putInt(len);
+                                filterValues.putVarchar(utf8);
+                            } else {
+                                filterValues.putInt(-1);
+                            }
                         }
-                    }
-                    break;
-                default:
-                    supported = false;
-                    break;
-            }
+                        break;
+                    default:
+                        supported = false;
+                        break;
+                }
 
-            if (!supported) {
-                continue;
-            }
+                if (!supported) {
+                    continue;
+                }
 
-            final long valuesPtr = filterValues.getAddress() + valuesOffset;
-            filterList.add(encodeColumnAndCount(columnIndex, valueCount));
-            filterList.add(valuesPtr);
-        }
-        final int filterCount = (int) (filterList.size() / LONGS_PER_FILTER);
-        if (filterCount == 0) {
+                final long valuesPtr = filterValues.getAddress() + valuesOffset;
+                filterList.add(encodeColumnAndCount(columnIndex, valueCount));
+                filterList.add(valuesPtr);
+            }
+            final int filterCount = (int) (filterList.size() / LONGS_PER_FILTER);
+            if (filterCount == 0) {
+                return false;
+            }
+            return decoder.canSkipRowGroup(rowGroupIndex, filterList);
+        } catch (Throwable e) {
+            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", e=").$(e).$(']').$();
             return false;
         }
-
-        return decoder.canSkipRowGroup(rowGroupIndex, filterList);
     }
 
     public static long encodeColumnAndCount(int columnIndex, int count) {
