@@ -85,7 +85,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             @NotNull IntList columnSizeShifts,
             int maxSymbolNotEqualsCount
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.orderDirection = orderDirection;
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
