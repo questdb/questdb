@@ -329,7 +329,7 @@ public class CheckpointTest extends AbstractCairoTest {
             // Path B (first refresh after wal_table1 INSERT is applied):
             //   1) fromTxn=-1,toTxn=1 -> single data refresh writes commitMatView() => seqTxn=1
             // Not a TOCTOU in this test: after lastRefreshBaseTxn reaches 1 we do not perform any new base-table
-            // commits, and this immediate non-period view has no additional incremental work (fromTxn==toTxn).
+            // commits, and this immediate view has no additional incremental work (fromTxn==toTxn).
             // So reading mat_view seqTxn once here and comparing it to checkpoint callback value is stable.
             long matViewSeqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(matViewToken).getSeqTxn();
             Assert.assertTrue("mat_view seqTxn should be either 1 or 3, was " + matViewSeqTxn, matViewSeqTxn == 1L || matViewSeqTxn == 3L);
