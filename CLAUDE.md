@@ -63,6 +63,9 @@ offending character, not the start of the expression.
 
 ## Git & PR Conventions
 
+- **`java-questdb-client/` is a separate git repo** (a git submodule). Always
+  `cd` into it and commit there independently. Never commit it from the parent
+  repo as a submodule pointer update without also committing inside it first.
 - PR titles must follow Conventional Commits format: `type(scope): description`
   (e.g., `fix(sql): fix ...`, `feat(core): add ...`). The description part is
   copied to release notes, so it must read well on its own — repeat the verb
