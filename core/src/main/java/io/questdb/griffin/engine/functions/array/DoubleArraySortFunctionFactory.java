@@ -47,6 +47,7 @@ import java.util.Arrays;
 
 public class DoubleArraySortFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_sort";
+    private static final int INITIAL_BUFFER_SIZE = 64;
 
     @Override
     public String getSignature() {
@@ -158,7 +159,7 @@ public class DoubleArraySortFunctionFactory implements FunctionFactory {
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
             this.position = position;
-            this.sortBuffer = new double[64];
+            this.sortBuffer = new double[INITIAL_BUFFER_SIZE];
         }
 
         @Override
@@ -215,7 +216,11 @@ public class DoubleArraySortFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("array_sort(").val(arrayArg).val(')');
+            sink.val("array_sort(").val(arrayArg);
+            if (descending || nullsFirst) {
+                sink.val(',').val(descending).val(',').val(nullsFirst);
+            }
+            sink.val(')');
         }
     }
 }
