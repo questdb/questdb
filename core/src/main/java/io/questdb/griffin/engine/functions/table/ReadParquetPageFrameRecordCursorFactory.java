@@ -98,7 +98,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
     }
 
     @Override
-    public boolean mayHasParquetFormatPartition(SqlExecutionContext executionContext) {
+    public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
         return true;
     }
 

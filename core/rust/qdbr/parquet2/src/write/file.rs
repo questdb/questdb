@@ -173,9 +173,16 @@ impl<W: Write> FileWriter<W> {
             self.start()?;
         }
         let ordinal = self.row_groups.len();
+        let expected_cols = self.schema.columns().len();
+        debug_assert!(
+            bloom_hashes.is_empty() || bloom_hashes.len() == expected_cols,
+            "bloom_hashes length mismatch: expected {}, got {}",
+            expected_cols,
+            bloom_hashes.len()
+        );
         let default_bloom: Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
         let bloom_hashes = if bloom_hashes.is_empty() {
-            default_bloom = vec![None; self.schema.columns().len()];
+            default_bloom = vec![None; expected_cols];
             &default_bloom
         } else {
             bloom_hashes
@@ -419,9 +426,16 @@ impl<W: Write> ParquetFile<W> {
     where
         E: std::error::Error + From<Error>,
     {
+        let expected_cols = self.schema.columns().len();
+        debug_assert!(
+            bloom_hashes.is_empty() || bloom_hashes.len() == expected_cols,
+            "bloom_hashes length mismatch: expected {}, got {}",
+            expected_cols,
+            bloom_hashes.len()
+        );
         let default_bloom: Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
         let bloom_hashes = if bloom_hashes.is_empty() {
-            default_bloom = vec![None; self.schema.columns().len()];
+            default_bloom = vec![None; expected_cols];
             &default_bloom
         } else {
             bloom_hashes

@@ -40,6 +40,10 @@ pub fn read<R: Read + Seek>(
     }
 
     let length: usize = header.num_bytes.try_into()?;
+    if length < 32 || length % 32 != 0 {
+        bitset.clear();
+        return Ok(());
+    }
 
     bitset.clear();
     bitset.try_reserve(length)?;
@@ -77,6 +81,9 @@ pub fn read_from_slice<'a>(
     }
 
     let length: usize = header.num_bytes.try_into()?;
+    if length < 32 || length % 32 != 0 {
+        return Ok(&[]);
+    }
     let start = offset + header_size;
     data.get(start..start + length)
         .ok_or_else(|| Error::oos("bloom filter bitset exceeds data length"))

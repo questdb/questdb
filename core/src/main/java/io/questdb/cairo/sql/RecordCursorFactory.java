@@ -269,7 +269,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    default boolean mayHasParquetFormatPartition(SqlExecutionContext executionContext) {
+    default boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
         return false;
     }
 

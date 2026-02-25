@@ -219,7 +219,7 @@ fn try_encode_i64_rle<W: Write>(
             slice,
             rest_slice,
             compute_stats,
-            bloom_hashes.take(),
+            bloom_hashes.as_deref_mut(),
             null_val,
         )
     } else {
@@ -565,7 +565,7 @@ fn try_encode_i32_rle<W: Write>(
             slice,
             rest_slice,
             compute_stats,
-            bloom_hashes.take(),
+            bloom_hashes.as_deref_mut(),
             null_val,
         )
     } else {
@@ -918,7 +918,7 @@ fn try_encode_f64_rle<W: Write>(
             slice,
             rest_slice,
             compute_stats,
-            bloom_hashes.take(),
+            bloom_hashes.as_deref_mut(),
             sign_mask_vec,
             infinity_vec,
         )
@@ -1294,7 +1294,7 @@ fn try_encode_f32_rle<W: Write>(
             slice,
             rest_slice,
             compute_stats,
-            bloom_hashes.take(),
+            bloom_hashes.as_deref_mut(),
             sign_mask_vec,
             infinity_vec,
         )

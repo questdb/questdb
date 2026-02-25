@@ -3170,7 +3170,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions = null;
         try {
-            if (factory.mayHasParquetFormatPartition(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
+            if (factory.mayHaveParquetPartitions(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
                 ObjList<PushdownFilterExtractor.PushdownFilterCondition> tempConditions = pushdownFilterExtractor.extract(sqlNodeStack, filterExpr, factory.getMetadata());
                 for (int i = 0, n = tempConditions.size(); i < n; i++) {
                     PushdownFilterExtractor.PushdownFilterCondition condition = tempConditions.getQuick(i);
@@ -3194,6 +3194,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 if (pushdownFilterConditions != null) {
                     factory.setPushdownFilterCondition(pushdownFilterConditions);
+                    pushdownFilterConditions = null;
                 }
             }
 

@@ -1371,7 +1371,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             CharSequence nextTok = SqlUtil.fetchNext(lexer);
                             if (action == PartitionAction.CONVERT_TO_PARQUET && nextTok != null && isWithKeyword(nextTok)) {
                                 parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
-                            } else if (nextTok != null && !isSemicolon(nextTok)) {
+                                nextTok = SqlUtil.fetchNext(lexer);
+                            }
+                            if (nextTok != null && !isSemicolon(nextTok)) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
                             }
                             compiledQuery.ofAlter(this.alterOperationBuilder.build());
@@ -1472,6 +1474,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
                 if (action == PartitionAction.CONVERT_TO_PARQUET && isWithKeyword(tok)) {
                     parseConvertToParquetWithClause(alterOperationBuilder, tableMetadata);
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && !isSemicolon(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token after WITH clause");
+                    }
                     break;
                 }
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
@@ -4712,7 +4718,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || Chars.equals(tok, ')')) {
+            if (tok == null) {
+                throw SqlException.$(lexer.getPosition(), "')' expected");
+            }
+            if (Chars.equals(tok, ')')) {
                 break;
             }
             if (!Chars.equals(tok, ',')) {

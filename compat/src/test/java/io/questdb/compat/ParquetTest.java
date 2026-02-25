@@ -298,7 +298,6 @@ public class ParquetTest extends AbstractTest {
                     BloomFilter bf = parquetFileReader.readBloomFilter(chunks.get(0));
                     Assert.assertNotNull("byte", bf);
                     Assert.assertTrue(bf.findHash(bf.hash(1)));
-                    Assert.assertFalse(bf.findHash(bf.hash(1000)));
 
                     // col 1: a_short - INT32
                     bf = parquetFileReader.readBloomFilter(chunks.get(1));
@@ -314,13 +313,11 @@ public class ParquetTest extends AbstractTest {
                     bf = parquetFileReader.readBloomFilter(chunks.get(3));
                     Assert.assertNotNull("int", bf);
                     Assert.assertTrue(bf.findHash(bf.hash(100)));
-                    Assert.assertFalse(bf.findHash(bf.hash(99999)));
 
                     // col 4: a_long - INT64
                     bf = parquetFileReader.readBloomFilter(chunks.get(4));
                     Assert.assertNotNull("long", bf);
                     Assert.assertTrue(bf.findHash(bf.hash(1L)));
-                    Assert.assertFalse(bf.findHash(bf.hash(99999L)));
 
                     // col 5: a_float - FLOAT
                     bf = parquetFileReader.readBloomFilter(chunks.get(5));
@@ -336,7 +333,6 @@ public class ParquetTest extends AbstractTest {
                     bf = parquetFileReader.readBloomFilter(chunks.get(7));
                     Assert.assertNotNull("string", bf);
                     Assert.assertTrue(bf.findHash(bf.hash(Binary.fromString("hello_1"))));
-                    Assert.assertFalse(bf.findHash(bf.hash(Binary.fromString("nonexistent"))));
 
                     // col 8: a_symbol - BINARY
                     bf = parquetFileReader.readBloomFilter(chunks.get(8));

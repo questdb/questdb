@@ -353,11 +353,11 @@ pub fn create_row_group(
                 .zip(column_types)
                 .zip(encoding)
                 .zip(&bloom_hashes)
-                .flat_map(|(((column, column_type), enc), bloom)| {
+                .map(|(((column, column_type), enc), bloom)| {
                     col_to_iter(column, column_type, enc, &options, bloom.clone())
                 })
-                .collect()
-        })
+                .collect::<ParquetResult<Vec<_>>>()
+        })?
     } else {
         partition
             .columns
@@ -482,9 +482,9 @@ pub fn create_row_group_from_partitions(
             (0..num_columns)
                 .into_par_iter()
                 .zip(&bloom_hashes)
-                .flat_map(|(col_idx, bloom)| col_to_iter(col_idx, &options, bloom.clone()))
-                .collect()
-        })
+                .map(|(col_idx, bloom)| col_to_iter(col_idx, &options, bloom.clone()))
+                .collect::<ParquetResult<Vec<_>>>()
+        })?
     } else {
         (0..num_columns)
             .zip(&bloom_hashes)

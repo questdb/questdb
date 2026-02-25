@@ -1386,7 +1386,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public boolean convertPartitionNativeToParquet(long partitionTimestamp, CharSequence bloomFilterColumns, double bloomFilterFpp) {
+    public boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
 
         assert metadata.getTimestampIndex() > -1;

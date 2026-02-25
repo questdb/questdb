@@ -1313,13 +1313,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isParallelReadParquetEnabled() {
-            return sqlExecutionContext.isParallelReadParquetEnabled();
+        public boolean isParallelHorizonJoinEnabled() {
+            return sqlExecutionContext.isParallelHorizonJoinEnabled();
         }
 
         @Override
-        public boolean isParquetRowGroupPruningEnabled() {
-            return sqlExecutionContext.isParquetRowGroupPruningEnabled();
+        public boolean isParallelReadParquetEnabled() {
+            return sqlExecutionContext.isParallelReadParquetEnabled();
         }
 
         @Override
@@ -1328,13 +1328,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isParallelHorizonJoinEnabled() {
-            return sqlExecutionContext.isParallelHorizonJoinEnabled();
+        public boolean isParallelWindowJoinEnabled() {
+            return sqlExecutionContext.isParallelWindowJoinEnabled();
         }
 
         @Override
-        public boolean isParallelWindowJoinEnabled() {
-            return sqlExecutionContext.isParallelWindowJoinEnabled();
+        public boolean isParquetRowGroupPruningEnabled() {
+            return sqlExecutionContext.isParquetRowGroupPruningEnabled();
         }
 
         @Override
@@ -1439,13 +1439,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
-            sqlExecutionContext.setParallelReadParquetEnabled(parallelReadParquetEnabled);
+        public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(parallelHorizonJoinEnabled);
         }
 
         @Override
-        public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
-            sqlExecutionContext.setParquetRowGroupPruningEnabled(parquetRowGroupPruningEnabled);
+        public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+            sqlExecutionContext.setParallelReadParquetEnabled(parallelReadParquetEnabled);
         }
 
         @Override
@@ -1454,13 +1454,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
-            sqlExecutionContext.setParallelHorizonJoinEnabled(parallelHorizonJoinEnabled);
+        public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
+            sqlExecutionContext.setParallelWindowJoinEnabled(parallelWindowJoinEnabled);
         }
 
         @Override
-        public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
-            sqlExecutionContext.setParallelWindowJoinEnabled(parallelWindowJoinEnabled);
+        public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
+            sqlExecutionContext.setParquetRowGroupPruningEnabled(parquetRowGroupPruningEnabled);
         }
 
         @Override

@@ -1109,7 +1109,13 @@ impl ParquetDecoder {
                         let len = len as usize;
                         let bytes = unsafe { slice::from_raw_parts(ptr.add(offset), len) };
                         offset += len;
-                        if bytes >= min_b && bytes <= max_b {
+                        let in_range = if is_decimal {
+                            compare_signed_be_varlen(bytes, min_b) != cmp::Ordering::Less
+                                && compare_signed_be_varlen(bytes, max_b) != cmp::Ordering::Greater
+                        } else {
+                            bytes >= min_b && bytes <= max_b
+                        };
+                        if in_range {
                             return false;
                         }
                     }
@@ -1272,6 +1278,40 @@ fn compare_signed_be(a: &[u8], b: &[u8]) -> cmp::Ordering {
         cmp::Ordering::Equal => a[1..].cmp(&b[1..]),
         other => other,
     }
+}
+
+fn sign_extend_be(bytes: &[u8], target_len: usize) -> Vec<u8> {
+    if bytes.len() >= target_len {
+        return bytes.to_vec();
+    }
+    let sign_byte = if (bytes.first().copied().unwrap_or(0) as i8).is_negative() {
+        0xFF
+    } else {
+        0x00
+    };
+    let mut result = vec![sign_byte; target_len];
+    result[target_len - bytes.len()..].copy_from_slice(bytes);
+    result
+}
+
+/// Compare two bi-endian signed integers of potentially different lengths.
+fn compare_signed_be_varlen(a: &[u8], b: &[u8]) -> cmp::Ordering {
+    let a_sign = (a.first().copied().unwrap_or(0) as i8).is_negative();
+    let b_sign = (b.first().copied().unwrap_or(0) as i8).is_negative();
+
+    if a_sign != b_sign {
+        return if a_sign {
+            cmp::Ordering::Less
+        } else {
+            cmp::Ordering::Greater
+        };
+    }
+
+    // Sign-extend shorter operand and compare as equal-length signed BE.
+    let max_len = a.len().max(b.len());
+    let a_ext = sign_extend_be(a, max_len);
+    let b_ext = sign_extend_be(b, max_len);
+    compare_signed_be(&a_ext, &b_ext)
 }
 
 /// Decode a filtered data page.

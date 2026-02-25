@@ -171,6 +171,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.partitionIndex = reenterPartitionIndex;
                     frame.partitionLo = lo;
                     frame.partitionHi = hi;
+                    frame.format = partitionFrame.getPartitionFormat();
+                    if (frame.format == PartitionFormat.PARQUET) {
+                        reenterParquetDecoder = partitionFrame.getParquetDecoder();
+                    } else {
+                        reenterParquetDecoder = null;
+                    }
                     return frame;
                 }
                 final TableReaderPageFrame result = nextSlow(partitionFrame, lo, hi);
