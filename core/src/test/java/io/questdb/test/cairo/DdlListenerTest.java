@@ -119,6 +119,72 @@ public class DdlListenerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDdlListenerDropAllNonWal() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] callbackCounters = new int[6];
+
+            engine.setDdlListener(new DefaultDdlListener() {
+                @Override
+                public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+                    callbackCounters[0]++;
+                }
+
+                @Override
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                    callbackCounters[1]++;
+                }
+
+                @Override
+                public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+                    callbackCounters[2]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                    Assert.assertFalse(cascadePermissions);
+                    callbackCounters[3]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                    callbackCounters[4]++;
+                }
+
+                @Override
+                public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
+                    callbackCounters[5]++;
+                }
+            });
+
+            // Create 2 non-WAL tables and 1 view
+            engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m)");
+
+            engine.execute("DROP ALL");
+
+            Assert.assertEquals(0, callbackCounters[0]);
+            Assert.assertEquals(0, callbackCounters[1]);
+            Assert.assertEquals(0, callbackCounters[2]);
+            Assert.assertEquals(3, callbackCounters[3]);
+            Assert.assertEquals(3, callbackCounters[4]);
+            Assert.assertEquals(0, callbackCounters[5]);
+
+            engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            engine.execute("DROP ALL TABLES");
+
+            Assert.assertEquals(0, callbackCounters[0]);
+            Assert.assertEquals(0, callbackCounters[1]);
+            Assert.assertEquals(0, callbackCounters[2]);
+            Assert.assertEquals(5, callbackCounters[3]);
+            Assert.assertEquals(5, callbackCounters[4]);
+            Assert.assertEquals(0, callbackCounters[5]);
+        });
+    }
+
+    @Test
     public void testDdlListenerDropAll() throws Exception {
         assertMemoryLeak(() -> {
             final int[] callbackCounters = new int[6];
@@ -188,6 +254,72 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(6, callbackCounters[3]);
             Assert.assertEquals(6, callbackCounters[4]);
             Assert.assertEquals(0, callbackCounters[5]);
+        });
+    }
+
+    @Test
+    public void testDdlListenerWithNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] callbackCounters = new int[6];
+
+            engine.setDdlListener(new DefaultDdlListener() {
+                @Override
+                public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+                    assertEquals("admin", securityContext.getPrincipal());
+                    assertEquals("tab", tableToken.getTableName());
+                    Assert.assertTrue(Chars.equals("z", columnName));
+                    callbackCounters[0]++;
+                }
+
+                @Override
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                    assertEquals("tab", tableToken.getTableName());
+                    Assert.assertTrue(Chars.equals("v", columnName));
+                    Assert.assertFalse(cascadePermissions);
+                    callbackCounters[1]++;
+                }
+
+                @Override
+                public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+                    assertEquals("tab", tableToken.getTableName());
+                    Assert.assertTrue(Chars.equals("z", oldColumnName));
+                    Assert.assertTrue(Chars.equals("v", newColumnName));
+                    callbackCounters[2]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                    assertEquals("tab2", tableName);
+                    Assert.assertFalse(cascadePermissions);
+                    callbackCounters[3]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                    assertEquals("admin", securityContext.getPrincipal());
+                    assertEquals("tab", tableToken.getTableName());
+                    Assert.assertEquals(TableUtils.TABLE_KIND_REGULAR_TABLE, tableKind);
+                    callbackCounters[4]++;
+                }
+
+                @Override
+                public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
+                    assertEquals("tab", oldTableToken.getTableName());
+                    assertEquals("tab2", newTableToken.getTableName());
+                    callbackCounters[5]++;
+                }
+            });
+
+            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.execute("ALTER TABLE tab ADD COLUMN z VARCHAR");
+            engine.execute("ALTER TABLE tab RENAME COLUMN z TO v");
+            engine.execute("ALTER TABLE tab DROP COLUMN v");
+            engine.execute("RENAME TABLE tab TO tab2");
+            engine.execute("DROP TABLE tab2");
+
+            for (int callbackCounter : callbackCounters) {
+                Assert.assertEquals(1, callbackCounter);
+            }
         });
     }
 
@@ -330,6 +462,63 @@ public class DdlListenerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropIfExistsNonWal() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] callbackCounters = new int[6];
+
+            engine.setDdlListener(new DefaultDdlListener() {
+                @Override
+                public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+                    callbackCounters[0]++;
+                }
+
+                @Override
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                    callbackCounters[1]++;
+                }
+
+                @Override
+                public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+                    callbackCounters[2]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                    callbackCounters[3]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                    callbackCounters[4]++;
+                }
+
+                @Override
+                public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
+                    callbackCounters[5]++;
+                }
+            });
+
+            // dropping non-existent table should not fire
+            engine.execute("DROP TABLE IF EXISTS tab");
+
+            for (int callbackCounter : callbackCounters) {
+                Assert.assertEquals(0, callbackCounter);
+            }
+
+            // create and then drop should fire
+            engine.execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.execute("DROP TABLE IF EXISTS tab");
+
+            Assert.assertEquals(0, callbackCounters[0]);
+            Assert.assertEquals(0, callbackCounters[1]);
+            Assert.assertEquals(0, callbackCounters[2]);
+            Assert.assertEquals(1, callbackCounters[3]);
+            Assert.assertEquals(1, callbackCounters[4]);
+            Assert.assertEquals(0, callbackCounters[5]);
+        });
+    }
+
+    @Test
     public void testDropIfExists() throws Exception {
         assertMemoryLeak(() -> {
             final int[] callbackCounters = new int[6];
@@ -397,6 +586,67 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(3, callbackCounters[3]);
             Assert.assertEquals(3, callbackCounters[4]);
             Assert.assertEquals(0, callbackCounters[5]);
+        });
+    }
+
+    @Test
+    public void testCreateIfNotExistsNonWal() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] callbackCounters = new int[6];
+
+            engine.setDdlListener(new DefaultDdlListener() {
+                @Override
+                public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+                    callbackCounters[0]++;
+                }
+
+                @Override
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                    callbackCounters[1]++;
+                }
+
+                @Override
+                public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+                    callbackCounters[2]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                    callbackCounters[3]++;
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                    callbackCounters[4]++;
+                }
+
+                @Override
+                public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
+                    callbackCounters[5]++;
+                }
+            });
+
+            engine.execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            Assert.assertEquals(0, callbackCounters[0]);
+            Assert.assertEquals(0, callbackCounters[1]);
+            Assert.assertEquals(0, callbackCounters[2]);
+            Assert.assertEquals(0, callbackCounters[3]);
+            Assert.assertEquals(1, callbackCounters[4]);
+            Assert.assertEquals(0, callbackCounters[5]);
+
+            // clear counters
+            callbackCounters[4] = 0;
+
+            // second time should not fire
+            engine.execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            for (int callbackCounter : callbackCounters) {
+                Assert.assertEquals(0, callbackCounter);
+            }
+
+            // cleanup
+            engine.execute("DROP TABLE tab");
         });
     }
 
