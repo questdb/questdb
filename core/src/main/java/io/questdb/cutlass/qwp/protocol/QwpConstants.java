@@ -384,7 +384,10 @@ public final class QwpConstants {
                 code == TYPE_TIMESTAMP_NANOS ||
                 code == TYPE_DATE ||
                 code == TYPE_UUID ||
-                code == TYPE_LONG256;
+                code == TYPE_LONG256 ||
+                code == TYPE_DECIMAL64 ||
+                code == TYPE_DECIMAL128 ||
+                code == TYPE_DECIMAL256;
     }
 
     /**
@@ -400,9 +403,9 @@ public final class QwpConstants {
             case TYPE_BYTE -> 1;
             case TYPE_SHORT, TYPE_CHAR -> 2;
             case TYPE_INT, TYPE_FLOAT -> 4;
-            case TYPE_LONG, TYPE_DOUBLE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE -> 8;
-            case TYPE_UUID -> 16;
-            case TYPE_LONG256 -> 32;
+            case TYPE_LONG, TYPE_DOUBLE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE, TYPE_DECIMAL64 -> 8;
+            case TYPE_UUID, TYPE_DECIMAL128 -> 16;
+            case TYPE_LONG256, TYPE_DECIMAL256 -> 32;
             default -> -1; // Variable width
         };
     }

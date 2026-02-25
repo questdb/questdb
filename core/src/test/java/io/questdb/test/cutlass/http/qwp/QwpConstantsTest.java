@@ -145,6 +145,9 @@ public class QwpConstantsTest {
         Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_DATE));
         Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_UUID));
         Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_LONG256));
+        Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_DECIMAL64));
+        Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_DECIMAL128));
+        Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_DECIMAL256));
 
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_STRING));
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_SYMBOL));
@@ -165,6 +168,9 @@ public class QwpConstantsTest {
         Assert.assertEquals(8, QwpConstants.getFixedTypeSize(TYPE_DATE));
         Assert.assertEquals(16, QwpConstants.getFixedTypeSize(TYPE_UUID));
         Assert.assertEquals(32, QwpConstants.getFixedTypeSize(TYPE_LONG256));
+        Assert.assertEquals(8, QwpConstants.getFixedTypeSize(TYPE_DECIMAL64));
+        Assert.assertEquals(16, QwpConstants.getFixedTypeSize(TYPE_DECIMAL128));
+        Assert.assertEquals(32, QwpConstants.getFixedTypeSize(TYPE_DECIMAL256));
 
         Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_STRING));
         Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_SYMBOL));
