@@ -120,6 +120,20 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     null, true, false
             );
 
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 50::SHORT", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            assertQueryNoLeakCheck("val\n10\n", "SELECT val FROM x WHERE val = 10::SHORT", null, true, false);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 50", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            assertQueryNoLeakCheck("val\n10\n", "SELECT val FROM x WHERE val = 10", null, true, false);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 50::LONG", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            assertQueryNoLeakCheck("val\n10\n", "SELECT val FROM x WHERE val = 10::LONG", null, true, false);
         });
     }
 
@@ -496,6 +510,11 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val = 50_000",
                     null, true, false
             );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 25_000::LONG", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = 50_000::LONG", null, true, false);
         });
     }
 
@@ -660,6 +679,21 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val = 200",
                     null, true, false
             );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 501", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            assertQueryNoLeakCheck("val\n200\n", "SELECT val FROM x WHERE val = 200", null, true, false);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 501::LONG", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            assertQueryNoLeakCheck("val\n200\n", "SELECT val FROM x WHERE val = 200::LONG", null, true, false);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = 501::SHORT", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            assertQueryNoLeakCheck("val\n200\n", "SELECT val FROM x WHERE val = 200::SHORT", null, true, false);
         });
     }
 
