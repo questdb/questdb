@@ -59,10 +59,17 @@ public class WalWriterBufferPool implements Closeable {
         this.capacity = capacity;
         this.addresses = new long[capacity];
         this.freeStack = new int[capacity];
-        this.freeCount = capacity;
-        for (int i = 0; i < capacity; i++) {
-            addresses[i] = Unsafe.malloc(bufferSize, memoryTag);
-            freeStack[i] = i;
+        this.freeCount = 0;
+        int allocated = 0;
+        try {
+            for (; allocated < capacity; allocated++) {
+                addresses[allocated] = Unsafe.malloc(bufferSize, memoryTag);
+                freeStack[freeCount++] = allocated;
+            }
+        } catch (Throwable th) {
+            freeAddresses(addresses, 0, allocated);
+            freeCount = 0;
+            throw th;
         }
     }
 
@@ -134,14 +141,22 @@ public class WalWriterBufferPool implements Closeable {
         int[] newFreeStack = new int[newCapacity];
         System.arraycopy(addresses, 0, newAddresses, 0, capacity);
         System.arraycopy(freeStack, 0, newFreeStack, 0, freeCount);
+        int newFreeCount = freeCount;
         // Allocate new buffers and push them onto the free stack.
-        for (int i = capacity; i < newCapacity; i++) {
-            newAddresses[i] = Unsafe.malloc(bufferSize, memoryTag);
-            newFreeStack[freeCount++] = i;
+        int i = capacity;
+        try {
+            for (; i < newCapacity; i++) {
+                newAddresses[i] = Unsafe.malloc(bufferSize, memoryTag);
+                newFreeStack[newFreeCount++] = i;
+            }
+        } catch (Throwable th) {
+            freeAddresses(newAddresses, capacity, i);
+            throw th;
         }
         addresses = newAddresses;
         freeStack = newFreeStack;
         capacity = newCapacity;
+        freeCount = newFreeCount;
         registerWithKernel();
     }
 
@@ -203,6 +218,15 @@ public class WalWriterBufferPool implements Closeable {
         // Address not found in pool — it may have been allocated outside the pool
         // (e.g., via preadPage before pool integration). Free it directly.
         Unsafe.free(address, bufferSize, memoryTag);
+    }
+
+    private void freeAddresses(long[] bufferAddresses, int from, int to) {
+        for (int i = from; i < to; i++) {
+            if (bufferAddresses[i] != 0) {
+                Unsafe.free(bufferAddresses[i], bufferSize, memoryTag);
+                bufferAddresses[i] = 0;
+            }
+        }
     }
 
     public void setRingManager(WalWriterRingManager ringManager) {

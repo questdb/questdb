@@ -1278,4 +1278,47 @@ public class MemoryPURImplTest extends AbstractTest {
             }
         });
     }
+
+    @Test
+    public void testWalWriterBufferPoolConstructorOomDoesNotLeak() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = 1024L * 1024L;
+            WalWriterBufferPool pool = null;
+            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + pageSize + 64 * 1024);
+            try {
+                try {
+                    pool = new WalWriterBufferPool(pageSize, 2, MemoryTag.NATIVE_TABLE_WAL_WRITER);
+                    Assert.fail("expected constructor to throw OOM");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isOutOfMemory());
+                }
+            } finally {
+                Unsafe.setRssMemLimit(0);
+                Misc.free(pool);
+            }
+        });
+    }
+
+    @Test
+    public void testWalWriterBufferPoolGrowOomDoesNotLeak() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = 1024L * 1024L;
+            try (WalWriterBufferPool pool = new WalWriterBufferPool(pageSize, 1, MemoryTag.NATIVE_TABLE_WAL_WRITER)) {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + pageSize + 64 * 1024);
+                try {
+                    try {
+                        pool.grow(3);
+                        Assert.fail("expected grow to throw OOM");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                    }
+                } finally {
+                    Unsafe.setRssMemLimit(0);
+                }
+                Assert.assertEquals(1, pool.getFreeCount());
+                int idx = pool.acquire();
+                pool.release(idx);
+            }
+        });
+    }
 }
