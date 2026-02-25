@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -65,7 +66,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private int dataPageSize;
     private boolean descending;
     private CopyExportContext.ExportTaskEntry entry;
-    private RecordCursorFactory factory;
+    private ParquetExportMode exportMode;
     private CharSequence fileName;
     private RecordMetadata metadata;
     private long now;
@@ -73,10 +74,12 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private @Nullable PageFrameCursor pageFrameCursor;
     private int parquetVersion;
     private boolean rawArrayEncoding;
-    private @Nullable RecordCursorFactory rfc;
     private int rowGroupSize;
+    private RecordCursorFactory selectFactory;
+    private @Nullable String selectText;
     private boolean statisticsEnabled;
     private String tableName;
+    private RecordCursorFactory tempTableFactory;
     private @Nullable StreamWriteParquetCallBack writeCallback;
 
     public static void validateBloomFilterColumns(@Nullable CharSequence columns, RecordMetadata meta, int position) throws SqlException {
@@ -109,7 +112,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     @Override
     public void clear() {
+        this.selectFactory = Misc.free(selectFactory);
         this.entry = null;
+        this.exportMode = null;
+        this.selectText = null;
         this.tableName = null;
         this.fileName = null;
         this.compressionCodec = -1;
@@ -121,8 +127,15 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.now = 0;
         this.nowTimestampType = 0;
         this.createOp = Misc.free(createOp);
-        this.rfc = Misc.free(rfc);
-        pageFrameCursor = null;
+        if (tempTableFactory != null) {
+            // Temp-table path owns both the factory and the cursor.
+            tempTableFactory = Misc.free(tempTableFactory);
+            pageFrameCursor = Misc.free(pageFrameCursor);
+        } else {
+            // Ownership belongs to BaseParquetExporter subclass (streamingPfc)
+            // or ExportQueryProcessorState (for DIRECT_PAGE_FRAME).
+            pageFrameCursor = null;
+        }
         writeCallback = null;
         metadata = null;
         streamPartitionParquetExporter.clear();
@@ -130,14 +143,16 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         bloomFilterColumns = null;
         bloomFilterColumnsPosition = -1;
         bloomFilterFpp = Double.NaN;
-        if (factory != null) { // owned only if setUpStreamPartitionParquetExporter called with factory
-            factory = Misc.free(factory);
-            pageFrameCursor = Misc.free(pageFrameCursor);
-        }
     }
 
     @Override
     public void close() {
+        selectFactory = Misc.free(selectFactory);
+        createOp = Misc.free(createOp);
+        if (tempTableFactory != null) {
+            tempTableFactory = Misc.free(tempTableFactory);
+            pageFrameCursor = Misc.free(pageFrameCursor);
+        }
         Misc.free(streamPartitionParquetExporter);
     }
 
@@ -181,6 +196,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         return entry;
     }
 
+    public ParquetExportMode getExportMode() {
+        return exportMode;
+    }
+
     public CharSequence getFileName() {
         return fileName;
     }
@@ -211,6 +230,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public SecurityContext getSecurityContext() {
         return entry.getSecurityContext();
+    }
+
+    public RecordCursorFactory getSelectFactory() {
+        return selectFactory;
+    }
+
+    public @Nullable String getSelectText() {
+        return selectText;
     }
 
     public StreamPartitionParquetExporter getStreamPartitionParquetExporter() {
@@ -255,6 +282,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             PageFrameCursor pageFrameCursor, // for streaming export
             RecordMetadata metadata,
             StreamWriteParquetCallBack writeCallback,
+            ParquetExportMode exportMode,
+            @Nullable String selectText,
             @Nullable CharSequence bloomFilterColumns,
             int bloomFilterColumnsPosition,
             double bloomFilterFpp
@@ -276,9 +305,19 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.writeCallback = writeCallback;
         this.now = now;
         this.nowTimestampType = nowTimestampType;
+        this.exportMode = exportMode;
+        this.selectText = selectText;
         this.bloomFilterColumns = bloomFilterColumns;
         this.bloomFilterColumnsPosition = bloomFilterColumnsPosition;
         this.bloomFilterFpp = bloomFilterFpp;
+    }
+
+    public void setCreateOp(@Nullable CreateTableOperation createOp) {
+        this.createOp = createOp;
+    }
+
+    public void setSelectFactory(RecordCursorFactory selectFactory) {
+        this.selectFactory = selectFactory;
     }
 
     public void setUpStreamPartitionParquetExporter() {
@@ -289,15 +328,19 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
     }
 
-    public void setUpStreamPartitionParquetExporter(RecordCursorFactory factory, PageFrameCursor pageFrameCursor, RecordMetadata metadata, boolean descending) {
+    public void setUpStreamPartitionParquetExporter(RecordCursorFactory tempTableFactory, PageFrameCursor pageFrameCursor, RecordMetadata metadata, boolean descending) {
         assert this.pageFrameCursor == null;
-        this.factory = factory;
+        this.tempTableFactory = tempTableFactory;
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.descending = descending;
         // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
         pageFrameCursor.setStreamingMode(true);
         streamPartitionParquetExporter.setUp();
+    }
+
+    public void setWriteCallback(@Nullable StreamWriteParquetCallBack writeCallback) {
+        this.writeCallback = writeCallback;
     }
 
     protected static void parseBloomFilterColumnIndexes(CharSequence columns, RecordMetadata meta, DirectIntList indexes, int bloomFilterColumnsPosition) {
@@ -433,8 +476,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         public void freeOwnedPageFrameCursor() {
-            if (factory != null) {
-                factory = Misc.free(factory);
+            if (tempTableFactory != null) {
+                tempTableFactory = Misc.free(tempTableFactory);
                 pageFrameCursor = Misc.free(pageFrameCursor);
             }
         }
@@ -486,28 +529,57 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         public void setUp() {
+            setUp(metadata, pageFrameCursor, null);
+        }
+
+        public void setUp(RecordMetadata adjustedMetadata) {
+            setUp(adjustedMetadata, null, null);
+        }
+
+        /**
+         * Unified writer setup for all export modes.
+         *
+         * @param meta          column metadata to encode
+         * @param pfc           page frame cursor for SYMBOL table lookup (null when cursor-based)
+         * @param baseColumnMap per-output-column base index for hybrid path, or null for
+         *                      direct/temp-table path (where every column is a real table column)
+         */
+        public void setUp(RecordMetadata meta, PageFrameCursor pfc, IntList baseColumnMap) {
+            metadata = meta;
+            pageFrameCursor = pfc;
             columnNames.reopen();
             columnMetadata.reopen();
             columnData.reopen();
 
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                CharSequence columnName = metadata.getColumnName(i);
+            for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+                CharSequence columnName = meta.getColumnName(i);
                 final int startSize = columnNames.size();
                 columnNames.put(columnName);
                 columnMetadata.add(columnNames.size() - startSize);
-                final int columnType = metadata.getColumnType(i);
+                final int columnType = meta.getColumnType(i);
+                // GenericRecordMetadata (hybrid/cursor paths) returns i;
+                // table metadata returns the physical writer column index.
+                final int writerIdx = meta.getWriterIndex(i);
 
-                if (ColumnType.isSymbol(columnType)) {
-                    assert pageFrameCursor != null;
-                    StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(i);
+                // A SYMBOL column needs symbol-table metadata when it is a
+                // real table column.  In the hybrid path (baseColumnMap != null)
+                // only pass-through columns (baseColumnMap >= 0) qualify;
+                // in the direct path (baseColumnMap == null) every column is real.
+                boolean isPassThroughSymbol = ColumnType.isSymbol(columnType)
+                        && (baseColumnMap == null || baseColumnMap.getQuick(i) >= 0);
+
+                if (isPassThroughSymbol) {
+                    assert pfc != null;
+                    int symbolTableIdx = baseColumnMap != null ? baseColumnMap.getQuick(i) : i;
+                    StaticSymbolTable symbolTable = pfc.getSymbolTable(symbolTableIdx);
                     assert symbolTable != null;
                     int symbolColumnType = columnType;
                     if (!symbolTable.containsNullValue()) {
                         symbolColumnType |= 1 << 31;
                     }
-                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | symbolColumnType);
+                    columnMetadata.add((long) writerIdx << 32 | symbolColumnType);
                 } else {
-                    columnMetadata.add((long) metadata.getWriterIndex(i) << 32 | columnType);
+                    columnMetadata.add((long) writerIdx << 32 | columnType);
                 }
             }
 
@@ -526,11 +598,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
             streamWriter = createStreamingParquetWriter(
                     Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_EXPORTER),
-                    metadata.getColumnCount(),
+                    meta.getColumnCount(),
                     columnNames.ptr(),
                     columnNames.size(),
                     columnMetadata.getAddress(),
-                    metadata.getTimestampIndex(),
+                    meta.getTimestampIndex(),
                     descending,
                     ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                     statisticsEnabled,
@@ -542,6 +614,23 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     bloomFilterCount,
                     fpp
             );
+        }
+
+        public void writeHybridFrame(DirectLongList prebuiltColumnData, long frameRowCount) throws Exception {
+            assert streamWriter != -1 && writeCallback != null;
+            currentFrameRowCount = frameRowCount;
+            long buffer = writeStreamingParquetChunk(streamWriter, prebuiltColumnData.getAddress(), frameRowCount);
+            while (buffer != 0) {
+                streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
+                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
+                rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
+                buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
+            }
+            totalRows += frameRowCount;
+            entry.setStreamingSendRowCount(totalRows);
+            streamExportCurrentPtr = 0;
+            streamExportCurrentSize = 0;
         }
 
         public void writePageFrame(PageFrameCursor frameCursor, PageFrame frame) throws Exception {

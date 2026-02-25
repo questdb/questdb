@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -34,7 +33,6 @@ import org.junit.Test;
 public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Before
     public void setUp() {
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10);
         ParquetRowGroupFilter.resetRowGroupsSkipped();
         super.setUp();
     }
