@@ -32,6 +32,68 @@ import org.junit.Test;
 public class QwpTableBufferTest {
 
     @Test
+    public void testAddDoubleArrayNullOnNonNullableColumn() {
+        QwpTableBuffer table = new QwpTableBuffer("test");
+        QwpTableBuffer.ColumnBuffer col = table.getOrCreateColumn("arr", QwpConstants.TYPE_DOUBLE_ARRAY, false);
+
+        // Row 0: real array
+        col.addDoubleArray(new double[]{1.0, 2.0});
+        table.nextRow();
+
+        // Row 1: null on non-nullable — must write empty array metadata
+        col.addDoubleArray((double[]) null);
+        table.nextRow();
+
+        // Row 2: real array
+        col.addDoubleArray(new double[]{3.0, 4.0});
+        table.nextRow();
+
+        Assert.assertEquals(3, table.getRowCount());
+        Assert.assertEquals(3, col.getValueCount());
+        Assert.assertEquals(col.getSize(), col.getValueCount());
+
+        byte[] dims = col.getArrayDims();
+        int[] shapes = col.getArrayShapes();
+        Assert.assertEquals(1, dims[0]);
+        Assert.assertEquals(2, shapes[0]);
+        Assert.assertEquals(1, dims[1]);  // null row: 1D empty
+        Assert.assertEquals(0, shapes[1]); // null row: 0 elements
+        Assert.assertEquals(1, dims[2]);
+        Assert.assertEquals(2, shapes[2]);
+    }
+
+    @Test
+    public void testAddLongArrayNullOnNonNullableColumn() {
+        QwpTableBuffer table = new QwpTableBuffer("test");
+        QwpTableBuffer.ColumnBuffer col = table.getOrCreateColumn("arr", QwpConstants.TYPE_LONG_ARRAY, false);
+
+        // Row 0: real array
+        col.addLongArray(new long[]{10, 20});
+        table.nextRow();
+
+        // Row 1: null on non-nullable — must write empty array metadata
+        col.addLongArray((long[]) null);
+        table.nextRow();
+
+        // Row 2: real array
+        col.addLongArray(new long[]{30, 40});
+        table.nextRow();
+
+        Assert.assertEquals(3, table.getRowCount());
+        Assert.assertEquals(3, col.getValueCount());
+        Assert.assertEquals(col.getSize(), col.getValueCount());
+
+        byte[] dims = col.getArrayDims();
+        int[] shapes = col.getArrayShapes();
+        Assert.assertEquals(1, dims[0]);
+        Assert.assertEquals(2, shapes[0]);
+        Assert.assertEquals(1, dims[1]);  // null row: 1D empty
+        Assert.assertEquals(0, shapes[1]); // null row: 0 elements
+        Assert.assertEquals(1, dims[2]);
+        Assert.assertEquals(2, shapes[2]);
+    }
+
+    @Test
     public void testAddSymbolNullOnNonNullableColumn() {
         QwpTableBuffer table = new QwpTableBuffer("test");
         QwpTableBuffer.ColumnBuffer col = table.getOrCreateColumn("sym", QwpConstants.TYPE_SYMBOL, false);

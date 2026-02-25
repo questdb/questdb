@@ -642,6 +642,12 @@ public class QwpTableBuffer {
                         decimal256Ll[valueCount] = Decimals.DECIMAL256_LL_NULL;
                         valueCount++;
                     }
+                    case TYPE_DOUBLE_ARRAY, TYPE_LONG_ARRAY -> {
+                        ensureArrayCapacity(1, 0);
+                        arrayDims[valueCount] = 1;
+                        arrayShapes[arrayShapeOffset++] = 0;
+                        valueCount++;
+                    }
                     default -> { }
                 }
                 size++;
