@@ -121,6 +121,10 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     public AbstractDoubleArrayElemAggGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.type = arg.getType();
+        // Weak-dim array types (bind variables with unresolved dimensionality) cannot
+        // reach GROUP BY aggregate args: column refs always carry strong dims, UNION
+        // rejects array bind variables, and data binding resolves dims before execution.
+        // decodeArrayDimensionality asserts dims > 0 as a safety net.
         this.nDims = ColumnType.decodeArrayDimensionality(type);
         this.headerSize = Integer.BYTES * (1 + nDims);
         this.accShape = new int[nDims];
