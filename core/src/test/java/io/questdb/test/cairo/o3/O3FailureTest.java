@@ -591,13 +591,12 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyIndexContended() throws Exception {
-        counter.set(0);
+        final AtomicInteger bitmapIndexInitTruncateCount = new AtomicInteger();
         executeWithPool(
                 0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
                     @Override
                     public boolean truncate(long fd, long size) {
-                        // First two calls to truncate are for varchar column
-                        if (size == 0 && counter.getAndIncrement() == 3) {
+                        if (size == 0 && isO3BitmapIndexInitTruncate() && bitmapIndexInitTruncateCount.getAndIncrement() == 0) {
                             return false;
                         }
                         return super.truncate(fd, size);
@@ -608,15 +607,12 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyValueContended() throws Exception {
-        counter.set(0);
-        // different number of calls to "truncate" on Windows and *Nix
-        // the number targets truncate of key file in BitmapIndexWriter
+        final AtomicInteger bitmapIndexInitTruncateCount = new AtomicInteger();
         executeWithPool(
                 0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
                     @Override
                     public boolean truncate(long fd, long size) {
-                        // First two calls to truncate are for varchar column
-                        if (size == 0 && counter.getAndIncrement() == 3) {
+                        if (size == 0 && isO3BitmapIndexInitTruncate() && bitmapIndexInitTruncateCount.getAndIncrement() == 1) {
                             return false;
                         }
                         return super.truncate(fd, size);
@@ -2213,6 +2209,26 @@ public class O3FailureTest extends AbstractO3Test {
                 "create table y as (select * from w union all append1 union all append2)",
                 "insert into x select * from append2"
         );
+    }
+
+    private static boolean isO3BitmapIndexInitTruncate() {
+        final StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+        boolean hasBitmapIndexOf = false;
+        boolean hasO3UpdateIndex = false;
+        for (int i = 0, n = stackTrace.length; i < n; i++) {
+            final StackTraceElement frame = stackTrace[i];
+            final String className = frame.getClassName();
+            final String methodName = frame.getMethodName();
+            if ("io.questdb.cairo.BitmapIndexWriter".equals(className) && "of".equals(methodName)) {
+                hasBitmapIndexOf = true;
+            } else if ("io.questdb.cairo.O3CopyJob".equals(className) && "updateIndex".equals(methodName)) {
+                hasO3UpdateIndex = true;
+            }
+            if (hasBitmapIndexOf && hasO3UpdateIndex) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void testColumnTopMidAppendBlankColumnFailRetry0(
