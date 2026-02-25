@@ -1986,7 +1986,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
         this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
-        this.partitionEncoderParquetO3RewriteUnusedMaxBytes = getLong(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 1024 * 1024 * 1024L);
+        this.partitionEncoderParquetO3RewriteUnusedMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 1024 * 1024 * 1024L);
         this.partitionEncoderParquetO3RewriteUnusedRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.5");
 
         // compatibility switch, to be removed in future

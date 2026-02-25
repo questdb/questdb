@@ -158,10 +158,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Verify parquet file exists and count is still correct after conversion.
             assertPartitionExists("x", "2024-06.1");
-            assertQueryNoLeakCheck(
+            assertSql(
                     "count\n10\n",
-                    "SELECT count() FROM x",
-                    null, false, true
+                    "SELECT count() FROM x"
             );
 
             // Insert O3 data into the same parquet partition.

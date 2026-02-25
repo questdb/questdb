@@ -25,7 +25,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     rg_index: jshort,
 ) {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.copyRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
     }
 
     let parquet_updater = unsafe { &mut *updater };
@@ -125,12 +127,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_destroy(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
 ) {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.destroy");
+        return err.into_cairo_exception().throw(&mut env);
     }
 
     let _ = unsafe { Box::from_raw(updater) };
@@ -143,7 +147,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     updater: *mut ParquetUpdater,
 ) -> jlong {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateFileMetadata");
+        return err.into_cairo_exception().throw::<jlong>(&mut env);
     }
 
     let parquet_updater = unsafe { &mut *updater };
@@ -159,12 +165,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_getResultUnusedBytes(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     updater: *const ParquetUpdater,
 ) -> jlong {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.getResultUnusedBytes");
+        return err.into_cairo_exception().throw::<jlong>(&mut env);
     }
 
     let parquet_updater = unsafe { &*updater };
@@ -190,10 +198,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     let orig_row_group_id = row_group_id;
     let row_group_id = Some(row_group_id);
 
-    assert!(
-        !parquet_updater.is_null(),
-        "parquet_updater pointer is null"
-    );
+    if parquet_updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
+    }
     let parquet_updater = unsafe { &mut *parquet_updater };
 
     let mut update = || -> ParquetResult<()> {
@@ -242,7 +251,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     row_hi: jint,
 ) {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.sliceRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
     }
 
     let parquet_updater = unsafe { &mut *updater };
@@ -275,10 +286,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     row_count: jlong,
 ) {
-    assert!(
-        !parquet_updater.is_null(),
-        "parquet_updater pointer is null"
-    );
+    if parquet_updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.insertRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
+    }
     let parquet_updater = unsafe { &mut *parquet_updater };
 
     let mut insert = || -> ParquetResult<()> {

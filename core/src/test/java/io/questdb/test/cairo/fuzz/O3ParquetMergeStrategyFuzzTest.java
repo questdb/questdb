@@ -207,7 +207,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
             }
 
-            // Verify that no row group in the Parquet partition exceeds 2x the configured size.
+            // Verify that no row group in the Parquet partition exceeds 1.5x the configured size.
             try (TableReader reader = engine.getReader(walTable)) {
                 for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
                     if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {

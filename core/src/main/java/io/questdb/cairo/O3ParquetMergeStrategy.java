@@ -286,6 +286,7 @@ public class O3ParquetMergeStrategy {
      * Emits one or more COPY_O3 actions, splitting the range into chunks of at most maxRowGroupSize.
      */
     private static void addCopyO3Actions(ObjList<MergeAction> actions, long o3Lo, long o3Hi, int maxRowGroupSize) {
+        assert maxRowGroupSize > 0 : "maxRowGroupSize must be > 0";
         long cursor = o3Lo;
         while (cursor <= o3Hi) {
             long chunkHi = Math.min(cursor + maxRowGroupSize - 1, o3Hi);
