@@ -125,11 +125,7 @@ public interface MetadataService {
             SecurityContext securityContext
     );
 
-    boolean convertPartitionNativeToParquet(long partitionTimestamp);
-
-    default boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
-        return convertPartitionNativeToParquet(partitionTimestamp);
-    }
+    boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp);
 
     boolean convertPartitionParquetToNative(long partitionTimestamp);
 
