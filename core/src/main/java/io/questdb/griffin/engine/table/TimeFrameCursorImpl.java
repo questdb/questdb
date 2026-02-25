@@ -264,6 +264,19 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public void seekEstimate(long timestamp) {
+        buildFrameCache();
+        TimeFrameCursor.findSeekEstimate(
+                timestamp,
+                frameCount,
+                framePartitionIndexes,
+                partitionCeilings,
+                partitionTimestamps,
+                timeFrame
+        );
+    }
+
+    @Override
     public void toTop() {
         timeFrame.clear();
         if (!isFrameCacheBuilt) {
