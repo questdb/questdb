@@ -25,7 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableReader;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -83,6 +85,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
+            long partitionTs = parseFloorPartialTimestamp("2020-01-01");
+            long versionAfterUpdate = getPartitionNameTxn("x", partitionTs);
+
             // Second O3: accumulated unused_bytes > 100 → REWRITE.
             execute(
                     """
@@ -92,6 +97,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             """
             );
             drainWalQueue();
+
+            long versionAfterRewrite = getPartitionNameTxn("x", partitionTs);
+            Assert.assertNotEquals("partition version should change on REWRITE", versionAfterUpdate, versionAfterRewrite);
 
             assertSql(
                     """
@@ -139,6 +147,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
+            long partitionTs = parseFloorPartialTimestamp("2020-01-01");
+            long versionBeforeO3 = getPartitionNameTxn("x", partitionTs);
+
             // O3 insert into the parquet partition.
             // Single row group always triggers a full REWRITE.
             execute(
@@ -150,6 +161,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             """
             );
             drainWalQueue();
+
+            long versionAfterRewrite = getPartitionNameTxn("x", partitionTs);
+            Assert.assertNotEquals("partition version should change on REWRITE", versionBeforeO3, versionAfterRewrite);
 
             assertSql(
                     """
@@ -212,6 +226,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
+            long partitionTs = parseFloorPartialTimestamp("2020-01-01");
+            long versionAfterUpdate = getPartitionNameTxn("x", partitionTs);
+
             // Second O3: unused_bytes / file_size > 0.1 → REWRITE.
             execute(
                     """
@@ -221,6 +238,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             """
             );
             drainWalQueue();
+
+            long versionAfterRewrite = getPartitionNameTxn("x", partitionTs);
+            Assert.assertNotEquals("partition version should change on REWRITE", versionAfterUpdate, versionAfterRewrite);
 
             assertSql(
                     """
@@ -240,5 +260,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     "SELECT * FROM x"
             );
         });
+    }
+
+    private long getPartitionNameTxn(String tableName, long partitionTimestamp) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+        }
     }
 }

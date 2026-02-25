@@ -2067,6 +2067,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         long dstAuxAddr = mergeDstBufs[bi4 + 2];
                         long dstAuxSize = mergeDstBufs[bi4 + 3];
 
+                        // Note: dstDataSize/dstAuxSize are buffer capacities, not exact used sizes.
+                        // The Rust encoder bounds all access by chunkRowCount, not by buffer size:
+                        // aux is sliced to [0..chunkRowCount], data is read via offsets within that slice.
+
                         O3CopyJob.mergeCopy(
                                 columnType,
                                 chunkMergeIndexAddr,
@@ -2096,6 +2100,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final long srcOooFixAddr = oooColumns.getQuick(columnOffset).addressOf(0);
                         long dstFixAddr = mergeDstBufs[bi4];
                         long dstFixSize = mergeDstBufs[bi4 + 1];
+
+                        // Note: dstFixSize is the buffer capacity, not exact used size.
+                        // The Rust encoder slices data to [0..chunkRowCount] elements, ignoring extra capacity.
 
                         O3CopyJob.mergeCopy(
                                 notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),

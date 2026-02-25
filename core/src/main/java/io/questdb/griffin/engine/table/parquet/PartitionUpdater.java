@@ -119,6 +119,9 @@ public class PartitionUpdater implements QuietCloseable {
 
     public void sliceRowGroup(short rowGroupIndex, int rowLo, int rowHi) {
         assert ptr != 0;
+        assert rowGroupIndex >= 0 : "rowGroupIndex must be >= 0, got " + rowGroupIndex;
+        assert rowLo >= 0 : "rowLo must be >= 0, got " + rowLo;
+        assert rowHi >= rowLo : "rowHi must be >= rowLo, got rowLo=" + rowLo + " rowHi=" + rowHi;
         sliceRowGroup(ptr, rowGroupIndex, rowLo, rowHi);
     }
 
