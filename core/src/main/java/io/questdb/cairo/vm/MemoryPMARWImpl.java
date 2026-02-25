@@ -27,6 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.std.Files;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -206,9 +207,20 @@ public class MemoryPMARWImpl extends MemoryPARWImpl implements MemoryMARW {
             return;
         }
         super.close();
-        if (!ff.truncate(Math.abs(fd), 0)) {
-            throw CairoException.critical(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to 0 bytes");
+        if (ff.truncate(Math.abs(fd), 0)) {
+            return;
         }
+
+        final int errno = ff.errno();
+        if (ff.isRestrictedFileSystem() && errno == Files.WINDOWS_ERROR_USER_MAPPED_FILE) {
+            LOG.debug()
+                    .$("could not truncate mapped file [fd=").$(fd)
+                    .$(", errno=").$(errno)
+                    .$(']').$();
+            return;
+        }
+
+        throw CairoException.critical(errno).put("Cannot truncate fd=").put(fd).put(" to 0 bytes");
     }
 
     @Override
