@@ -235,9 +235,9 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     }
 
     @Override
-    public void onFsyncCompleted(int cqeRes) {
+    public void onFsyncError(int cqeRes) {
         distressed = true;
-        cqeError = cqeRes < 0 ? -cqeRes : 0;
+        cqeError = -cqeRes;
     }
 
     @Override

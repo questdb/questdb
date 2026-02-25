@@ -388,10 +388,11 @@ public class WalWriterRingManager implements Closeable {
                 pool.release(bufIdx);
             }
             case (int) OP_FSYNC -> {
+                // Fsync completion callback is error-only.
                 if (cqeRes < 0) {
                     WalWriterRingColumn column = columns.getQuick(columnSlot);
                     if (column != null) {
-                        column.onFsyncCompleted(cqeRes);
+                        column.onFsyncError(cqeRes);
                     }
                 }
             }
@@ -519,7 +520,7 @@ public class WalWriterRingManager implements Closeable {
 
         boolean isPageConfirmed(long pageId);
 
-        void onFsyncCompleted(int cqeRes);
+        void onFsyncError(int cqeRes);
 
         void onSnapshotCompleted(int cqeRes);
 

@@ -741,6 +741,27 @@ public class MemoryPURImplTest extends AbstractTest {
     }
 
     @Test
+    public void testOnFsyncErrorMarksDistressedOnError() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            MemoryPURImpl mem = new MemoryPURImpl(null, null);
+            try {
+                mem.onFsyncError(-22);
+                Assert.assertTrue(mem.isDistressed());
+
+                try {
+                    mem.sync(false);
+                    Assert.fail("expected distressed exception");
+                } catch (CairoException e) {
+                    Assert.assertEquals(22, e.getErrno());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "io_uring write error, column distressed");
+                }
+            } finally {
+                mem.close();
+            }
+        });
+    }
+
+    @Test
     public void testSwitchTo() throws Exception {
         Assume.assumeTrue(rf.isAvailable());
 

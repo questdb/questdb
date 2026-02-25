@@ -495,7 +495,7 @@ public class WalWriterRingManagerTest extends AbstractTest {
         }
 
         @Override
-        public void onFsyncCompleted(int cqeRes) {
+        public void onFsyncError(int cqeRes) {
             lastFsyncRes.set(cqeRes);
         }
 
@@ -534,7 +534,7 @@ public class WalWriterRingManagerTest extends AbstractTest {
         }
 
         @Override
-        public void onFsyncCompleted(int cqeRes) {
+        public void onFsyncError(int cqeRes) {
             if (cqeRes < 0) {
                 distressed = true;
             }
