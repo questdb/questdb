@@ -38,6 +38,9 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
 public class DdlListenerTest extends AbstractCairoTest {
@@ -126,6 +129,7 @@ public class DdlListenerTest extends AbstractCairoTest {
     public void testDdlListenerDropAllNonWal() throws Exception {
         assertMemoryLeak(() -> {
             final int[] callbackCounters = new int[6];
+            final Set<String> droppedNames = new HashSet<>();
 
             engine.setDdlListener(new DefaultDdlListener() {
                 @Override
@@ -146,6 +150,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 @Override
                 public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
                     Assert.assertFalse(cascadePermissions);
+                    droppedNames.add(tableName);
                     callbackCounters[3]++;
                 }
 
@@ -173,7 +178,9 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(3, callbackCounters[3]);
             Assert.assertEquals(3, callbackCounters[4]);
             Assert.assertEquals(0, callbackCounters[5]);
+            Assert.assertEquals(Set.of("tab1", "tab2", "v"), droppedNames);
 
+            droppedNames.clear();
             engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
 
@@ -185,6 +192,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(5, callbackCounters[3]);
             Assert.assertEquals(5, callbackCounters[4]);
             Assert.assertEquals(0, callbackCounters[5]);
+            Assert.assertEquals(Set.of("tab1", "tab2"), droppedNames);
         });
     }
 
@@ -204,6 +212,7 @@ public class DdlListenerTest extends AbstractCairoTest {
     public void testDdlListenerDropAll() throws Exception {
         assertMemoryLeak(() -> {
             final int[] callbackCounters = new int[6];
+            final Set<String> droppedNames = new HashSet<>();
 
             engine.setDdlListener(new DefaultDdlListener() {
                 @Override
@@ -224,6 +233,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 @Override
                 public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
                     Assert.assertFalse(cascadePermissions);
+                    droppedNames.add(tableName);
                     callbackCounters[3]++;
                 }
 
@@ -256,7 +266,9 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(4, callbackCounters[3]);
             Assert.assertEquals(4, callbackCounters[4]);
             Assert.assertEquals(0, callbackCounters[5]);
+            Assert.assertEquals(Set.of("tab1", "tab2", "mv", "v"), droppedNames);
 
+            droppedNames.clear();
             engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
@@ -270,6 +282,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(6, callbackCounters[3]);
             Assert.assertEquals(6, callbackCounters[4]);
             Assert.assertEquals(0, callbackCounters[5]);
+            Assert.assertEquals(Set.of("tab1", "tab2"), droppedNames);
         });
     }
 
