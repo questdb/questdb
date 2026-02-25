@@ -78,6 +78,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
                     assertEquals("admin", securityContext.getPrincipal());
                     assertEquals("tab", tableToken.getTableName());
+                    // TABLE_KIND_REGULAR_TABLE is used for tables, views and mat views too
+                    // table kind only distinguishes between regular vs. temp parquet export tables
                     Assert.assertEquals(TableUtils.TABLE_KIND_REGULAR_TABLE, tableKind);
                     callbackCounters[4]++;
                 }
@@ -219,6 +221,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
                     assertEquals("admin", securityContext.getPrincipal());
                     assertEquals("mv", tableToken.getTableName());
+                    // TABLE_KIND_REGULAR_TABLE is used for tables, views and mat views too
+                    // table kind only distinguishes between regular vs. temp parquet export tables
                     Assert.assertEquals(TableUtils.TABLE_KIND_REGULAR_TABLE, tableKind);
                     callbackCounters[4]++;
                 }
@@ -285,6 +289,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
                     assertEquals("admin", securityContext.getPrincipal());
                     assertEquals("v", tableToken.getTableName());
+                    // TABLE_KIND_REGULAR_TABLE is used for tables, views and mat views too
+                    // table kind only distinguishes between regular vs. temp parquet export tables
                     Assert.assertEquals(TableUtils.TABLE_KIND_REGULAR_TABLE, tableKind);
                     callbackCounters[4]++;
                 }
