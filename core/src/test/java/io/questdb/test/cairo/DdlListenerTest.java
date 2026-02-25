@@ -24,12 +24,14 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
@@ -183,6 +185,18 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(5, callbackCounters[3]);
             Assert.assertEquals(5, callbackCounters[4]);
             Assert.assertEquals(0, callbackCounters[5]);
+        });
+    }
+
+    @Test
+    public void testDdlListenerBypassedForSystemTables() throws Exception {
+        assertMemoryLeak(() -> {
+            final DdlListener custom = new DefaultDdlListener() {
+            };
+            engine.setDdlListener(custom);
+
+            Assert.assertSame(DefaultDdlListener.INSTANCE, engine.getDdlListener(QueryTracingJob.TABLE_NAME));
+            Assert.assertSame(custom, engine.getDdlListener("user_table"));
         });
     }
 
