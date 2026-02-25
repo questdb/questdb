@@ -330,7 +330,7 @@ impl ParquetUpdater {
             .map_err(|s| {
                 ParquetError::with_descr(
                     ParquetErrorReason::Parquet2(s),
-                    &format!("Failed to raw-copy row group {rg_idx}"),
+                    format!("Failed to raw-copy row group {rg_idx}"),
                 )
             })
     }
@@ -485,6 +485,8 @@ impl ParquetUpdater {
     }
 }
 
+type SymbolTables = Vec<Option<(Vec<u8>, Vec<u64>)>>;
+
 /// Extract QDB-format symbol tables from parquet dictionary pages.
 /// Returns one entry per column: `Some((chars, offsets))` for symbol columns,
 /// `None` for non-symbol columns.
@@ -492,7 +494,7 @@ fn extract_symbol_tables(
     file_metadata: &FileMetaData,
     file_bytes: &[u8],
     rg_idx: usize,
-) -> ParquetResult<Vec<Option<(Vec<u8>, Vec<u64>)>>> {
+) -> ParquetResult<SymbolTables> {
     use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
     use parquet2::page::CompressedPage;
     use parquet2::read::{decompress, PageMetaData, PageReader};
@@ -666,9 +668,9 @@ fn build_partition_from_decoded(
             data_type: column_type,
             row_count,
             column_top: 0,
-            primary_data: unsafe { std::mem::transmute(primary_data) },
-            secondary_data: unsafe { std::mem::transmute(secondary_data) },
-            symbol_offsets: unsafe { std::mem::transmute(sym_offsets) },
+            primary_data: unsafe { std::mem::transmute::<&[u8], &[u8]>(primary_data) },
+            secondary_data: unsafe { std::mem::transmute::<&[u8], &[u8]>(secondary_data) },
+            symbol_offsets: unsafe { std::mem::transmute::<&[u64], &[u64]>(sym_offsets) },
             designated_timestamp: false,
             required: is_required,
             designated_timestamp_ascending: true,
