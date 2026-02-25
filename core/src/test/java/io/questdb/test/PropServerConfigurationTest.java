@@ -1148,7 +1148,7 @@ public class PropServerConfigurationTest {
             TestUtils.assertContains(e.getMessage(), PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath());
         }
 
-        properties.setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath(), "4k");
+        properties.setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath(), String.valueOf(Files.PAGE_SIZE));
         properties.setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES.getPropertyPath(), "1");
         try {
             newPropServerConfiguration(properties);
