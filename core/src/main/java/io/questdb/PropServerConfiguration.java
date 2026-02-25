@@ -293,6 +293,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
+    private final boolean walWriterIOURingEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
@@ -1735,6 +1736,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
+            this.walWriterIOURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_WRITER_IO_URING_ENABLED, false);
             this.madviseRandomMmapCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MADVISE_RANDOM_MMAP_CACHE_ENABLED, false);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
@@ -4675,6 +4677,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isWalWriterIOURingEnabled() {
+            return walWriterIOURingEnabled;
         }
 
         @Override

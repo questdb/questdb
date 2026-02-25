@@ -1480,6 +1480,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalWriterIOURingEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isMadviseRandomMmapCacheEnabled() {
         return true;
     }

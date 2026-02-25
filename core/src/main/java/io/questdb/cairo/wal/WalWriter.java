@@ -692,7 +692,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private static WalWriterRingManager createRingManager(CairoConfiguration configuration) {
-        if (configuration.isIOURingEnabled()) {
+        if (configuration.isWalWriterIOURingEnabled()) {
             IOURingFacade facade = configuration.getIOURingFacade();
             if (!facade.isAvailable()) {
                 LOG.info().$("io_uring enabled but not available, falling back to mmap").$();

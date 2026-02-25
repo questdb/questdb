@@ -290,6 +290,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(ff.allowMixedIO(root), configuration.getCairoConfiguration().isWriterMixedIOEnabled());
         Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
         Assert.assertTrue(configuration.getCairoConfiguration().isIOURingEnabled());
+        Assert.assertFalse(configuration.getCairoConfiguration().isWalWriterIOURingEnabled());
         Assert.assertFalse(configuration.getCairoConfiguration().isMadviseRandomMmapCacheEnabled());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getPreferencesStringPoolCapacity());
 
@@ -2058,6 +2059,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(ff.allowMixedIO(root), configuration.isWriterMixedIOEnabled());
         Assert.assertEquals(CairoConfiguration.O_DIRECT | CairoConfiguration.O_SYNC, configuration.getWriterFileOpenOpts());
         Assert.assertFalse(configuration.isIOURingEnabled());
+        Assert.assertTrue(configuration.isWalWriterIOURingEnabled());
         Assert.assertFalse(configuration.isMadviseRandomMmapCacheEnabled());
 
         Assert.assertEquals(100_000, configuration.getMaxUncommittedRows());

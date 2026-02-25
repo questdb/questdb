@@ -1462,6 +1462,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isWalWriterIOURingEnabled() {
+        return getDelegate().isWalWriterIOURingEnabled();
+    }
+
+    @Override
     public boolean isMadviseRandomMmapCacheEnabled() {
         return getDelegate().isMadviseRandomMmapCacheEnabled();
     }
