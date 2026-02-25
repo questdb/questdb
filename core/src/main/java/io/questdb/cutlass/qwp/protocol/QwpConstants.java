@@ -310,6 +310,7 @@ public final class QwpConstants {
             case TYPE_LONG, TYPE_DOUBLE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE, TYPE_DECIMAL64 -> 8;
             case TYPE_UUID, TYPE_DECIMAL128 -> 16;
             case TYPE_LONG256, TYPE_DECIMAL256 -> 32;
+            case TYPE_GEOHASH -> -1; // Variable width: varint precision + packed values
             default -> -1; // Variable width
         };
     }

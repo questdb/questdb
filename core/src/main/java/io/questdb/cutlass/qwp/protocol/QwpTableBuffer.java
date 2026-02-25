@@ -606,66 +606,43 @@ public class QwpTableBuffer {
                 // For non-nullable columns, we must store a sentinel/default value
                 // because no null bitmap will be written
                 switch (type) {
-                    case TYPE_BOOLEAN:
-                        booleanValues[valueCount++] = false;
-                        break;
-                    case TYPE_BYTE:
-                        byteValues[valueCount++] = 0;
-                        break;
-                    case TYPE_SHORT:
-                    case TYPE_CHAR:
-                        shortValues[valueCount++] = 0;
-                        break;
-                    case TYPE_INT:
-                        intValues[valueCount++] = 0;
-                        break;
-                    case TYPE_LONG:
-                    case TYPE_TIMESTAMP:
-                    case TYPE_TIMESTAMP_NANOS:
-                    case TYPE_DATE:
-                        longValues[valueCount++] = Long.MIN_VALUE;
-                        break;
-                    case TYPE_FLOAT:
-                        floatValues[valueCount++] = Float.NaN;
-                        break;
-                    case TYPE_DOUBLE:
-                        doubleValues[valueCount++] = Double.NaN;
-                        break;
-                    case TYPE_STRING:
-                    case TYPE_VARCHAR:
-                        stringValues[valueCount++] = null;
-                        break;
-                    case TYPE_SYMBOL:
-                        symbolIndices[valueCount++] = -1;
-                        break;
-                    case TYPE_UUID:
+                    case TYPE_BOOLEAN -> booleanValues[valueCount++] = false;
+                    case TYPE_BYTE -> byteValues[valueCount++] = 0;
+                    case TYPE_SHORT, TYPE_CHAR -> shortValues[valueCount++] = 0;
+                    case TYPE_INT -> intValues[valueCount++] = 0;
+                    case TYPE_GEOHASH -> longValues[valueCount++] = -1L;
+                    case TYPE_LONG, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE -> longValues[valueCount++] = Long.MIN_VALUE;
+                    case TYPE_FLOAT -> floatValues[valueCount++] = Float.NaN;
+                    case TYPE_DOUBLE -> doubleValues[valueCount++] = Double.NaN;
+                    case TYPE_STRING, TYPE_VARCHAR -> stringValues[valueCount++] = null;
+                    case TYPE_SYMBOL -> symbolIndices[valueCount++] = -1;
+                    case TYPE_UUID -> {
                         uuidHigh[valueCount] = Long.MIN_VALUE;
                         uuidLow[valueCount] = Long.MIN_VALUE;
                         valueCount++;
-                        break;
-                    case TYPE_LONG256:
+                    }
+                    case TYPE_LONG256 -> {
                         int offset = valueCount * 4;
                         long256Values[offset] = Long.MIN_VALUE;
                         long256Values[offset + 1] = Long.MIN_VALUE;
                         long256Values[offset + 2] = Long.MIN_VALUE;
                         long256Values[offset + 3] = Long.MIN_VALUE;
                         valueCount++;
-                        break;
-                    case TYPE_DECIMAL64:
-                        decimal64Values[valueCount++] = Decimals.DECIMAL64_NULL;
-                        break;
-                    case TYPE_DECIMAL128:
+                    }
+                    case TYPE_DECIMAL64 -> decimal64Values[valueCount++] = Decimals.DECIMAL64_NULL;
+                    case TYPE_DECIMAL128 -> {
                         decimal128High[valueCount] = Decimals.DECIMAL128_HI_NULL;
                         decimal128Low[valueCount] = Decimals.DECIMAL128_LO_NULL;
                         valueCount++;
-                        break;
-                    case TYPE_DECIMAL256:
+                    }
+                    case TYPE_DECIMAL256 -> {
                         decimal256Hh[valueCount] = Decimals.DECIMAL256_HH_NULL;
                         decimal256Hl[valueCount] = Decimals.DECIMAL256_HL_NULL;
                         decimal256Lh[valueCount] = Decimals.DECIMAL256_LH_NULL;
                         decimal256Ll[valueCount] = Decimals.DECIMAL256_LL_NULL;
                         valueCount++;
-                        break;
+                    }
+                    default -> { }
                 }
                 size++;
             }
@@ -1084,68 +1061,40 @@ public class QwpTableBuffer {
 
         private void allocateStorage(byte type, int cap) {
             switch (type) {
-                case TYPE_BOOLEAN:
-                    booleanValues = new boolean[cap];
-                    break;
-                case TYPE_BYTE:
-                    byteValues = new byte[cap];
-                    break;
-                case TYPE_SHORT:
-                case TYPE_CHAR:
-                    shortValues = new short[cap];
-                    break;
-                case TYPE_INT:
-                    intValues = new int[cap];
-                    break;
-                case TYPE_LONG:
-                case TYPE_TIMESTAMP:
-                case TYPE_TIMESTAMP_NANOS:
-                case TYPE_DATE:
-                    longValues = new long[cap];
-                    break;
-                case TYPE_FLOAT:
-                    floatValues = new float[cap];
-                    break;
-                case TYPE_DOUBLE:
-                    doubleValues = new double[cap];
-                    break;
-                case TYPE_STRING:
-                case TYPE_VARCHAR:
-                    stringValues = new String[cap];
-                    break;
-                case TYPE_SYMBOL:
+                case TYPE_BOOLEAN -> booleanValues = new boolean[cap];
+                case TYPE_BYTE -> byteValues = new byte[cap];
+                case TYPE_SHORT, TYPE_CHAR -> shortValues = new short[cap];
+                case TYPE_INT -> intValues = new int[cap];
+                case TYPE_GEOHASH, TYPE_LONG, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE -> longValues = new long[cap];
+                case TYPE_FLOAT -> floatValues = new float[cap];
+                case TYPE_DOUBLE -> doubleValues = new double[cap];
+                case TYPE_STRING, TYPE_VARCHAR -> stringValues = new String[cap];
+                case TYPE_SYMBOL -> {
                     symbolIndices = new int[cap];
                     symbolDict = new CharSequenceIntHashMap();
                     symbolList = new ObjList<>();
-                    break;
-                case TYPE_UUID:
+                }
+                case TYPE_UUID -> {
                     uuidHigh = new long[cap];
                     uuidLow = new long[cap];
-                    break;
-                case TYPE_LONG256:
-                    // Flat array: 4 longs per value
-                    long256Values = new long[cap * 4];
-                    break;
-                case TYPE_DOUBLE_ARRAY:
-                case TYPE_LONG_ARRAY:
-                    // Array types: allocate per-row tracking
-                    // Shape and data arrays are grown dynamically in ensureArrayCapacity()
+                }
+                case TYPE_LONG256 -> long256Values = new long[cap * 4];
+                case TYPE_DOUBLE_ARRAY, TYPE_LONG_ARRAY -> {
                     arrayDims = new byte[cap];
                     arrayRowCapacity = cap;
-                    break;
-                case TYPE_DECIMAL64:
-                    decimal64Values = new long[cap];
-                    break;
-                case TYPE_DECIMAL128:
+                }
+                case TYPE_DECIMAL64 -> decimal64Values = new long[cap];
+                case TYPE_DECIMAL128 -> {
                     decimal128High = new long[cap];
                     decimal128Low = new long[cap];
-                    break;
-                case TYPE_DECIMAL256:
+                }
+                case TYPE_DECIMAL256 -> {
                     decimal256Hh = new long[cap];
                     decimal256Hl = new long[cap];
                     decimal256Lh = new long[cap];
                     decimal256Ll = new long[cap];
-                    break;
+                }
+                default -> { }
             }
         }
 
@@ -1197,69 +1146,42 @@ public class QwpTableBuffer {
 
         private void growStorage(byte type, int newCap) {
             switch (type) {
-                case TYPE_BOOLEAN:
-                    booleanValues = Arrays.copyOf(booleanValues, newCap);
-                    break;
-                case TYPE_BYTE:
-                    byteValues = Arrays.copyOf(byteValues, newCap);
-                    break;
-                case TYPE_SHORT:
-                case TYPE_CHAR:
-                    shortValues = Arrays.copyOf(shortValues, newCap);
-                    break;
-                case TYPE_INT:
-                    intValues = Arrays.copyOf(intValues, newCap);
-                    break;
-                case TYPE_LONG:
-                case TYPE_TIMESTAMP:
-                case TYPE_TIMESTAMP_NANOS:
-                case TYPE_DATE:
-                    longValues = Arrays.copyOf(longValues, newCap);
-                    break;
-                case TYPE_FLOAT:
-                    floatValues = Arrays.copyOf(floatValues, newCap);
-                    break;
-                case TYPE_DOUBLE:
-                    doubleValues = Arrays.copyOf(doubleValues, newCap);
-                    break;
-                case TYPE_STRING:
-                case TYPE_VARCHAR:
-                    stringValues = Arrays.copyOf(stringValues, newCap);
-                    break;
-                case TYPE_SYMBOL:
+                case TYPE_BOOLEAN -> booleanValues = Arrays.copyOf(booleanValues, newCap);
+                case TYPE_BYTE -> byteValues = Arrays.copyOf(byteValues, newCap);
+                case TYPE_SHORT, TYPE_CHAR -> shortValues = Arrays.copyOf(shortValues, newCap);
+                case TYPE_INT -> intValues = Arrays.copyOf(intValues, newCap);
+                case TYPE_GEOHASH, TYPE_LONG, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE ->
+                        longValues = Arrays.copyOf(longValues, newCap);
+                case TYPE_FLOAT -> floatValues = Arrays.copyOf(floatValues, newCap);
+                case TYPE_DOUBLE -> doubleValues = Arrays.copyOf(doubleValues, newCap);
+                case TYPE_STRING, TYPE_VARCHAR -> stringValues = Arrays.copyOf(stringValues, newCap);
+                case TYPE_SYMBOL -> {
                     symbolIndices = Arrays.copyOf(symbolIndices, newCap);
                     if (globalSymbolIds != null) {
                         globalSymbolIds = Arrays.copyOf(globalSymbolIds, newCap);
                     }
-                    break;
-                case TYPE_UUID:
+                }
+                case TYPE_UUID -> {
                     uuidHigh = Arrays.copyOf(uuidHigh, newCap);
                     uuidLow = Arrays.copyOf(uuidLow, newCap);
-                    break;
-                case TYPE_LONG256:
-                    // Flat array: 4 longs per value
-                    long256Values = Arrays.copyOf(long256Values, newCap * 4);
-                    break;
-                case TYPE_DOUBLE_ARRAY:
-                case TYPE_LONG_ARRAY:
-                    // Array types: grow per-row tracking
+                }
+                case TYPE_LONG256 -> long256Values = Arrays.copyOf(long256Values, newCap * 4);
+                case TYPE_DOUBLE_ARRAY, TYPE_LONG_ARRAY -> {
                     arrayDims = Arrays.copyOf(arrayDims, newCap);
                     arrayRowCapacity = newCap;
-                    // Note: shapes and data arrays are grown in ensureArrayCapacity()
-                    break;
-                case TYPE_DECIMAL64:
-                    decimal64Values = Arrays.copyOf(decimal64Values, newCap);
-                    break;
-                case TYPE_DECIMAL128:
+                }
+                case TYPE_DECIMAL64 -> decimal64Values = Arrays.copyOf(decimal64Values, newCap);
+                case TYPE_DECIMAL128 -> {
                     decimal128High = Arrays.copyOf(decimal128High, newCap);
                     decimal128Low = Arrays.copyOf(decimal128Low, newCap);
-                    break;
-                case TYPE_DECIMAL256:
+                }
+                case TYPE_DECIMAL256 -> {
                     decimal256Hh = Arrays.copyOf(decimal256Hh, newCap);
                     decimal256Hl = Arrays.copyOf(decimal256Hl, newCap);
                     decimal256Lh = Arrays.copyOf(decimal256Lh, newCap);
                     decimal256Ll = Arrays.copyOf(decimal256Ll, newCap);
-                    break;
+                }
+                default -> { }
             }
         }
 
