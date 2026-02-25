@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.wal.WalWriterRingManager;
 import io.questdb.cairo.wal.WalWriterRingManager.WalWriterRingColumn;
 import io.questdb.std.*;
@@ -342,6 +343,55 @@ public class WalWriterRingManagerTest extends AbstractTest {
     }
 
     @Test
+    public void testWaitForAllThrowsWhenAlreadyDistressedAndNoInFlight() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 1024;
+            long buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            try (WalWriterRingManager mgr = new WalWriterRingManager(rf, 32)) {
+                DistressedColumn col = new DistressedColumn();
+                int slot = mgr.registerColumn(col);
+
+                mgr.enqueueWrite(slot, 0, -1, 0, buf, bufLen);
+                mgr.submitAndDrainAll();
+
+                Assert.assertEquals(0, mgr.getInFlightCount());
+                Assert.assertTrue("Column should be distressed after error CQE", col.isDistressed());
+
+                CairoException ex = Assert.assertThrows(CairoException.class, mgr::waitForAll);
+                TestUtils.assertContains(ex.getFlyweightMessage(), "io_uring write error on column slot");
+            } finally {
+                Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWaitForAllThrowsWhenInitialDrainSetsDistressed() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufLen = 1024;
+            long buf = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+            try (WalWriterRingManager mgr = new WalWriterRingManager(rf, 32)) {
+                DistressedColumn col = new DistressedColumn();
+                int slot = mgr.registerColumn(col);
+
+                // One op ensures first drain consumes the only completion.
+                mgr.enqueueWrite(slot, 0, -1, 0, buf, bufLen);
+
+                CairoException ex = Assert.assertThrows(CairoException.class, mgr::waitForAll);
+                TestUtils.assertContains(ex.getFlyweightMessage(), "io_uring write error on column slot");
+                Assert.assertEquals(0, mgr.getInFlightCount());
+                Assert.assertTrue("Column should be distressed after error CQE", col.isDistressed());
+            } finally {
+                Unsafe.free(buf, bufLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testWaitForPage() throws Exception {
         Assume.assumeTrue(rf.isAvailable());
 
@@ -406,14 +456,9 @@ public class WalWriterRingManagerTest extends AbstractTest {
                         // Second: valid write on col1 to keep inFlight > 0 after first CQE.
                         mgr.enqueueWrite(slot1, 0, fd, 0, buf1, bufLen);
 
-                        try {
-                            mgr.waitForAll();
-                            // If all CQEs drain quickly, waitForAll may succeed.
-                            // In that case, verify the distressed state was set.
-                            Assert.assertTrue("col0 should be distressed", col0.isDistressed());
-                        } catch (io.questdb.cairo.CairoException e) {
-                            Assert.assertTrue(e.getMessage().contains("io_uring write error"));
-                        }
+                        CairoException ex = Assert.assertThrows(CairoException.class, mgr::waitForAll);
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "io_uring write error on column slot");
+                        Assert.assertTrue("col0 should be distressed", col0.isDistressed());
                     } finally {
                         Files.close(fd);
                     }

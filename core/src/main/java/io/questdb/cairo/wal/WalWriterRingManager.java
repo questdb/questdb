@@ -307,17 +307,19 @@ public class WalWriterRingManager implements Closeable {
     }
 
     public void waitForAll() {
+        pendingSubmitCount = 0;
         if (inFlightCount == 0) {
+            checkDistressed();
             return;
         }
-        pendingSubmitCount = 0;
         // Submit any pending SQEs first, then drain what's already available.
         submitOrThrow();
         drainCqes();
+        checkDistressed();
         while (inFlightCount > 0) {
-            checkDistressed();
             submitAndWaitOrThrow(1);
             drainCqes();
+            checkDistressed();
         }
     }
 
