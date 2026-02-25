@@ -28,6 +28,8 @@ import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
@@ -254,6 +256,35 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(6, callbackCounters[3]);
             Assert.assertEquals(6, callbackCounters[4]);
             Assert.assertEquals(0, callbackCounters[5]);
+        });
+    }
+
+    @Test
+    public void testDdlListenerCascadePermissionsOnColumnDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            final boolean[] cascadeReceived = new boolean[1];
+            final int[] callCount = new int[1];
+
+            engine.setDdlListener(new DefaultDdlListener() {
+                @Override
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                    assertEquals("tab", tableToken.getTableName());
+                    Assert.assertTrue(Chars.equals("z", columnName));
+                    cascadeReceived[0] = cascadePermissions;
+                    callCount[0]++;
+                }
+            });
+
+            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, z INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            try (TableWriter writer = getWriter("tab")) {
+                writer.removeColumn("z", AllowAllSecurityContext.INSTANCE, true);
+            }
+
+            Assert.assertEquals(1, callCount[0]);
+            Assert.assertTrue(cascadeReceived[0]);
+
+            // cleanup
+            engine.execute("DROP TABLE tab");
         });
     }
 
