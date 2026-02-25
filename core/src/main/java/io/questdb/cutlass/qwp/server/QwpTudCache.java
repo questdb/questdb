@@ -25,9 +25,17 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.Telemetry;
-import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetryEvent;
-import io.questdb.cairo.*;
+import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
@@ -37,7 +45,12 @@ import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
-import io.questdb.std.*;
+import io.questdb.std.Decimals;
+import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -53,13 +66,13 @@ public class QwpTudCache implements QuietCloseable {
     private final boolean autoCreateNewTables;
     private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
+    private final int defaultPartitionBy;
     private final CairoEngine engine;
     private final Path path = new Path();
+    private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
     private final StringSink tableNameUtf16 = new StringSink();
-    private final int defaultPartitionBy;
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
-    private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
     private boolean distressed = false;
 
     public QwpTudCache(
@@ -248,14 +261,14 @@ public class QwpTudCache implements QuietCloseable {
     private static class QwpTableStructureAdapter implements TableStructure {
         private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
         private final CairoConfiguration configuration;
-        private final String tableName;
-        private final QwpColumnDef[] schema;
         private final QwpTableBlockCursor cursor;
         private final int partitionBy;
+        private final QwpColumnDef[] schema;
+        private final String tableName;
         private int timestampIndex = -1;
 
         QwpTableStructureAdapter(CairoConfiguration configuration, String tableName, QwpColumnDef[] schema,
-                                   QwpTableBlockCursor cursor, int partitionBy) {
+                                 QwpTableBlockCursor cursor, int partitionBy) {
             this.configuration = configuration;
             this.tableName = tableName;
             this.schema = schema;
@@ -319,16 +332,6 @@ public class QwpTudCache implements QuietCloseable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return false;
-        }
-
-        @Override
-        public boolean isDedupKey(int columnIndex) {
-            return false;
-        }
-
-        @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
         }
@@ -362,6 +365,16 @@ public class QwpTudCache implements QuietCloseable {
         public int getTimestampIndex() {
             // If no timestamp column in schema, it's the auto-added one at the end
             return timestampIndex == -1 ? schema.length : timestampIndex;
+        }
+
+        @Override
+        public boolean isDedupKey(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return false;
         }
 
         @Override

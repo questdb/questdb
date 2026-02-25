@@ -48,21 +48,104 @@ import io.questdb.std.Unsafe;
  */
 public final class QwpGeoHashDecoder implements QwpColumnDecoder {
 
+    public static final QwpGeoHashDecoder INSTANCE = new QwpGeoHashDecoder();
     /**
      * Maximum GeoHash precision in bits (matches QuestDB's GEOLONG_MAX_BITS).
      */
     public static final int MAX_BITS = ColumnType.GEOLONG_MAX_BITS;
-
     /**
      * Minimum GeoHash precision in bits.
      */
     public static final int MIN_BITS = ColumnType.GEOBYTE_MIN_BITS;
-
-    public static final QwpGeoHashDecoder INSTANCE = new QwpGeoHashDecoder();
-
     private final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
 
     private QwpGeoHashDecoder() {
+    }
+
+    /**
+     * Calculates the encoded size in bytes.
+     *
+     * @param rowCount  number of rows
+     * @param precision number of bits
+     * @param nullable  whether column is nullable
+     * @return encoded size in bytes
+     */
+    public static int calculateEncodedSize(int rowCount, int precision, boolean nullable) {
+        int size = 0;
+        if (nullable) {
+            size += QwpNullBitmap.sizeInBytes(rowCount);
+        }
+        // Calculate varint size for precision (precision is 1-60, fits in 1 byte)
+        size += varintSize(precision);
+        size += rowCount * ((precision + 7) / 8);
+        return size;
+    }
+
+    /**
+     * Encodes GeoHash values to direct memory.
+     *
+     * @param destAddress destination address
+     * @param values      geohash values
+     * @param precision   number of bits for all values
+     * @param nulls       null flags (can be null if not nullable)
+     * @return address after encoded data
+     */
+    public static long encode(long destAddress, long[] values, int precision, boolean[] nulls) {
+        int rowCount = values.length;
+        boolean nullable = nulls != null;
+        long pos = destAddress;
+
+        // Write null bitmap if nullable
+        if (nullable) {
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            QwpNullBitmap.fillNoneNull(pos, rowCount);
+            for (int i = 0; i < rowCount; i++) {
+                if (nulls[i]) {
+                    QwpNullBitmap.setNull(pos, i);
+                }
+            }
+            pos += bitmapSize;
+        }
+
+        // Write precision
+        pos = QwpVarint.encode(pos, precision);
+
+        // Write values
+        int valueSize = (precision + 7) / 8;
+        for (int i = 0; i < rowCount; i++) {
+            writeValue(pos, values[i], valueSize);
+            pos += valueSize;
+        }
+
+        return pos;
+    }
+
+    /**
+     * Returns the QuestDB column type for a given precision.
+     *
+     * @param precision number of bits (1-60)
+     * @return QuestDB column type (GEOBYTE, GEOSHORT, GEOINT, or GEOLONG)
+     */
+    public static int getColumnType(int precision) {
+        return ColumnType.getGeoHashTypeWithBits(precision);
+    }
+
+    /**
+     * Returns the storage size in bytes for a given precision.
+     *
+     * @param precision number of bits
+     * @return storage size (1, 2, 4, or 8 bytes)
+     */
+    public static int getStorageSize(int precision) {
+        if (precision <= ColumnType.GEOBYTE_MAX_BITS) {
+            return 1;
+        } else if (precision <= ColumnType.GEOSHORT_MAX_BITS) {
+            return 2;
+        } else if (precision <= ColumnType.GEOINT_MAX_BITS) {
+            return 4;
+        } else {
+            return 8;
+        }
     }
 
     @Override
@@ -129,6 +212,17 @@ public final class QwpGeoHashDecoder implements QwpColumnDecoder {
         return offset + valuesSize;
     }
 
+    @Override
+    public int expectedSize(int rowCount, boolean nullable) {
+        // Minimum size: 1-byte precision + 1 byte per value
+        int size = 1; // precision varint (minimum 1 byte)
+        if (nullable) {
+            size += QwpNullBitmap.sizeInBytes(rowCount);
+        }
+        size += rowCount; // minimum 1 byte per value
+        return size;
+    }
+
     /**
      * Reads a geohash value of the specified size (1-8 bytes).
      */
@@ -151,147 +245,16 @@ public final class QwpGeoHashDecoder implements QwpColumnDecoder {
         };
     }
 
-    @Override
-    public int expectedSize(int rowCount, boolean nullable) {
-        // Minimum size: 1-byte precision + 1 byte per value
-        int size = 1; // precision varint (minimum 1 byte)
-        if (nullable) {
-            size += QwpNullBitmap.sizeInBytes(rowCount);
+    /**
+     * Calculates the size of a varint-encoded value.
+     */
+    private static int varintSize(long value) {
+        int size = 1;
+        while (value >= 0x80) {
+            size++;
+            value >>>= 7;
         }
-        size += rowCount; // minimum 1 byte per value
         return size;
-    }
-
-    /**
-     * Returns the QuestDB column type for a given precision.
-     *
-     * @param precision number of bits (1-60)
-     * @return QuestDB column type (GEOBYTE, GEOSHORT, GEOINT, or GEOLONG)
-     */
-    public static int getColumnType(int precision) {
-        return ColumnType.getGeoHashTypeWithBits(precision);
-    }
-
-    /**
-     * Returns the storage size in bytes for a given precision.
-     *
-     * @param precision number of bits
-     * @return storage size (1, 2, 4, or 8 bytes)
-     */
-    public static int getStorageSize(int precision) {
-        if (precision <= ColumnType.GEOBYTE_MAX_BITS) {
-            return 1;
-        } else if (precision <= ColumnType.GEOSHORT_MAX_BITS) {
-            return 2;
-        } else if (precision <= ColumnType.GEOINT_MAX_BITS) {
-            return 4;
-        } else {
-            return 8;
-        }
-    }
-
-    /**
-     * Extended sink interface for GeoHash columns.
-     */
-    public interface GeoHashColumnSink extends ColumnSink {
-        /**
-         * Called for each decoded GeoHash value.
-         *
-         * @param rowIndex  row index
-         * @param value     geohash value (bit-packed)
-         * @param precision number of bits
-         */
-        void putGeoHash(int rowIndex, long value, int precision);
-    }
-
-    /**
-     * Simple array-based sink for testing.
-     */
-    public static class ArrayGeoHashSink implements GeoHashColumnSink {
-        private final long[] values;
-        private final int[] precisions;
-        private final boolean[] nulls;
-
-        public ArrayGeoHashSink(int rowCount) {
-            this.values = new long[rowCount];
-            this.precisions = new int[rowCount];
-            this.nulls = new boolean[rowCount];
-        }
-
-        @Override
-        public void putGeoHash(int rowIndex, long value, int precision) {
-            values[rowIndex] = value;
-            precisions[rowIndex] = precision;
-        }
-
-        @Override
-        public void putNull(int rowIndex) {
-            nulls[rowIndex] = true;
-        }
-
-        public long getValue(int rowIndex) {
-            return values[rowIndex];
-        }
-
-        public int getPrecision(int rowIndex) {
-            return precisions[rowIndex];
-        }
-
-        public boolean isNull(int rowIndex) {
-            return nulls[rowIndex];
-        }
-
-        // Unused methods from ColumnSink interface
-        @Override public void putByte(int rowIndex, byte value) {}
-        @Override public void putShort(int rowIndex, short value) {}
-        @Override public void putInt(int rowIndex, int value) {}
-        @Override public void putLong(int rowIndex, long value) {}
-        @Override public void putFloat(int rowIndex, float value) {}
-        @Override public void putDouble(int rowIndex, double value) {}
-        @Override public void putBoolean(int rowIndex, boolean value) {}
-        @Override public void putUuid(int rowIndex, long hi, long lo) {}
-        @Override public void putLong256(int rowIndex, long l0, long l1, long l2, long l3) {}
-    }
-
-    // ==================== Static Encoding Methods ====================
-
-    /**
-     * Encodes GeoHash values to direct memory.
-     *
-     * @param destAddress destination address
-     * @param values      geohash values
-     * @param precision   number of bits for all values
-     * @param nulls       null flags (can be null if not nullable)
-     * @return address after encoded data
-     */
-    public static long encode(long destAddress, long[] values, int precision, boolean[] nulls) {
-        int rowCount = values.length;
-        boolean nullable = nulls != null;
-        long pos = destAddress;
-
-        // Write null bitmap if nullable
-        if (nullable) {
-            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
-            QwpNullBitmap.fillNoneNull(pos, rowCount);
-            for (int i = 0; i < rowCount; i++) {
-                if (nulls[i]) {
-                    QwpNullBitmap.setNull(pos, i);
-                }
-            }
-            pos += bitmapSize;
-        }
-
-        // Write precision
-        pos = QwpVarint.encode(pos, precision);
-
-        // Write values
-        int valueSize = (precision + 7) / 8;
-        for (int i = 0; i < rowCount; i++) {
-            writeValue(pos, values[i], valueSize);
-            pos += valueSize;
-        }
-
-        return pos;
     }
 
     /**
@@ -334,33 +297,91 @@ public final class QwpGeoHashDecoder implements QwpColumnDecoder {
     }
 
     /**
-     * Calculates the encoded size in bytes.
-     *
-     * @param rowCount  number of rows
-     * @param precision number of bits
-     * @param nullable  whether column is nullable
-     * @return encoded size in bytes
+     * Extended sink interface for GeoHash columns.
      */
-    public static int calculateEncodedSize(int rowCount, int precision, boolean nullable) {
-        int size = 0;
-        if (nullable) {
-            size += QwpNullBitmap.sizeInBytes(rowCount);
-        }
-        // Calculate varint size for precision (precision is 1-60, fits in 1 byte)
-        size += varintSize(precision);
-        size += rowCount * ((precision + 7) / 8);
-        return size;
+    public interface GeoHashColumnSink extends ColumnSink {
+        /**
+         * Called for each decoded GeoHash value.
+         *
+         * @param rowIndex  row index
+         * @param value     geohash value (bit-packed)
+         * @param precision number of bits
+         */
+        void putGeoHash(int rowIndex, long value, int precision);
     }
 
     /**
-     * Calculates the size of a varint-encoded value.
+     * Simple array-based sink for testing.
      */
-    private static int varintSize(long value) {
-        int size = 1;
-        while (value >= 0x80) {
-            size++;
-            value >>>= 7;
+    public static class ArrayGeoHashSink implements GeoHashColumnSink {
+        private final boolean[] nulls;
+        private final int[] precisions;
+        private final long[] values;
+
+        public ArrayGeoHashSink(int rowCount) {
+            this.values = new long[rowCount];
+            this.precisions = new int[rowCount];
+            this.nulls = new boolean[rowCount];
         }
-        return size;
+
+        public int getPrecision(int rowIndex) {
+            return precisions[rowIndex];
+        }
+
+        public long getValue(int rowIndex) {
+            return values[rowIndex];
+        }
+
+        public boolean isNull(int rowIndex) {
+            return nulls[rowIndex];
+        }
+
+        @Override
+        public void putBoolean(int rowIndex, boolean value) {
+        }
+
+        // Unused methods from ColumnSink interface
+        @Override
+        public void putByte(int rowIndex, byte value) {
+        }
+
+        @Override
+        public void putDouble(int rowIndex, double value) {
+        }
+
+        @Override
+        public void putFloat(int rowIndex, float value) {
+        }
+
+        @Override
+        public void putGeoHash(int rowIndex, long value, int precision) {
+            values[rowIndex] = value;
+            precisions[rowIndex] = precision;
+        }
+
+        @Override
+        public void putInt(int rowIndex, int value) {
+        }
+
+        @Override
+        public void putLong(int rowIndex, long value) {
+        }
+
+        @Override
+        public void putLong256(int rowIndex, long l0, long l1, long l2, long l3) {
+        }
+
+        @Override
+        public void putNull(int rowIndex) {
+            nulls[rowIndex] = true;
+        }
+
+        @Override
+        public void putShort(int rowIndex, short value) {
+        }
+
+        @Override
+        public void putUuid(int rowIndex, long hi, long lo) {
+        }
     }
 }

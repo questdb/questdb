@@ -24,7 +24,12 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
 
 /**
@@ -51,32 +56,6 @@ public class QwpTableStructureAdapter implements TableStructure {
         this.configuration = configuration;
         this.defaultPartitionBy = defaultPartitionBy;
         this.walEnabledDefault = walEnabledDefault;
-    }
-
-    /**
-     * Configures this adapter for the given table and columns.
-     *
-     * @param tableName table name
-     * @param columns   column definitions
-     * @return this adapter
-     */
-    public QwpTableStructureAdapter of(CharSequence tableName, QwpColumnDef[] columns) {
-        this.tableName = tableName;
-        this.columns = columns;
-        this.timestampIndex = -1;
-
-        // Find the designated timestamp column - empty name with TIMESTAMP or TIMESTAMP_NANOS type
-        for (int i = 0; i < columns.length; i++) {
-            byte typeCode = (byte) (columns[i].getTypeCode() & 0x7F);
-            if (columns[i].getName().isEmpty() &&
-                    (typeCode == QwpConstants.TYPE_TIMESTAMP || typeCode == QwpConstants.TYPE_TIMESTAMP_NANOS)) {
-                timestampIndex = i;
-                break;
-            }
-        }
-        // If no designated timestamp found, we'll add one automatically (see getColumnCount)
-
-        return this;
     }
 
     @Override
@@ -174,5 +153,31 @@ public class QwpTableStructureAdapter implements TableStructure {
         // ILP v4 always creates WAL tables for partitioned tables
         // Non-WAL tables are legacy and not recommended for ILP v4
         return PartitionBy.isPartitioned(getPartitionBy());
+    }
+
+    /**
+     * Configures this adapter for the given table and columns.
+     *
+     * @param tableName table name
+     * @param columns   column definitions
+     * @return this adapter
+     */
+    public QwpTableStructureAdapter of(CharSequence tableName, QwpColumnDef[] columns) {
+        this.tableName = tableName;
+        this.columns = columns;
+        this.timestampIndex = -1;
+
+        // Find the designated timestamp column - empty name with TIMESTAMP or TIMESTAMP_NANOS type
+        for (int i = 0; i < columns.length; i++) {
+            byte typeCode = (byte) (columns[i].getTypeCode() & 0x7F);
+            if (columns[i].getName().isEmpty() &&
+                    (typeCode == QwpConstants.TYPE_TIMESTAMP || typeCode == QwpConstants.TYPE_TIMESTAMP_NANOS)) {
+                timestampIndex = i;
+                break;
+            }
+        }
+        // If no designated timestamp found, we'll add one automatically (see getColumnCount)
+
+        return this;
     }
 }

@@ -38,55 +38,80 @@ import io.questdb.std.Unsafe;
  */
 public class WebSocketFrameParser {
     /**
-     * Initial state, waiting for frame header.
-     */
-    public static final int STATE_HEADER = 0;
-
-    /**
-     * Need more data to complete parsing.
-     */
-    public static final int STATE_NEED_MORE = 1;
-
-    /**
-     * Header parsed, need payload data.
-     */
-    public static final int STATE_NEED_PAYLOAD = 2;
-
-    /**
      * Frame completely parsed.
      */
     public static final int STATE_COMPLETE = 3;
-
     /**
      * Error state - frame is invalid.
      */
     public static final int STATE_ERROR = 4;
-
+    /**
+     * Initial state, waiting for frame header.
+     */
+    public static final int STATE_HEADER = 0;
+    /**
+     * Need more data to complete parsing.
+     */
+    public static final int STATE_NEED_MORE = 1;
+    /**
+     * Header parsed, need payload data.
+     */
+    public static final int STATE_NEED_PAYLOAD = 2;
     // Frame header bits
     private static final int FIN_BIT = 0x80;
-    private static final int RSV_BITS = 0x70;
-    private static final int OPCODE_MASK = 0x0F;
-    private static final int MASK_BIT = 0x80;
     private static final int LENGTH_MASK = 0x7F;
-
+    private static final int MASK_BIT = 0x80;
     // Control frame max payload size (RFC 6455)
     private static final int MAX_CONTROL_FRAME_PAYLOAD = 125;
-
+    private static final int OPCODE_MASK = 0x0F;
+    private static final int RSV_BITS = 0x70;
+    private int errorCode;
     // Parsed frame data
     private boolean fin;
-    private int opcode;
-    private boolean masked;
-    private int maskKey;
-    private long payloadLength;
     private int headerSize;
-
-    // Parser state
-    private int state = STATE_HEADER;
-    private int errorCode;
-
+    private int maskKey;
+    private boolean masked;
+    private int opcode;
+    private long payloadLength;
     // Configuration
     private boolean serverMode = false;  // If true, expect masked frames from clients
+    // Parser state
+    private int state = STATE_HEADER;
     private boolean strictMode = false;  // If true, reject non-minimal length encodings
+
+    public int getErrorCode() {
+        return errorCode;
+    }
+
+    public int getHeaderSize() {
+        return headerSize;
+    }
+
+    public int getMaskKey() {
+        return maskKey;
+    }
+
+    // Getters
+
+    public int getOpcode() {
+        return opcode;
+    }
+
+    public long getPayloadLength() {
+        return payloadLength;
+    }
+
+    public int getState() {
+        return state;
+    }
+
+    public boolean isFin() {
+        return fin;
+    }
+
+    public boolean isMasked() {
+        return masked;
+    }
 
     /**
      * Parses a WebSocket frame from the given buffer.
@@ -236,6 +261,38 @@ public class WebSocketFrameParser {
     }
 
     /**
+     * Resets the parser state for parsing a new frame.
+     */
+    public void reset() {
+        state = STATE_HEADER;
+        fin = false;
+        opcode = 0;
+        masked = false;
+        maskKey = 0;
+        payloadLength = 0;
+        headerSize = 0;
+        errorCode = 0;
+    }
+
+    /**
+     * Sets the mask key for unmasking. Used in testing.
+     */
+    public void setMaskKey(int maskKey) {
+        this.maskKey = maskKey;
+        this.masked = true;
+    }
+
+    // Setters for configuration
+
+    public void setServerMode(boolean serverMode) {
+        this.serverMode = serverMode;
+    }
+
+    public void setStrictMode(boolean strictMode) {
+        this.strictMode = strictMode;
+    }
+
+    /**
      * Unmasks the payload data in place.
      *
      * @param buf the start of the payload data
@@ -272,71 +329,5 @@ public class WebSocketFrameParser {
             Unsafe.getUnsafe().putByte(buf + i, (byte) (b ^ maskByte));
             i++;
         }
-    }
-
-    /**
-     * Resets the parser state for parsing a new frame.
-     */
-    public void reset() {
-        state = STATE_HEADER;
-        fin = false;
-        opcode = 0;
-        masked = false;
-        maskKey = 0;
-        payloadLength = 0;
-        headerSize = 0;
-        errorCode = 0;
-    }
-
-    // Getters
-
-    public boolean isFin() {
-        return fin;
-    }
-
-    public int getOpcode() {
-        return opcode;
-    }
-
-    public boolean isMasked() {
-        return masked;
-    }
-
-    public int getMaskKey() {
-        return maskKey;
-    }
-
-    public long getPayloadLength() {
-        return payloadLength;
-    }
-
-    public int getHeaderSize() {
-        return headerSize;
-    }
-
-    public int getState() {
-        return state;
-    }
-
-    public int getErrorCode() {
-        return errorCode;
-    }
-
-    // Setters for configuration
-
-    public void setServerMode(boolean serverMode) {
-        this.serverMode = serverMode;
-    }
-
-    public void setStrictMode(boolean strictMode) {
-        this.strictMode = strictMode;
-    }
-
-    /**
-     * Sets the mask key for unmasking. Used in testing.
-     */
-    public void setMaskKey(int maskKey) {
-        this.maskKey = maskKey;
-        this.masked = true;
     }
 }

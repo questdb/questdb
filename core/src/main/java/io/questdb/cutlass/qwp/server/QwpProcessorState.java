@@ -24,18 +24,28 @@
 
 package io.questdb.cutlass.qwp.server;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.ConnectionAware;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.http.processors.SendStatus;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
-import io.questdb.cutlass.qwp.protocol.*;
-import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
-import io.questdb.cutlass.http.processors.SendStatus;
+import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
+import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
@@ -49,25 +59,20 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
     private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
-
-    private final QwpStreamingDecoder streamingDecoder;
-    private final QwpWalAppender walAppender;
-    private final StringSink error = new StringSink();
-    private final QwpTudCache tudCache;
-    private final int maxResponseErrorMessageLength;
-    private final QwpSchemaCache schemaCache;
-
     // Per-connection accumulated symbol dictionary for delta encoding
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
-
+    private final StringSink error = new StringSink();
+    private final int maxResponseErrorMessageLength;
+    private final QwpSchemaCache schemaCache;
+    private final QwpStreamingDecoder streamingDecoder;
     // Per-connection symbol ID cache: clientSymbolId → tableSymbolId
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
-
+    private final QwpTudCache tudCache;
+    private final QwpWalAppender walAppender;
     // Buffer to accumulate incoming data
     private long bufferAddress;
-    private int bufferSize;
     private int bufferPosition;
-
+    private int bufferSize;
     private Status currentStatus = Status.OK;
     private long errorId;
     private long fd = -1;
@@ -113,6 +118,13 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         this.bufferPosition = 0;
     }
 
+    public void addData(long lo, long hi) {
+        int len = (int) (hi - lo);
+        ensureCapacity(bufferPosition + len);
+        Unsafe.getUnsafe().copyMemory(lo, bufferAddress + bufferPosition, len);
+        bufferPosition += len;
+    }
+
     public void clear() {
         tudCache.clear();
         error.clear();
@@ -133,9 +145,101 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
+    public void commit() {
+        try {
+            tudCache.commitAll();
+        } catch (Throwable th) {
+            tudCache.setDistressed();
+            currentStatus = Status.INTERNAL_ERROR;
+            errorId = ERROR_COUNT.incrementAndGet();
+            error.put("commit error: ").put(th.getMessage());
+            LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
+        }
+    }
+
+    public void formatError(Utf8Sink sink) {
+        sink.putAscii("{\"code\":\"").putAscii(currentStatus.codeStr);
+        sink.putAscii("\",\"message\":\"");
+        sink.escapeJsonStr(error, 0, Math.min(error.length(), maxResponseErrorMessageLength));
+        sink.putQuote();
+        sink.putAscii(",\"errorId\":\"").putAscii(ERROR_ID).put('-').put(errorId).putAscii("\"").putAscii('}');
+    }
+
+    public String getErrorText() {
+        return error.toString();
+    }
+
+    public long getHighestProcessedSequence() {
+        return highestProcessedSequence;
+    }
+
+    public int getHttpResponseCode() {
+        return currentStatus.responseCode;
+    }
+
+    public long getLastAckedSequence() {
+        return lastAckedSequence;
+    }
+
+    public int getRecvBufferLen() {
+        return recvBufferLen;
+    }
+
+    public SendStatus getSendStatus() {
+        return sendStatus;
+    }
+
+    public Status getStatus() {
+        return currentStatus;
+    }
+
+    /**
+     * Returns true if there are successfully processed messages that haven't been
+     * ACKed yet and the send buffer is clear (READY state).
+     */
+    public boolean hasPendingAck() {
+        return sendState == SendState.READY && highestProcessedSequence > lastAckedSequence;
+    }
+
+    public boolean isOk() {
+        return currentStatus == Status.OK;
+    }
+
+    public boolean isSendReady() {
+        return sendState == SendState.READY;
+    }
+
+    public boolean isSending() {
+        return sendState == SendState.SENDING;
+    }
+
+    public boolean isWsHandshakeSent() {
+        return wsHandshakeSent;
+    }
+
+    public long nextMessageSequence() {
+        return messageSequence++;
+    }
+
     public void of(long fd, SecurityContext securityContext) {
         this.fd = fd;
         this.securityContext = securityContext;
+    }
+
+    /**
+     * Records that an ACK send was blocked by a full OS buffer.
+     * Transitions from READY to SENDING state.
+     */
+    public void onAckBlocked(long sequence) {
+        sendState = SendState.SENDING;
+        sequenceInBuffer = sequence;
+    }
+
+    /**
+     * Records a successful ACK send. Stays in READY state.
+     */
+    public void onAckSent(long sequence) {
+        lastAckedSequence = sequence;
     }
 
     @Override
@@ -167,58 +271,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         symbolCache.clear();
     }
 
-    public long getHighestProcessedSequence() {
-        return highestProcessedSequence;
-    }
-
-    public long getLastAckedSequence() {
-        return lastAckedSequence;
-    }
-
-    public int getRecvBufferLen() {
-        return recvBufferLen;
-    }
-
-    /**
-     * Returns true if there are successfully processed messages that haven't been
-     * ACKed yet and the send buffer is clear (READY state).
-     */
-    public boolean hasPendingAck() {
-        return sendState == SendState.READY && highestProcessedSequence > lastAckedSequence;
-    }
-
-    public boolean isSending() {
-        return sendState == SendState.SENDING;
-    }
-
-    public boolean isSendReady() {
-        return sendState == SendState.READY;
-    }
-
-    public boolean isWsHandshakeSent() {
-        return wsHandshakeSent;
-    }
-
-    public long nextMessageSequence() {
-        return messageSequence++;
-    }
-
-    /**
-     * Records that an ACK send was blocked by a full OS buffer.
-     * Transitions from READY to SENDING state.
-     */
-    public void onAckBlocked(long sequence) {
-        sendState = SendState.SENDING;
-        sequenceInBuffer = sequence;
-    }
-
-    /**
-     * Records a successful ACK send. Stays in READY state.
-     */
-    public void onAckSent(long sequence) {
-        lastAckedSequence = sequence;
-    }
-
     /**
      * Completes a resumed send that was previously blocked.
      * Transitions from SENDING back to READY state.
@@ -227,34 +279,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         lastAckedSequence = sequenceInBuffer;
         sequenceInBuffer = -1;
         sendState = SendState.READY;
-    }
-
-    public void setHighestProcessedSequence(long highestProcessedSequence) {
-        this.highestProcessedSequence = highestProcessedSequence;
-    }
-
-    public void setRecvBufferLen(int recvBufferLen) {
-        this.recvBufferLen = recvBufferLen;
-    }
-
-    public void setWsHandshakeSent(boolean wsHandshakeSent) {
-        this.wsHandshakeSent = wsHandshakeSent;
-    }
-
-    /**
-     * Returns true if the ACK batch threshold has been reached and the send
-     * buffer is clear, meaning a cumulative ACK should be sent now.
-     */
-    public boolean shouldSendAck(int batchSize) {
-        return sendState == SendState.READY
-                && highestProcessedSequence - lastAckedSequence >= batchSize;
-    }
-
-    public void addData(long lo, long hi) {
-        int len = (int) (hi - lo);
-        ensureCapacity(bufferPosition + len);
-        Unsafe.getUnsafe().copyMemory(lo, bufferAddress + bufferPosition, len);
-        bufferPosition += len;
     }
 
     public void processMessage() {
@@ -304,18 +328,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    public void commit() {
-        try {
-            tudCache.commitAll();
-        } catch (Throwable th) {
-            tudCache.setDistressed();
-            currentStatus = Status.INTERNAL_ERROR;
-            errorId = ERROR_COUNT.incrementAndGet();
-            error.put("commit error: ").put(th.getMessage());
-            LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
-        }
-    }
-
     public void reject(Status status, String errorText, long fd) {
         currentStatus = status;
         error.put(errorText);
@@ -324,36 +336,33 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         LOG.error().$('[').$(fd).$("] rejected [status=").$(status).$(", error=").$(errorText).$(']').$();
     }
 
-    public boolean isOk() {
-        return currentStatus == Status.OK;
+    public void setHighestProcessedSequence(long highestProcessedSequence) {
+        this.highestProcessedSequence = highestProcessedSequence;
     }
 
-    public String getErrorText() {
-        return error.toString();
-    }
-
-    public Status getStatus() {
-        return currentStatus;
-    }
-
-    public int getHttpResponseCode() {
-        return currentStatus.responseCode;
-    }
-
-    public SendStatus getSendStatus() {
-        return sendStatus;
+    public void setRecvBufferLen(int recvBufferLen) {
+        this.recvBufferLen = recvBufferLen;
     }
 
     public void setSendStatus(SendStatus sendStatus) {
         this.sendStatus = sendStatus;
     }
 
-    public void formatError(Utf8Sink sink) {
-        sink.putAscii("{\"code\":\"").putAscii(currentStatus.codeStr);
-        sink.putAscii("\",\"message\":\"");
-        sink.escapeJsonStr(error, 0, Math.min(error.length(), maxResponseErrorMessageLength));
-        sink.putQuote();
-        sink.putAscii(",\"errorId\":\"").putAscii(ERROR_ID).put('-').put(errorId).putAscii("\"").putAscii('}');
+    public void setWsHandshakeSent(boolean wsHandshakeSent) {
+        this.wsHandshakeSent = wsHandshakeSent;
+    }
+
+    /**
+     * Returns true if the ACK batch threshold has been reached and the send
+     * buffer is clear, meaning a cumulative ACK should be sent now.
+     */
+    public boolean shouldSendAck(int batchSize) {
+        return sendState == SendState.READY
+                && highestProcessedSequence - lastAckedSequence >= batchSize;
+    }
+
+    private static String generateErrorId() {
+        return UUID.randomUUID().toString().substring(24, 36);
     }
 
     private void ensureCapacity(int required) {
@@ -363,10 +372,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             bufferAddress = newAddress;
             bufferSize = newSize;
         }
-    }
-
-    private static String generateErrorId() {
-        return UUID.randomUUID().toString().substring(24, 36);
     }
 
     enum SendState {

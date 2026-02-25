@@ -61,55 +61,6 @@ public final class QwpVarint {
     }
 
     /**
-     * Calculates the number of bytes needed to encode the given value.
-     *
-     * @param value the value to measure (treated as unsigned)
-     * @return number of bytes needed (1-10)
-     */
-    public static int encodedLength(long value) {
-        if (value == 0) {
-            return 1;
-        }
-        // Count leading zeros to determine the number of bits needed
-        int bits = 64 - Long.numberOfLeadingZeros(value);
-        // Each byte encodes 7 bits, round up
-        return (bits + 6) / 7;
-    }
-
-    /**
-     * Encodes a long value as a varint into the given byte array.
-     *
-     * @param buf   the buffer to write to
-     * @param pos   the position to start writing
-     * @param value the value to encode (treated as unsigned)
-     * @return the new position after the encoded bytes
-     */
-    public static int encode(byte[] buf, int pos, long value) {
-        while ((value & ~DATA_MASK) != 0) {
-            buf[pos++] = (byte) ((value & DATA_MASK) | CONTINUATION_BIT);
-            value >>>= 7;
-        }
-        buf[pos++] = (byte) value;
-        return pos;
-    }
-
-    /**
-     * Encodes a long value as a varint to direct memory.
-     *
-     * @param address the memory address to write to
-     * @param value   the value to encode (treated as unsigned)
-     * @return the new address after the encoded bytes
-     */
-    public static long encode(long address, long value) {
-        while ((value & ~DATA_MASK) != 0) {
-            Unsafe.getUnsafe().putByte(address++, (byte) ((value & DATA_MASK) | CONTINUATION_BIT));
-            value >>>= 7;
-        }
-        Unsafe.getUnsafe().putByte(address++, (byte) value);
-        return address;
-    }
-
-    /**
      * Decodes a varint from the given byte array.
      *
      * @param buf the buffer to read from
@@ -183,20 +134,6 @@ public final class QwpVarint {
     }
 
     /**
-     * Result holder for decoding varints when the number of bytes consumed matters.
-     * This class is mutable and should be reused to avoid allocations.
-     */
-    public static class DecodeResult {
-        public long value;
-        public int bytesRead;
-
-        public void reset() {
-            value = 0;
-            bytesRead = 0;
-        }
-    }
-
-    /**
      * Decodes a varint from a byte array and stores both value and bytes consumed.
      *
      * @param buf    the buffer to read from
@@ -257,5 +194,68 @@ public final class QwpVarint {
 
         result.value = value;
         result.bytesRead = bytesRead;
+    }
+
+    /**
+     * Encodes a long value as a varint to direct memory.
+     *
+     * @param address the memory address to write to
+     * @param value   the value to encode (treated as unsigned)
+     * @return the new address after the encoded bytes
+     */
+    public static long encode(long address, long value) {
+        while ((value & ~DATA_MASK) != 0) {
+            Unsafe.getUnsafe().putByte(address++, (byte) ((value & DATA_MASK) | CONTINUATION_BIT));
+            value >>>= 7;
+        }
+        Unsafe.getUnsafe().putByte(address++, (byte) value);
+        return address;
+    }
+
+    /**
+     * Encodes a long value as a varint into the given byte array.
+     *
+     * @param buf   the buffer to write to
+     * @param pos   the position to start writing
+     * @param value the value to encode (treated as unsigned)
+     * @return the new position after the encoded bytes
+     */
+    public static int encode(byte[] buf, int pos, long value) {
+        while ((value & ~DATA_MASK) != 0) {
+            buf[pos++] = (byte) ((value & DATA_MASK) | CONTINUATION_BIT);
+            value >>>= 7;
+        }
+        buf[pos++] = (byte) value;
+        return pos;
+    }
+
+    /**
+     * Calculates the number of bytes needed to encode the given value.
+     *
+     * @param value the value to measure (treated as unsigned)
+     * @return number of bytes needed (1-10)
+     */
+    public static int encodedLength(long value) {
+        if (value == 0) {
+            return 1;
+        }
+        // Count leading zeros to determine the number of bits needed
+        int bits = 64 - Long.numberOfLeadingZeros(value);
+        // Each byte encodes 7 bits, round up
+        return (bits + 6) / 7;
+    }
+
+    /**
+     * Result holder for decoding varints when the number of bytes consumed matters.
+     * This class is mutable and should be reused to avoid allocations.
+     */
+    public static class DecodeResult {
+        public int bytesRead;
+        public long value;
+
+        public void reset() {
+            value = 0;
+            bytesRead = 0;
+        }
     }
 }

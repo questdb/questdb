@@ -64,90 +64,6 @@ import java.nio.charset.StandardCharsets;
 public class QwpResponseEncoder {
 
     /**
-     * Encodes a response to the given memory address.
-     *
-     * @param response response to encode
-     * @param address  destination address
-     * @param maxLen   maximum bytes available
-     * @return number of bytes written
-     * @throws IllegalArgumentException if buffer too small
-     */
-    public static int encode(QwpResponse response, long address, int maxLen) {
-        int offset = 0;
-
-        // Write status code
-        if (offset >= maxLen) {
-            throw new IllegalArgumentException("buffer too small for status code");
-        }
-        Unsafe.getUnsafe().putByte(address + offset, response.getStatusCode());
-        offset++;
-
-        byte statusCode = response.getStatusCode();
-
-        if (statusCode == QwpStatusCode.OK) {
-            // OK response is just the status byte
-            return offset;
-        }
-
-        if (statusCode == QwpStatusCode.PARTIAL) {
-            // Partial response has table errors
-            ObjList<QwpResponse.TableError> errors = response.getTableErrors();
-            int errorCount = errors != null ? errors.size() : 0;
-
-            // Write error count
-            offset += encodeVarint(errorCount, address + offset, maxLen - offset);
-
-            // Write each table error
-            for (int i = 0; i < errorCount; i++) {
-                QwpResponse.TableError error = errors.get(i);
-
-                // Table index
-                offset += encodeVarint(error.getTableIndex(), address + offset, maxLen - offset);
-
-                // Error code
-                if (offset >= maxLen) {
-                    throw new IllegalArgumentException("buffer too small for error code");
-                }
-                Unsafe.getUnsafe().putByte(address + offset, error.getErrorCode());
-                offset++;
-
-                // Error message
-                offset += encodeString(error.getErrorMessage(), address + offset, maxLen - offset);
-            }
-        } else {
-            // Other error responses have an error message
-            String errorMessage = response.getErrorMessage();
-            offset += encodeString(errorMessage, address + offset, maxLen - offset);
-        }
-
-        return offset;
-    }
-
-    /**
-     * Encodes a response to a byte array.
-     *
-     * @param response response to encode
-     * @return encoded bytes
-     */
-    public static byte[] encode(QwpResponse response) {
-        // Calculate required size
-        int size = calculateSize(response);
-        byte[] buf = new byte[size];
-
-        // Encode to native memory then copy
-        long address = Unsafe.malloc(size, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
-        try {
-            int written = encode(response, address, size);
-            for (int i = 0; i < written; i++) {
-                buf[i] = Unsafe.getUnsafe().getByte(address + i);
-            }
-            return buf;
-        } finally {
-            Unsafe.free(address, size, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    /**
      * Calculates the encoded size of a response.
      *
      * @param response response to measure
@@ -261,59 +177,106 @@ public class QwpResponseEncoder {
         return decode(buf, 0, length);
     }
 
+    /**
+     * Encodes a response to a byte array.
+     *
+     * @param response response to encode
+     * @return encoded bytes
+     */
+    public static byte[] encode(QwpResponse response) {
+        // Calculate required size
+        int size = calculateSize(response);
+        byte[] buf = new byte[size];
+
+        // Encode to native memory then copy
+        long address = Unsafe.malloc(size, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+        try {
+            int written = encode(response, address, size);
+            for (int i = 0; i < written; i++) {
+                buf[i] = Unsafe.getUnsafe().getByte(address + i);
+            }
+            return buf;
+        } finally {
+            Unsafe.free(address, size, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Encodes a response to the given memory address.
+     *
+     * @param response response to encode
+     * @param address  destination address
+     * @param maxLen   maximum bytes available
+     * @return number of bytes written
+     * @throws IllegalArgumentException if buffer too small
+     */
+    public static int encode(QwpResponse response, long address, int maxLen) {
+        int offset = 0;
+
+        // Write status code
+        if (offset >= maxLen) {
+            throw new IllegalArgumentException("buffer too small for status code");
+        }
+        Unsafe.getUnsafe().putByte(address + offset, response.getStatusCode());
+        offset++;
+
+        byte statusCode = response.getStatusCode();
+
+        if (statusCode == QwpStatusCode.OK) {
+            // OK response is just the status byte
+            return offset;
+        }
+
+        if (statusCode == QwpStatusCode.PARTIAL) {
+            // Partial response has table errors
+            ObjList<QwpResponse.TableError> errors = response.getTableErrors();
+            int errorCount = errors != null ? errors.size() : 0;
+
+            // Write error count
+            offset += encodeVarint(errorCount, address + offset, maxLen - offset);
+
+            // Write each table error
+            for (int i = 0; i < errorCount; i++) {
+                QwpResponse.TableError error = errors.get(i);
+
+                // Table index
+                offset += encodeVarint(error.getTableIndex(), address + offset, maxLen - offset);
+
+                // Error code
+                if (offset >= maxLen) {
+                    throw new IllegalArgumentException("buffer too small for error code");
+                }
+                Unsafe.getUnsafe().putByte(address + offset, error.getErrorCode());
+                offset++;
+
+                // Error message
+                offset += encodeString(error.getErrorMessage(), address + offset, maxLen - offset);
+            }
+        } else {
+            // Other error responses have an error message
+            String errorMessage = response.getErrorMessage();
+            offset += encodeString(errorMessage, address + offset, maxLen - offset);
+        }
+
+        return offset;
+    }
+
     // Helper methods
 
-    private static int encodeVarint(long value, long address, int maxLen) {
-        int offset = 0;
-        while (value > 0x7F) {
-            if (offset >= maxLen) {
-                throw new IllegalArgumentException("buffer too small for varint");
-            }
-            Unsafe.getUnsafe().putByte(address + offset, (byte) ((value & 0x7F) | 0x80));
-            value >>>= 7;
-            offset++;
-        }
-        if (offset >= maxLen) {
-            throw new IllegalArgumentException("buffer too small for varint");
-        }
-        Unsafe.getUnsafe().putByte(address + offset, (byte) value);
-        return offset + 1;
-    }
+    private static String[] decodeString(byte[] buf, int offset, int limit) throws QwpParseException {
+        int[] varintResult = decodeVarint(buf, offset, limit);
+        int strLen = varintResult[0];
+        int pos = varintResult[1];
 
-    private static int varintSize(long value) {
-        int size = 1;
-        while (value > 0x7F) {
-            value >>>= 7;
-            size++;
-        }
-        return size;
-    }
-
-    private static int encodeString(String str, long address, int maxLen) {
-        if (str == null) {
-            return encodeVarint(0, address, maxLen);
+        if (pos + strLen > limit) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "string extends beyond buffer"
+            );
         }
 
-        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
-        int offset = encodeVarint(bytes.length, address, maxLen);
-
-        if (offset + bytes.length > maxLen) {
-            throw new IllegalArgumentException("buffer too small for string");
-        }
-
-        for (int i = 0; i < bytes.length; i++) {
-            Unsafe.getUnsafe().putByte(address + offset + i, bytes[i]);
-        }
-
-        return offset + bytes.length;
-    }
-
-    private static int stringSize(String str) {
-        if (str == null) {
-            return 1; // varint(0)
-        }
-        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
-        return varintSize(bytes.length) + bytes.length;
+        String str = new String(buf, pos, strLen, StandardCharsets.UTF_8);
+        return new String[]{str, String.valueOf(pos + strLen)};
     }
 
     private static int[] decodeVarint(byte[] buf, int offset, int limit) throws QwpParseException {
@@ -342,19 +305,56 @@ public class QwpResponseEncoder {
         );
     }
 
-    private static String[] decodeString(byte[] buf, int offset, int limit) throws QwpParseException {
-        int[] varintResult = decodeVarint(buf, offset, limit);
-        int strLen = varintResult[0];
-        int pos = varintResult[1];
-
-        if (pos + strLen > limit) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                    "string extends beyond buffer"
-            );
+    private static int encodeString(String str, long address, int maxLen) {
+        if (str == null) {
+            return encodeVarint(0, address, maxLen);
         }
 
-        String str = new String(buf, pos, strLen, StandardCharsets.UTF_8);
-        return new String[]{str, String.valueOf(pos + strLen)};
+        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
+        int offset = encodeVarint(bytes.length, address, maxLen);
+
+        if (offset + bytes.length > maxLen) {
+            throw new IllegalArgumentException("buffer too small for string");
+        }
+
+        for (int i = 0; i < bytes.length; i++) {
+            Unsafe.getUnsafe().putByte(address + offset + i, bytes[i]);
+        }
+
+        return offset + bytes.length;
+    }
+
+    private static int encodeVarint(long value, long address, int maxLen) {
+        int offset = 0;
+        while (value > 0x7F) {
+            if (offset >= maxLen) {
+                throw new IllegalArgumentException("buffer too small for varint");
+            }
+            Unsafe.getUnsafe().putByte(address + offset, (byte) ((value & 0x7F) | 0x80));
+            value >>>= 7;
+            offset++;
+        }
+        if (offset >= maxLen) {
+            throw new IllegalArgumentException("buffer too small for varint");
+        }
+        Unsafe.getUnsafe().putByte(address + offset, (byte) value);
+        return offset + 1;
+    }
+
+    private static int stringSize(String str) {
+        if (str == null) {
+            return 1; // varint(0)
+        }
+        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
+        return varintSize(bytes.length) + bytes.length;
+    }
+
+    private static int varintSize(long value) {
+        int size = 1;
+        while (value > 0x7F) {
+            value >>>= 7;
+            size++;
+        }
+        return size;
     }
 }

@@ -24,16 +24,17 @@
 
 package io.questdb.cutlass.qwp.server;
 
-import io.questdb.cutlass.qwp.protocol.*;
-
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
-import io.questdb.cutlass.qwp.websocket.*;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
+import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
+import io.questdb.cutlass.qwp.websocket.WebSocketHandshake;
+import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
@@ -59,14 +60,20 @@ import java.nio.charset.StandardCharsets;
  * so a single processor instance can safely be shared across connections on the same worker.
  */
 public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
-    private static final Log LOG = LogFactory.getLog(QwpWebSocketUpgradeProcessor.class);
-    private static final LocalValue<QwpProcessorState> LV = new LocalValue<>();
-
+    // Cumulative ACK batch size
+    private static final int ACK_BATCH_SIZE = 8;
     // HTTP response templates
     private static final byte[] BAD_REQUEST_PREFIX =
             "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] HTTP_HEADER_END = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
-
+    private static final Log LOG = LogFactory.getLog(QwpWebSocketUpgradeProcessor.class);
+    private static final LocalValue<QwpProcessorState> LV = new LocalValue<>();
+    private static final byte STATUS_INTERNAL_ERROR = (byte) 255;
+    // Response status codes (match WebSocketResponse)
+    private static final byte STATUS_OK = 0;
+    private static final byte STATUS_PARSE_ERROR = 1;
+    private static final byte STATUS_SECURITY_ERROR = 4;
+    private static final byte STATUS_WRITE_ERROR = 3;
     private static final byte[] UPGRADE_REQUIRED_RESPONSE =
             ("""
                     HTTP/1.1 426 Upgrade Required\r
@@ -76,25 +83,13 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     Content-Length: 0\r
                     \r
                     """).getBytes(StandardCharsets.US_ASCII);
-
-    // Response status codes (match WebSocketResponse)
-    private static final byte STATUS_OK = 0;
-    private static final byte STATUS_PARSE_ERROR = 1;
-    private static final byte STATUS_WRITE_ERROR = 3;
-    private static final byte STATUS_SECURITY_ERROR = 4;
-    private static final byte STATUS_INTERNAL_ERROR = (byte) 255;
-
-    // Cumulative ACK batch size
-    private static final int ACK_BATCH_SIZE = 8;
-
     // Dependencies for ILP processing (safe as instance fields — config only)
     private final CairoEngine engine;
+    // WebSocket frame parser (scratchpad — fully reset within each processWebSocketFrames call)
+    private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final HttpFullFatServerConfiguration httpConfiguration;
     private final int maxResponseContentLength;
     private final int recvBufferSize;
-
-    // WebSocket frame parser (scratchpad — fully reset within each processWebSocketFrames call)
-    private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
 
     public QwpWebSocketUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
         this.engine = engine;
@@ -102,6 +97,122 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
         this.frameParser.setServerMode(true);  // Expect masked frames from clients
+    }
+
+    /**
+     * Returns the size of the handshake response for the given key.
+     *
+     * @param key the WebSocket key from the client
+     * @return the response size in bytes
+     */
+    public static int handshakeResponseSize(Utf8Sequence key) {
+        String acceptKey = WebSocketHandshake.computeAcceptKey(key);
+        return WebSocketHandshake.responseSize(acceptKey);
+    }
+
+    /**
+     * Writes a 400 Bad Request response.
+     *
+     * @param buffer     the buffer to write to
+     * @param bufferSize the size of the buffer
+     * @param reason     the reason for the bad request
+     * @return the number of bytes written, or -1 if buffer too small
+     */
+    public static int writeBadRequestResponse(long buffer, int bufferSize, String reason) {
+        byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
+        String contentLength = String.valueOf(reasonBytes.length);
+        byte[] contentLengthBytes = contentLength.getBytes(StandardCharsets.US_ASCII);
+
+        int requiredSize = BAD_REQUEST_PREFIX.length + contentLengthBytes.length +
+                HTTP_HEADER_END.length + reasonBytes.length;
+
+        if (requiredSize > bufferSize) {
+            return -1;
+        }
+
+        int offset = 0;
+
+        // Write prefix
+        for (byte b : BAD_REQUEST_PREFIX) {
+            Unsafe.getUnsafe().putByte(buffer + offset++, b);
+        }
+
+        // Write content length
+        for (byte b : contentLengthBytes) {
+            Unsafe.getUnsafe().putByte(buffer + offset++, b);
+        }
+
+        // Write header end
+        for (byte b : HTTP_HEADER_END) {
+            Unsafe.getUnsafe().putByte(buffer + offset++, b);
+        }
+
+        // Write body
+        for (byte b : reasonBytes) {
+            Unsafe.getUnsafe().putByte(buffer + offset++, b);
+        }
+
+        return offset;
+    }
+
+    /**
+     * Writes a WebSocket handshake response to the buffer.
+     *
+     * @param buffer     the buffer to write to
+     * @param bufferSize the size of the buffer
+     * @param key        the WebSocket key from the client
+     * @return the number of bytes written, or -1 if buffer too small
+     */
+    public static int writeHandshakeResponse(long buffer, int bufferSize, Utf8Sequence key) {
+        String acceptKey = WebSocketHandshake.computeAcceptKey(key);
+        int requiredSize = WebSocketHandshake.responseSize(acceptKey);
+
+        if (requiredSize > bufferSize) {
+            return -1;
+        }
+
+        return WebSocketHandshake.writeResponse(buffer, acceptKey);
+    }
+
+    /**
+     * Writes a 426 Upgrade Required response.
+     *
+     * @param buffer     the buffer to write to
+     * @param bufferSize the size of the buffer
+     * @return the number of bytes written, or -1 if buffer too small
+     */
+    public static int writeUpgradeRequiredResponse(long buffer, int bufferSize) {
+        if (UPGRADE_REQUIRED_RESPONSE.length > bufferSize) {
+            return -1;
+        }
+
+        for (int i = 0; i < UPGRADE_REQUIRED_RESPONSE.length; i++) {
+            Unsafe.getUnsafe().putByte(buffer + i, UPGRADE_REQUIRED_RESPONSE[i]);
+        }
+
+        return UPGRADE_REQUIRED_RESPONSE.length;
+    }
+
+    @Override
+    public void onConnectionClosed(HttpConnectionContext context) {
+        LOG.info().$("WebSocket connection closed [fd=").$(context.getFd()).I$();
+        QwpProcessorState state = LV.get(context);
+        if (state == null) {
+            return;
+        }
+        // Try to flush any pending ACKs before closing
+        try {
+            if (state.isSending()) {
+                // Try to flush pending buffer first
+                context.resumeResponseSend();
+                state.onResumeSendComplete();
+            }
+            // Now try to send any remaining ACKs
+            flushPendingAck(context, state);
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            // Connection is closing anyway, ignore
+        }
+        state.onDisconnected();
     }
 
     @Override
@@ -184,6 +295,11 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     @Override
+    public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
+        // WebSocket connections don't park like normal HTTP requests
+    }
+
+    @Override
     public void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
         // Ensure state is available
         QwpProcessorState state = LV.get(context);
@@ -235,77 +351,38 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
-            throws ServerDisconnectException, PeerIsSlowToWriteException, PeerDisconnectedException, PeerIsSlowToReadException {
-        long bufferEnd = buffer + bufferLen;
-        long pos = buffer;
-
-        try {
-            while (pos < bufferEnd) {
-                frameParser.reset();
-                int consumed = frameParser.parse(pos, bufferEnd);
-
-                if (frameParser.getState() == WebSocketFrameParser.STATE_ERROR) {
-                    LOG.error().$("WebSocket frame error [fd=").$(context.getFd()).$(", code=").$(frameParser.getErrorCode()).I$();
-                    throw ServerDisconnectException.INSTANCE;
-                }
-
-                if (consumed == 0 || frameParser.getState() == WebSocketFrameParser.STATE_NEED_MORE ||
-                        frameParser.getState() == WebSocketFrameParser.STATE_NEED_PAYLOAD) {
-                    // Need more data — finally block compacts the buffer
-                    throw PeerIsSlowToWriteException.INSTANCE;
-                }
-
-                // Frame parsed successfully
-                int opcode = frameParser.getOpcode();
-                long payloadPtr = pos + frameParser.getHeaderSize();
-                int payloadLen = (int) frameParser.getPayloadLength();
-
-                // Unmask payload
-                if (frameParser.isMasked()) {
-                    frameParser.unmaskPayload(payloadPtr, payloadLen);
-                }
-
-                // Advance past this frame BEFORE processing. If handleWebSocketFrame
-                // throws (e.g. ACK backpressure), the committed frame won't be replayed.
-                pos += consumed;
-
-                handleWebSocketFrame(context, state, opcode, payloadPtr, payloadLen);
-            }
-
-            // All frames processed — flush any pending cumulative ACK
-            flushPendingAck(context, state);
-        } finally {
-            // Compact unprocessed bytes to buffer start and update state.
-            // Handles both normal exit (remaining=0) and exception unwind
-            // (e.g. PeerIsSlowToReadException from trySendAck after a committed frame).
-            int remaining = (int) (bufferEnd - pos);
-            if (remaining > 0 && pos > buffer) {
-                Unsafe.getUnsafe().copyMemory(pos, buffer, remaining);
-            }
-            state.setRecvBufferLen(remaining);
+    @Override
+    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        QwpProcessorState state = LV.get(context);
+        if (state == null) {
+            throw ServerDisconnectException.INSTANCE;
         }
+
+        if (state.isSending()) {
+            // Try to flush the pending ACK in the buffer
+            context.resumeResponseSend();
+
+            // If we get here, the send succeeded
+            state.onResumeSendComplete();
+            LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
+                    .$(", upTo=").$(state.getLastAckedSequence()).I$();
+
+            // Check if more ACKs are pending (messages arrived while we were blocked)
+            if (state.hasPendingAck()) {
+                trySendAck(context, state);
+            }
+        }
+        // If in READY state, nothing to do - no pending buffer data
     }
 
-    // Note: WebSocket fragmentation (FIN=0, CONTINUATION frames) is not supported.
-    // ILP v4 clients are expected to send each message as a single unfragmented frame.
-    // The parser accepts fragmented data frames but we don't track continuation state here;
-    // continuation frames (opcode 0x00) fall through to the default branch and are ignored.
-    // This is acceptable per RFC 6455 Section 5.4 since we control both client and server.
-    private void handleWebSocketFrame(HttpConnectionContext context, QwpProcessorState state, int opcode, long payload, int length)
-            throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
-        switch (opcode) {
-            case WebSocketOpcode.BINARY -> handleBinaryMessage(context, state, payload, length);
-            case WebSocketOpcode.TEXT ->
-                    LOG.debug().$("WebSocket text message ignored [fd=").$(context.getFd()).$(", len=").$(length).I$();
-            case WebSocketOpcode.PING -> handlePing(context, state, payload, length);
-            case WebSocketOpcode.PONG -> LOG.debug().$("WebSocket pong [fd=").$(context.getFd()).I$();
-            case WebSocketOpcode.CLOSE -> {
-                handleClose(context, state, payload, length);
-                throw ServerDisconnectException.INSTANCE;
-            }
-            default ->
-                    LOG.debug().$("WebSocket unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
+    /**
+     * Flushes any pending cumulative ACK.
+     * Only attempts to send when in READY state (buffer is clear).
+     */
+    private void flushPendingAck(HttpConnectionContext context, QwpProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.hasPendingAck()) {
+            trySendAck(context, state);
         }
     }
 
@@ -385,68 +462,141 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    /**
-     * Flushes any pending cumulative ACK.
-     * Only attempts to send when in READY state (buffer is clear).
-     */
-    private void flushPendingAck(HttpConnectionContext context, QwpProcessorState state)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (state.hasPendingAck()) {
-            trySendAck(context, state);
+    private void handleClose(HttpConnectionContext context, QwpProcessorState state, long payload, int length) {
+        int closeCode = -1;
+        if (length >= 2) {
+            int high = Unsafe.getUnsafe().getByte(payload) & 0xFF;
+            int low = Unsafe.getUnsafe().getByte(payload + 1) & 0xFF;
+            closeCode = (high << 8) | low;
+        }
+        LOG.info().$("WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
+
+        // Flush any pending ACKs for already-committed data before closing.
+        // The client may have sent [BINARY₁, ..., BINARYₙ, CLOSE] in the same
+        // TCP segment — those messages are committed but not yet ACKed. Without
+        // this flush the client would never learn that its data was persisted.
+        try {
+            flushPendingAck(context, state);
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            // Best effort — if the ACK can't be sent, proceed with close.
+            // PeerIsSlowToReadException transitions state to SENDING, so the
+            // isSendReady() check below will skip the close response (the ACK
+            // in the send buffer is more important than the close frame).
+        }
+
+        // Send close response only if buffer is clear
+        if (!state.isSendReady()) {
+            LOG.debug().$("Skipping close response, buffer busy [fd=").$(context.getFd()).I$();
+            return;
+        }
+
+        try {
+            HttpRawSocket rawSocket = context.getRawResponseSocket();
+            long bufferAddr = rawSocket.getBufferAddress();
+            int bufferSize = rawSocket.getBufferSize();
+
+            int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, closeCode, null);
+            if (written <= bufferSize) {
+                rawSocket.send(written);
+            }
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            // Ignore, we're closing anyway
         }
     }
 
-    /**
-     * Attempts to send a cumulative ACK for the highest processed sequence.
-     * <p>
-     * State transitions (managed by {@link QwpProcessorState}):
-     * <ul>
-     *   <li>READY + success → stays READY, updates lastAckedSequence</li>
-     *   <li>READY + PeerIsSlowToReadException → transitions to SENDING, throws</li>
-     * </ul>
-     *
-     * @param context the HTTP connection context
-     * @param state   the per-connection processor state
-     * @throws PeerIsSlowToReadException if the client's receive buffer is full (transitions to SENDING)
-     * @throws PeerDisconnectedException if the client disconnected
-     */
-    private void trySendAck(HttpConnectionContext context, QwpProcessorState state)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        assert state.isSendReady() : "trySendAck called in wrong state";
-
-        HttpRawSocket rawSocket = context.getRawResponseSocket();
-        long bufferAddr = rawSocket.getBufferAddress();
-        int bufferSize = rawSocket.getBufferSize();
-
-        // Response: status (1) + sequence (8) = 9 bytes
-        int payloadLen = 9;
-        int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-
-        if (frameSize > bufferSize) {
-            // Buffer capacity too small for even a single ACK frame
-            LOG.critical().$("Buffer too small for ACK response [fd=").$(context.getFd())
-                    .$(", required=").$(frameSize)
-                    .$(", bufferSize=").$(bufferSize).I$();
-            throw PeerDisconnectedException.INSTANCE;
+    private void handlePing(HttpConnectionContext context, QwpProcessorState state, long payload, int length) {
+        // Can only send pong when buffer is clear
+        if (!state.isSendReady()) {
+            LOG.debug().$("Skipping pong, buffer busy [fd=").$(context.getFd()).I$();
+            return;
         }
 
-        long sequence = state.getHighestProcessedSequence();
-        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
-        // Write status
-        Unsafe.getUnsafe().putByte(bufferAddr + headerLen, STATUS_OK);
-        // Write sequence (little-endian)
-        Unsafe.getUnsafe().putLong(bufferAddr + headerLen + 1, sequence);
+        try {
+            HttpRawSocket rawSocket = context.getRawResponseSocket();
+            long bufferAddr = rawSocket.getBufferAddress();
+            int bufferSize = rawSocket.getBufferSize();
+
+            int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
+            if (frameSize <= bufferSize) {
+                int written = WebSocketFrameWriter.writePongFrame(bufferAddr, payload, length);
+                rawSocket.send(written);
+                LOG.debug().$("WebSocket pong sent [fd=").$(context.getFd()).I$();
+            }
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            LOG.debug().$("Failed to send pong [fd=").$(context.getFd()).I$();
+        }
+    }
+
+    // Note: WebSocket fragmentation (FIN=0, CONTINUATION frames) is not supported.
+    // ILP v4 clients are expected to send each message as a single unfragmented frame.
+    // The parser accepts fragmented data frames but we don't track continuation state here;
+    // continuation frames (opcode 0x00) fall through to the default branch and are ignored.
+    // This is acceptable per RFC 6455 Section 5.4 since we control both client and server.
+    private void handleWebSocketFrame(HttpConnectionContext context, QwpProcessorState state, int opcode, long payload, int length)
+            throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
+        switch (opcode) {
+            case WebSocketOpcode.BINARY -> handleBinaryMessage(context, state, payload, length);
+            case WebSocketOpcode.TEXT ->
+                    LOG.debug().$("WebSocket text message ignored [fd=").$(context.getFd()).$(", len=").$(length).I$();
+            case WebSocketOpcode.PING -> handlePing(context, state, payload, length);
+            case WebSocketOpcode.PONG -> LOG.debug().$("WebSocket pong [fd=").$(context.getFd()).I$();
+            case WebSocketOpcode.CLOSE -> {
+                handleClose(context, state, payload, length);
+                throw ServerDisconnectException.INSTANCE;
+            }
+            default -> LOG.debug().$("WebSocket unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
+        }
+    }
+
+    private void processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
+            throws ServerDisconnectException, PeerIsSlowToWriteException, PeerDisconnectedException, PeerIsSlowToReadException {
+        long bufferEnd = buffer + bufferLen;
+        long pos = buffer;
 
         try {
-            rawSocket.send(headerLen + payloadLen);
-            state.onAckSent(sequence);
-            LOG.debug().$("Sent cumulative ACK [fd=").$(context.getFd()).$(", upTo=").$(sequence).I$();
-        } catch (PeerIsSlowToReadException e) {
-            // OS buffer full - transition to SENDING state
-            state.onAckBlocked(sequence);
-            LOG.debug().$("ACK blocked, transitioning to SENDING [fd=").$(context.getFd())
-                    .$(", seq=").$(sequence).I$();
-            throw e;
+            while (pos < bufferEnd) {
+                frameParser.reset();
+                int consumed = frameParser.parse(pos, bufferEnd);
+
+                if (frameParser.getState() == WebSocketFrameParser.STATE_ERROR) {
+                    LOG.error().$("WebSocket frame error [fd=").$(context.getFd()).$(", code=").$(frameParser.getErrorCode()).I$();
+                    throw ServerDisconnectException.INSTANCE;
+                }
+
+                if (consumed == 0 || frameParser.getState() == WebSocketFrameParser.STATE_NEED_MORE ||
+                        frameParser.getState() == WebSocketFrameParser.STATE_NEED_PAYLOAD) {
+                    // Need more data — finally block compacts the buffer
+                    throw PeerIsSlowToWriteException.INSTANCE;
+                }
+
+                // Frame parsed successfully
+                int opcode = frameParser.getOpcode();
+                long payloadPtr = pos + frameParser.getHeaderSize();
+                int payloadLen = (int) frameParser.getPayloadLength();
+
+                // Unmask payload
+                if (frameParser.isMasked()) {
+                    frameParser.unmaskPayload(payloadPtr, payloadLen);
+                }
+
+                // Advance past this frame BEFORE processing. If handleWebSocketFrame
+                // throws (e.g. ACK backpressure), the committed frame won't be replayed.
+                pos += consumed;
+
+                handleWebSocketFrame(context, state, opcode, payloadPtr, payloadLen);
+            }
+
+            // All frames processed — flush any pending cumulative ACK
+            flushPendingAck(context, state);
+        } finally {
+            // Compact unprocessed bytes to buffer start and update state.
+            // Handles both normal exit (remaining=0) and exception unwind
+            // (e.g. PeerIsSlowToReadException from trySendAck after a committed frame).
+            int remaining = (int) (bufferEnd - pos);
+            if (remaining > 0 && pos > buffer) {
+                Unsafe.getUnsafe().copyMemory(pos, buffer, remaining);
+            }
+            state.setRecvBufferLen(remaining);
         }
     }
 
@@ -512,215 +662,57 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void handlePing(HttpConnectionContext context, QwpProcessorState state, long payload, int length) {
-        // Can only send pong when buffer is clear
-        if (!state.isSendReady()) {
-            LOG.debug().$("Skipping pong, buffer busy [fd=").$(context.getFd()).I$();
-            return;
+    /**
+     * Attempts to send a cumulative ACK for the highest processed sequence.
+     * <p>
+     * State transitions (managed by {@link QwpProcessorState}):
+     * <ul>
+     *   <li>READY + success → stays READY, updates lastAckedSequence</li>
+     *   <li>READY + PeerIsSlowToReadException → transitions to SENDING, throws</li>
+     * </ul>
+     *
+     * @param context the HTTP connection context
+     * @param state   the per-connection processor state
+     * @throws PeerIsSlowToReadException if the client's receive buffer is full (transitions to SENDING)
+     * @throws PeerDisconnectedException if the client disconnected
+     */
+    private void trySendAck(HttpConnectionContext context, QwpProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        assert state.isSendReady() : "trySendAck called in wrong state";
+
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufferAddr = rawSocket.getBufferAddress();
+        int bufferSize = rawSocket.getBufferSize();
+
+        // Response: status (1) + sequence (8) = 9 bytes
+        int payloadLen = 9;
+        int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
+
+        if (frameSize > bufferSize) {
+            // Buffer capacity too small for even a single ACK frame
+            LOG.critical().$("Buffer too small for ACK response [fd=").$(context.getFd())
+                    .$(", required=").$(frameSize)
+                    .$(", bufferSize=").$(bufferSize).I$();
+            throw PeerDisconnectedException.INSTANCE;
         }
+
+        long sequence = state.getHighestProcessedSequence();
+        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
+        // Write status
+        Unsafe.getUnsafe().putByte(bufferAddr + headerLen, STATUS_OK);
+        // Write sequence (little-endian)
+        Unsafe.getUnsafe().putLong(bufferAddr + headerLen + 1, sequence);
 
         try {
-            HttpRawSocket rawSocket = context.getRawResponseSocket();
-            long bufferAddr = rawSocket.getBufferAddress();
-            int bufferSize = rawSocket.getBufferSize();
-
-            int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
-            if (frameSize <= bufferSize) {
-                int written = WebSocketFrameWriter.writePongFrame(bufferAddr, payload, length);
-                rawSocket.send(written);
-                LOG.debug().$("WebSocket pong sent [fd=").$(context.getFd()).I$();
-            }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            LOG.debug().$("Failed to send pong [fd=").$(context.getFd()).I$();
+            rawSocket.send(headerLen + payloadLen);
+            state.onAckSent(sequence);
+            LOG.debug().$("Sent cumulative ACK [fd=").$(context.getFd()).$(", upTo=").$(sequence).I$();
+        } catch (PeerIsSlowToReadException e) {
+            // OS buffer full - transition to SENDING state
+            state.onAckBlocked(sequence);
+            LOG.debug().$("ACK blocked, transitioning to SENDING [fd=").$(context.getFd())
+                    .$(", seq=").$(sequence).I$();
+            throw e;
         }
-    }
-
-    private void handleClose(HttpConnectionContext context, QwpProcessorState state, long payload, int length) {
-        int closeCode = -1;
-        if (length >= 2) {
-            int high = Unsafe.getUnsafe().getByte(payload) & 0xFF;
-            int low = Unsafe.getUnsafe().getByte(payload + 1) & 0xFF;
-            closeCode = (high << 8) | low;
-        }
-        LOG.info().$("WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
-
-        // Flush any pending ACKs for already-committed data before closing.
-        // The client may have sent [BINARY₁, ..., BINARYₙ, CLOSE] in the same
-        // TCP segment — those messages are committed but not yet ACKed. Without
-        // this flush the client would never learn that its data was persisted.
-        try {
-            flushPendingAck(context, state);
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            // Best effort — if the ACK can't be sent, proceed with close.
-            // PeerIsSlowToReadException transitions state to SENDING, so the
-            // isSendReady() check below will skip the close response (the ACK
-            // in the send buffer is more important than the close frame).
-        }
-
-        // Send close response only if buffer is clear
-        if (!state.isSendReady()) {
-            LOG.debug().$("Skipping close response, buffer busy [fd=").$(context.getFd()).I$();
-            return;
-        }
-
-        try {
-            HttpRawSocket rawSocket = context.getRawResponseSocket();
-            long bufferAddr = rawSocket.getBufferAddress();
-            int bufferSize = rawSocket.getBufferSize();
-
-            int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, closeCode, null);
-            if (written <= bufferSize) {
-                rawSocket.send(written);
-            }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            // Ignore, we're closing anyway
-        }
-    }
-
-    @Override
-    public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        QwpProcessorState state = LV.get(context);
-        if (state == null) {
-            throw ServerDisconnectException.INSTANCE;
-        }
-
-        if (state.isSending()) {
-            // Try to flush the pending ACK in the buffer
-            context.resumeResponseSend();
-
-            // If we get here, the send succeeded
-            state.onResumeSendComplete();
-            LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
-                    .$(", upTo=").$(state.getLastAckedSequence()).I$();
-
-            // Check if more ACKs are pending (messages arrived while we were blocked)
-            if (state.hasPendingAck()) {
-                trySendAck(context, state);
-            }
-        }
-        // If in READY state, nothing to do - no pending buffer data
-    }
-
-    @Override
-    public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
-        // WebSocket connections don't park like normal HTTP requests
-    }
-
-    @Override
-    public void onConnectionClosed(HttpConnectionContext context) {
-        LOG.info().$("WebSocket connection closed [fd=").$(context.getFd()).I$();
-        QwpProcessorState state = LV.get(context);
-        if (state == null) {
-            return;
-        }
-        // Try to flush any pending ACKs before closing
-        try {
-            if (state.isSending()) {
-                // Try to flush pending buffer first
-                context.resumeResponseSend();
-                state.onResumeSendComplete();
-            }
-            // Now try to send any remaining ACKs
-            flushPendingAck(context, state);
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            // Connection is closing anyway, ignore
-        }
-        state.onDisconnected();
-    }
-
-    // ==================== STATIC RESPONSE WRITING METHODS ====================
-
-    /**
-     * Writes a WebSocket handshake response to the buffer.
-     *
-     * @param buffer     the buffer to write to
-     * @param bufferSize the size of the buffer
-     * @param key        the WebSocket key from the client
-     * @return the number of bytes written, or -1 if buffer too small
-     */
-    public static int writeHandshakeResponse(long buffer, int bufferSize, Utf8Sequence key) {
-        String acceptKey = WebSocketHandshake.computeAcceptKey(key);
-        int requiredSize = WebSocketHandshake.responseSize(acceptKey);
-
-        if (requiredSize > bufferSize) {
-            return -1;
-        }
-
-        return WebSocketHandshake.writeResponse(buffer, acceptKey);
-    }
-
-    /**
-     * Returns the size of the handshake response for the given key.
-     *
-     * @param key the WebSocket key from the client
-     * @return the response size in bytes
-     */
-    public static int handshakeResponseSize(Utf8Sequence key) {
-        String acceptKey = WebSocketHandshake.computeAcceptKey(key);
-        return WebSocketHandshake.responseSize(acceptKey);
-    }
-
-    /**
-     * Writes a 400 Bad Request response.
-     *
-     * @param buffer     the buffer to write to
-     * @param bufferSize the size of the buffer
-     * @param reason     the reason for the bad request
-     * @return the number of bytes written, or -1 if buffer too small
-     */
-    public static int writeBadRequestResponse(long buffer, int bufferSize, String reason) {
-        byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
-        String contentLength = String.valueOf(reasonBytes.length);
-        byte[] contentLengthBytes = contentLength.getBytes(StandardCharsets.US_ASCII);
-
-        int requiredSize = BAD_REQUEST_PREFIX.length + contentLengthBytes.length +
-                HTTP_HEADER_END.length + reasonBytes.length;
-
-        if (requiredSize > bufferSize) {
-            return -1;
-        }
-
-        int offset = 0;
-
-        // Write prefix
-        for (byte b : BAD_REQUEST_PREFIX) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
-        }
-
-        // Write content length
-        for (byte b : contentLengthBytes) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
-        }
-
-        // Write header end
-        for (byte b : HTTP_HEADER_END) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
-        }
-
-        // Write body
-        for (byte b : reasonBytes) {
-            Unsafe.getUnsafe().putByte(buffer + offset++, b);
-        }
-
-        return offset;
-    }
-
-    /**
-     * Writes a 426 Upgrade Required response.
-     *
-     * @param buffer     the buffer to write to
-     * @param bufferSize the size of the buffer
-     * @return the number of bytes written, or -1 if buffer too small
-     */
-    public static int writeUpgradeRequiredResponse(long buffer, int bufferSize) {
-        if (UPGRADE_REQUIRED_RESPONSE.length > bufferSize) {
-            return -1;
-        }
-
-        for (int i = 0; i < UPGRADE_REQUIRED_RESPONSE.length; i++) {
-            Unsafe.getUnsafe().putByte(buffer + i, UPGRADE_REQUIRED_RESPONSE[i]);
-        }
-
-        return UPGRADE_REQUIRED_RESPONSE.length;
     }
 }

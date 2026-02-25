@@ -43,19 +43,17 @@ package io.questdb.cutlass.qwp.protocol;
  */
 public class QwpGorillaDecoder {
 
+    private static final int BUCKET_12BIT_MAX = 2048;
+    private static final int BUCKET_12BIT_MIN = -2047;
+    private static final int BUCKET_7BIT_MAX = 64;
     // Bucket boundaries (two's complement signed ranges)
     private static final int BUCKET_7BIT_MIN = -63;
-    private static final int BUCKET_7BIT_MAX = 64;
-    private static final int BUCKET_9BIT_MIN = -255;
     private static final int BUCKET_9BIT_MAX = 256;
-    private static final int BUCKET_12BIT_MIN = -2047;
-    private static final int BUCKET_12BIT_MAX = 2048;
-
+    private static final int BUCKET_9BIT_MIN = -255;
     private final QwpBitReader bitReader;
-
+    private long prevDelta;
     // State for decoding
     private long prevTimestamp;
-    private long prevDelta;
 
     /**
      * Creates a new Gorilla decoder.
@@ -74,27 +72,40 @@ public class QwpGorillaDecoder {
     }
 
     /**
-     * Resets the decoder with the first two timestamps.
-     * <p>
-     * The first two timestamps are always stored uncompressed and are used
-     * to establish the initial delta for subsequent compression.
+     * Returns the number of bits required to encode a delta-of-delta value.
      *
-     * @param firstTimestamp  the first timestamp in the sequence
-     * @param secondTimestamp the second timestamp in the sequence
+     * @param deltaOfDelta the delta-of-delta value
+     * @return bits required
      */
-    public void reset(long firstTimestamp, long secondTimestamp) {
-        this.prevTimestamp = secondTimestamp;
-        this.prevDelta = secondTimestamp - firstTimestamp;
+    public static int getBitsRequired(long deltaOfDelta) {
+        int bucket = getBucket(deltaOfDelta);
+        return switch (bucket) {
+            case 0 -> 1;
+            case 1 -> 9;
+            case 2 -> 12;
+            case 3 -> 16;
+            default -> 36;
+        };
     }
 
     /**
-     * Resets the bit reader for reading encoded delta-of-deltas.
+     * Determines which bucket a delta-of-delta value falls into.
      *
-     * @param address the address of the encoded data
-     * @param length  the length of the encoded data in bytes
+     * @param deltaOfDelta the delta-of-delta value
+     * @return bucket number (0 = 1-bit, 1 = 9-bit, 2 = 12-bit, 3 = 16-bit, 4 = 36-bit)
      */
-    public void resetReader(long address, long length) {
-        bitReader.reset(address, length);
+    public static int getBucket(long deltaOfDelta) {
+        if (deltaOfDelta == 0) {
+            return 0; // 1-bit
+        } else if (deltaOfDelta >= BUCKET_7BIT_MIN && deltaOfDelta <= BUCKET_7BIT_MAX) {
+            return 1; // 9-bit (2 prefix + 7 value)
+        } else if (deltaOfDelta >= BUCKET_9BIT_MIN && deltaOfDelta <= BUCKET_9BIT_MAX) {
+            return 2; // 12-bit (3 prefix + 9 value)
+        } else if (deltaOfDelta >= BUCKET_12BIT_MIN && deltaOfDelta <= BUCKET_12BIT_MAX) {
+            return 3; // 16-bit (4 prefix + 12 value)
+        } else {
+            return 4; // 36-bit (4 prefix + 32 value)
+        }
     }
 
     /**
@@ -121,6 +132,75 @@ public class QwpGorillaDecoder {
         prevTimestamp = timestamp;
 
         return timestamp;
+    }
+
+    /**
+     * Returns the number of bits remaining.
+     *
+     * @return available bits
+     */
+    public long getAvailableBits() {
+        return bitReader.getAvailableBits();
+    }
+
+    /**
+     * Returns the current bit position (bits read since reset).
+     *
+     * @return bits read
+     */
+    public long getBitPosition() {
+        return bitReader.getBitPosition();
+    }
+
+    /**
+     * Gets the previous delta (for debugging/testing).
+     *
+     * @return the last computed delta
+     */
+    public long getPrevDelta() {
+        return prevDelta;
+    }
+
+    /**
+     * Gets the previous timestamp (for debugging/testing).
+     *
+     * @return the last decoded timestamp
+     */
+    public long getPrevTimestamp() {
+        return prevTimestamp;
+    }
+
+    /**
+     * Returns whether there are more bits available in the reader.
+     *
+     * @return true if more bits available
+     */
+    public boolean hasMoreBits() {
+        return bitReader.hasMoreBits();
+    }
+
+    /**
+     * Resets the decoder with the first two timestamps.
+     * <p>
+     * The first two timestamps are always stored uncompressed and are used
+     * to establish the initial delta for subsequent compression.
+     *
+     * @param firstTimestamp  the first timestamp in the sequence
+     * @param secondTimestamp the second timestamp in the sequence
+     */
+    public void reset(long firstTimestamp, long secondTimestamp) {
+        this.prevTimestamp = secondTimestamp;
+        this.prevDelta = secondTimestamp - firstTimestamp;
+    }
+
+    /**
+     * Resets the bit reader for reading encoded delta-of-deltas.
+     *
+     * @param address the address of the encoded data
+     * @param length  the length of the encoded data in bytes
+     */
+    public void resetReader(long address, long length) {
+        bitReader.reset(address, length);
     }
 
     /**
@@ -160,89 +240,5 @@ public class QwpGorillaDecoder {
 
         // '1111' = 32-bit signed value
         return bitReader.readSigned(32);
-    }
-
-    /**
-     * Returns whether there are more bits available in the reader.
-     *
-     * @return true if more bits available
-     */
-    public boolean hasMoreBits() {
-        return bitReader.hasMoreBits();
-    }
-
-    /**
-     * Returns the number of bits remaining.
-     *
-     * @return available bits
-     */
-    public long getAvailableBits() {
-        return bitReader.getAvailableBits();
-    }
-
-    /**
-     * Returns the current bit position (bits read since reset).
-     *
-     * @return bits read
-     */
-    public long getBitPosition() {
-        return bitReader.getBitPosition();
-    }
-
-    /**
-     * Gets the previous timestamp (for debugging/testing).
-     *
-     * @return the last decoded timestamp
-     */
-    public long getPrevTimestamp() {
-        return prevTimestamp;
-    }
-
-    /**
-     * Gets the previous delta (for debugging/testing).
-     *
-     * @return the last computed delta
-     */
-    public long getPrevDelta() {
-        return prevDelta;
-    }
-
-    // ==================== Static Encoding Methods (for testing) ====================
-
-    /**
-     * Determines which bucket a delta-of-delta value falls into.
-     *
-     * @param deltaOfDelta the delta-of-delta value
-     * @return bucket number (0 = 1-bit, 1 = 9-bit, 2 = 12-bit, 3 = 16-bit, 4 = 36-bit)
-     */
-    public static int getBucket(long deltaOfDelta) {
-        if (deltaOfDelta == 0) {
-            return 0; // 1-bit
-        } else if (deltaOfDelta >= BUCKET_7BIT_MIN && deltaOfDelta <= BUCKET_7BIT_MAX) {
-            return 1; // 9-bit (2 prefix + 7 value)
-        } else if (deltaOfDelta >= BUCKET_9BIT_MIN && deltaOfDelta <= BUCKET_9BIT_MAX) {
-            return 2; // 12-bit (3 prefix + 9 value)
-        } else if (deltaOfDelta >= BUCKET_12BIT_MIN && deltaOfDelta <= BUCKET_12BIT_MAX) {
-            return 3; // 16-bit (4 prefix + 12 value)
-        } else {
-            return 4; // 36-bit (4 prefix + 32 value)
-        }
-    }
-
-    /**
-     * Returns the number of bits required to encode a delta-of-delta value.
-     *
-     * @param deltaOfDelta the delta-of-delta value
-     * @return bits required
-     */
-    public static int getBitsRequired(long deltaOfDelta) {
-        int bucket = getBucket(deltaOfDelta);
-        return switch (bucket) {
-            case 0 -> 1;
-            case 1 -> 9;
-            case 2 -> 12;
-            case 3 -> 16;
-            default -> 36;
-        };
     }
 }

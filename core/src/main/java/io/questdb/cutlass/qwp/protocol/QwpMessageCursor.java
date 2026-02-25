@@ -29,7 +29,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8s;
 
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
 
 /**
  * Streaming cursor over an ILP v4 message.
@@ -51,21 +51,112 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  */
 public class QwpMessageCursor implements Mutable {
 
-    private final QwpTableBlockCursor tableBlockCursor = new QwpTableBlockCursor();
     private final QwpMessageHeader messageHeader = new QwpMessageHeader();
+    private final QwpTableBlockCursor tableBlockCursor = new QwpTableBlockCursor();
     // Reusable array for varint parsing: [0]=value, [1]=bytes consumed
     private final long[] varintResult = new long[2];
-
+    private ObjList<String> connectionSymbolDict;
+    private long currentTableAddress;
+    private int currentTableIndex;
+    private boolean deltaSymbolDictEnabled;
+    private boolean gorillaEnabled;
     // Message state
     private long payloadAddress;
     private long payloadEnd;
-    private int tableCount;
-    private int currentTableIndex;
-    private long currentTableAddress;
-    private boolean gorillaEnabled;
-    private boolean deltaSymbolDictEnabled;
     private QwpSchemaCache schemaCache;
-    private ObjList<String> connectionSymbolDict;
+    private int tableCount;
+
+    @Override
+    public void clear() {
+        tableBlockCursor.clear();
+        messageHeader.reset();
+        payloadAddress = 0;
+        payloadEnd = 0;
+        tableCount = 0;
+        currentTableIndex = -1;
+        currentTableAddress = 0;
+        gorillaEnabled = false;
+        deltaSymbolDictEnabled = false;
+        schemaCache = null;
+        connectionSymbolDict = null;
+    }
+
+    /**
+     * Returns the current table block cursor without advancing.
+     * <p>
+     * Must be called after {@link #nextTable()}.
+     */
+    public QwpTableBlockCursor getCurrentTable() {
+        return tableBlockCursor;
+    }
+
+    /**
+     * Returns the current table index (0-based).
+     */
+    public int getCurrentTableIndex() {
+        return currentTableIndex;
+    }
+
+    /**
+     * Returns the message header for diagnostics.
+     */
+    public QwpMessageHeader getMessageHeader() {
+        return messageHeader;
+    }
+
+    /**
+     * Returns the number of tables in this message.
+     */
+    public int getTableCount() {
+        return tableCount;
+    }
+
+    /**
+     * Returns whether there are more tables to iterate.
+     */
+    public boolean hasNextTable() {
+        return currentTableIndex + 1 < tableCount;
+    }
+
+    /**
+     * Returns whether delta symbol dictionary mode is enabled.
+     */
+    public boolean isDeltaSymbolDictEnabled() {
+        return deltaSymbolDictEnabled;
+    }
+
+    /**
+     * Returns whether Gorilla timestamp encoding is enabled.
+     */
+    public boolean isGorillaEnabled() {
+        return gorillaEnabled;
+    }
+
+    /**
+     * Advances to the next table and returns the table block cursor.
+     * <p>
+     * <b>Important:</b> The returned cursor is reused across calls.
+     * It is invalidated on the next call to {@link #nextTable()} or {@link #clear()}.
+     *
+     * @return table block cursor positioned at the new table
+     * @throws QwpParseException if parsing fails
+     */
+    public QwpTableBlockCursor nextTable() throws QwpParseException {
+        if (!hasNextTable()) {
+            throw new IllegalStateException("No more tables");
+        }
+
+        currentTableIndex++;
+        tableBlockCursor.clear();
+
+        int remainingBytes = (int) (payloadEnd - currentTableAddress);
+        int consumed = tableBlockCursor.of(
+                currentTableAddress, remainingBytes, gorillaEnabled, schemaCache,
+                connectionSymbolDict, deltaSymbolDictEnabled);
+        currentTableAddress += consumed;
+
+        return tableBlockCursor;
+    }
 
     /**
      * Initializes this cursor for the given message data with delta symbol dictionary support.
@@ -207,97 +298,5 @@ public class QwpMessageCursor implements Mutable {
                 QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                 "truncated varint"
         );
-    }
-
-    /**
-     * Returns the number of tables in this message.
-     */
-    public int getTableCount() {
-        return tableCount;
-    }
-
-    /**
-     * Returns whether Gorilla timestamp encoding is enabled.
-     */
-    public boolean isGorillaEnabled() {
-        return gorillaEnabled;
-    }
-
-    /**
-     * Returns whether there are more tables to iterate.
-     */
-    public boolean hasNextTable() {
-        return currentTableIndex + 1 < tableCount;
-    }
-
-    /**
-     * Advances to the next table and returns the table block cursor.
-     * <p>
-     * <b>Important:</b> The returned cursor is reused across calls.
-     * It is invalidated on the next call to {@link #nextTable()} or {@link #clear()}.
-     *
-     * @return table block cursor positioned at the new table
-     * @throws QwpParseException if parsing fails
-     */
-    public QwpTableBlockCursor nextTable() throws QwpParseException {
-        if (!hasNextTable()) {
-            throw new IllegalStateException("No more tables");
-        }
-
-        currentTableIndex++;
-        tableBlockCursor.clear();
-
-        int remainingBytes = (int) (payloadEnd - currentTableAddress);
-        int consumed = tableBlockCursor.of(
-                currentTableAddress, remainingBytes, gorillaEnabled, schemaCache,
-                connectionSymbolDict, deltaSymbolDictEnabled);
-        currentTableAddress += consumed;
-
-        return tableBlockCursor;
-    }
-
-    /**
-     * Returns the current table block cursor without advancing.
-     * <p>
-     * Must be called after {@link #nextTable()}.
-     */
-    public QwpTableBlockCursor getCurrentTable() {
-        return tableBlockCursor;
-    }
-
-    /**
-     * Returns the current table index (0-based).
-     */
-    public int getCurrentTableIndex() {
-        return currentTableIndex;
-    }
-
-    /**
-     * Returns the message header for diagnostics.
-     */
-    public QwpMessageHeader getMessageHeader() {
-        return messageHeader;
-    }
-
-    /**
-     * Returns whether delta symbol dictionary mode is enabled.
-     */
-    public boolean isDeltaSymbolDictEnabled() {
-        return deltaSymbolDictEnabled;
-    }
-
-    @Override
-    public void clear() {
-        tableBlockCursor.clear();
-        messageHeader.reset();
-        payloadAddress = 0;
-        payloadEnd = 0;
-        tableCount = 0;
-        currentTableIndex = -1;
-        currentTableAddress = 0;
-        gorillaEnabled = false;
-        deltaSymbolDictEnabled = false;
-        schemaCache = null;
-        connectionSymbolDict = null;
     }
 }

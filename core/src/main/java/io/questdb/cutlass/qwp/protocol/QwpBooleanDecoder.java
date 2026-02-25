@@ -46,82 +46,6 @@ public final class QwpBooleanDecoder implements QwpColumnDecoder {
     private QwpBooleanDecoder() {
     }
 
-    @Override
-    public int decode(long sourceAddress, int sourceLength, int rowCount, boolean nullable, ColumnSink sink) throws QwpParseException {
-        if (rowCount == 0) {
-            return 0;
-        }
-
-        int offset = 0;
-
-        // Parse null bitmap if nullable
-        long nullBitmapAddress = 0;
-        int nullCount = 0;
-        if (nullable) {
-            int nullBitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
-            if (offset + nullBitmapSize > sourceLength) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                        "insufficient data for null bitmap"
-                );
-            }
-            nullBitmapAddress = sourceAddress + offset;
-            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
-            offset += nullBitmapSize;
-        }
-
-        // Value bits only for non-null values
-        int valueCount = rowCount - nullCount;
-        int valueBitmapSize = QwpNullBitmap.sizeInBytes(valueCount);
-
-        // Validate value bits size
-        if (offset + valueBitmapSize > sourceLength) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                    "insufficient data for boolean values"
-            );
-        }
-
-        long valueBitsAddress = sourceAddress + offset;
-        offset += valueBitmapSize;
-
-        // Decode boolean values
-        int valueOffset = 0;
-        for (int i = 0; i < rowCount; i++) {
-            if (nullable && QwpNullBitmap.isNull(nullBitmapAddress, i)) {
-                sink.putNull(i);
-            } else {
-                boolean value = getBit(valueBitsAddress, valueOffset);
-                sink.putBoolean(i, value);
-                valueOffset++;
-            }
-        }
-
-        return offset;
-    }
-
-    /**
-     * Gets a bit from a bit-packed array (LSB first within each byte).
-     */
-    private boolean getBit(long address, int bitIndex) {
-        int byteIndex = bitIndex >>> 3;
-        int bitOffset = bitIndex & 7;
-        byte b = Unsafe.getUnsafe().getByte(address + byteIndex);
-        return (b & (1 << bitOffset)) != 0;
-    }
-
-    @Override
-    public int expectedSize(int rowCount, boolean nullable) {
-        int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
-        int size = bitmapSize; // value bits
-        if (nullable) {
-            size += bitmapSize; // null bitmap
-        }
-        return size;
-    }
-
-    // ==================== Static Encoding Methods ====================
-
     /**
      * Encodes boolean values to direct memory.
      * Only non-null values are bit-packed.
@@ -174,18 +98,6 @@ public final class QwpBooleanDecoder implements QwpColumnDecoder {
         pos += valueBitmapSize;
 
         return pos;
-    }
-
-    /**
-     * Sets a bit in a bit-packed array (LSB first within each byte).
-     */
-    private static void setBit(long address, int bitIndex) {
-        int byteIndex = bitIndex >>> 3;
-        int bitOffset = bitIndex & 7;
-        long addr = address + byteIndex;
-        byte b = Unsafe.getUnsafe().getByte(addr);
-        b |= (1 << bitOffset);
-        Unsafe.getUnsafe().putByte(addr, b);
     }
 
     /**
@@ -243,5 +155,91 @@ public final class QwpBooleanDecoder implements QwpColumnDecoder {
         offset += valueBitmapSize;
 
         return offset;
+    }
+
+    @Override
+    public int decode(long sourceAddress, int sourceLength, int rowCount, boolean nullable, ColumnSink sink) throws QwpParseException {
+        if (rowCount == 0) {
+            return 0;
+        }
+
+        int offset = 0;
+
+        // Parse null bitmap if nullable
+        long nullBitmapAddress = 0;
+        int nullCount = 0;
+        if (nullable) {
+            int nullBitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            if (offset + nullBitmapSize > sourceLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "insufficient data for null bitmap"
+                );
+            }
+            nullBitmapAddress = sourceAddress + offset;
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
+            offset += nullBitmapSize;
+        }
+
+        // Value bits only for non-null values
+        int valueCount = rowCount - nullCount;
+        int valueBitmapSize = QwpNullBitmap.sizeInBytes(valueCount);
+
+        // Validate value bits size
+        if (offset + valueBitmapSize > sourceLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "insufficient data for boolean values"
+            );
+        }
+
+        long valueBitsAddress = sourceAddress + offset;
+        offset += valueBitmapSize;
+
+        // Decode boolean values
+        int valueOffset = 0;
+        for (int i = 0; i < rowCount; i++) {
+            if (nullable && QwpNullBitmap.isNull(nullBitmapAddress, i)) {
+                sink.putNull(i);
+            } else {
+                boolean value = getBit(valueBitsAddress, valueOffset);
+                sink.putBoolean(i, value);
+                valueOffset++;
+            }
+        }
+
+        return offset;
+    }
+
+    @Override
+    public int expectedSize(int rowCount, boolean nullable) {
+        int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+        int size = bitmapSize; // value bits
+        if (nullable) {
+            size += bitmapSize; // null bitmap
+        }
+        return size;
+    }
+
+    /**
+     * Sets a bit in a bit-packed array (LSB first within each byte).
+     */
+    private static void setBit(long address, int bitIndex) {
+        int byteIndex = bitIndex >>> 3;
+        int bitOffset = bitIndex & 7;
+        long addr = address + byteIndex;
+        byte b = Unsafe.getUnsafe().getByte(addr);
+        b |= (1 << bitOffset);
+        Unsafe.getUnsafe().putByte(addr, b);
+    }
+
+    /**
+     * Gets a bit from a bit-packed array (LSB first within each byte).
+     */
+    private boolean getBit(long address, int bitIndex) {
+        int byteIndex = bitIndex >>> 3;
+        int bitOffset = bitIndex & 7;
+        byte b = Unsafe.getUnsafe().getByte(address + byteIndex);
+        return (b & (1 << bitOffset)) != 0;
     }
 }

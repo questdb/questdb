@@ -48,32 +48,121 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final DirectUtf8String valueUtf8 = new DirectUtf8String(); // Flyweight for current value
-
-    // Configuration
-    private byte typeCode;
-    private boolean nullable;
-    private int rowCount;
-
-    // Wire pointers
-    private long nullBitmapAddress;
-    private long offsetArrayAddress;
-    private long stringDataAddress;
-
+    private boolean currentIsNull;
     // Iteration state
     private int currentRow;
     private int currentValueIndex;
-    private boolean currentIsNull;
+    // Wire pointers
+    private long nullBitmapAddress;
+    private boolean nullable;
+    private long offsetArrayAddress;
+    private int rowCount;
+    private long stringDataAddress;
+    // Configuration
+    private byte typeCode;
+
+    @Override
+    public boolean advanceRow() throws QwpParseException {
+        currentRow++;
+
+        if (nullable && nullBitmapAddress != 0) {
+            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
+            if (currentIsNull) {
+                valueUtf8.clear();
+                return true;
+            }
+        } else {
+            currentIsNull = false;
+        }
+
+        // Read string bounds from offset array
+        int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) currentValueIndex * 4);
+        int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
+
+        // Update flyweight to point to this string's bytes - NO ALLOCATION!
+        int stringLen = endOffset - startOffset;
+        long stringAddr = stringDataAddress + startOffset;
+        boolean ascii = Utf8s.isAscii(stringAddr, stringLen);
+        valueUtf8.of(stringAddr, stringDataAddress + endOffset, ascii);
+        currentValueIndex++;
+        return false;
+    }
+
+    @Override
+    public void clear() {
+        nameUtf8.clear();
+        valueUtf8.clear();
+        typeCode = TYPE_STRING;
+        nullable = false;
+        rowCount = 0;
+        nullBitmapAddress = 0;
+        offsetArrayAddress = 0;
+        stringDataAddress = 0;
+        resetRowPosition();
+    }
+
+    @Override
+    public int getCurrentRow() {
+        return currentRow;
+    }
+
+    @Override
+    public DirectUtf8Sequence getNameUtf8() {
+        return nameUtf8;
+    }
+
+    /**
+     * Returns current row's value as a String.
+     * <p>
+     * <b>Allocates:</b> Creates a new String object. Prefer {@link #getUtf8Value()}
+     * for zero-allocation access when the consumer supports {@link DirectUtf8Sequence}.
+     *
+     * @return String value, or null if NULL
+     */
+    public String getStringValue() {
+        if (currentIsNull) {
+            return null;
+        }
+        return valueUtf8.toString();
+    }
+
+    @Override
+    public byte getTypeCode() {
+        return typeCode;
+    }
+
+    /**
+     * Returns current row's value as a UTF-8 sequence.
+     * <p>
+     * <b>Zero-allocation:</b> Returns a flyweight pointing directly to wire memory.
+     * The returned sequence is valid until the next {@link #advanceRow()} call.
+     *
+     * @return UTF-8 sequence, or empty sequence if NULL
+     */
+    public DirectUtf8Sequence getUtf8Value() {
+        return valueUtf8;
+    }
+
+    @Override
+    public boolean isNull() {
+        return currentIsNull;
+    }
+
+    @Override
+    public boolean isNullable() {
+        return nullable;
+    }
 
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data
-     * @param dataLength    available bytes
-     * @param rowCount      number of rows
-     * @param typeCode      column type code (TYPE_STRING or TYPE_VARCHAR)
-     * @param nullable      whether column is nullable
-     * @param nameAddress   address of column name UTF-8 bytes
-     * @param nameLength    column name length in bytes
+     * @param dataAddress address of column data
+     * @param dataLength  available bytes
+     * @param rowCount    number of rows
+     * @param typeCode    column type code (TYPE_STRING or TYPE_VARCHAR)
+     * @param nullable    whether column is nullable
+     * @param nameAddress address of column name UTF-8 bytes
+     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      */
     public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
@@ -111,102 +200,10 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     }
 
     @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
-    @Override
-    public byte getTypeCode() {
-        return typeCode;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
-    @Override
-    public boolean isNull() {
-        return currentIsNull;
-    }
-
-    @Override
-    public boolean advanceRow() throws QwpParseException {
-        currentRow++;
-
-        if (nullable && nullBitmapAddress != 0) {
-            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
-            if (currentIsNull) {
-                valueUtf8.clear();
-                return true;
-            }
-        } else {
-            currentIsNull = false;
-        }
-
-        // Read string bounds from offset array
-        int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) currentValueIndex * 4);
-        int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
-
-        // Update flyweight to point to this string's bytes - NO ALLOCATION!
-        int stringLen = endOffset - startOffset;
-        long stringAddr = stringDataAddress + startOffset;
-        boolean ascii = Utf8s.isAscii(stringAddr, stringLen);
-        valueUtf8.of(stringAddr, stringDataAddress + endOffset, ascii);
-        currentValueIndex++;
-        return false;
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    @Override
     public void resetRowPosition() {
         currentRow = -1;
         currentValueIndex = 0;
         currentIsNull = false;
         valueUtf8.clear();
-    }
-
-    @Override
-    public void clear() {
-        nameUtf8.clear();
-        valueUtf8.clear();
-        typeCode = TYPE_STRING;
-        nullable = false;
-        rowCount = 0;
-        nullBitmapAddress = 0;
-        offsetArrayAddress = 0;
-        stringDataAddress = 0;
-        resetRowPosition();
-    }
-
-    /**
-     * Returns current row's value as a UTF-8 sequence.
-     * <p>
-     * <b>Zero-allocation:</b> Returns a flyweight pointing directly to wire memory.
-     * The returned sequence is valid until the next {@link #advanceRow()} call.
-     *
-     * @return UTF-8 sequence, or empty sequence if NULL
-     */
-    public DirectUtf8Sequence getUtf8Value() {
-        return valueUtf8;
-    }
-
-    /**
-     * Returns current row's value as a String.
-     * <p>
-     * <b>Allocates:</b> Creates a new String object. Prefer {@link #getUtf8Value()}
-     * for zero-allocation access when the consumer supports {@link DirectUtf8Sequence}.
-     *
-     * @return String value, or null if NULL
-     */
-    public String getStringValue() {
-        if (currentIsNull) {
-            return null;
-        }
-        return valueUtf8.toString();
     }
 }

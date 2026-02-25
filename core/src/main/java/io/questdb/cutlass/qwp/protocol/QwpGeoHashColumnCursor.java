@@ -42,33 +42,101 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
  */
 public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
 
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
-
-    // Configuration
-    private boolean nullable;
-    private int rowCount;
-    private int precision;
-    private int valueSize;
-
-    // Wire pointers
-    private long nullBitmapAddress;
-    private long valuesAddress;
-
+    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
+    private long currentGeoHash;
+    private boolean currentIsNull;
     // Iteration state
     private int currentRow;
-    private boolean currentIsNull;
-    private long currentGeoHash;
+    // Wire pointers
+    private long nullBitmapAddress;
+    // Configuration
+    private boolean nullable;
+    private int precision;
+    private int rowCount;
+    private int valueSize;
+    private long valuesAddress;
+
+    @Override
+    public boolean advanceRow() throws QwpParseException {
+        currentRow++;
+
+        if (nullable && nullBitmapAddress != 0) {
+            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
+            if (currentIsNull) {
+                currentGeoHash = 0;
+                return true;
+            }
+        } else {
+            currentIsNull = false;
+        }
+
+        // Read geohash value
+        long valueAddress = valuesAddress + (long) currentRow * valueSize;
+        currentGeoHash = readValue(valueAddress, valueSize);
+        return false;
+    }
+
+    @Override
+    public void clear() {
+        nameUtf8.clear();
+        nullable = false;
+        rowCount = 0;
+        precision = 0;
+        valueSize = 0;
+        nullBitmapAddress = 0;
+        valuesAddress = 0;
+        resetRowPosition();
+    }
+
+    @Override
+    public int getCurrentRow() {
+        return currentRow;
+    }
+
+    /**
+     * Returns current row's GeoHash value.
+     */
+    public long getGeoHash() {
+        return currentGeoHash;
+    }
+
+    @Override
+    public DirectUtf8Sequence getNameUtf8() {
+        return nameUtf8;
+    }
+
+    /**
+     * Returns the GeoHash precision in bits.
+     */
+    public int getPrecision() {
+        return precision;
+    }
+
+    @Override
+    public byte getTypeCode() {
+        return TYPE_GEOHASH;
+    }
+
+    @Override
+    public boolean isNull() {
+        return currentIsNull;
+    }
+
+    @Override
+    public boolean isNullable() {
+        return nullable;
+    }
 
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data
-     * @param dataLength    available bytes
-     * @param rowCount      number of rows
-     * @param nullable      whether column is nullable
-     * @param nameAddress   address of column name UTF-8 bytes
-     * @param nameLength    column name length in bytes
+     * @param dataAddress address of column data
+     * @param dataLength  available bytes
+     * @param rowCount    number of rows
+     * @param nullable    whether column is nullable
+     * @param nameAddress address of column name UTF-8 bytes
+     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
@@ -111,43 +179,10 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
     }
 
     @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
-    @Override
-    public byte getTypeCode() {
-        return TYPE_GEOHASH;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
-    @Override
-    public boolean isNull() {
-        return currentIsNull;
-    }
-
-    @Override
-    public boolean advanceRow() throws QwpParseException {
-        currentRow++;
-
-        if (nullable && nullBitmapAddress != 0) {
-            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
-            if (currentIsNull) {
-                currentGeoHash = 0;
-                return true;
-            }
-        } else {
-            currentIsNull = false;
-        }
-
-        // Read geohash value
-        long valueAddress = valuesAddress + (long) currentRow * valueSize;
-        currentGeoHash = readValue(valueAddress, valueSize);
-        return false;
+    public void resetRowPosition() {
+        currentRow = -1;
+        currentIsNull = false;
+        currentGeoHash = 0;
     }
 
     private static long readValue(long address, int valueSize) {
@@ -176,43 +211,5 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
             default:
                 throw new IllegalArgumentException("Invalid value size: " + valueSize);
         }
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    @Override
-    public void resetRowPosition() {
-        currentRow = -1;
-        currentIsNull = false;
-        currentGeoHash = 0;
-    }
-
-    @Override
-    public void clear() {
-        nameUtf8.clear();
-        nullable = false;
-        rowCount = 0;
-        precision = 0;
-        valueSize = 0;
-        nullBitmapAddress = 0;
-        valuesAddress = 0;
-        resetRowPosition();
-    }
-
-    /**
-     * Returns the GeoHash precision in bits.
-     */
-    public int getPrecision() {
-        return precision;
-    }
-
-    /**
-     * Returns current row's GeoHash value.
-     */
-    public long getGeoHash() {
-        return currentGeoHash;
     }
 }

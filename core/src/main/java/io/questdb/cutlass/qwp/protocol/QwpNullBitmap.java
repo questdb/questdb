@@ -49,70 +49,34 @@ public final class QwpNullBitmap {
     }
 
     /**
-     * Calculates the size in bytes needed for a null bitmap.
-     *
-     * @param rowCount number of rows
-     * @return bitmap size in bytes
-     */
-    public static int sizeInBytes(long rowCount) {
-        return (int) ((rowCount + 7) / 8);
-    }
-
-    /**
-     * Checks if a specific row is null in the bitmap (from direct memory).
+     * Checks if all rows are null.
      *
      * @param address  bitmap start address
-     * @param rowIndex row index to check
-     * @return true if the row is null
+     * @param rowCount total number of rows
+     * @return true if all rows are null
      */
-    public static boolean isNull(long address, int rowIndex) {
-        int byteIndex = rowIndex >>> 3; // rowIndex / 8
-        int bitIndex = rowIndex & 7;    // rowIndex % 8
-        byte b = Unsafe.getUnsafe().getByte(address + byteIndex);
-        return (b & (1 << bitIndex)) != 0;
-    }
+    public static boolean allNull(long address, int rowCount) {
+        int fullBytes = rowCount >>> 3;
+        int remainingBits = rowCount & 7;
 
-    /**
-     * Checks if a specific row is null in the bitmap (from byte array).
-     *
-     * @param bitmap   bitmap byte array
-     * @param offset   starting offset in array
-     * @param rowIndex row index to check
-     * @return true if the row is null
-     */
-    public static boolean isNull(byte[] bitmap, int offset, int rowIndex) {
-        int byteIndex = rowIndex >>> 3;
-        int bitIndex = rowIndex & 7;
-        byte b = bitmap[offset + byteIndex];
-        return (b & (1 << bitIndex)) != 0;
-    }
+        // Check full bytes (all bits should be 1)
+        for (int i = 0; i < fullBytes; i++) {
+            byte b = Unsafe.getUnsafe().getByte(address + i);
+            if ((b & 0xFF) != 0xFF) {
+                return false;
+            }
+        }
 
-    /**
-     * Sets a row as null in the bitmap (direct memory).
-     *
-     * @param address  bitmap start address
-     * @param rowIndex row index to set as null
-     */
-    public static void setNull(long address, int rowIndex) {
-        int byteIndex = rowIndex >>> 3;
-        int bitIndex = rowIndex & 7;
-        long addr = address + byteIndex;
-        byte b = Unsafe.getUnsafe().getByte(addr);
-        b |= (1 << bitIndex);
-        Unsafe.getUnsafe().putByte(addr, b);
-    }
+        // Check remaining bits
+        if (remainingBits > 0) {
+            byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
+            int mask = (1 << remainingBits) - 1;
+            if ((b & mask) != mask) {
+                return false;
+            }
+        }
 
-    /**
-     * Sets a row as null in the bitmap (byte array).
-     *
-     * @param bitmap   bitmap byte array
-     * @param offset   starting offset in array
-     * @param rowIndex row index to set as null
-     */
-    public static void setNull(byte[] bitmap, int offset, int rowIndex) {
-        int byteIndex = rowIndex >>> 3;
-        int bitIndex = rowIndex & 7;
-        bitmap[offset + byteIndex] |= (1 << bitIndex);
+        return true;
     }
 
     /**
@@ -198,68 +162,6 @@ public final class QwpNullBitmap {
     }
 
     /**
-     * Checks if all rows are null.
-     *
-     * @param address  bitmap start address
-     * @param rowCount total number of rows
-     * @return true if all rows are null
-     */
-    public static boolean allNull(long address, int rowCount) {
-        int fullBytes = rowCount >>> 3;
-        int remainingBits = rowCount & 7;
-
-        // Check full bytes (all bits should be 1)
-        for (int i = 0; i < fullBytes; i++) {
-            byte b = Unsafe.getUnsafe().getByte(address + i);
-            if ((b & 0xFF) != 0xFF) {
-                return false;
-            }
-        }
-
-        // Check remaining bits
-        if (remainingBits > 0) {
-            byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
-            int mask = (1 << remainingBits) - 1;
-            if ((b & mask) != mask) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
-     * Checks if no rows are null.
-     *
-     * @param address  bitmap start address
-     * @param rowCount total number of rows
-     * @return true if no rows are null
-     */
-    public static boolean noneNull(long address, int rowCount) {
-        int fullBytes = rowCount >>> 3;
-        int remainingBits = rowCount & 7;
-
-        // Check full bytes
-        for (int i = 0; i < fullBytes; i++) {
-            byte b = Unsafe.getUnsafe().getByte(address + i);
-            if (b != 0) {
-                return false;
-            }
-        }
-
-        // Check remaining bits
-        if (remainingBits > 0) {
-            byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
-            int mask = (1 << remainingBits) - 1;
-            if ((b & mask) != 0) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
      * Fills the bitmap setting all rows as null (direct memory).
      *
      * @param address  bitmap start address
@@ -306,5 +208,103 @@ public final class QwpNullBitmap {
         for (int i = 0; i < sizeBytes; i++) {
             bitmap[offset + i] = 0;
         }
+    }
+
+    /**
+     * Checks if a specific row is null in the bitmap (from direct memory).
+     *
+     * @param address  bitmap start address
+     * @param rowIndex row index to check
+     * @return true if the row is null
+     */
+    public static boolean isNull(long address, int rowIndex) {
+        int byteIndex = rowIndex >>> 3; // rowIndex / 8
+        int bitIndex = rowIndex & 7;    // rowIndex % 8
+        byte b = Unsafe.getUnsafe().getByte(address + byteIndex);
+        return (b & (1 << bitIndex)) != 0;
+    }
+
+    /**
+     * Checks if a specific row is null in the bitmap (from byte array).
+     *
+     * @param bitmap   bitmap byte array
+     * @param offset   starting offset in array
+     * @param rowIndex row index to check
+     * @return true if the row is null
+     */
+    public static boolean isNull(byte[] bitmap, int offset, int rowIndex) {
+        int byteIndex = rowIndex >>> 3;
+        int bitIndex = rowIndex & 7;
+        byte b = bitmap[offset + byteIndex];
+        return (b & (1 << bitIndex)) != 0;
+    }
+
+    /**
+     * Checks if no rows are null.
+     *
+     * @param address  bitmap start address
+     * @param rowCount total number of rows
+     * @return true if no rows are null
+     */
+    public static boolean noneNull(long address, int rowCount) {
+        int fullBytes = rowCount >>> 3;
+        int remainingBits = rowCount & 7;
+
+        // Check full bytes
+        for (int i = 0; i < fullBytes; i++) {
+            byte b = Unsafe.getUnsafe().getByte(address + i);
+            if (b != 0) {
+                return false;
+            }
+        }
+
+        // Check remaining bits
+        if (remainingBits > 0) {
+            byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
+            int mask = (1 << remainingBits) - 1;
+            if ((b & mask) != 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Sets a row as null in the bitmap (direct memory).
+     *
+     * @param address  bitmap start address
+     * @param rowIndex row index to set as null
+     */
+    public static void setNull(long address, int rowIndex) {
+        int byteIndex = rowIndex >>> 3;
+        int bitIndex = rowIndex & 7;
+        long addr = address + byteIndex;
+        byte b = Unsafe.getUnsafe().getByte(addr);
+        b |= (1 << bitIndex);
+        Unsafe.getUnsafe().putByte(addr, b);
+    }
+
+    /**
+     * Sets a row as null in the bitmap (byte array).
+     *
+     * @param bitmap   bitmap byte array
+     * @param offset   starting offset in array
+     * @param rowIndex row index to set as null
+     */
+    public static void setNull(byte[] bitmap, int offset, int rowIndex) {
+        int byteIndex = rowIndex >>> 3;
+        int bitIndex = rowIndex & 7;
+        bitmap[offset + byteIndex] |= (1 << bitIndex);
+    }
+
+    /**
+     * Calculates the size in bytes needed for a null bitmap.
+     *
+     * @param rowCount number of rows
+     * @return bitmap size in bytes
+     */
+    public static int sizeInBytes(long rowCount) {
+        return (int) ((rowCount + 7) / 8);
     }
 }

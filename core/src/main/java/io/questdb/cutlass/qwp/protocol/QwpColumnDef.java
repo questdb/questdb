@@ -34,8 +34,8 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
  */
 public final class QwpColumnDef {
     private final String name;
-    private final byte typeCode;
     private final boolean nullable;
+    private final byte typeCode;
 
     /**
      * Creates a column definition.
@@ -63,6 +63,25 @@ public final class QwpColumnDef {
         this.nullable = nullable;
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        QwpColumnDef that = (QwpColumnDef) o;
+        return typeCode == that.typeCode &&
+                nullable == that.nullable &&
+                name.equals(that.name);
+    }
+
+    /**
+     * Gets the fixed width in bytes for fixed-width types.
+     *
+     * @return width in bytes, or -1 for variable-width types
+     */
+    public int getFixedWidth() {
+        return QwpConstants.getFixedTypeSize(typeCode);
+    }
+
     /**
      * Gets the column name.
      */
@@ -80,6 +99,13 @@ public final class QwpColumnDef {
     }
 
     /**
+     * Gets the type name for display purposes.
+     */
+    public String getTypeName() {
+        return QwpConstants.getTypeName(typeCode);
+    }
+
+    /**
      * Gets the wire type code (with nullable flag if applicable).
      *
      * @return type code as sent on wire
@@ -88,11 +114,12 @@ public final class QwpColumnDef {
         return nullable ? (byte) (typeCode | 0x80) : typeCode;
     }
 
-    /**
-     * Returns true if this column is nullable.
-     */
-    public boolean isNullable() {
-        return nullable;
+    @Override
+    public int hashCode() {
+        int result = name.hashCode();
+        result = 31 * result + typeCode;
+        result = 31 * result + (nullable ? 1 : 0);
+        return result;
     }
 
     /**
@@ -103,19 +130,20 @@ public final class QwpColumnDef {
     }
 
     /**
-     * Gets the fixed width in bytes for fixed-width types.
-     *
-     * @return width in bytes, or -1 for variable-width types
+     * Returns true if this column is nullable.
      */
-    public int getFixedWidth() {
-        return QwpConstants.getFixedTypeSize(typeCode);
+    public boolean isNullable() {
+        return nullable;
     }
 
-    /**
-     * Gets the type name for display purposes.
-     */
-    public String getTypeName() {
-        return QwpConstants.getTypeName(typeCode);
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(name).append(':').append(getTypeName());
+        if (nullable) {
+            sb.append('?');
+        }
+        return sb.toString();
     }
 
     /**
@@ -133,33 +161,5 @@ public final class QwpColumnDef {
                     "invalid column type code: 0x" + Integer.toHexString(typeCode)
             );
         }
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        QwpColumnDef that = (QwpColumnDef) o;
-        return typeCode == that.typeCode &&
-                nullable == that.nullable &&
-                name.equals(that.name);
-    }
-
-    @Override
-    public int hashCode() {
-        int result = name.hashCode();
-        result = 31 * result + typeCode;
-        result = 31 * result + (nullable ? 1 : 0);
-        return result;
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(name).append(':').append(getTypeName());
-        if (nullable) {
-            sb.append('?');
-        }
-        return sb.toString();
     }
 }

@@ -29,107 +29,75 @@ package io.questdb.cutlass.qwp.websocket;
  */
 public final class WebSocketCloseCode {
     /**
-     * Normal closure (1000).
-     * The connection successfully completed whatever purpose for which it was created.
-     */
-    public static final int NORMAL_CLOSURE = 1000;
-
-    /**
-     * Going away (1001).
-     * The endpoint is going away, e.g., server shutting down or browser navigating away.
-     */
-    public static final int GOING_AWAY = 1001;
-
-    /**
-     * Protocol error (1002).
-     * The endpoint is terminating the connection due to a protocol error.
-     */
-    public static final int PROTOCOL_ERROR = 1002;
-
-    /**
-     * Unsupported data (1003).
-     * The endpoint received a type of data it cannot accept.
-     */
-    public static final int UNSUPPORTED_DATA = 1003;
-
-    /**
-     * Reserved (1004).
-     * Reserved for future use.
-     */
-    public static final int RESERVED = 1004;
-
-    /**
-     * No status received (1005).
-     * Reserved value. MUST NOT be sent in a Close frame.
-     */
-    public static final int NO_STATUS_RECEIVED = 1005;
-
-    /**
      * Abnormal closure (1006).
      * Reserved value. MUST NOT be sent in a Close frame.
      * Used to indicate that a connection was closed abnormally.
      */
     public static final int ABNORMAL_CLOSURE = 1006;
-
     /**
-     * Invalid frame payload data (1007).
-     * The endpoint received a message with invalid payload data.
+     * Going away (1001).
+     * The endpoint is going away, e.g., server shutting down or browser navigating away.
      */
-    public static final int INVALID_PAYLOAD_DATA = 1007;
-
-    /**
-     * Policy violation (1008).
-     * The endpoint received a message that violates its policy.
-     */
-    public static final int POLICY_VIOLATION = 1008;
-
-    /**
-     * Message too big (1009).
-     * The endpoint received a message that is too big to process.
-     */
-    public static final int MESSAGE_TOO_BIG = 1009;
-
-    /**
-     * Mandatory extension (1010).
-     * The client expected the server to negotiate one or more extensions.
-     */
-    public static final int MANDATORY_EXTENSION = 1010;
-
+    public static final int GOING_AWAY = 1001;
     /**
      * Internal server error (1011).
      * The server encountered an unexpected condition that prevented it from fulfilling the request.
      */
     public static final int INTERNAL_ERROR = 1011;
-
+    /**
+     * Invalid frame payload data (1007).
+     * The endpoint received a message with invalid payload data.
+     */
+    public static final int INVALID_PAYLOAD_DATA = 1007;
+    /**
+     * Mandatory extension (1010).
+     * The client expected the server to negotiate one or more extensions.
+     */
+    public static final int MANDATORY_EXTENSION = 1010;
+    /**
+     * Message too big (1009).
+     * The endpoint received a message that is too big to process.
+     */
+    public static final int MESSAGE_TOO_BIG = 1009;
+    /**
+     * Normal closure (1000).
+     * The connection successfully completed whatever purpose for which it was created.
+     */
+    public static final int NORMAL_CLOSURE = 1000;
+    /**
+     * No status received (1005).
+     * Reserved value. MUST NOT be sent in a Close frame.
+     */
+    public static final int NO_STATUS_RECEIVED = 1005;
+    /**
+     * Policy violation (1008).
+     * The endpoint received a message that violates its policy.
+     */
+    public static final int POLICY_VIOLATION = 1008;
+    /**
+     * Protocol error (1002).
+     * The endpoint is terminating the connection due to a protocol error.
+     */
+    public static final int PROTOCOL_ERROR = 1002;
+    /**
+     * Reserved (1004).
+     * Reserved for future use.
+     */
+    public static final int RESERVED = 1004;
     /**
      * TLS handshake (1015).
      * Reserved value. MUST NOT be sent in a Close frame.
      * Used to indicate that the connection was closed due to TLS handshake failure.
      */
     public static final int TLS_HANDSHAKE = 1015;
+    /**
+     * Unsupported data (1003).
+     * The endpoint received a type of data it cannot accept.
+     */
+    public static final int UNSUPPORTED_DATA = 1003;
 
     private WebSocketCloseCode() {
         // Constants class
-    }
-
-    /**
-     * Checks if a close code is valid for use in a Close frame.
-     * Codes 1005 and 1006 are reserved and must not be sent.
-     *
-     * @param code the close code
-     * @return true if the code can be sent in a Close frame
-     */
-    public static boolean isValidForSending(int code) {
-        if (code < 1000) {
-            return false;
-        }
-        if (code == NO_STATUS_RECEIVED || code == ABNORMAL_CLOSURE || code == TLS_HANDSHAKE) {
-            return false;
-        }
-        // 1000-2999 are defined by RFC 6455
-        // 3000-3999 are reserved for libraries/frameworks
-        // 4000-4999 are reserved for applications
-        return code < 5000;
     }
 
     /**
@@ -174,5 +142,25 @@ public final class WebSocketCloseCode {
                 }
                 return "Unknown (" + code + ")";
         }
+    }
+
+    /**
+     * Checks if a close code is valid for use in a Close frame.
+     * Codes 1005 and 1006 are reserved and must not be sent.
+     *
+     * @param code the close code
+     * @return true if the code can be sent in a Close frame
+     */
+    public static boolean isValidForSending(int code) {
+        if (code < 1000) {
+            return false;
+        }
+        if (code == NO_STATUS_RECEIVED || code == ABNORMAL_CLOSURE || code == TLS_HANDSHAKE) {
+            return false;
+        }
+        // 1000-2999 are defined by RFC 6455
+        // 3000-3999 are reserved for libraries/frameworks
+        // 4000-4999 are reserved for applications
+        return code < 5000;
     }
 }

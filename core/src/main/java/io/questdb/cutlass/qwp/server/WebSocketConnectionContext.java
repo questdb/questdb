@@ -24,10 +24,11 @@
 
 package io.questdb.cutlass.qwp.server;
 
-import io.questdb.cutlass.qwp.protocol.*;
-
-import io.questdb.cutlass.qwp.websocket.*;
-
+import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
+import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
+import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
+import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
+import io.questdb.cutlass.qwp.websocket.WebSocketProcessor;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -44,45 +45,37 @@ import io.questdb.std.Unsafe;
  */
 public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     /**
-     * Connection is open and can send/receive messages.
+     * Connection is fully closed.
      */
-    public static final int STATE_OPEN = 0;
-
+    public static final int STATE_CLOSED = 2;
     /**
      * Close handshake in progress.
      */
     public static final int STATE_CLOSING = 1;
-
     /**
-     * Connection is fully closed.
+     * Connection is open and can send/receive messages.
      */
-    public static final int STATE_CLOSED = 2;
-
+    public static final int STATE_OPEN = 0;
     // Default values
     private static final int DEFAULT_MAX_MESSAGE_SIZE = 16 * 1024 * 1024;  // 16MB
     private static final int MAX_CONTROL_FRAME_PAYLOAD = 125;
-
-    // Connection state
-    private int state = STATE_OPEN;
-    private boolean closeFrameSent = false;
-    private boolean closeFrameReceived = false;
-
+    private final WebSocketBuffer fragmentBuffer;  // For assembling fragmented messages
+    // Frame parsing
+    private final WebSocketFrameParser parser;
     // Buffers
     private final WebSocketBuffer recvBuffer;
     private final WebSocketBuffer sendBuffer;
-    private final WebSocketBuffer fragmentBuffer;  // For assembling fragmented messages
-
-    // Frame parsing
-    private final WebSocketFrameParser parser;
+    private boolean closeFrameReceived = false;
+    private boolean closeFrameSent = false;
     private int fragmentOpcode = -1;  // Original opcode of fragmented message
-
-    // Pending pong
-    private long pendingPongPayload = 0;
-    private int pendingPongLength = 0;
     private boolean hasPendingPong = false;
-
     // Configuration
     private long maxMessageSize = DEFAULT_MAX_MESSAGE_SIZE;
+    private int pendingPongLength = 0;
+    // Pending pong
+    private long pendingPongPayload = 0;
+    // Connection state
+    private int state = STATE_OPEN;
 
     public WebSocketConnectionContext(int bufferSize) {
         this.recvBuffer = new WebSocketBuffer(bufferSize);
@@ -92,53 +85,36 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
         this.parser.setServerMode(true);  // Expect masked frames from clients
     }
 
-    /**
-     * Returns the current connection state.
-     */
-    public int getState() {
-        return state;
+    @Override
+    public void clear() {
+        state = STATE_OPEN;
+        closeFrameSent = false;
+        closeFrameReceived = false;
+        fragmentOpcode = -1;
+        hasPendingPong = false;
+        pendingPongLength = 0;
+        recvBuffer.clear();
+        sendBuffer.clear();
+        fragmentBuffer.clear();
+        parser.reset();
+    }
+
+    @Override
+    public void close() {
+        recvBuffer.close();
+        sendBuffer.close();
+        fragmentBuffer.close();
+        if (pendingPongPayload != 0) {
+            Unsafe.free(pendingPongPayload, MAX_CONTROL_FRAME_PAYLOAD, MemoryTag.NATIVE_DEFAULT);
+            pendingPongPayload = 0;
+        }
     }
 
     /**
-     * Returns true if the connection is in closing state.
+     * Returns the maximum allowed message size.
      */
-    public boolean isClosing() {
-        return state == STATE_CLOSING;
-    }
-
-    /**
-     * Returns true if the connection is fully closed.
-     */
-    public boolean isClosed() {
-        return state == STATE_CLOSED;
-    }
-
-    /**
-     * Returns true if a close frame has been sent.
-     */
-    public boolean isCloseFrameSent() {
-        return closeFrameSent;
-    }
-
-    /**
-     * Returns true if there's a pending close response to send.
-     */
-    public boolean hasPendingCloseResponse() {
-        return closeFrameReceived && !closeFrameSent;
-    }
-
-    /**
-     * Returns true if there's a pending pong frame to send.
-     */
-    public boolean hasPendingPong() {
-        return hasPendingPong;
-    }
-
-    /**
-     * Returns true if there's data pending in the send buffer.
-     */
-    public boolean hasPendingSend() {
-        return sendBuffer.readableBytes() > 0;
+    public long getMaxMessageSize() {
+        return maxMessageSize;
     }
 
     /**
@@ -156,48 +132,10 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     }
 
     /**
-     * Returns the maximum allowed message size.
+     * Returns the current connection state.
      */
-    public long getMaxMessageSize() {
-        return maxMessageSize;
-    }
-
-    /**
-     * Sets the maximum allowed message size.
-     *
-     * @param maxMessageSize the maximum size in bytes, or 0 to disable limit
-     */
-    public void setMaxMessageSize(long maxMessageSize) {
-        this.maxMessageSize = maxMessageSize;
-    }
-
-    /**
-     * Initiates a close handshake.
-     *
-     * @param code   the close status code
-     * @param reason the close reason (may be null)
-     */
-    public void initiateClose(int code, String reason) {
-        if (state == STATE_CLOSED || closeFrameSent) {
-            return;
-        }
-        sendCloseFrame(code, reason);
-        closeFrameSent = true;
-        state = STATE_CLOSING;
-    }
-
-    /**
-     * Called when a close frame is received.
-     *
-     * @param code the close status code
-     */
-    public void onCloseFrameReceived(int code) {
-        closeFrameReceived = true;
-        if (closeFrameSent) {
-            state = STATE_CLOSED;
-        } else {
-            state = STATE_CLOSING;
-        }
+    public int getState() {
+        return state;
     }
 
     /**
@@ -256,24 +194,199 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     }
 
     /**
-     * Handles a single WebSocket frame.
-     *
-     * @return true if handled successfully, false on error
+     * Returns true if there's a pending close response to send.
      */
-    private boolean handleFrame(int opcode, long payloadPtr, int payloadLength, boolean fin,
-                                WebSocketProcessor processor) {
-        // Control frames can appear between data fragments
-        if (WebSocketOpcode.isControlFrame(opcode)) {
-            return handleControlFrame(opcode, payloadPtr, payloadLength, processor);
+    public boolean hasPendingCloseResponse() {
+        return closeFrameReceived && !closeFrameSent;
+    }
+
+    /**
+     * Returns true if there's a pending pong frame to send.
+     */
+    public boolean hasPendingPong() {
+        return hasPendingPong;
+    }
+
+    /**
+     * Returns true if there's data pending in the send buffer.
+     */
+    public boolean hasPendingSend() {
+        return sendBuffer.readableBytes() > 0;
+    }
+
+    /**
+     * Initiates a close handshake.
+     *
+     * @param code   the close status code
+     * @param reason the close reason (may be null)
+     */
+    public void initiateClose(int code, String reason) {
+        if (state == STATE_CLOSED || closeFrameSent) {
+            return;
+        }
+        sendCloseFrame(code, reason);
+        closeFrameSent = true;
+        state = STATE_CLOSING;
+    }
+
+    /**
+     * Returns true if a close frame has been sent.
+     */
+    public boolean isCloseFrameSent() {
+        return closeFrameSent;
+    }
+
+    /**
+     * Returns true if the connection is fully closed.
+     */
+    public boolean isClosed() {
+        return state == STATE_CLOSED;
+    }
+
+    /**
+     * Returns true if the connection is in closing state.
+     */
+    public boolean isClosing() {
+        return state == STATE_CLOSING;
+    }
+
+    /**
+     * Called when a close frame is received.
+     *
+     * @param code the close status code
+     */
+    public void onCloseFrameReceived(int code) {
+        closeFrameReceived = true;
+        if (closeFrameSent) {
+            state = STATE_CLOSED;
+        } else {
+            state = STATE_CLOSING;
+        }
+    }
+
+    /**
+     * Sends a binary frame.
+     */
+    public void sendBinaryFrame(byte[] data, int offset, int length) {
+        sendDataFrame(WebSocketOpcode.BINARY, data, offset, length);
+    }
+
+    /**
+     * Sends a close frame.
+     */
+    public void sendCloseFrame(int code, String reason) {
+        int payloadLen = 2;
+        byte[] reasonBytes = null;
+        if (reason != null && !reason.isEmpty()) {
+            reasonBytes = reason.getBytes();
+            payloadLen += reasonBytes.length;
         }
 
-        // If we're in closing state, ignore data frames
-        if (state == STATE_CLOSING && closeFrameSent) {
-            return true;
+        int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
+        sendBuffer.ensureCapacity(frameSize);
+
+        long writePtr = sendBuffer.writeAddress();
+        int written = WebSocketFrameWriter.writeCloseFrame(writePtr, code, reason);
+        sendBuffer.advanceWrite(written);
+    }
+
+    /**
+     * Sends the pending pong response.
+     */
+    public void sendPendingPong() {
+        if (!hasPendingPong) {
+            return;
         }
 
-        // Handle data frames
-        return handleDataFrame(opcode, payloadPtr, payloadLength, fin, processor);
+        int frameSize = WebSocketFrameWriter.headerSize(pendingPongLength, false) + pendingPongLength;
+        sendBuffer.ensureCapacity(frameSize);
+
+        long writePtr = sendBuffer.writeAddress();
+        int written;
+        if (pendingPongLength > 0) {
+            written = WebSocketFrameWriter.writePongFrame(writePtr, pendingPongPayload, pendingPongLength);
+        } else {
+            written = WebSocketFrameWriter.writeHeader(writePtr, true, WebSocketOpcode.PONG, 0, false);
+        }
+        sendBuffer.advanceWrite(written);
+
+        hasPendingPong = false;
+    }
+
+    /**
+     * Sends a ping frame.
+     */
+    public void sendPingFrame(byte[] data, int offset, int length) {
+        int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
+        sendBuffer.ensureCapacity(frameSize);
+
+        long writePtr = sendBuffer.writeAddress();
+        int written = WebSocketFrameWriter.writePingFrame(writePtr, data, offset, length);
+        sendBuffer.advanceWrite(written);
+    }
+
+    /**
+     * Sends a pong frame.
+     */
+    public void sendPongFrame(byte[] data, int offset, int length) {
+        int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
+        sendBuffer.ensureCapacity(frameSize);
+
+        long writePtr = sendBuffer.writeAddress();
+        int written = WebSocketFrameWriter.writePongFrame(writePtr, data, offset, length);
+        sendBuffer.advanceWrite(written);
+    }
+
+    /**
+     * Sends a text frame.
+     */
+    public void sendTextFrame(byte[] data, int offset, int length) {
+        sendDataFrame(WebSocketOpcode.TEXT, data, offset, length);
+    }
+
+    /**
+     * Sets the maximum allowed message size.
+     *
+     * @param maxMessageSize the maximum size in bytes, or 0 to disable limit
+     */
+    public void setMaxMessageSize(long maxMessageSize) {
+        this.maxMessageSize = maxMessageSize;
+    }
+
+    /**
+     * Delivers a complete message to the processor.
+     */
+    private void deliverMessage(int opcode, long payload, int length, WebSocketProcessor processor) {
+        switch (opcode) {
+            case WebSocketOpcode.BINARY:
+                processor.onBinaryMessage(payload, length);
+                break;
+            case WebSocketOpcode.TEXT:
+                processor.onTextMessage(payload, length);
+                break;
+        }
+    }
+
+    /**
+     * Handles a close frame.
+     */
+    private boolean handleCloseFrame(long payloadPtr, int payloadLength, WebSocketProcessor processor) {
+        int code = -1;
+        long reasonPtr = 0;
+        int reasonLength = 0;
+
+        if (payloadLength >= 2) {
+            // Read close code (big-endian)
+            int high = Unsafe.getUnsafe().getByte(payloadPtr) & 0xFF;
+            int low = Unsafe.getUnsafe().getByte(payloadPtr + 1) & 0xFF;
+            code = (high << 8) | low;
+            reasonPtr = payloadPtr + 2;
+            reasonLength = payloadLength - 2;
+        }
+
+        processor.onClose(code, reasonPtr, reasonLength);
+        onCloseFrameReceived(code);
+        return true;
     }
 
     /**
@@ -299,28 +412,6 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
                 processor.onError(WebSocketCloseCode.PROTOCOL_ERROR, "Unknown control opcode");
                 return false;
         }
-    }
-
-    /**
-     * Handles a close frame.
-     */
-    private boolean handleCloseFrame(long payloadPtr, int payloadLength, WebSocketProcessor processor) {
-        int code = -1;
-        long reasonPtr = 0;
-        int reasonLength = 0;
-
-        if (payloadLength >= 2) {
-            // Read close code (big-endian)
-            int high = Unsafe.getUnsafe().getByte(payloadPtr) & 0xFF;
-            int low = Unsafe.getUnsafe().getByte(payloadPtr + 1) & 0xFF;
-            code = (high << 8) | low;
-            reasonPtr = payloadPtr + 2;
-            reasonLength = payloadLength - 2;
-        }
-
-        processor.onClose(code, reasonPtr, reasonLength);
-        onCloseFrameReceived(code);
-        return true;
     }
 
     /**
@@ -391,70 +482,24 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     }
 
     /**
-     * Delivers a complete message to the processor.
+     * Handles a single WebSocket frame.
+     *
+     * @return true if handled successfully, false on error
      */
-    private void deliverMessage(int opcode, long payload, int length, WebSocketProcessor processor) {
-        switch (opcode) {
-            case WebSocketOpcode.BINARY:
-                processor.onBinaryMessage(payload, length);
-                break;
-            case WebSocketOpcode.TEXT:
-                processor.onTextMessage(payload, length);
-                break;
-        }
-    }
-
-    /**
-     * Stores the ping payload for later pong response.
-     */
-    private void storePendingPong(long payloadPtr, int payloadLength) {
-        // Allocate or reuse pong payload buffer
-        if (pendingPongPayload == 0 && payloadLength > 0) {
-            pendingPongPayload = Unsafe.malloc(MAX_CONTROL_FRAME_PAYLOAD, MemoryTag.NATIVE_DEFAULT);
+    private boolean handleFrame(int opcode, long payloadPtr, int payloadLength, boolean fin,
+                                WebSocketProcessor processor) {
+        // Control frames can appear between data fragments
+        if (WebSocketOpcode.isControlFrame(opcode)) {
+            return handleControlFrame(opcode, payloadPtr, payloadLength, processor);
         }
 
-        if (payloadLength > 0 && pendingPongPayload != 0) {
-            Unsafe.getUnsafe().copyMemory(payloadPtr, pendingPongPayload, payloadLength);
-        }
-        pendingPongLength = payloadLength;
-        hasPendingPong = true;
-    }
-
-    /**
-     * Sends the pending pong response.
-     */
-    public void sendPendingPong() {
-        if (!hasPendingPong) {
-            return;
+        // If we're in closing state, ignore data frames
+        if (state == STATE_CLOSING && closeFrameSent) {
+            return true;
         }
 
-        int frameSize = WebSocketFrameWriter.headerSize(pendingPongLength, false) + pendingPongLength;
-        sendBuffer.ensureCapacity(frameSize);
-
-        long writePtr = sendBuffer.writeAddress();
-        int written;
-        if (pendingPongLength > 0) {
-            written = WebSocketFrameWriter.writePongFrame(writePtr, pendingPongPayload, pendingPongLength);
-        } else {
-            written = WebSocketFrameWriter.writeHeader(writePtr, true, WebSocketOpcode.PONG, 0, false);
-        }
-        sendBuffer.advanceWrite(written);
-
-        hasPendingPong = false;
-    }
-
-    /**
-     * Sends a binary frame.
-     */
-    public void sendBinaryFrame(byte[] data, int offset, int length) {
-        sendDataFrame(WebSocketOpcode.BINARY, data, offset, length);
-    }
-
-    /**
-     * Sends a text frame.
-     */
-    public void sendTextFrame(byte[] data, int offset, int length) {
-        sendDataFrame(WebSocketOpcode.TEXT, data, offset, length);
+        // Handle data frames
+        return handleDataFrame(opcode, payloadPtr, payloadLength, fin, processor);
     }
 
     /**
@@ -476,37 +521,6 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     }
 
     /**
-     * Sends a close frame.
-     */
-    public void sendCloseFrame(int code, String reason) {
-        int payloadLen = 2;
-        byte[] reasonBytes = null;
-        if (reason != null && !reason.isEmpty()) {
-            reasonBytes = reason.getBytes();
-            payloadLen += reasonBytes.length;
-        }
-
-        int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-        sendBuffer.ensureCapacity(frameSize);
-
-        long writePtr = sendBuffer.writeAddress();
-        int written = WebSocketFrameWriter.writeCloseFrame(writePtr, code, reason);
-        sendBuffer.advanceWrite(written);
-    }
-
-    /**
-     * Sends a pong frame.
-     */
-    public void sendPongFrame(byte[] data, int offset, int length) {
-        int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
-        sendBuffer.ensureCapacity(frameSize);
-
-        long writePtr = sendBuffer.writeAddress();
-        int written = WebSocketFrameWriter.writePongFrame(writePtr, data, offset, length);
-        sendBuffer.advanceWrite(written);
-    }
-
-    /**
      * Sends a pong frame immediately from native memory.
      * Used internally to respond to ping frames.
      */
@@ -525,39 +539,18 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     }
 
     /**
-     * Sends a ping frame.
+     * Stores the ping payload for later pong response.
      */
-    public void sendPingFrame(byte[] data, int offset, int length) {
-        int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
-        sendBuffer.ensureCapacity(frameSize);
-
-        long writePtr = sendBuffer.writeAddress();
-        int written = WebSocketFrameWriter.writePingFrame(writePtr, data, offset, length);
-        sendBuffer.advanceWrite(written);
-    }
-
-    @Override
-    public void clear() {
-        state = STATE_OPEN;
-        closeFrameSent = false;
-        closeFrameReceived = false;
-        fragmentOpcode = -1;
-        hasPendingPong = false;
-        pendingPongLength = 0;
-        recvBuffer.clear();
-        sendBuffer.clear();
-        fragmentBuffer.clear();
-        parser.reset();
-    }
-
-    @Override
-    public void close() {
-        recvBuffer.close();
-        sendBuffer.close();
-        fragmentBuffer.close();
-        if (pendingPongPayload != 0) {
-            Unsafe.free(pendingPongPayload, MAX_CONTROL_FRAME_PAYLOAD, MemoryTag.NATIVE_DEFAULT);
-            pendingPongPayload = 0;
+    private void storePendingPong(long payloadPtr, int payloadLength) {
+        // Allocate or reuse pong payload buffer
+        if (pendingPongPayload == 0 && payloadLength > 0) {
+            pendingPongPayload = Unsafe.malloc(MAX_CONTROL_FRAME_PAYLOAD, MemoryTag.NATIVE_DEFAULT);
         }
+
+        if (payloadLength > 0 && pendingPongPayload != 0) {
+            Unsafe.getUnsafe().copyMemory(payloadPtr, pendingPongPayload, payloadLength);
+        }
+        pendingPongLength = payloadLength;
+        hasPendingPong = true;
     }
 }

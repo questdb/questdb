@@ -46,172 +46,6 @@ public final class QwpStringDecoder implements QwpColumnDecoder {
     private QwpStringDecoder() {
     }
 
-    @Override
-    public int decode(long sourceAddress, int sourceLength, int rowCount, boolean nullable, ColumnSink sink) throws QwpParseException {
-        if (rowCount == 0) {
-            return 0;
-        }
-
-        int offset = 0;
-
-        // Parse null bitmap if nullable
-        long nullBitmapAddress = 0;
-        int nullCount = 0;
-        if (nullable) {
-            int nullBitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
-            if (offset + nullBitmapSize > sourceLength) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                        "insufficient data for null bitmap"
-                );
-            }
-            nullBitmapAddress = sourceAddress + offset;
-            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
-            offset += nullBitmapSize;
-        }
-
-        // Only non-null values have offset entries
-        int valueCount = rowCount - nullCount;
-
-        // Parse offset array: (valueCount + 1) * 4 bytes
-        int offsetArraySize = (valueCount + 1) * 4;
-        if (offset + offsetArraySize > sourceLength) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                    "insufficient data for offset array"
-            );
-        }
-        long offsetArrayAddress = sourceAddress + offset;
-        offset += offsetArraySize;
-
-        // Validate first offset is 0
-        int firstOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress);
-        if (firstOffset != 0) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY,
-                    "first offset must be 0, got " + firstOffset
-            );
-        }
-
-        // Get total string data size from last offset
-        int lastOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueCount * 4);
-        if (lastOffset < 0) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY,
-                    "negative offset: " + lastOffset
-            );
-        }
-
-        // Validate string data size
-        if (offset + lastOffset > sourceLength) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                    "insufficient data for string values: need " + lastOffset + " bytes"
-            );
-        }
-        long stringDataAddress = sourceAddress + offset;
-
-        // Decode strings
-        int valueOffset = 0;
-        for (int i = 0; i < rowCount; i++) {
-            if (nullable && QwpNullBitmap.isNull(nullBitmapAddress, i)) {
-                sink.putNull(i);
-            } else {
-                int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueOffset * 4);
-                int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (valueOffset + 1) * 4);
-
-                // Validate offsets are monotonic
-                if (endOffset < startOffset) {
-                    throw QwpParseException.create(
-                            QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY,
-                            "non-monotonic offsets at row " + i + ": " + startOffset + " > " + endOffset
-                    );
-                }
-
-                int stringLength = endOffset - startOffset;
-                long stringAddress = stringDataAddress + startOffset;
-                ((StringColumnSink) sink).putString(i, stringAddress, stringLength);
-                valueOffset++;
-            }
-        }
-
-        offset += lastOffset;
-        return offset;
-    }
-
-    @Override
-    public int expectedSize(int rowCount, boolean nullable) {
-        // Variable size - this is just the minimum (no string data)
-        int size = 0;
-        if (nullable) {
-            size += QwpNullBitmap.sizeInBytes(rowCount);
-        }
-        size += (rowCount + 1) * 4; // offset array
-        return size;
-    }
-
-    /**
-     * Extended sink interface for string columns.
-     */
-    public interface StringColumnSink extends ColumnSink {
-        /**
-         * Called for each decoded string value.
-         *
-         * @param rowIndex row index
-         * @param address  address of string data (UTF-8 bytes)
-         * @param length   length in bytes
-         */
-        void putString(int rowIndex, long address, int length);
-    }
-
-    /**
-     * Simple array-based sink for testing.
-     */
-    public static class ArrayStringSink implements StringColumnSink {
-        private final String[] values;
-        private final boolean[] nulls;
-
-        public ArrayStringSink(int rowCount) {
-            this.values = new String[rowCount];
-            this.nulls = new boolean[rowCount];
-        }
-
-        @Override
-        public void putString(int rowIndex, long address, int length) {
-            byte[] bytes = new byte[length];
-            for (int i = 0; i < length; i++) {
-                bytes[i] = Unsafe.getUnsafe().getByte(address + i);
-            }
-            values[rowIndex] = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-        }
-
-        @Override
-        public void putNull(int rowIndex) {
-            nulls[rowIndex] = true;
-        }
-
-        public String getValue(int rowIndex) {
-            return values[rowIndex];
-        }
-
-        public boolean isNull(int rowIndex) {
-            return nulls[rowIndex];
-        }
-
-        // Unused methods from ColumnSink interface
-        @Override public void putByte(int rowIndex, byte value) {}
-        @Override public void putShort(int rowIndex, short value) {}
-        @Override public void putInt(int rowIndex, int value) {}
-        @Override public void putLong(int rowIndex, long value) {}
-        @Override public void putFloat(int rowIndex, float value) {}
-        @Override public void putDouble(int rowIndex, double value) {}
-        @Override public void putBoolean(int rowIndex, boolean value) {}
-        @Override public void putUuid(int rowIndex, long hi, long lo) {}
-        @Override public void putLong256(int rowIndex, long l0, long l1, long l2, long l3) {}
-    }
-
-    // ==================== Static Encoding Methods ====================
-
     /**
      * Encodes string values to direct memory.
      * Only non-null values are encoded.
@@ -346,8 +180,8 @@ public final class QwpStringDecoder implements QwpColumnDecoder {
     /**
      * Calculates the encoded size for string values.
      *
-     * @param values   string values
-     * @param nulls    null flags (can be null if not nullable)
+     * @param values string values
+     * @param nulls  null flags (can be null if not nullable)
      * @return total encoded size in bytes
      */
     public static int encodedSize(String[] values, boolean[] nulls) {
@@ -375,5 +209,195 @@ public final class QwpStringDecoder implements QwpColumnDecoder {
         }
 
         return size;
+    }
+
+    @Override
+    public int decode(long sourceAddress, int sourceLength, int rowCount, boolean nullable, ColumnSink sink) throws QwpParseException {
+        if (rowCount == 0) {
+            return 0;
+        }
+
+        int offset = 0;
+
+        // Parse null bitmap if nullable
+        long nullBitmapAddress = 0;
+        int nullCount = 0;
+        if (nullable) {
+            int nullBitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            if (offset + nullBitmapSize > sourceLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "insufficient data for null bitmap"
+                );
+            }
+            nullBitmapAddress = sourceAddress + offset;
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
+            offset += nullBitmapSize;
+        }
+
+        // Only non-null values have offset entries
+        int valueCount = rowCount - nullCount;
+
+        // Parse offset array: (valueCount + 1) * 4 bytes
+        int offsetArraySize = (valueCount + 1) * 4;
+        if (offset + offsetArraySize > sourceLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "insufficient data for offset array"
+            );
+        }
+        long offsetArrayAddress = sourceAddress + offset;
+        offset += offsetArraySize;
+
+        // Validate first offset is 0
+        int firstOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress);
+        if (firstOffset != 0) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY,
+                    "first offset must be 0, got " + firstOffset
+            );
+        }
+
+        // Get total string data size from last offset
+        int lastOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueCount * 4);
+        if (lastOffset < 0) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY,
+                    "negative offset: " + lastOffset
+            );
+        }
+
+        // Validate string data size
+        if (offset + lastOffset > sourceLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "insufficient data for string values: need " + lastOffset + " bytes"
+            );
+        }
+        long stringDataAddress = sourceAddress + offset;
+
+        // Decode strings
+        int valueOffset = 0;
+        for (int i = 0; i < rowCount; i++) {
+            if (nullable && QwpNullBitmap.isNull(nullBitmapAddress, i)) {
+                sink.putNull(i);
+            } else {
+                int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueOffset * 4);
+                int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (valueOffset + 1) * 4);
+
+                // Validate offsets are monotonic
+                if (endOffset < startOffset) {
+                    throw QwpParseException.create(
+                            QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY,
+                            "non-monotonic offsets at row " + i + ": " + startOffset + " > " + endOffset
+                    );
+                }
+
+                int stringLength = endOffset - startOffset;
+                long stringAddress = stringDataAddress + startOffset;
+                ((StringColumnSink) sink).putString(i, stringAddress, stringLength);
+                valueOffset++;
+            }
+        }
+
+        offset += lastOffset;
+        return offset;
+    }
+
+    @Override
+    public int expectedSize(int rowCount, boolean nullable) {
+        // Variable size - this is just the minimum (no string data)
+        int size = 0;
+        if (nullable) {
+            size += QwpNullBitmap.sizeInBytes(rowCount);
+        }
+        size += (rowCount + 1) * 4; // offset array
+        return size;
+    }
+
+    /**
+     * Extended sink interface for string columns.
+     */
+    public interface StringColumnSink extends ColumnSink {
+        /**
+         * Called for each decoded string value.
+         *
+         * @param rowIndex row index
+         * @param address  address of string data (UTF-8 bytes)
+         * @param length   length in bytes
+         */
+        void putString(int rowIndex, long address, int length);
+    }
+
+    /**
+     * Simple array-based sink for testing.
+     */
+    public static class ArrayStringSink implements StringColumnSink {
+        private final boolean[] nulls;
+        private final String[] values;
+
+        public ArrayStringSink(int rowCount) {
+            this.values = new String[rowCount];
+            this.nulls = new boolean[rowCount];
+        }
+
+        public String getValue(int rowIndex) {
+            return values[rowIndex];
+        }
+
+        public boolean isNull(int rowIndex) {
+            return nulls[rowIndex];
+        }
+
+        @Override
+        public void putBoolean(int rowIndex, boolean value) {
+        }
+
+        // Unused methods from ColumnSink interface
+        @Override
+        public void putByte(int rowIndex, byte value) {
+        }
+
+        @Override
+        public void putDouble(int rowIndex, double value) {
+        }
+
+        @Override
+        public void putFloat(int rowIndex, float value) {
+        }
+
+        @Override
+        public void putInt(int rowIndex, int value) {
+        }
+
+        @Override
+        public void putLong(int rowIndex, long value) {
+        }
+
+        @Override
+        public void putLong256(int rowIndex, long l0, long l1, long l2, long l3) {
+        }
+
+        @Override
+        public void putNull(int rowIndex) {
+            nulls[rowIndex] = true;
+        }
+
+        @Override
+        public void putShort(int rowIndex, short value) {
+        }
+
+        @Override
+        public void putString(int rowIndex, long address, int length) {
+            byte[] bytes = new byte[length];
+            for (int i = 0; i < length; i++) {
+                bytes[i] = Unsafe.getUnsafe().getByte(address + i);
+            }
+            values[rowIndex] = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        }
+
+        @Override
+        public void putUuid(int rowIndex, long hi, long lo) {
+        }
     }
 }

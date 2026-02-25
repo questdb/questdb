@@ -30,7 +30,7 @@ import io.questdb.std.Unsafe;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_COLUMN_NAME_LENGTH;
 
 /**
  * Represents an ILP v4 table schema (immutable, safe for caching).
@@ -87,51 +87,77 @@ public final class QwpSchema {
     }
 
     /**
-     * Result of parsing a schema section.
-     * <p>
-     * This class is mutable and reusable to avoid allocations on hot paths.
-     * Use {@link #setFullSchema} or {@link #setReference} to populate, and
-     * {@link #clear} to reset for reuse.
+     * Encodes a schema reference to direct memory.
+     *
+     * @param address    destination address
+     * @param schemaHash the schema hash
+     * @return address after encoded reference
      */
-    public static final class ParseResult implements Mutable {
-        public QwpSchema schema;
-        public long schemaHash;
-        public boolean isReference;
-        public int bytesConsumed;
+    public static long encodeReference(long address, long schemaHash) {
+        Unsafe.getUnsafe().putByte(address, SCHEMA_MODE_REFERENCE);
+        Unsafe.getUnsafe().putLong(address + 1, schemaHash);
+        return address + 1 + 8;
+    }
 
-        public void setFullSchema(QwpSchema schema, int bytesConsumed) {
-            this.schema = schema;
-            this.schemaHash = schema.getSchemaHash();
-            this.isReference = false;
-            this.bytesConsumed = bytesConsumed;
+    /**
+     * Encodes a schema reference to a byte array.
+     *
+     * @param buf        destination buffer
+     * @param offset     starting offset
+     * @param schemaHash the schema hash
+     * @return offset after encoded reference
+     */
+    public static int encodeReference(byte[] buf, int offset, long schemaHash) {
+        buf[offset++] = SCHEMA_MODE_REFERENCE;
+        buf[offset++] = (byte) schemaHash;
+        buf[offset++] = (byte) (schemaHash >> 8);
+        buf[offset++] = (byte) (schemaHash >> 16);
+        buf[offset++] = (byte) (schemaHash >> 24);
+        buf[offset++] = (byte) (schemaHash >> 32);
+        buf[offset++] = (byte) (schemaHash >> 40);
+        buf[offset++] = (byte) (schemaHash >> 48);
+        buf[offset++] = (byte) (schemaHash >> 56);
+        return offset;
+    }
+
+    /**
+     * Parses a schema section from a byte array.
+     *
+     * @param buf         buffer
+     * @param bufOffset   starting offset
+     * @param length      available bytes
+     * @param columnCount expected number of columns
+     * @return parse result
+     * @throws QwpParseException if parsing fails
+     */
+    public static ParseResult parse(byte[] buf, int bufOffset, int length, int columnCount) throws QwpParseException {
+        if (length < 1) {
+            throw QwpParseException.headerTooShort();
         }
 
-        public void setReference(long schemaHash, int bytesConsumed) {
-            this.schema = null;
-            this.schemaHash = schemaHash;
-            this.isReference = true;
-            this.bytesConsumed = bytesConsumed;
-        }
+        byte schemaMode = buf[bufOffset];
+        int offset = 1;
 
-        @Override
-        public void clear() {
-            this.schema = null;
-            this.schemaHash = 0;
-            this.isReference = false;
-            this.bytesConsumed = 0;
-        }
-
-        // Factory methods for convenience (allocate - use in tests)
-        public static ParseResult fullSchema(QwpSchema schema, int bytesConsumed) {
-            ParseResult result = new ParseResult();
-            result.setFullSchema(schema, bytesConsumed);
-            return result;
-        }
-
-        public static ParseResult reference(long schemaHash, int bytesConsumed) {
-            ParseResult result = new ParseResult();
-            result.setReference(schemaHash, bytesConsumed);
-            return result;
+        if (schemaMode == SCHEMA_MODE_REFERENCE) {
+            if (length < 1 + 8) {
+                throw QwpParseException.headerTooShort();
+            }
+            long schemaHash = (buf[bufOffset + offset] & 0xFFL) |
+                    ((buf[bufOffset + offset + 1] & 0xFFL) << 8) |
+                    ((buf[bufOffset + offset + 2] & 0xFFL) << 16) |
+                    ((buf[bufOffset + offset + 3] & 0xFFL) << 24) |
+                    ((buf[bufOffset + offset + 4] & 0xFFL) << 32) |
+                    ((buf[bufOffset + offset + 5] & 0xFFL) << 40) |
+                    ((buf[bufOffset + offset + 6] & 0xFFL) << 48) |
+                    ((buf[bufOffset + offset + 7] & 0xFFL) << 56);
+            return ParseResult.reference(schemaHash, 1 + 8);
+        } else if (schemaMode == SCHEMA_MODE_FULL) {
+            return parseFullSchemaFromArray(buf, bufOffset, length, columnCount, offset);
+        } else {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_SCHEMA_MODE,
+                    "unknown schema mode: 0x" + Integer.toHexString(schemaMode & 0xFF)
+            );
         }
     }
 
@@ -192,44 +218,140 @@ public final class QwpSchema {
     }
 
     /**
-     * Parses a schema section from a byte array.
+     * Encodes this schema in full schema mode to direct memory.
      *
-     * @param buf         buffer
-     * @param bufOffset   starting offset
-     * @param length      available bytes
-     * @param columnCount expected number of columns
-     * @return parse result
-     * @throws QwpParseException if parsing fails
+     * @param address destination address
+     * @return address after encoded schema
      */
-    public static ParseResult parse(byte[] buf, int bufOffset, int length, int columnCount) throws QwpParseException {
-        if (length < 1) {
-            throw QwpParseException.headerTooShort();
-        }
+    public long encode(long address) {
+        Unsafe.getUnsafe().putByte(address, SCHEMA_MODE_FULL);
+        long pos = address + 1;
 
-        byte schemaMode = buf[bufOffset];
-        int offset = 1;
-
-        if (schemaMode == SCHEMA_MODE_REFERENCE) {
-            if (length < 1 + 8) {
-                throw QwpParseException.headerTooShort();
+        for (QwpColumnDef col : columns) {
+            byte[] nameBytes = col.getName().getBytes(StandardCharsets.UTF_8);
+            pos = QwpVarint.encode(pos, nameBytes.length);
+            for (byte b : nameBytes) {
+                Unsafe.getUnsafe().putByte(pos++, b);
             }
-            long schemaHash = (buf[bufOffset + offset] & 0xFFL) |
-                    ((buf[bufOffset + offset + 1] & 0xFFL) << 8) |
-                    ((buf[bufOffset + offset + 2] & 0xFFL) << 16) |
-                    ((buf[bufOffset + offset + 3] & 0xFFL) << 24) |
-                    ((buf[bufOffset + offset + 4] & 0xFFL) << 32) |
-                    ((buf[bufOffset + offset + 5] & 0xFFL) << 40) |
-                    ((buf[bufOffset + offset + 6] & 0xFFL) << 48) |
-                    ((buf[bufOffset + offset + 7] & 0xFFL) << 56);
-            return ParseResult.reference(schemaHash, 1 + 8);
-        } else if (schemaMode == SCHEMA_MODE_FULL) {
-            return parseFullSchemaFromArray(buf, bufOffset, length, columnCount, offset);
-        } else {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_SCHEMA_MODE,
-                    "unknown schema mode: 0x" + Integer.toHexString(schemaMode & 0xFF)
-            );
+            Unsafe.getUnsafe().putByte(pos++, col.getWireTypeCode());
         }
+
+        return pos;
+    }
+
+    /**
+     * Encodes this schema in full schema mode to a byte array.
+     *
+     * @param buf    destination buffer
+     * @param offset starting offset
+     * @return offset after encoded schema
+     */
+    public int encode(byte[] buf, int offset) {
+        buf[offset++] = SCHEMA_MODE_FULL;
+
+        for (QwpColumnDef col : columns) {
+            byte[] nameBytes = col.getName().getBytes(StandardCharsets.UTF_8);
+            offset = QwpVarint.encode(buf, offset, nameBytes.length);
+            System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
+            offset += nameBytes.length;
+            buf[offset++] = col.getWireTypeCode();
+        }
+
+        return offset;
+    }
+
+    /**
+     * Computes the encoded size in bytes for this schema in full mode.
+     *
+     * @return encoded size
+     */
+    public int encodedSize() {
+        int size = 1; // schema mode byte
+        for (QwpColumnDef col : columns) {
+            byte[] nameBytes = col.getName().getBytes(StandardCharsets.UTF_8);
+            size += QwpVarint.encodedLength(nameBytes.length);
+            size += nameBytes.length;
+            size += 1; // type code
+        }
+        return size;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        QwpSchema that = (QwpSchema) o;
+        return schemaHash == that.schemaHash && Arrays.equals(columns, that.columns);
+    }
+
+    /**
+     * Gets the column definition at the specified index.
+     *
+     * @param index column index
+     * @return column definition
+     */
+    public QwpColumnDef getColumn(int index) {
+        return columns[index];
+    }
+
+    /**
+     * Gets the number of columns in this schema.
+     */
+    public int getColumnCount() {
+        return columns.length;
+    }
+
+    /**
+     * Gets all column definitions.
+     * <p>
+     * Returns the internal array directly (no copy) for zero-allocation access.
+     * Callers must not modify the returned array.
+     *
+     * @return column definitions array (do not modify)
+     */
+    public QwpColumnDef[] getColumns() {
+        return columns;
+    }
+
+    /**
+     * Gets the schema hash.
+     */
+    public long getSchemaHash() {
+        return schemaHash;
+    }
+
+    @Override
+    public int hashCode() {
+        return (int) (schemaHash ^ (schemaHash >>> 32));
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("QwpSchema{hash=0x").append(Long.toHexString(schemaHash));
+        sb.append(", columns=[");
+        for (int i = 0; i < columns.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(columns[i]);
+        }
+        sb.append("]}");
+        return sb.toString();
+    }
+
+    /**
+     * Computes the schema hash for an array of column definitions.
+     * <p>
+     * Hash is XXH64 over column name bytes + type code for each column.
+     * This matches QwpSchemaHash.computeSchemaHash() for consistency.
+     */
+    private static long computeSchemaHash(QwpColumnDef[] columns) {
+        String[] names = new String[columns.length];
+        byte[] types = new byte[columns.length];
+        for (int i = 0; i < columns.length; i++) {
+            names[i] = columns[i].getName();
+            types[i] = columns[i].getWireTypeCode();
+        }
+        return QwpSchemaHash.computeSchemaHash(names, types);
     }
 
     private static void parseFullSchema(long address, int length, int columnCount, int offset, ParseResult result) throws QwpParseException {
@@ -337,175 +459,51 @@ public final class QwpSchema {
     }
 
     /**
-     * Encodes this schema in full schema mode to direct memory.
-     *
-     * @param address destination address
-     * @return address after encoded schema
-     */
-    public long encode(long address) {
-        Unsafe.getUnsafe().putByte(address, SCHEMA_MODE_FULL);
-        long pos = address + 1;
-
-        for (QwpColumnDef col : columns) {
-            byte[] nameBytes = col.getName().getBytes(StandardCharsets.UTF_8);
-            pos = QwpVarint.encode(pos, nameBytes.length);
-            for (byte b : nameBytes) {
-                Unsafe.getUnsafe().putByte(pos++, b);
-            }
-            Unsafe.getUnsafe().putByte(pos++, col.getWireTypeCode());
-        }
-
-        return pos;
-    }
-
-    /**
-     * Encodes this schema in full schema mode to a byte array.
-     *
-     * @param buf    destination buffer
-     * @param offset starting offset
-     * @return offset after encoded schema
-     */
-    public int encode(byte[] buf, int offset) {
-        buf[offset++] = SCHEMA_MODE_FULL;
-
-        for (QwpColumnDef col : columns) {
-            byte[] nameBytes = col.getName().getBytes(StandardCharsets.UTF_8);
-            offset = QwpVarint.encode(buf, offset, nameBytes.length);
-            System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
-            offset += nameBytes.length;
-            buf[offset++] = col.getWireTypeCode();
-        }
-
-        return offset;
-    }
-
-    /**
-     * Encodes a schema reference to direct memory.
-     *
-     * @param address    destination address
-     * @param schemaHash the schema hash
-     * @return address after encoded reference
-     */
-    public static long encodeReference(long address, long schemaHash) {
-        Unsafe.getUnsafe().putByte(address, SCHEMA_MODE_REFERENCE);
-        Unsafe.getUnsafe().putLong(address + 1, schemaHash);
-        return address + 1 + 8;
-    }
-
-    /**
-     * Encodes a schema reference to a byte array.
-     *
-     * @param buf        destination buffer
-     * @param offset     starting offset
-     * @param schemaHash the schema hash
-     * @return offset after encoded reference
-     */
-    public static int encodeReference(byte[] buf, int offset, long schemaHash) {
-        buf[offset++] = SCHEMA_MODE_REFERENCE;
-        buf[offset++] = (byte) schemaHash;
-        buf[offset++] = (byte) (schemaHash >> 8);
-        buf[offset++] = (byte) (schemaHash >> 16);
-        buf[offset++] = (byte) (schemaHash >> 24);
-        buf[offset++] = (byte) (schemaHash >> 32);
-        buf[offset++] = (byte) (schemaHash >> 40);
-        buf[offset++] = (byte) (schemaHash >> 48);
-        buf[offset++] = (byte) (schemaHash >> 56);
-        return offset;
-    }
-
-    /**
-     * Computes the encoded size in bytes for this schema in full mode.
-     *
-     * @return encoded size
-     */
-    public int encodedSize() {
-        int size = 1; // schema mode byte
-        for (QwpColumnDef col : columns) {
-            byte[] nameBytes = col.getName().getBytes(StandardCharsets.UTF_8);
-            size += QwpVarint.encodedLength(nameBytes.length);
-            size += nameBytes.length;
-            size += 1; // type code
-        }
-        return size;
-    }
-
-    /**
-     * Computes the schema hash for an array of column definitions.
+     * Result of parsing a schema section.
      * <p>
-     * Hash is XXH64 over column name bytes + type code for each column.
-     * This matches QwpSchemaHash.computeSchemaHash() for consistency.
+     * This class is mutable and reusable to avoid allocations on hot paths.
+     * Use {@link #setFullSchema} or {@link #setReference} to populate, and
+     * {@link #clear} to reset for reuse.
      */
-    private static long computeSchemaHash(QwpColumnDef[] columns) {
-        String[] names = new String[columns.length];
-        byte[] types = new byte[columns.length];
-        for (int i = 0; i < columns.length; i++) {
-            names[i] = columns[i].getName();
-            types[i] = columns[i].getWireTypeCode();
+    public static final class ParseResult implements Mutable {
+        public int bytesConsumed;
+        public boolean isReference;
+        public QwpSchema schema;
+        public long schemaHash;
+
+        // Factory methods for convenience (allocate - use in tests)
+        public static ParseResult fullSchema(QwpSchema schema, int bytesConsumed) {
+            ParseResult result = new ParseResult();
+            result.setFullSchema(schema, bytesConsumed);
+            return result;
         }
-        return QwpSchemaHash.computeSchemaHash(names, types);
-    }
 
-    // ==================== Getters ====================
-
-    /**
-     * Gets the number of columns in this schema.
-     */
-    public int getColumnCount() {
-        return columns.length;
-    }
-
-    /**
-     * Gets the column definition at the specified index.
-     *
-     * @param index column index
-     * @return column definition
-     */
-    public QwpColumnDef getColumn(int index) {
-        return columns[index];
-    }
-
-    /**
-     * Gets all column definitions.
-     * <p>
-     * Returns the internal array directly (no copy) for zero-allocation access.
-     * Callers must not modify the returned array.
-     *
-     * @return column definitions array (do not modify)
-     */
-    public QwpColumnDef[] getColumns() {
-        return columns;
-    }
-
-    /**
-     * Gets the schema hash.
-     */
-    public long getSchemaHash() {
-        return schemaHash;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        QwpSchema that = (QwpSchema) o;
-        return schemaHash == that.schemaHash && Arrays.equals(columns, that.columns);
-    }
-
-    @Override
-    public int hashCode() {
-        return (int) (schemaHash ^ (schemaHash >>> 32));
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("QwpSchema{hash=0x").append(Long.toHexString(schemaHash));
-        sb.append(", columns=[");
-        for (int i = 0; i < columns.length; i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(columns[i]);
+        public static ParseResult reference(long schemaHash, int bytesConsumed) {
+            ParseResult result = new ParseResult();
+            result.setReference(schemaHash, bytesConsumed);
+            return result;
         }
-        sb.append("]}");
-        return sb.toString();
+
+        @Override
+        public void clear() {
+            this.schema = null;
+            this.schemaHash = 0;
+            this.isReference = false;
+            this.bytesConsumed = 0;
+        }
+
+        public void setFullSchema(QwpSchema schema, int bytesConsumed) {
+            this.schema = schema;
+            this.schemaHash = schema.getSchemaHash();
+            this.isReference = false;
+            this.bytesConsumed = bytesConsumed;
+        }
+
+        public void setReference(long schemaHash, int bytesConsumed) {
+            this.schema = null;
+            this.schemaHash = schemaHash;
+            this.isReference = true;
+            this.bytesConsumed = bytesConsumed;
+        }
     }
 }

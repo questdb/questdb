@@ -44,42 +44,154 @@ import static io.questdb.cutlass.qwp.protocol.QwpTimestampDecoder.ENCODING_UNCOM
  */
 public final class QwpTimestampColumnCursor implements QwpColumnCursor {
 
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final QwpGorillaDecoder gorillaDecoder = new QwpGorillaDecoder();
-
-    // Configuration
-    private byte typeCode;
-    private boolean nullable;
-    private int rowCount;
-    private boolean gorillaEnabled;
-
-    // Wire pointers
-    private long nullBitmapAddress;
-    private long valuesAddress;  // For uncompressed mode
-    private long gorillaDataAddress;  // For Gorilla mode
-    private int gorillaDataLength;
-
-    // Gorilla state
-    private long firstTimestamp;
-    private long secondTimestamp;
-    private int valueCount;
-
+    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
+    private boolean currentIsNull;
     // Iteration state
     private int currentRow;
-    private int currentValueIndex;
-    private boolean currentIsNull;
     private long currentTimestamp;
+    private int currentValueIndex;
+    // Gorilla state
+    private long firstTimestamp;
+    private long gorillaDataAddress;  // For Gorilla mode
+    private int gorillaDataLength;
+    private boolean gorillaEnabled;
+    // Wire pointers
+    private long nullBitmapAddress;
+    private boolean nullable;
+    private int rowCount;
+    private long secondTimestamp;
+    // Configuration
+    private byte typeCode;
+    private int valueCount;
+    private long valuesAddress;  // For uncompressed mode
+
+    @Override
+    public boolean advanceRow() throws QwpParseException {
+        currentRow++;
+
+        if (nullable && nullBitmapAddress != 0) {
+            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
+            if (currentIsNull) {
+                return true;
+            }
+        } else {
+            currentIsNull = false;
+        }
+
+        // Read timestamp value
+        if (gorillaEnabled) {
+            if (currentValueIndex == 0) {
+                currentTimestamp = firstTimestamp;
+            } else if (currentValueIndex == 1) {
+                currentTimestamp = secondTimestamp;
+            } else {
+                currentTimestamp = gorillaDecoder.decodeNext();
+            }
+        } else {
+            currentTimestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) currentValueIndex * 8);
+        }
+        currentValueIndex++;
+        return false;
+    }
+
+    @Override
+    public void clear() {
+        nameUtf8.clear();
+        typeCode = 0;
+        nullable = false;
+        rowCount = 0;
+        gorillaEnabled = false;
+        nullBitmapAddress = 0;
+        valuesAddress = 0;
+        gorillaDataAddress = 0;
+        gorillaDataLength = 0;
+        firstTimestamp = 0;
+        secondTimestamp = 0;
+        valueCount = 0;
+        resetRowPosition();
+    }
+
+    @Override
+    public int getCurrentRow() {
+        return currentRow;
+    }
+
+    @Override
+    public DirectUtf8Sequence getNameUtf8() {
+        return nameUtf8;
+    }
+
+    /**
+     * Returns the address of the null bitmap, or 0 if not nullable.
+     *
+     * @return the memory address of null bitmap, or 0 if not nullable
+     */
+    public long getNullBitmapAddress() {
+        return nullBitmapAddress;
+    }
+
+    /**
+     * Returns the total row count (including nulls).
+     *
+     * @return total row count
+     */
+    public int getRowCount() {
+        return rowCount;
+    }
+
+    /**
+     * Returns current row's timestamp value (microseconds or nanoseconds since epoch).
+     */
+    public long getTimestamp() {
+        return currentTimestamp;
+    }
+
+    @Override
+    public byte getTypeCode() {
+        return typeCode;
+    }
+
+    /**
+     * Returns the number of non-null values in this column.
+     *
+     * @return count of non-null values
+     */
+    public int getValueCount() {
+        return valueCount;
+    }
+
+    /**
+     * Returns the address of the packed non-null values array.
+     * <p>
+     * Only valid when {@link #supportsDirectAccess()} returns true.
+     *
+     * @return the memory address of values array, or 0 if Gorilla-encoded
+     */
+    public long getValuesAddress() {
+        return gorillaEnabled ? 0 : valuesAddress;
+    }
+
+    @Override
+    public boolean isNull() {
+        return currentIsNull;
+    }
+
+    @Override
+    public boolean isNullable() {
+        return nullable;
+    }
 
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data
-     * @param dataLength    available bytes
-     * @param rowCount      number of rows
-     * @param typeCode      column type code (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
-     * @param nullable      whether column is nullable
-     * @param nameAddress   address of column name UTF-8 bytes
-     * @param nameLength    column name length in bytes
+     * @param dataAddress    address of column data
+     * @param dataLength     available bytes
+     * @param rowCount       number of rows
+     * @param typeCode       column type code (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
+     * @param nullable       whether column is nullable
+     * @param nameAddress    address of column name UTF-8 bytes
+     * @param nameLength     column name length in bytes
      * @param gorillaEnabled whether Gorilla encoding is enabled
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
@@ -178,60 +290,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     }
 
     @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
-    @Override
-    public byte getTypeCode() {
-        return typeCode;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
-    @Override
-    public boolean isNull() {
-        return currentIsNull;
-    }
-
-    @Override
-    public boolean advanceRow() throws QwpParseException {
-        currentRow++;
-
-        if (nullable && nullBitmapAddress != 0) {
-            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
-            if (currentIsNull) {
-                return true;
-            }
-        } else {
-            currentIsNull = false;
-        }
-
-        // Read timestamp value
-        if (gorillaEnabled) {
-            if (currentValueIndex == 0) {
-                currentTimestamp = firstTimestamp;
-            } else if (currentValueIndex == 1) {
-                currentTimestamp = secondTimestamp;
-            } else {
-                currentTimestamp = gorillaDecoder.decodeNext();
-            }
-        } else {
-            currentTimestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) currentValueIndex * 8);
-        }
-        currentValueIndex++;
-        return false;
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    @Override
     public void resetRowPosition() {
         currentRow = -1;
         currentValueIndex = 0;
@@ -245,32 +303,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
         }
     }
 
-    @Override
-    public void clear() {
-        nameUtf8.clear();
-        typeCode = 0;
-        nullable = false;
-        rowCount = 0;
-        gorillaEnabled = false;
-        nullBitmapAddress = 0;
-        valuesAddress = 0;
-        gorillaDataAddress = 0;
-        gorillaDataLength = 0;
-        firstTimestamp = 0;
-        secondTimestamp = 0;
-        valueCount = 0;
-        resetRowPosition();
-    }
-
-    /**
-     * Returns current row's timestamp value (microseconds or nanoseconds since epoch).
-     */
-    public long getTimestamp() {
-        return currentTimestamp;
-    }
-
-    // ==================== Columnar Access Methods ====================
-
     /**
      * Returns whether direct memory access is possible for this column.
      * <p>
@@ -281,43 +313,5 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
      */
     public boolean supportsDirectAccess() {
         return !gorillaEnabled;
-    }
-
-    /**
-     * Returns the address of the packed non-null values array.
-     * <p>
-     * Only valid when {@link #supportsDirectAccess()} returns true.
-     *
-     * @return the memory address of values array, or 0 if Gorilla-encoded
-     */
-    public long getValuesAddress() {
-        return gorillaEnabled ? 0 : valuesAddress;
-    }
-
-    /**
-     * Returns the address of the null bitmap, or 0 if not nullable.
-     *
-     * @return the memory address of null bitmap, or 0 if not nullable
-     */
-    public long getNullBitmapAddress() {
-        return nullBitmapAddress;
-    }
-
-    /**
-     * Returns the number of non-null values in this column.
-     *
-     * @return count of non-null values
-     */
-    public int getValueCount() {
-        return valueCount;
-    }
-
-    /**
-     * Returns the total row count (including nulls).
-     *
-     * @return total row count
-     */
-    public int getRowCount() {
-        return rowCount;
     }
 }

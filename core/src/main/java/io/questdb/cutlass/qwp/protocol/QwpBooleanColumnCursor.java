@@ -44,30 +44,91 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
 public final class QwpBooleanColumnCursor implements QwpColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
-
+    private boolean currentIsNull;
+    // Iteration state
+    private int currentRow;
+    private boolean currentValue;
+    private int currentValueIndex;  // Index into value bitmap (non-null values only)
+    // Wire pointers
+    private long nullBitmapAddress;
     // Configuration
     private boolean nullable;
     private int rowCount;
-
-    // Wire pointers
-    private long nullBitmapAddress;
     private long valueBitmapAddress;
 
-    // Iteration state
-    private int currentRow;
-    private int currentValueIndex;  // Index into value bitmap (non-null values only)
-    private boolean currentIsNull;
-    private boolean currentValue;
+    @Override
+    public boolean advanceRow() throws QwpParseException {
+        currentRow++;
+
+        if (nullable && nullBitmapAddress != 0) {
+            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
+            if (currentIsNull) {
+                return true;
+            }
+        } else {
+            currentIsNull = false;
+        }
+
+        // Read value bit from value bitmap
+        int byteIndex = currentValueIndex >>> 3;
+        int bitIndex = currentValueIndex & 7;
+        byte b = Unsafe.getUnsafe().getByte(valueBitmapAddress + byteIndex);
+        currentValue = (b & (1 << bitIndex)) != 0;
+        currentValueIndex++;
+        return false;
+    }
+
+    @Override
+    public void clear() {
+        nameUtf8.clear();
+        nullable = false;
+        rowCount = 0;
+        nullBitmapAddress = 0;
+        valueBitmapAddress = 0;
+        resetRowPosition();
+    }
+
+    @Override
+    public int getCurrentRow() {
+        return currentRow;
+    }
+
+    @Override
+    public DirectUtf8Sequence getNameUtf8() {
+        return nameUtf8;
+    }
+
+    @Override
+    public byte getTypeCode() {
+        return TYPE_BOOLEAN;
+    }
+
+    /**
+     * Returns current row's boolean value.
+     */
+    public boolean getValue() {
+        return currentValue;
+    }
+
+    @Override
+    public boolean isNull() {
+        return currentIsNull;
+    }
+
+    @Override
+    public boolean isNullable() {
+        return nullable;
+    }
 
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data
-     * @param dataLength    available bytes
-     * @param rowCount      number of rows
-     * @param nullable      whether column is nullable
-     * @param nameAddress   address of column name UTF-8 bytes
-     * @param nameLength    column name length in bytes
+     * @param dataAddress address of column data
+     * @param dataLength  available bytes
+     * @param rowCount    number of rows
+     * @param nullable    whether column is nullable
+     * @param nameAddress address of column name UTF-8 bytes
+     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      */
     public int of(long dataAddress, int dataLength, int rowCount, boolean nullable,
@@ -98,74 +159,10 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
     }
 
     @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
-    @Override
-    public byte getTypeCode() {
-        return TYPE_BOOLEAN;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
-    @Override
-    public boolean isNull() {
-        return currentIsNull;
-    }
-
-    @Override
-    public boolean advanceRow() throws QwpParseException {
-        currentRow++;
-
-        if (nullable && nullBitmapAddress != 0) {
-            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
-            if (currentIsNull) {
-                return true;
-            }
-        } else {
-            currentIsNull = false;
-        }
-
-        // Read value bit from value bitmap
-        int byteIndex = currentValueIndex >>> 3;
-        int bitIndex = currentValueIndex & 7;
-        byte b = Unsafe.getUnsafe().getByte(valueBitmapAddress + byteIndex);
-        currentValue = (b & (1 << bitIndex)) != 0;
-        currentValueIndex++;
-        return false;
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    @Override
     public void resetRowPosition() {
         currentRow = -1;
         currentValueIndex = 0;
         currentIsNull = false;
         currentValue = false;
-    }
-
-    @Override
-    public void clear() {
-        nameUtf8.clear();
-        nullable = false;
-        rowCount = 0;
-        nullBitmapAddress = 0;
-        valueBitmapAddress = 0;
-        resetRowPosition();
-    }
-
-    /**
-     * Returns current row's boolean value.
-     */
-    public boolean getValue() {
-        return currentValue;
     }
 }

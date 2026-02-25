@@ -24,15 +24,12 @@
 
 package io.questdb.cutlass.qwp.server;
 
-import io.questdb.cutlass.qwp.protocol.*;
-
-import io.questdb.cutlass.qwp.websocket.*;
-
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.qwp.websocket.WebSocketHandshake;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -55,13 +52,14 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         this.processor = new QwpWebSocketUpgradeProcessor(engine, httpConfiguration);
     }
 
-    @Override
-    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
-        // Always return the same processor instance. Per-connection state lives
-        // in LocalValue, so the instance is safe to share. Returning unconditionally
-        // is required because resolveProcessorById() calls this after headers are
-        // cleared (post-protocol-switch).
-        return processor;
+    /**
+     * Gets the WebSocket key from the request header.
+     *
+     * @param header the HTTP request header
+     * @return the WebSocket key, or null if not present
+     */
+    public static Utf8Sequence getWebSocketKey(HttpRequestHeader header) {
+        return header.getHeader(WebSocketHandshake.HEADER_SEC_WEBSOCKET_KEY);
     }
 
     /**
@@ -140,13 +138,12 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         return null;
     }
 
-    /**
-     * Gets the WebSocket key from the request header.
-     *
-     * @param header the HTTP request header
-     * @return the WebSocket key, or null if not present
-     */
-    public static Utf8Sequence getWebSocketKey(HttpRequestHeader header) {
-        return header.getHeader(WebSocketHandshake.HEADER_SEC_WEBSOCKET_KEY);
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        // Always return the same processor instance. Per-connection state lives
+        // in LocalValue, so the instance is safe to share. Returning unconditionally
+        // is required because resolveProcessorById() calls this after headers are
+        // cleared (post-protocol-switch).
+        return processor;
     }
 }

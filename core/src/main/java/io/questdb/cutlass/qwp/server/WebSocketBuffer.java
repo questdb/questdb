@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.qwp.server;
 
-import io.questdb.cutlass.qwp.protocol.*;
-
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -55,17 +53,81 @@ public class WebSocketBuffer implements Mutable, QuietCloseable {
     }
 
     /**
+     * Advances the write position.
+     */
+    public void advanceWrite(int bytes) {
+        writePos += bytes;
+    }
+
+    /**
+     * Returns the buffer capacity.
+     */
+    public int capacity() {
+        return capacity;
+    }
+
+    @Override
+    public void clear() {
+        readPos = 0;
+        writePos = 0;
+    }
+
+    @Override
+    public void close() {
+        if (address != 0) {
+            Unsafe.free(address, capacity, MemoryTag.NATIVE_DEFAULT);
+            address = 0;
+            capacity = 0;
+        }
+        readPos = 0;
+        writePos = 0;
+    }
+
+    /**
+     * Compacts the buffer by moving unread data to the beginning.
+     */
+    public void compact() {
+        if (readPos == 0) {
+            return;
+        }
+        int remaining = writePos - readPos;
+        if (remaining > 0) {
+            Unsafe.getUnsafe().copyMemory(address + readPos, address, remaining);
+        }
+        readPos = 0;
+        writePos = remaining;
+    }
+
+    /**
+     * Ensures the buffer has enough capacity to write the given number of bytes.
+     */
+    public void ensureCapacity(int additional) {
+        if (writePos + additional <= capacity) {
+            return;
+        }
+
+        // Compact first if possible
+        if (readPos > 0) {
+            compact();
+            if (writePos + additional <= capacity) {
+                return;
+            }
+        }
+
+        // Grow buffer
+        int newCapacity = Math.max(capacity * 2, writePos + additional);
+        long newAddress = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.getUnsafe().copyMemory(address, newAddress, writePos);
+        Unsafe.free(address, capacity, MemoryTag.NATIVE_DEFAULT);
+        address = newAddress;
+        capacity = newCapacity;
+    }
+
+    /**
      * Returns the start address for reading.
      */
     public long readAddress() {
         return address + readPos;
-    }
-
-    /**
-     * Returns the start address for writing.
-     */
-    public long writeAddress() {
-        return address + writePos;
     }
 
     /**
@@ -76,17 +138,33 @@ public class WebSocketBuffer implements Mutable, QuietCloseable {
     }
 
     /**
+     * Skips (consumes) bytes from the read position.
+     */
+    public void skip(int bytes) {
+        readPos += bytes;
+        if (readPos > writePos) {
+            readPos = writePos;
+        }
+    }
+
+    /**
+     * Returns the buffer contents as a byte array.
+     * Note: This allocates a new array, use only for testing.
+     */
+    public byte[] toByteArray() {
+        int length = writePos - readPos;
+        byte[] result = new byte[length];
+        for (int i = 0; i < length; i++) {
+            result[i] = Unsafe.getUnsafe().getByte(address + readPos + i);
+        }
+        return result;
+    }
+
+    /**
      * Returns the number of writable bytes without resizing.
      */
     public long writableBytes() {
         return capacity - writePos;
-    }
-
-    /**
-     * Returns the buffer capacity.
-     */
-    public int capacity() {
-        return capacity;
     }
 
     /**
@@ -117,89 +195,9 @@ public class WebSocketBuffer implements Mutable, QuietCloseable {
     }
 
     /**
-     * Ensures the buffer has enough capacity to write the given number of bytes.
+     * Returns the start address for writing.
      */
-    public void ensureCapacity(int additional) {
-        if (writePos + additional <= capacity) {
-            return;
-        }
-
-        // Compact first if possible
-        if (readPos > 0) {
-            compact();
-            if (writePos + additional <= capacity) {
-                return;
-            }
-        }
-
-        // Grow buffer
-        int newCapacity = Math.max(capacity * 2, writePos + additional);
-        long newAddress = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.getUnsafe().copyMemory(address, newAddress, writePos);
-        Unsafe.free(address, capacity, MemoryTag.NATIVE_DEFAULT);
-        address = newAddress;
-        capacity = newCapacity;
-    }
-
-    /**
-     * Advances the write position.
-     */
-    public void advanceWrite(int bytes) {
-        writePos += bytes;
-    }
-
-    /**
-     * Skips (consumes) bytes from the read position.
-     */
-    public void skip(int bytes) {
-        readPos += bytes;
-        if (readPos > writePos) {
-            readPos = writePos;
-        }
-    }
-
-    /**
-     * Compacts the buffer by moving unread data to the beginning.
-     */
-    public void compact() {
-        if (readPos == 0) {
-            return;
-        }
-        int remaining = writePos - readPos;
-        if (remaining > 0) {
-            Unsafe.getUnsafe().copyMemory(address + readPos, address, remaining);
-        }
-        readPos = 0;
-        writePos = remaining;
-    }
-
-    /**
-     * Returns the buffer contents as a byte array.
-     * Note: This allocates a new array, use only for testing.
-     */
-    public byte[] toByteArray() {
-        int length = writePos - readPos;
-        byte[] result = new byte[length];
-        for (int i = 0; i < length; i++) {
-            result[i] = Unsafe.getUnsafe().getByte(address + readPos + i);
-        }
-        return result;
-    }
-
-    @Override
-    public void clear() {
-        readPos = 0;
-        writePos = 0;
-    }
-
-    @Override
-    public void close() {
-        if (address != 0) {
-            Unsafe.free(address, capacity, MemoryTag.NATIVE_DEFAULT);
-            address = 0;
-            capacity = 0;
-        }
-        readPos = 0;
-        writePos = 0;
+    public long writeAddress() {
+        return address + writePos;
     }
 }

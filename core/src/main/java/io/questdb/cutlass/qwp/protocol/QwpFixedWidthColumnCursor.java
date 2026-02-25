@@ -44,42 +44,249 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
-
-    // Configuration
-    private byte typeCode;
-    private boolean nullable;
-    private int rowCount;
-    private int valueSize;
-
-    // Wire pointers
-    private long nullBitmapAddress;
-    private long valuesAddress;
-
-    // Iteration state
-    private int currentRow;
-    private int currentValueIndex;  // Index into non-null values
+    private double currentDouble;   // For FLOAT, DOUBLE
     private boolean currentIsNull;
-
     // Current value storage (to avoid reading twice)
     private long currentLong;       // For BYTE, SHORT, INT, LONG, DATE, TIMESTAMP
-    private double currentDouble;   // For FLOAT, DOUBLE
-    private long currentUuidHi;     // For UUID
-    private long currentUuidLo;
     private long currentLong256_0;  // For LONG256
     private long currentLong256_1;
     private long currentLong256_2;
     private long currentLong256_3;
+    // Iteration state
+    private int currentRow;
+    private long currentUuidHi;     // For UUID
+    private long currentUuidLo;
+    private int currentValueIndex;  // Index into non-null values
+    // Wire pointers
+    private long nullBitmapAddress;
+    private boolean nullable;
+    private int rowCount;
+    // Configuration
+    private byte typeCode;
+    private int valueSize;
+    private long valuesAddress;
+
+    @Override
+    public boolean advanceRow() throws QwpParseException {
+        currentRow++;
+
+        if (nullable && nullBitmapAddress != 0) {
+            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
+            if (currentIsNull) {
+                return true;
+            }
+        } else {
+            currentIsNull = false;
+        }
+
+        // Read value from wire
+        long valueAddress = valuesAddress + (long) currentValueIndex * valueSize;
+        readCurrentValue(valueAddress);
+        currentValueIndex++;
+        return false;
+    }
+
+    @Override
+    public void clear() {
+        nameUtf8.clear();
+        typeCode = 0;
+        nullable = false;
+        rowCount = 0;
+        valueSize = 0;
+        nullBitmapAddress = 0;
+        valuesAddress = 0;
+        resetRowPosition();
+    }
+
+    /**
+     * Returns current row's byte value.
+     */
+    public byte getByte() {
+        return (byte) currentLong;
+    }
+
+    @Override
+    public int getCurrentRow() {
+        return currentRow;
+    }
+
+    /**
+     * Returns current row's date value (milliseconds since epoch).
+     */
+    public long getDate() {
+        return currentLong;
+    }
+
+    /**
+     * Returns current row's double value.
+     */
+    public double getDouble() {
+        return currentDouble;
+    }
+
+    /**
+     * Returns current row's float value.
+     */
+    public float getFloat() {
+        return (float) currentDouble;
+    }
+
+    /**
+     * Returns current row's int value.
+     */
+    public int getInt() {
+        return (int) currentLong;
+    }
+
+    /**
+     * Returns current row's long value.
+     */
+    public long getLong() {
+        return currentLong;
+    }
+
+    /**
+     * Returns current row's LONG256 component 0 (least significant).
+     */
+    public long getLong256_0() {
+        return currentLong256_0;
+    }
+
+    /**
+     * Returns current row's LONG256 component 1.
+     */
+    public long getLong256_1() {
+        return currentLong256_1;
+    }
+
+    /**
+     * Returns current row's LONG256 component 2.
+     */
+    public long getLong256_2() {
+        return currentLong256_2;
+    }
+
+    /**
+     * Returns current row's LONG256 component 3 (most significant).
+     */
+    public long getLong256_3() {
+        return currentLong256_3;
+    }
+
+    @Override
+    public DirectUtf8Sequence getNameUtf8() {
+        return nameUtf8;
+    }
+
+    /**
+     * Returns the address of the null bitmap, or 0 if not nullable.
+     * <p>
+     * Used for bulk columnar writes to determine which positions need
+     * null sentinel values.
+     *
+     * @return the memory address of null bitmap, or 0 if not nullable
+     */
+    public long getNullBitmapAddress() {
+        return nullBitmapAddress;
+    }
+
+    /**
+     * Returns the total row count (including nulls).
+     *
+     * @return total row count
+     */
+    public int getRowCount() {
+        return rowCount;
+    }
+
+    /**
+     * Returns current row's short value.
+     */
+    public short getShort() {
+        return (short) currentLong;
+    }
+
+    /**
+     * Returns current row's timestamp value (microseconds or nanoseconds since epoch).
+     */
+    public long getTimestamp() {
+        return currentLong;
+    }
+
+    @Override
+    public byte getTypeCode() {
+        return typeCode;
+    }
+
+    /**
+     * Returns current row's UUID high bits.
+     */
+    public long getUuidHi() {
+        return currentUuidHi;
+    }
+
+    /**
+     * Returns current row's UUID low bits.
+     */
+    public long getUuidLo() {
+        return currentUuidLo;
+    }
+
+    /**
+     * Returns the number of non-null values in this column.
+     * <p>
+     * This equals rowCount minus the number of null rows.
+     *
+     * @return count of non-null values
+     */
+    public int getValueCount() {
+        if (!nullable || nullBitmapAddress == 0) {
+            return rowCount;
+        }
+        return rowCount - QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
+    }
+
+    /**
+     * Returns the size of each value in bytes.
+     *
+     * @return value size in bytes
+     */
+    public int getValueSize() {
+        return valueSize;
+    }
+
+    /**
+     * Returns the address of the packed non-null values array.
+     * <p>
+     * Used for bulk columnar writes where values can be copied directly
+     * from wire format to storage.
+     *
+     * @return the memory address of values array
+     */
+    public long getValuesAddress() {
+        return valuesAddress;
+    }
+
+    @Override
+    public boolean isNull() {
+        return currentIsNull;
+    }
+
+    @Override
+    public boolean isNullable() {
+        return nullable;
+    }
 
     /**
      * Initializes this cursor for the given column data.
      *
-     * @param dataAddress   address of column data (starts at null bitmap if nullable, else values)
-     * @param dataLength    available bytes
-     * @param rowCount      number of rows
-     * @param typeCode      column type code
-     * @param nullable      whether column is nullable
-     * @param nameAddress   address of column name UTF-8 bytes
-     * @param nameLength    column name length in bytes
+     * @param dataAddress address of column data (starts at null bitmap if nullable, else values)
+     * @param dataLength  available bytes
+     * @param rowCount    number of rows
+     * @param typeCode    column type code
+     * @param nullable    whether column is nullable
+     * @param nameAddress address of column name UTF-8 bytes
+     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      */
     public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
@@ -111,43 +318,10 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     }
 
     @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
-    @Override
-    public byte getTypeCode() {
-        return typeCode;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
-    @Override
-    public boolean isNull() {
-        return currentIsNull;
-    }
-
-    @Override
-    public boolean advanceRow() throws QwpParseException {
-        currentRow++;
-
-        if (nullable && nullBitmapAddress != 0) {
-            currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
-            if (currentIsNull) {
-                return true;
-            }
-        } else {
-            currentIsNull = false;
-        }
-
-        // Read value from wire
-        long valueAddress = valuesAddress + (long) currentValueIndex * valueSize;
-        readCurrentValue(valueAddress);
-        currentValueIndex++;
-        return false;
+    public void resetRowPosition() {
+        currentRow = -1;
+        currentValueIndex = 0;
+        currentIsNull = false;
     }
 
     private void readCurrentValue(long address) {
@@ -188,187 +362,5 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
                 currentLong256_3 = Unsafe.getUnsafe().getLong(address + 24);
                 break;
         }
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    @Override
-    public void resetRowPosition() {
-        currentRow = -1;
-        currentValueIndex = 0;
-        currentIsNull = false;
-    }
-
-    @Override
-    public void clear() {
-        nameUtf8.clear();
-        typeCode = 0;
-        nullable = false;
-        rowCount = 0;
-        valueSize = 0;
-        nullBitmapAddress = 0;
-        valuesAddress = 0;
-        resetRowPosition();
-    }
-
-    // ==================== Type-Specific Getters ====================
-
-    /**
-     * Returns current row's byte value.
-     */
-    public byte getByte() {
-        return (byte) currentLong;
-    }
-
-    /**
-     * Returns current row's short value.
-     */
-    public short getShort() {
-        return (short) currentLong;
-    }
-
-    /**
-     * Returns current row's int value.
-     */
-    public int getInt() {
-        return (int) currentLong;
-    }
-
-    /**
-     * Returns current row's long value.
-     */
-    public long getLong() {
-        return currentLong;
-    }
-
-    /**
-     * Returns current row's float value.
-     */
-    public float getFloat() {
-        return (float) currentDouble;
-    }
-
-    /**
-     * Returns current row's double value.
-     */
-    public double getDouble() {
-        return currentDouble;
-    }
-
-    /**
-     * Returns current row's date value (milliseconds since epoch).
-     */
-    public long getDate() {
-        return currentLong;
-    }
-
-    /**
-     * Returns current row's timestamp value (microseconds or nanoseconds since epoch).
-     */
-    public long getTimestamp() {
-        return currentLong;
-    }
-
-    /**
-     * Returns current row's UUID high bits.
-     */
-    public long getUuidHi() {
-        return currentUuidHi;
-    }
-
-    /**
-     * Returns current row's UUID low bits.
-     */
-    public long getUuidLo() {
-        return currentUuidLo;
-    }
-
-    /**
-     * Returns current row's LONG256 component 0 (least significant).
-     */
-    public long getLong256_0() {
-        return currentLong256_0;
-    }
-
-    /**
-     * Returns current row's LONG256 component 1.
-     */
-    public long getLong256_1() {
-        return currentLong256_1;
-    }
-
-    /**
-     * Returns current row's LONG256 component 2.
-     */
-    public long getLong256_2() {
-        return currentLong256_2;
-    }
-
-    /**
-     * Returns current row's LONG256 component 3 (most significant).
-     */
-    public long getLong256_3() {
-        return currentLong256_3;
-    }
-
-    // ==================== Columnar Access Methods ====================
-
-    /**
-     * Returns the address of the packed non-null values array.
-     * <p>
-     * Used for bulk columnar writes where values can be copied directly
-     * from wire format to storage.
-     *
-     * @return the memory address of values array
-     */
-    public long getValuesAddress() {
-        return valuesAddress;
-    }
-
-    /**
-     * Returns the address of the null bitmap, or 0 if not nullable.
-     * <p>
-     * Used for bulk columnar writes to determine which positions need
-     * null sentinel values.
-     *
-     * @return the memory address of null bitmap, or 0 if not nullable
-     */
-    public long getNullBitmapAddress() {
-        return nullBitmapAddress;
-    }
-
-    /**
-     * Returns the number of non-null values in this column.
-     * <p>
-     * This equals rowCount minus the number of null rows.
-     *
-     * @return count of non-null values
-     */
-    public int getValueCount() {
-        if (!nullable || nullBitmapAddress == 0) {
-            return rowCount;
-        }
-        return rowCount - QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
-    }
-
-    /**
-     * Returns the size of each value in bytes.
-     *
-     * @return value size in bytes
-     */
-    public int getValueSize() {
-        return valueSize;
-    }
-
-    /**
-     * Returns the total row count (including nulls).
-     *
-     * @return total row count
-     */
-    public int getRowCount() {
-        return rowCount;
     }
 }

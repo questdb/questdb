@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.qwp.server;
 
-import io.questdb.cutlass.qwp.protocol.*;
 import io.questdb.cutlass.qwp.websocket.WebSocketProcessor;
 
 /**
@@ -36,15 +35,6 @@ import io.questdb.cutlass.qwp.websocket.WebSocketProcessor;
 public class QwpWebSocketProcessor implements WebSocketProcessor {
     private Callback callback;
 
-    /**
-     * Sets the callback for processing events.
-     *
-     * @param callback the callback to receive events
-     */
-    public void setCallback(Callback callback) {
-        this.callback = callback;
-    }
-
     @Override
     public void onBinaryMessage(long payload, int length) {
         if (callback != null) {
@@ -53,10 +43,16 @@ public class QwpWebSocketProcessor implements WebSocketProcessor {
     }
 
     @Override
-    public void onTextMessage(long payload, int length) {
-        // ILP v4 is binary only - text messages are ignored
+    public void onClose(int code, long reason, int reasonLength) {
         if (callback != null) {
-            callback.onTextMessage(payload, length);
+            callback.onClose(code, reason, reasonLength);
+        }
+    }
+
+    @Override
+    public void onError(int errorCode, CharSequence message) {
+        if (callback != null) {
+            callback.onError(errorCode, message);
         }
     }
 
@@ -75,17 +71,20 @@ public class QwpWebSocketProcessor implements WebSocketProcessor {
     }
 
     @Override
-    public void onClose(int code, long reason, int reasonLength) {
+    public void onTextMessage(long payload, int length) {
+        // ILP v4 is binary only - text messages are ignored
         if (callback != null) {
-            callback.onClose(code, reason, reasonLength);
+            callback.onTextMessage(payload, length);
         }
     }
 
-    @Override
-    public void onError(int errorCode, CharSequence message) {
-        if (callback != null) {
-            callback.onError(errorCode, message);
-        }
+    /**
+     * Sets the callback for processing events.
+     *
+     * @param callback the callback to receive events
+     */
+    public void setCallback(Callback callback) {
+        this.callback = callback;
     }
 
     /**
@@ -98,10 +97,14 @@ public class QwpWebSocketProcessor implements WebSocketProcessor {
         void onBinaryMessage(long payload, int length);
 
         /**
-         * Called when a text message is received.
-         * ILP v4 is binary-only, so this is typically ignored.
+         * Called when a close frame is received.
          */
-        void onTextMessage(long payload, int length);
+        void onClose(int code, long reason, int reasonLength);
+
+        /**
+         * Called when an error occurs.
+         */
+        void onError(int errorCode, CharSequence message);
 
         /**
          * Called when a ping frame is received.
@@ -114,13 +117,9 @@ public class QwpWebSocketProcessor implements WebSocketProcessor {
         void onPong(long payload, int length);
 
         /**
-         * Called when a close frame is received.
+         * Called when a text message is received.
+         * ILP v4 is binary-only, so this is typically ignored.
          */
-        void onClose(int code, long reason, int reasonLength);
-
-        /**
-         * Called when an error occurs.
-         */
-        void onError(int errorCode, CharSequence message);
+        void onTextMessage(long payload, int length);
     }
 }

@@ -48,20 +48,10 @@ public class QwpSchemaCache {
         this.cache = new LongObjHashMap<>(initialCapacity);
     }
 
-    public void put(String tableName, QwpSchema schema) {
-        long key = combineKey(tableName.hashCode(), schema.getSchemaHash());
-        cache.put(key, schema);
-    }
-
-    public QwpSchema get(DirectUtf8Sequence tableName, long schemaHash) {
-        long key = combineKey(Utf8s.hashCode(tableName), schemaHash);
-        QwpSchema schema = cache.get(key);
-        if (schema != null) {
-            hits++;
-        } else {
-            misses++;
-        }
-        return schema;
+    public void clear() {
+        cache.clear();
+        hits = 0;
+        misses = 0;
     }
 
     public QwpSchema get(String tableName, long schemaHash) {
@@ -75,14 +65,20 @@ public class QwpSchemaCache {
         return schema;
     }
 
-    public void clear() {
-        cache.clear();
-        hits = 0;
-        misses = 0;
+    public QwpSchema get(DirectUtf8Sequence tableName, long schemaHash) {
+        long key = combineKey(Utf8s.hashCode(tableName), schemaHash);
+        QwpSchema schema = cache.get(key);
+        if (schema != null) {
+            hits++;
+        } else {
+            misses++;
+        }
+        return schema;
     }
 
-    public int size() {
-        return cache.size();
+    public double getHitRate() {
+        long total = hits + misses;
+        return total > 0 ? (double) hits / total : 0.0;
     }
 
     public long getHits() {
@@ -93,9 +89,13 @@ public class QwpSchemaCache {
         return misses;
     }
 
-    public double getHitRate() {
-        long total = hits + misses;
-        return total > 0 ? (double) hits / total : 0.0;
+    public void put(String tableName, QwpSchema schema) {
+        long key = combineKey(tableName.hashCode(), schema.getSchemaHash());
+        cache.put(key, schema);
+    }
+
+    public int size() {
+        return cache.size();
     }
 
     private static long combineKey(int tableNameHash, long schemaHash) {

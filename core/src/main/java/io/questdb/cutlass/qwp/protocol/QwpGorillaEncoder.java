@@ -55,6 +55,82 @@ public class QwpGorillaEncoder {
     }
 
     /**
+     * Calculates the encoded size in bytes for Gorilla-encoded timestamps.
+     * <p>
+     * Note: This does NOT include the encoding flag byte. Add 1 byte if
+     * the encoding flag is needed.
+     *
+     * @param timestamps array of timestamp values
+     * @param count      number of timestamps
+     * @return encoded size in bytes (excluding encoding flag)
+     */
+    public static int calculateEncodedSize(long[] timestamps, int count) {
+        if (count == 0) {
+            return 0;
+        }
+
+        int size = 8; // first timestamp
+
+        if (count == 1) {
+            return size;
+        }
+
+        size += 8; // second timestamp
+
+        if (count == 2) {
+            return size;
+        }
+
+        // Calculate bits for delta-of-delta encoding
+        long prevTimestamp = timestamps[1];
+        long prevDelta = timestamps[1] - timestamps[0];
+        int totalBits = 0;
+
+        for (int i = 2; i < count; i++) {
+            long delta = timestamps[i] - prevTimestamp;
+            long deltaOfDelta = delta - prevDelta;
+
+            totalBits += QwpGorillaDecoder.getBitsRequired(deltaOfDelta);
+
+            prevDelta = delta;
+            prevTimestamp = timestamps[i];
+        }
+
+        // Round up to bytes
+        size += (totalBits + 7) / 8;
+
+        return size;
+    }
+
+    /**
+     * Checks if Gorilla encoding can be used for the given timestamps.
+     * <p>
+     * Gorilla encoding uses 32-bit signed integers for delta-of-delta values,
+     * so it cannot encode timestamps where the delta-of-delta exceeds the
+     * 32-bit signed integer range.
+     *
+     * @param timestamps array of timestamp values
+     * @param count      number of timestamps
+     * @return true if Gorilla encoding can be used, false otherwise
+     */
+    public static boolean canUseGorilla(long[] timestamps, int count) {
+        if (count < 3) {
+            return true; // No DoD encoding needed for 0, 1, or 2 timestamps
+        }
+
+        long prevDelta = timestamps[1] - timestamps[0];
+        for (int i = 2; i < count; i++) {
+            long delta = timestamps[i] - timestamps[i - 1];
+            long dod = delta - prevDelta;
+            if (dod < Integer.MIN_VALUE || dod > Integer.MAX_VALUE) {
+                return false;
+            }
+            prevDelta = delta;
+        }
+        return true;
+    }
+
+    /**
      * Encodes a delta-of-delta value using bucket selection.
      * <p>
      * Prefix patterns are written LSB-first to match the decoder's read order:
@@ -155,81 +231,5 @@ public class QwpGorillaEncoder {
         }
 
         return pos + bitWriter.finish();
-    }
-
-    /**
-     * Checks if Gorilla encoding can be used for the given timestamps.
-     * <p>
-     * Gorilla encoding uses 32-bit signed integers for delta-of-delta values,
-     * so it cannot encode timestamps where the delta-of-delta exceeds the
-     * 32-bit signed integer range.
-     *
-     * @param timestamps array of timestamp values
-     * @param count      number of timestamps
-     * @return true if Gorilla encoding can be used, false otherwise
-     */
-    public static boolean canUseGorilla(long[] timestamps, int count) {
-        if (count < 3) {
-            return true; // No DoD encoding needed for 0, 1, or 2 timestamps
-        }
-
-        long prevDelta = timestamps[1] - timestamps[0];
-        for (int i = 2; i < count; i++) {
-            long delta = timestamps[i] - timestamps[i - 1];
-            long dod = delta - prevDelta;
-            if (dod < Integer.MIN_VALUE || dod > Integer.MAX_VALUE) {
-                return false;
-            }
-            prevDelta = delta;
-        }
-        return true;
-    }
-
-    /**
-     * Calculates the encoded size in bytes for Gorilla-encoded timestamps.
-     * <p>
-     * Note: This does NOT include the encoding flag byte. Add 1 byte if
-     * the encoding flag is needed.
-     *
-     * @param timestamps array of timestamp values
-     * @param count      number of timestamps
-     * @return encoded size in bytes (excluding encoding flag)
-     */
-    public static int calculateEncodedSize(long[] timestamps, int count) {
-        if (count == 0) {
-            return 0;
-        }
-
-        int size = 8; // first timestamp
-
-        if (count == 1) {
-            return size;
-        }
-
-        size += 8; // second timestamp
-
-        if (count == 2) {
-            return size;
-        }
-
-        // Calculate bits for delta-of-delta encoding
-        long prevTimestamp = timestamps[1];
-        long prevDelta = timestamps[1] - timestamps[0];
-        int totalBits = 0;
-
-        for (int i = 2; i < count; i++) {
-            long delta = timestamps[i] - prevTimestamp;
-            long deltaOfDelta = delta - prevDelta;
-
-            totalBits += QwpGorillaDecoder.getBitsRequired(deltaOfDelta);
-
-            prevDelta = delta;
-            prevTimestamp = timestamps[i];
-        }
-
-        // Round up to bytes
-        size += (totalBits + 7) / 8;
-
-        return size;
     }
 }

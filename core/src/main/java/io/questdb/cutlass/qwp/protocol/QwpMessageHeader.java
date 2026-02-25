@@ -46,14 +46,13 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  */
 public class QwpMessageHeader {
 
-    private int magic;
-    private byte version;
     private byte flags;
-    private int tableCount;
-    private long payloadLength;
-
+    private int magic;
     // Configuration limits
     private long maxPayloadLength = DEFAULT_MAX_BATCH_SIZE;
+    private long payloadLength;
+    private int tableCount;
+    private byte version;
 
     /**
      * Creates a new header parser with default limits.
@@ -62,14 +61,146 @@ public class QwpMessageHeader {
     }
 
     /**
-     * Sets the maximum allowed payload length.
+     * Checks if the given 4 bytes match the capability request magic.
      *
-     * @param maxPayloadLength max payload in bytes
-     * @return this for chaining
+     * @param magic the magic integer to check
+     * @return true if it's a capability request
      */
-    public QwpMessageHeader setMaxPayloadLength(long maxPayloadLength) {
-        this.maxPayloadLength = maxPayloadLength;
-        return this;
+    public static boolean isCapabilityRequestMagic(int magic) {
+        return magic == MAGIC_CAPABILITY_REQUEST;
+    }
+
+    /**
+     * Checks if the given 4 bytes match the ILP v4 message magic.
+     *
+     * @param magic the magic integer to check
+     * @return true if it's an ILP v4 message
+     */
+    public static boolean isMessageMagic(int magic) {
+        return magic == MAGIC_MESSAGE;
+    }
+
+    /**
+     * Reads the magic integer from direct memory.
+     *
+     * @param address memory address
+     * @return magic integer (little-endian)
+     */
+    public static int readMagic(long address) {
+        return Unsafe.getUnsafe().getInt(address);
+    }
+
+    /**
+     * Reads the magic integer from a byte array.
+     *
+     * @param buf    buffer
+     * @param offset starting offset
+     * @return magic integer (little-endian)
+     */
+    public static int readMagic(byte[] buf, int offset) {
+        return (buf[offset] & 0xFF) |
+                ((buf[offset + 1] & 0xFF) << 8) |
+                ((buf[offset + 2] & 0xFF) << 16) |
+                ((buf[offset + 3] & 0xFF) << 24);
+    }
+
+    /**
+     * Returns the flags byte.
+     *
+     * @return flags
+     */
+    public byte getFlags() {
+        return flags;
+    }
+
+    /**
+     * Returns the magic bytes as an integer.
+     *
+     * @return magic integer
+     */
+    public int getMagic() {
+        return magic;
+    }
+
+    /**
+     * Returns the payload length in bytes.
+     *
+     * @return payload length
+     */
+    public long getPayloadLength() {
+        return payloadLength;
+    }
+
+    /**
+     * Returns the number of tables in this batch.
+     *
+     * @return table count (0-65535)
+     */
+    public int getTableCount() {
+        return tableCount;
+    }
+
+    /**
+     * Returns the total message length (header + payload).
+     *
+     * @return total message size in bytes
+     */
+    public long getTotalLength() {
+        return HEADER_SIZE + payloadLength;
+    }
+
+    /**
+     * Returns the protocol version.
+     *
+     * @return version number
+     */
+    public byte getVersion() {
+        return version;
+    }
+
+    /**
+     * Returns true if any compression is enabled.
+     *
+     * @return true if compressed
+     */
+    public boolean isCompressed() {
+        return (flags & FLAG_COMPRESSION_MASK) != 0;
+    }
+
+    /**
+     * Returns true if delta symbol dictionary encoding is enabled.
+     *
+     * @return true if delta symbol dictionary mode
+     */
+    public boolean isDeltaSymbolDictEnabled() {
+        return (flags & FLAG_DELTA_SYMBOL_DICT) != 0;
+    }
+
+    /**
+     * Returns true if Gorilla timestamp encoding is enabled.
+     *
+     * @return true if Gorilla timestamps
+     */
+    public boolean isGorillaEnabled() {
+        return (flags & FLAG_GORILLA) != 0;
+    }
+
+    /**
+     * Returns true if LZ4 compression is enabled.
+     *
+     * @return true if compressed with LZ4
+     */
+    public boolean isLZ4Compressed() {
+        return (flags & FLAG_LZ4) != 0;
+    }
+
+    /**
+     * Returns true if Zstd compression is enabled.
+     *
+     * @return true if compressed with Zstd
+     */
+    public boolean isZstdCompressed() {
+        return (flags & FLAG_ZSTD) != 0;
     }
 
     /**
@@ -130,137 +261,6 @@ public class QwpMessageHeader {
     }
 
     /**
-     * Validates the parsed header values.
-     *
-     * @throws QwpParseException if validation fails
-     */
-    private void validate() throws QwpParseException {
-        // Validate magic bytes
-        if (magic != MAGIC_MESSAGE) {
-            throw QwpParseException.invalidMagic();
-        }
-
-        // Validate version
-        if (version != VERSION_1) {
-            throw QwpParseException.unsupportedVersion();
-        }
-
-        // Validate payload length
-        if (payloadLength > maxPayloadLength) {
-            throw QwpParseException.payloadTooLarge();
-        }
-
-        // Validate compression flags (can't have both LZ4 and Zstd)
-        if ((flags & FLAG_LZ4) != 0 && (flags & FLAG_ZSTD) != 0) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_MAGIC,
-                    "invalid flags: both LZ4 and Zstd compression set"
-            );
-        }
-    }
-
-    // ==================== Getters ====================
-
-    /**
-     * Returns the magic bytes as an integer.
-     *
-     * @return magic integer
-     */
-    public int getMagic() {
-        return magic;
-    }
-
-    /**
-     * Returns the protocol version.
-     *
-     * @return version number
-     */
-    public byte getVersion() {
-        return version;
-    }
-
-    /**
-     * Returns the flags byte.
-     *
-     * @return flags
-     */
-    public byte getFlags() {
-        return flags;
-    }
-
-    /**
-     * Returns true if LZ4 compression is enabled.
-     *
-     * @return true if compressed with LZ4
-     */
-    public boolean isLZ4Compressed() {
-        return (flags & FLAG_LZ4) != 0;
-    }
-
-    /**
-     * Returns true if Zstd compression is enabled.
-     *
-     * @return true if compressed with Zstd
-     */
-    public boolean isZstdCompressed() {
-        return (flags & FLAG_ZSTD) != 0;
-    }
-
-    /**
-     * Returns true if any compression is enabled.
-     *
-     * @return true if compressed
-     */
-    public boolean isCompressed() {
-        return (flags & FLAG_COMPRESSION_MASK) != 0;
-    }
-
-    /**
-     * Returns true if Gorilla timestamp encoding is enabled.
-     *
-     * @return true if Gorilla timestamps
-     */
-    public boolean isGorillaEnabled() {
-        return (flags & FLAG_GORILLA) != 0;
-    }
-
-    /**
-     * Returns true if delta symbol dictionary encoding is enabled.
-     *
-     * @return true if delta symbol dictionary mode
-     */
-    public boolean isDeltaSymbolDictEnabled() {
-        return (flags & FLAG_DELTA_SYMBOL_DICT) != 0;
-    }
-
-    /**
-     * Returns the number of tables in this batch.
-     *
-     * @return table count (0-65535)
-     */
-    public int getTableCount() {
-        return tableCount;
-    }
-
-    /**
-     * Returns the payload length in bytes.
-     *
-     * @return payload length
-     */
-    public long getPayloadLength() {
-        return payloadLength;
-    }
-
-    /**
-     * Returns the total message length (header + payload).
-     *
-     * @return total message size in bytes
-     */
-    public long getTotalLength() {
-        return HEADER_SIZE + payloadLength;
-    }
-
-    /**
      * Resets the header for reuse.
      */
     public void reset() {
@@ -269,6 +269,17 @@ public class QwpMessageHeader {
         flags = 0;
         tableCount = 0;
         payloadLength = 0;
+    }
+
+    /**
+     * Sets the maximum allowed payload length.
+     *
+     * @param maxPayloadLength max payload in bytes
+     * @return this for chaining
+     */
+    public QwpMessageHeader setMaxPayloadLength(long maxPayloadLength) {
+        this.maxPayloadLength = maxPayloadLength;
+        return this;
     }
 
     @Override
@@ -308,49 +319,33 @@ public class QwpMessageHeader {
         return new String(chars);
     }
 
-    // ==================== Static Utility Methods ====================
-
     /**
-     * Checks if the given 4 bytes match the ILP v4 message magic.
+     * Validates the parsed header values.
      *
-     * @param magic the magic integer to check
-     * @return true if it's an ILP v4 message
+     * @throws QwpParseException if validation fails
      */
-    public static boolean isMessageMagic(int magic) {
-        return magic == MAGIC_MESSAGE;
-    }
+    private void validate() throws QwpParseException {
+        // Validate magic bytes
+        if (magic != MAGIC_MESSAGE) {
+            throw QwpParseException.invalidMagic();
+        }
 
-    /**
-     * Checks if the given 4 bytes match the capability request magic.
-     *
-     * @param magic the magic integer to check
-     * @return true if it's a capability request
-     */
-    public static boolean isCapabilityRequestMagic(int magic) {
-        return magic == MAGIC_CAPABILITY_REQUEST;
-    }
+        // Validate version
+        if (version != VERSION_1) {
+            throw QwpParseException.unsupportedVersion();
+        }
 
-    /**
-     * Reads the magic integer from direct memory.
-     *
-     * @param address memory address
-     * @return magic integer (little-endian)
-     */
-    public static int readMagic(long address) {
-        return Unsafe.getUnsafe().getInt(address);
-    }
+        // Validate payload length
+        if (payloadLength > maxPayloadLength) {
+            throw QwpParseException.payloadTooLarge();
+        }
 
-    /**
-     * Reads the magic integer from a byte array.
-     *
-     * @param buf    buffer
-     * @param offset starting offset
-     * @return magic integer (little-endian)
-     */
-    public static int readMagic(byte[] buf, int offset) {
-        return (buf[offset] & 0xFF) |
-                ((buf[offset + 1] & 0xFF) << 8) |
-                ((buf[offset + 2] & 0xFF) << 16) |
-                ((buf[offset + 3] & 0xFF) << 24);
+        // Validate compression flags (can't have both LZ4 and Zstd)
+        if ((flags & FLAG_LZ4) != 0 && (flags & FLAG_ZSTD) != 0) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_MAGIC,
+                    "invalid flags: both LZ4 and Zstd compression set"
+            );
+        }
     }
 }

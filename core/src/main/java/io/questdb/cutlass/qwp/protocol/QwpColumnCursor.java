@@ -48,6 +48,32 @@ import io.questdb.std.str.DirectUtf8Sequence;
 public interface QwpColumnCursor extends Mutable {
 
     /**
+     * Advances to the next row.
+     * <p>
+     * Must be called before reading each row's value. The first call
+     * advances to row 0.
+     *
+     * @return true if the current row's value is NULL
+     * @throws QwpParseException if parsing fails during row advance
+     */
+    boolean advanceRow() throws QwpParseException;
+
+    /**
+     * Clears all state. Implements {@link Mutable#clear()}.
+     */
+    @Override
+    void clear();
+
+    /**
+     * Returns the current row index (0-based).
+     * <p>
+     * Returns -1 before the first {@link #advanceRow()} call.
+     *
+     * @return current row index
+     */
+    int getCurrentRow();
+
+    /**
      * Returns the column name as a UTF-8 sequence.
      * <p>
      * The returned sequence is a flyweight pointing to wire memory.
@@ -66,13 +92,6 @@ public interface QwpColumnCursor extends Mutable {
     byte getTypeCode();
 
     /**
-     * Returns whether this column is nullable.
-     *
-     * @return true if column can contain NULL values
-     */
-    boolean isNullable();
-
-    /**
      * Returns whether the current row's value is NULL.
      * <p>
      * Must be called after {@link #advanceRow()}.
@@ -82,24 +101,11 @@ public interface QwpColumnCursor extends Mutable {
     boolean isNull();
 
     /**
-     * Advances to the next row.
-     * <p>
-     * Must be called before reading each row's value. The first call
-     * advances to row 0.
+     * Returns whether this column is nullable.
      *
-     * @return true if the current row's value is NULL
-     * @throws QwpParseException if parsing fails during row advance
+     * @return true if column can contain NULL values
      */
-    boolean advanceRow() throws QwpParseException;
-
-    /**
-     * Returns the current row index (0-based).
-     * <p>
-     * Returns -1 before the first {@link #advanceRow()} call.
-     *
-     * @return current row index
-     */
-    int getCurrentRow();
+    boolean isNullable();
 
     /**
      * Resets the cursor to before the first row.
@@ -108,10 +114,4 @@ public interface QwpColumnCursor extends Mutable {
      * to position on row 0.
      */
     void resetRowPosition();
-
-    /**
-     * Clears all state. Implements {@link Mutable#clear()}.
-     */
-    @Override
-    void clear();
 }

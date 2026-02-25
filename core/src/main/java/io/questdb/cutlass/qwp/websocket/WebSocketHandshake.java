@@ -40,28 +40,24 @@ import java.util.Base64;
  * generating proper handshake responses.
  */
 public final class WebSocketHandshake {
+    public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
+    public static final Utf8String HEADER_SEC_WEBSOCKET_ACCEPT = new Utf8String("Sec-WebSocket-Accept");
+    public static final Utf8String HEADER_SEC_WEBSOCKET_KEY = new Utf8String("Sec-WebSocket-Key");
+    public static final Utf8String HEADER_SEC_WEBSOCKET_PROTOCOL = new Utf8String("Sec-WebSocket-Protocol");
+    public static final Utf8String HEADER_SEC_WEBSOCKET_VERSION = new Utf8String("Sec-WebSocket-Version");
+    // Header names (case-insensitive)
+    public static final Utf8String HEADER_UPGRADE = new Utf8String("Upgrade");
+    public static final Utf8String VALUE_UPGRADE = new Utf8String("upgrade");
+    // Header values
+    public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
     /**
      * The WebSocket magic GUID used in the Sec-WebSocket-Accept calculation.
      */
     public static final String WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-
     /**
      * The required WebSocket version (RFC 6455).
      */
     public static final int WEBSOCKET_VERSION = 13;
-
-    // Header names (case-insensitive)
-    public static final Utf8String HEADER_UPGRADE = new Utf8String("Upgrade");
-    public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
-    public static final Utf8String HEADER_SEC_WEBSOCKET_KEY = new Utf8String("Sec-WebSocket-Key");
-    public static final Utf8String HEADER_SEC_WEBSOCKET_VERSION = new Utf8String("Sec-WebSocket-Version");
-    public static final Utf8String HEADER_SEC_WEBSOCKET_PROTOCOL = new Utf8String("Sec-WebSocket-Protocol");
-    public static final Utf8String HEADER_SEC_WEBSOCKET_ACCEPT = new Utf8String("Sec-WebSocket-Accept");
-
-    // Header values
-    public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
-    public static final Utf8String VALUE_UPGRADE = new Utf8String("upgrade");
-
     // Response template
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
@@ -78,121 +74,6 @@ public final class WebSocketHandshake {
 
     private WebSocketHandshake() {
         // Static utility class
-    }
-
-    /**
-     * Checks if the given header indicates a WebSocket upgrade request.
-     *
-     * @param upgradeHeader the value of the Upgrade header
-     * @return true if this is a WebSocket upgrade request
-     */
-    public static boolean isWebSocketUpgrade(Utf8Sequence upgradeHeader) {
-        return upgradeHeader != null && Utf8s.equalsIgnoreCaseAscii(upgradeHeader, VALUE_WEBSOCKET);
-    }
-
-    /**
-     * Checks if the Connection header contains "upgrade".
-     *
-     * @param connectionHeader the value of the Connection header
-     * @return true if the connection should be upgraded
-     */
-    public static boolean isConnectionUpgrade(Utf8Sequence connectionHeader) {
-        if (connectionHeader == null) {
-            return false;
-        }
-        // Connection header may contain multiple values, e.g., "keep-alive, Upgrade"
-        // Perform case-insensitive substring search
-        return containsIgnoreCaseAscii(connectionHeader, VALUE_UPGRADE);
-    }
-
-    /**
-     * Checks if the sequence contains the given substring (case-insensitive).
-     */
-    private static boolean containsIgnoreCaseAscii(Utf8Sequence seq, Utf8Sequence substring) {
-        int seqLen = seq.size();
-        int subLen = substring.size();
-
-        if (subLen > seqLen) {
-            return false;
-        }
-        if (subLen == 0) {
-            return true;
-        }
-
-        outer:
-        for (int i = 0; i <= seqLen - subLen; i++) {
-            for (int j = 0; j < subLen; j++) {
-                byte a = seq.byteAt(i + j);
-                byte b = substring.byteAt(j);
-                // Convert to lowercase for comparison
-                if (a >= 'A' && a <= 'Z') {
-                    a = (byte) (a + 32);
-                }
-                if (b >= 'A' && b <= 'Z') {
-                    b = (byte) (b + 32);
-                }
-                if (a != b) {
-                    continue outer;
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Validates the WebSocket version.
-     *
-     * @param versionHeader the Sec-WebSocket-Version header value
-     * @return true if the version is valid (13)
-     */
-    public static boolean isValidVersion(Utf8Sequence versionHeader) {
-        if (versionHeader == null || versionHeader.size() == 0) {
-            return false;
-        }
-        // Parse the version number
-        try {
-            int version = 0;
-            for (int i = 0; i < versionHeader.size(); i++) {
-                byte b = versionHeader.byteAt(i);
-                if (b < '0' || b > '9') {
-                    return false;
-                }
-                version = version * 10 + (b - '0');
-            }
-            return version == WEBSOCKET_VERSION;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /**
-     * Validates the Sec-WebSocket-Key header.
-     * The key must be a base64-encoded 16-byte value.
-     *
-     * @param key the Sec-WebSocket-Key header value
-     * @return true if the key is valid
-     */
-    public static boolean isValidKey(Utf8Sequence key) {
-        if (key == null) {
-            return false;
-        }
-        // Base64-encoded 16-byte value should be exactly 24 characters
-        // (16 bytes = 128 bits = 22 base64 chars + 2 padding = 24)
-        int size = key.size();
-        if (size != 24) {
-            return false;
-        }
-        // Basic validation: check that all characters are valid base64
-        for (int i = 0; i < size; i++) {
-            byte b = key.byteAt(i);
-            boolean valid = (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') ||
-                    (b >= '0' && b <= '9') || b == '+' || b == '/' || b == '=';
-            if (!valid) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**
@@ -238,6 +119,174 @@ public final class WebSocketHandshake {
     }
 
     /**
+     * Checks if the Connection header contains "upgrade".
+     *
+     * @param connectionHeader the value of the Connection header
+     * @return true if the connection should be upgraded
+     */
+    public static boolean isConnectionUpgrade(Utf8Sequence connectionHeader) {
+        if (connectionHeader == null) {
+            return false;
+        }
+        // Connection header may contain multiple values, e.g., "keep-alive, Upgrade"
+        // Perform case-insensitive substring search
+        return containsIgnoreCaseAscii(connectionHeader, VALUE_UPGRADE);
+    }
+
+    /**
+     * Validates the Sec-WebSocket-Key header.
+     * The key must be a base64-encoded 16-byte value.
+     *
+     * @param key the Sec-WebSocket-Key header value
+     * @return true if the key is valid
+     */
+    public static boolean isValidKey(Utf8Sequence key) {
+        if (key == null) {
+            return false;
+        }
+        // Base64-encoded 16-byte value should be exactly 24 characters
+        // (16 bytes = 128 bits = 22 base64 chars + 2 padding = 24)
+        int size = key.size();
+        if (size != 24) {
+            return false;
+        }
+        // Basic validation: check that all characters are valid base64
+        for (int i = 0; i < size; i++) {
+            byte b = key.byteAt(i);
+            boolean valid = (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') ||
+                    (b >= '0' && b <= '9') || b == '+' || b == '/' || b == '=';
+            if (!valid) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Validates the WebSocket version.
+     *
+     * @param versionHeader the Sec-WebSocket-Version header value
+     * @return true if the version is valid (13)
+     */
+    public static boolean isValidVersion(Utf8Sequence versionHeader) {
+        if (versionHeader == null || versionHeader.size() == 0) {
+            return false;
+        }
+        // Parse the version number
+        try {
+            int version = 0;
+            for (int i = 0; i < versionHeader.size(); i++) {
+                byte b = versionHeader.byteAt(i);
+                if (b < '0' || b > '9') {
+                    return false;
+                }
+                version = version * 10 + (b - '0');
+            }
+            return version == WEBSOCKET_VERSION;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Checks if the given header indicates a WebSocket upgrade request.
+     *
+     * @param upgradeHeader the value of the Upgrade header
+     * @return true if this is a WebSocket upgrade request
+     */
+    public static boolean isWebSocketUpgrade(Utf8Sequence upgradeHeader) {
+        return upgradeHeader != null && Utf8s.equalsIgnoreCaseAscii(upgradeHeader, VALUE_WEBSOCKET);
+    }
+
+    /**
+     * Returns the size of the handshake response for the given accept key.
+     *
+     * @param acceptKey the computed accept key
+     * @return the total response size in bytes
+     */
+    public static int responseSize(String acceptKey) {
+        return RESPONSE_PREFIX.length + acceptKey.length() + RESPONSE_SUFFIX.length;
+    }
+
+    /**
+     * Returns the size of the handshake response with an optional subprotocol.
+     *
+     * @param acceptKey the computed accept key
+     * @param protocol  the negotiated subprotocol (may be null or empty)
+     * @return the total response size in bytes
+     */
+    public static int responseSizeWithProtocol(String acceptKey, String protocol) {
+        int size = RESPONSE_PREFIX.length + acceptKey.length() + RESPONSE_SUFFIX.length;
+        if (protocol != null && !protocol.isEmpty()) {
+            size += "\r\nSec-WebSocket-Protocol: ".length() + protocol.length();
+        }
+        return size;
+    }
+
+    /**
+     * Validates all required headers for a WebSocket upgrade request.
+     *
+     * @param upgradeHeader    the Upgrade header value
+     * @param connectionHeader the Connection header value
+     * @param keyHeader        the Sec-WebSocket-Key header value
+     * @param versionHeader    the Sec-WebSocket-Version header value
+     * @return null if valid, or an error message describing the problem
+     */
+    public static String validate(
+            Utf8Sequence upgradeHeader,
+            Utf8Sequence connectionHeader,
+            Utf8Sequence keyHeader,
+            Utf8Sequence versionHeader
+    ) {
+        if (!isWebSocketUpgrade(upgradeHeader)) {
+            return "Missing or invalid Upgrade header";
+        }
+        if (!isConnectionUpgrade(connectionHeader)) {
+            return "Missing or invalid Connection header";
+        }
+        if (!isValidKey(keyHeader)) {
+            return "Missing or invalid Sec-WebSocket-Key header";
+        }
+        if (!isValidVersion(versionHeader)) {
+            return "Unsupported WebSocket version";
+        }
+        return null;
+    }
+
+    /**
+     * Writes a 400 Bad Request response.
+     *
+     * @param buf    the buffer to write to
+     * @param reason the reason for the bad request
+     * @return the number of bytes written
+     */
+    public static int writeBadRequestResponse(long buf, String reason) {
+        int offset = 0;
+
+        byte[] statusLine = "HTTP/1.1 400 Bad Request\r\n".getBytes(StandardCharsets.US_ASCII);
+        for (byte b : statusLine) {
+            Unsafe.getUnsafe().putByte(buf + offset++, b);
+        }
+
+        byte[] contentType = "Content-Type: text/plain\r\n".getBytes(StandardCharsets.US_ASCII);
+        for (byte b : contentType) {
+            Unsafe.getUnsafe().putByte(buf + offset++, b);
+        }
+
+        byte[] reasonBytes = reason != null ? reason.getBytes(StandardCharsets.UTF_8) : new byte[0];
+        byte[] contentLength = ("Content-Length: " + reasonBytes.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII);
+        for (byte b : contentLength) {
+            Unsafe.getUnsafe().putByte(buf + offset++, b);
+        }
+
+        for (byte b : reasonBytes) {
+            Unsafe.getUnsafe().putByte(buf + offset++, b);
+        }
+
+        return offset;
+    }
+
+    /**
      * Writes the WebSocket handshake response to the given buffer.
      *
      * @param buf       the buffer to write to
@@ -264,16 +313,6 @@ public final class WebSocketHandshake {
         }
 
         return offset;
-    }
-
-    /**
-     * Returns the size of the handshake response for the given accept key.
-     *
-     * @param acceptKey the computed accept key
-     * @return the total response size in bytes
-     */
-    public static int responseSize(String acceptKey) {
-        return RESPONSE_PREFIX.length + acceptKey.length() + RESPONSE_SUFFIX.length;
     }
 
     /**
@@ -315,54 +354,6 @@ public final class WebSocketHandshake {
     }
 
     /**
-     * Returns the size of the handshake response with an optional subprotocol.
-     *
-     * @param acceptKey the computed accept key
-     * @param protocol  the negotiated subprotocol (may be null or empty)
-     * @return the total response size in bytes
-     */
-    public static int responseSizeWithProtocol(String acceptKey, String protocol) {
-        int size = RESPONSE_PREFIX.length + acceptKey.length() + RESPONSE_SUFFIX.length;
-        if (protocol != null && !protocol.isEmpty()) {
-            size += "\r\nSec-WebSocket-Protocol: ".length() + protocol.length();
-        }
-        return size;
-    }
-
-    /**
-     * Writes a 400 Bad Request response.
-     *
-     * @param buf    the buffer to write to
-     * @param reason the reason for the bad request
-     * @return the number of bytes written
-     */
-    public static int writeBadRequestResponse(long buf, String reason) {
-        int offset = 0;
-
-        byte[] statusLine = "HTTP/1.1 400 Bad Request\r\n".getBytes(StandardCharsets.US_ASCII);
-        for (byte b : statusLine) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        byte[] contentType = "Content-Type: text/plain\r\n".getBytes(StandardCharsets.US_ASCII);
-        for (byte b : contentType) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        byte[] reasonBytes = reason != null ? reason.getBytes(StandardCharsets.UTF_8) : new byte[0];
-        byte[] contentLength = ("Content-Length: " + reasonBytes.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII);
-        for (byte b : contentLength) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        for (byte b : reasonBytes) {
-            Unsafe.getUnsafe().putByte(buf + offset++, b);
-        }
-
-        return offset;
-    }
-
-    /**
      * Writes a 426 Upgrade Required response indicating unsupported WebSocket version.
      *
      * @param buf the buffer to write to
@@ -390,32 +381,37 @@ public final class WebSocketHandshake {
     }
 
     /**
-     * Validates all required headers for a WebSocket upgrade request.
-     *
-     * @param upgradeHeader   the Upgrade header value
-     * @param connectionHeader the Connection header value
-     * @param keyHeader       the Sec-WebSocket-Key header value
-     * @param versionHeader   the Sec-WebSocket-Version header value
-     * @return null if valid, or an error message describing the problem
+     * Checks if the sequence contains the given substring (case-insensitive).
      */
-    public static String validate(
-            Utf8Sequence upgradeHeader,
-            Utf8Sequence connectionHeader,
-            Utf8Sequence keyHeader,
-            Utf8Sequence versionHeader
-    ) {
-        if (!isWebSocketUpgrade(upgradeHeader)) {
-            return "Missing or invalid Upgrade header";
+    private static boolean containsIgnoreCaseAscii(Utf8Sequence seq, Utf8Sequence substring) {
+        int seqLen = seq.size();
+        int subLen = substring.size();
+
+        if (subLen > seqLen) {
+            return false;
         }
-        if (!isConnectionUpgrade(connectionHeader)) {
-            return "Missing or invalid Connection header";
+        if (subLen == 0) {
+            return true;
         }
-        if (!isValidKey(keyHeader)) {
-            return "Missing or invalid Sec-WebSocket-Key header";
+
+        outer:
+        for (int i = 0; i <= seqLen - subLen; i++) {
+            for (int j = 0; j < subLen; j++) {
+                byte a = seq.byteAt(i + j);
+                byte b = substring.byteAt(j);
+                // Convert to lowercase for comparison
+                if (a >= 'A' && a <= 'Z') {
+                    a = (byte) (a + 32);
+                }
+                if (b >= 'A' && b <= 'Z') {
+                    b = (byte) (b + 32);
+                }
+                if (a != b) {
+                    continue outer;
+                }
+            }
+            return true;
         }
-        if (!isValidVersion(versionHeader)) {
-            return "Unsupported WebSocket version";
-        }
-        return null;
+        return false;
     }
 }

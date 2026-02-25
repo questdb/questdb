@@ -43,13 +43,21 @@ public interface WebSocketProcessor {
     void onBinaryMessage(long payload, int length);
 
     /**
-     * Called when a complete text message is received.
-     * For fragmented messages, this is called after all fragments are assembled.
+     * Called when a CLOSE frame is received.
      *
-     * @param payload pointer to the UTF-8 encoded payload data
-     * @param length  the payload length
+     * @param code         the close status code, or -1 if no code was provided
+     * @param reason       pointer to the UTF-8 encoded close reason, or 0 if none
+     * @param reasonLength the length of the reason string
      */
-    void onTextMessage(long payload, int length);
+    void onClose(int code, long reason, int reasonLength);
+
+    /**
+     * Called when a protocol error occurs.
+     *
+     * @param errorCode the WebSocket close code that describes the error
+     * @param message   human-readable error description
+     */
+    void onError(int errorCode, CharSequence message);
 
     /**
      * Called when a PING frame is received.
@@ -69,19 +77,11 @@ public interface WebSocketProcessor {
     void onPong(long payload, int length);
 
     /**
-     * Called when a CLOSE frame is received.
+     * Called when a complete text message is received.
+     * For fragmented messages, this is called after all fragments are assembled.
      *
-     * @param code   the close status code, or -1 if no code was provided
-     * @param reason pointer to the UTF-8 encoded close reason, or 0 if none
-     * @param reasonLength the length of the reason string
+     * @param payload pointer to the UTF-8 encoded payload data
+     * @param length  the payload length
      */
-    void onClose(int code, long reason, int reasonLength);
-
-    /**
-     * Called when a protocol error occurs.
-     *
-     * @param errorCode the WebSocket close code that describes the error
-     * @param message   human-readable error description
-     */
-    void onError(int errorCode, CharSequence message);
+    void onTextMessage(long payload, int length);
 }

@@ -47,14 +47,13 @@ import io.questdb.std.Unsafe;
  */
 public class QwpBitWriter {
 
-    private long startAddress;
-    private long currentAddress;
-    private long endAddress;
-
     // Buffer for accumulating bits before writing
     private long bitBuffer;
     // Number of bits currently in the buffer (0-63)
     private int bitsInBuffer;
+    private long currentAddress;
+    private long endAddress;
+    private long startAddress;
 
     /**
      * Creates a new bit writer. Call {@link #reset} before use.
@@ -63,17 +62,51 @@ public class QwpBitWriter {
     }
 
     /**
-     * Resets the writer to write to the specified memory region.
-     *
-     * @param address  the starting address
-     * @param capacity the maximum number of bytes to write
+     * Aligns the writer to the next byte boundary by padding with zeros.
+     * If already byte-aligned, this is a no-op.
      */
-    public void reset(long address, long capacity) {
-        this.startAddress = address;
-        this.currentAddress = address;
-        this.endAddress = address + capacity;
-        this.bitBuffer = 0;
-        this.bitsInBuffer = 0;
+    public void alignToByte() {
+        if (bitsInBuffer > 0) {
+            flush();
+        }
+    }
+
+    /**
+     * Finishes writing and returns the number of bytes written since reset.
+     * <p>
+     * This method flushes any remaining bits and returns the total byte count.
+     *
+     * @return bytes written since reset
+     */
+    public int finish() {
+        flush();
+        return (int) (currentAddress - startAddress);
+    }
+
+    /**
+     * Flushes any remaining bits in the buffer to memory.
+     * <p>
+     * If there are partial bits (less than 8), they are written as the last byte
+     * with the remaining high bits set to zero.
+     * <p>
+     * Must be called before reading the output or getting the final position.
+     */
+    public void flush() {
+        if (bitsInBuffer > 0 && currentAddress < endAddress) {
+            Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
+            bitBuffer = 0;
+            bitsInBuffer = 0;
+        }
+    }
+
+    /**
+     * Returns the number of bits remaining in the partial byte buffer.
+     * This is 0 after a flush or when aligned on a byte boundary.
+     *
+     * @return bits in buffer (0-7)
+     */
+    public int getBitsInBuffer() {
+        return bitsInBuffer;
     }
 
     /**
@@ -93,6 +126,20 @@ public class QwpBitWriter {
      */
     public long getTotalBitsWritten() {
         return (currentAddress - startAddress) * 8L + bitsInBuffer;
+    }
+
+    /**
+     * Resets the writer to write to the specified memory region.
+     *
+     * @param address  the starting address
+     * @param capacity the maximum number of bytes to write
+     */
+    public void reset(long address, long capacity) {
+        this.startAddress = address;
+        this.currentAddress = address;
+        this.endAddress = address + capacity;
+        this.bitBuffer = 0;
+        this.bitsInBuffer = 0;
     }
 
     /**
@@ -149,65 +196,6 @@ public class QwpBitWriter {
     }
 
     /**
-     * Writes a signed value using two's complement representation.
-     *
-     * @param value   the signed value
-     * @param numBits number of bits to use for the representation
-     */
-    public void writeSigned(long value, int numBits) {
-        // Two's complement is automatic in Java for the bit pattern
-        writeBits(value, numBits);
-    }
-
-    /**
-     * Flushes any remaining bits in the buffer to memory.
-     * <p>
-     * If there are partial bits (less than 8), they are written as the last byte
-     * with the remaining high bits set to zero.
-     * <p>
-     * Must be called before reading the output or getting the final position.
-     */
-    public void flush() {
-        if (bitsInBuffer > 0 && currentAddress < endAddress) {
-            Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
-            bitBuffer = 0;
-            bitsInBuffer = 0;
-        }
-    }
-
-    /**
-     * Finishes writing and returns the number of bytes written since reset.
-     * <p>
-     * This method flushes any remaining bits and returns the total byte count.
-     *
-     * @return bytes written since reset
-     */
-    public int finish() {
-        flush();
-        return (int) (currentAddress - startAddress);
-    }
-
-    /**
-     * Returns the number of bits remaining in the partial byte buffer.
-     * This is 0 after a flush or when aligned on a byte boundary.
-     *
-     * @return bits in buffer (0-7)
-     */
-    public int getBitsInBuffer() {
-        return bitsInBuffer;
-    }
-
-    /**
-     * Aligns the writer to the next byte boundary by padding with zeros.
-     * If already byte-aligned, this is a no-op.
-     */
-    public void alignToByte() {
-        if (bitsInBuffer > 0) {
-            flush();
-        }
-    }
-
-    /**
      * Writes a complete byte, ensuring byte alignment first.
      *
      * @param value the byte value
@@ -243,5 +231,16 @@ public class QwpBitWriter {
             Unsafe.getUnsafe().putLong(currentAddress, value);
             currentAddress += 8;
         }
+    }
+
+    /**
+     * Writes a signed value using two's complement representation.
+     *
+     * @param value   the signed value
+     * @param numBits number of bits to use for the representation
+     */
+    public void writeSigned(long value, int numBits) {
+        // Two's complement is automatic in Java for the bit pattern
+        writeBits(value, numBits);
     }
 }

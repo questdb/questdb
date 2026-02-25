@@ -45,36 +45,180 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DOUBLE_ARRAY;
  */
 public final class QwpArrayColumnCursor implements QwpColumnCursor {
 
-    private static final int MAX_DIMS = 32;
     private static final int INITIAL_ROW_CAPACITY = 64;
-
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
-
-    // Pre-computed row offsets for fast random access
-    private long[] rowOffsets = new long[INITIAL_ROW_CAPACITY];
-    private int[] rowDims = new int[INITIAL_ROW_CAPACITY]; // nDims per row
-    private int[] rowElementCounts = new int[INITIAL_ROW_CAPACITY]; // total elements per row
-
+    private static final int MAX_DIMS = 32;
     // Shape buffer for current row (reused)
     private final int[] currentShape = new int[MAX_DIMS];
-
-    // Configuration
-    private byte typeCode;
-    private boolean nullable;
-    private int rowCount;
-    private boolean isDoubleArray;
-
-    // Wire pointers
-    private long nullBitmapAddress;
-    private long dataAddress;
-
+    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
+    private int currentElementCount;
+    private boolean currentIsNull;
+    private int currentNDims;
     // Iteration state
     private int currentRow;
     private int currentValueIndex; // index into non-null rows
-    private boolean currentIsNull;
-    private int currentNDims;
-    private int currentElementCount;
     private long currentValuesAddress;
+    private long dataAddress;
+    private boolean isDoubleArray;
+    // Wire pointers
+    private long nullBitmapAddress;
+    private boolean nullable;
+    private int rowCount;
+    private int[] rowDims = new int[INITIAL_ROW_CAPACITY]; // nDims per row
+    private int[] rowElementCounts = new int[INITIAL_ROW_CAPACITY]; // total elements per row
+    // Pre-computed row offsets for fast random access
+    private long[] rowOffsets = new long[INITIAL_ROW_CAPACITY];
+    // Configuration
+    private byte typeCode;
+
+    @Override
+    public boolean advanceRow() throws QwpParseException {
+        currentRow++;
+
+        if (nullable && nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, currentRow)) {
+            currentIsNull = true;
+            currentNDims = 0;
+            currentElementCount = 0;
+            currentValuesAddress = 0;
+            return true;
+        }
+
+        currentIsNull = false;
+        currentNDims = rowDims[currentRow];
+        currentElementCount = rowElementCounts[currentRow];
+
+        // Position to current row's data
+        long rowAddr = dataAddress + rowOffsets[currentRow];
+        rowAddr += 1; // skip nDims byte
+
+        // Read shape
+        for (int d = 0; d < currentNDims; d++) {
+            currentShape[d] = Unsafe.getUnsafe().getInt(rowAddr);
+            rowAddr += 4;
+        }
+
+        currentValuesAddress = rowAddr;
+        currentValueIndex++;
+        return false;
+    }
+
+    @Override
+    public void clear() {
+        nameUtf8.clear();
+        typeCode = TYPE_DOUBLE_ARRAY;
+        nullable = false;
+        rowCount = 0;
+        isDoubleArray = true;
+        nullBitmapAddress = 0;
+        dataAddress = 0;
+        resetRowPosition();
+    }
+
+    @Override
+    public int getCurrentRow() {
+        return currentRow;
+    }
+
+    /**
+     * Returns the size of a specific dimension for the current row's array.
+     *
+     * @param dim dimension index (0-based)
+     * @return dimension size
+     */
+    public int getDimSize(int dim) {
+        return currentShape[dim];
+    }
+
+    /**
+     * Returns the double value at the specified flat index.
+     * <p>
+     * Values are stored in row-major order.
+     *
+     * @param index flat index (0 to totalElements-1)
+     * @return double value
+     */
+    public double getDoubleAt(int index) {
+        return Unsafe.getUnsafe().getDouble(currentValuesAddress + (long) index * 8);
+    }
+
+    /**
+     * Returns the long value at the specified flat index.
+     * <p>
+     * Values are stored in row-major order.
+     *
+     * @param index flat index (0 to totalElements-1)
+     * @return long value
+     */
+    public long getLongAt(int index) {
+        return Unsafe.getUnsafe().getLong(currentValuesAddress + (long) index * 8);
+    }
+
+    /**
+     * Returns the number of dimensions for the current row's array.
+     *
+     * @return number of dimensions (1-32), or 0 if null
+     */
+    public int getNDims() {
+        return currentNDims;
+    }
+
+    @Override
+    public DirectUtf8Sequence getNameUtf8() {
+        return nameUtf8;
+    }
+
+    /**
+     * Returns the shape array for the current row.
+     * <p>
+     * The returned array is reused across rows. Only the first {@link #getNDims()}
+     * elements are valid.
+     *
+     * @return shape array (internal buffer, do not modify)
+     */
+    public int[] getShape() {
+        return currentShape;
+    }
+
+    /**
+     * Returns the total number of elements in the current row's array.
+     *
+     * @return total element count
+     */
+    public int getTotalElements() {
+        return currentElementCount;
+    }
+
+    @Override
+    public byte getTypeCode() {
+        return typeCode;
+    }
+
+    /**
+     * Returns the address of the values data for direct memory access.
+     *
+     * @return memory address of values, or 0 if null
+     */
+    public long getValuesAddress() {
+        return currentValuesAddress;
+    }
+
+    /**
+     * Returns whether this is a double array (vs long array).
+     *
+     * @return true for double array, false for long array
+     */
+    public boolean isDoubleArray() {
+        return isDoubleArray;
+    }
+
+    @Override
+    public boolean isNull() {
+        return currentIsNull;
+    }
+
+    @Override
+    public boolean isNullable() {
+        return nullable;
+    }
 
     /**
      * Initializes this cursor for the given column data.
@@ -194,71 +338,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         return offset;
     }
 
-    private void ensureRowCapacity(int required) {
-        if (rowOffsets.length < required) {
-            int newCapacity = Math.max(required, rowOffsets.length * 2);
-            rowOffsets = new long[newCapacity];
-            rowDims = new int[newCapacity];
-            rowElementCounts = new int[newCapacity];
-        }
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
-    @Override
-    public byte getTypeCode() {
-        return typeCode;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
-    @Override
-    public boolean isNull() {
-        return currentIsNull;
-    }
-
-    @Override
-    public boolean advanceRow() throws QwpParseException {
-        currentRow++;
-
-        if (nullable && nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, currentRow)) {
-            currentIsNull = true;
-            currentNDims = 0;
-            currentElementCount = 0;
-            currentValuesAddress = 0;
-            return true;
-        }
-
-        currentIsNull = false;
-        currentNDims = rowDims[currentRow];
-        currentElementCount = rowElementCounts[currentRow];
-
-        // Position to current row's data
-        long rowAddr = dataAddress + rowOffsets[currentRow];
-        rowAddr += 1; // skip nDims byte
-
-        // Read shape
-        for (int d = 0; d < currentNDims; d++) {
-            currentShape[d] = Unsafe.getUnsafe().getInt(rowAddr);
-            rowAddr += 4;
-        }
-
-        currentValuesAddress = rowAddr;
-        currentValueIndex++;
-        return false;
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
     @Override
     public void resetRowPosition() {
         currentRow = -1;
@@ -269,97 +348,12 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         currentValuesAddress = 0;
     }
 
-    @Override
-    public void clear() {
-        nameUtf8.clear();
-        typeCode = TYPE_DOUBLE_ARRAY;
-        nullable = false;
-        rowCount = 0;
-        isDoubleArray = true;
-        nullBitmapAddress = 0;
-        dataAddress = 0;
-        resetRowPosition();
-    }
-
-    /**
-     * Returns the number of dimensions for the current row's array.
-     *
-     * @return number of dimensions (1-32), or 0 if null
-     */
-    public int getNDims() {
-        return currentNDims;
-    }
-
-    /**
-     * Returns the size of a specific dimension for the current row's array.
-     *
-     * @param dim dimension index (0-based)
-     * @return dimension size
-     */
-    public int getDimSize(int dim) {
-        return currentShape[dim];
-    }
-
-    /**
-     * Returns the shape array for the current row.
-     * <p>
-     * The returned array is reused across rows. Only the first {@link #getNDims()}
-     * elements are valid.
-     *
-     * @return shape array (internal buffer, do not modify)
-     */
-    public int[] getShape() {
-        return currentShape;
-    }
-
-    /**
-     * Returns the total number of elements in the current row's array.
-     *
-     * @return total element count
-     */
-    public int getTotalElements() {
-        return currentElementCount;
-    }
-
-    /**
-     * Returns whether this is a double array (vs long array).
-     *
-     * @return true for double array, false for long array
-     */
-    public boolean isDoubleArray() {
-        return isDoubleArray;
-    }
-
-    /**
-     * Returns the double value at the specified flat index.
-     * <p>
-     * Values are stored in row-major order.
-     *
-     * @param index flat index (0 to totalElements-1)
-     * @return double value
-     */
-    public double getDoubleAt(int index) {
-        return Unsafe.getUnsafe().getDouble(currentValuesAddress + (long) index * 8);
-    }
-
-    /**
-     * Returns the long value at the specified flat index.
-     * <p>
-     * Values are stored in row-major order.
-     *
-     * @param index flat index (0 to totalElements-1)
-     * @return long value
-     */
-    public long getLongAt(int index) {
-        return Unsafe.getUnsafe().getLong(currentValuesAddress + (long) index * 8);
-    }
-
-    /**
-     * Returns the address of the values data for direct memory access.
-     *
-     * @return memory address of values, or 0 if null
-     */
-    public long getValuesAddress() {
-        return currentValuesAddress;
+    private void ensureRowCapacity(int required) {
+        if (rowOffsets.length < required) {
+            int newCapacity = Math.max(required, rowOffsets.length * 2);
+            rowOffsets = new long[newCapacity];
+            rowDims = new int[newCapacity];
+            rowElementCounts = new int[newCapacity];
+        }
     }
 }

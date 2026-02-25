@@ -33,67 +33,40 @@ package io.questdb.cutlass.qwp.protocol;
 public final class QwpStatusCode {
 
     /**
+     * Server error.
+     */
+    public static final byte INTERNAL_ERROR = 0x06;
+    /**
      * Batch accepted successfully.
      */
     public static final byte OK = 0x00;
-
+    /**
+     * Server overloaded, client should retry with backoff.
+     */
+    public static final byte OVERLOADED = 0x07;
+    /**
+     * Malformed message (parsing error).
+     */
+    public static final byte PARSE_ERROR = 0x05;
     /**
      * Some rows failed processing. Error payload contains per-table details.
      */
     public static final byte PARTIAL = 0x01;
-
-    /**
-     * Schema hash not recognized. Client should resend with full schema.
-     */
-    public static final byte SCHEMA_REQUIRED = 0x02;
-
     /**
      * Column type incompatible with existing table schema.
      */
     public static final byte SCHEMA_MISMATCH = 0x03;
-
+    /**
+     * Schema hash not recognized. Client should resend with full schema.
+     */
+    public static final byte SCHEMA_REQUIRED = 0x02;
     /**
      * Table doesn't exist and auto-create is disabled.
      */
     public static final byte TABLE_NOT_FOUND = 0x04;
 
-    /**
-     * Malformed message (parsing error).
-     */
-    public static final byte PARSE_ERROR = 0x05;
-
-    /**
-     * Server error.
-     */
-    public static final byte INTERNAL_ERROR = 0x06;
-
-    /**
-     * Server overloaded, client should retry with backoff.
-     */
-    public static final byte OVERLOADED = 0x07;
-
     private QwpStatusCode() {
         // Prevent instantiation
-    }
-
-    /**
-     * Returns a human-readable name for the status code.
-     *
-     * @param code status code
-     * @return name string
-     */
-    public static String name(byte code) {
-        return switch (code) {
-            case OK -> "OK";
-            case PARTIAL -> "PARTIAL";
-            case SCHEMA_REQUIRED -> "SCHEMA_REQUIRED";
-            case SCHEMA_MISMATCH -> "SCHEMA_MISMATCH";
-            case TABLE_NOT_FOUND -> "TABLE_NOT_FOUND";
-            case PARSE_ERROR -> "PARSE_ERROR";
-            case INTERNAL_ERROR -> "INTERNAL_ERROR";
-            case OVERLOADED -> "OVERLOADED";
-            default -> "UNKNOWN(" + (code & 0xFF) + ")";
-        };
     }
 
     /**
@@ -114,5 +87,25 @@ public final class QwpStatusCode {
      */
     public static boolean isSuccess(byte code) {
         return code == OK || code == PARTIAL;
+    }
+
+    /**
+     * Returns a human-readable name for the status code.
+     *
+     * @param code status code
+     * @return name string
+     */
+    public static String name(byte code) {
+        return switch (code) {
+            case OK -> "OK";
+            case PARTIAL -> "PARTIAL";
+            case SCHEMA_REQUIRED -> "SCHEMA_REQUIRED";
+            case SCHEMA_MISMATCH -> "SCHEMA_MISMATCH";
+            case TABLE_NOT_FOUND -> "TABLE_NOT_FOUND";
+            case PARSE_ERROR -> "PARSE_ERROR";
+            case INTERNAL_ERROR -> "INTERNAL_ERROR";
+            case OVERLOADED -> "OVERLOADED";
+            default -> "UNKNOWN(" + (code & 0xFF) + ")";
+        };
     }
 }

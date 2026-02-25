@@ -51,26 +51,9 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 public final class QwpDecimalColumnCursor implements QwpColumnCursor {
 
     private final DirectUtf8String nameUtf8 = new DirectUtf8String();
-
-    // Configuration
-    private byte typeCode;
-    private boolean nullable;
-    private int rowCount;
-    private int valueSize;
-    private byte scale;
-
-    // Wire pointers
-    private long nullBitmapAddress;
-    private long valuesAddress;
-
+    private boolean currentIsNull;
     // Iteration state
     private int currentRow;
-    private int currentValueIndex;
-    private boolean currentIsNull;
-
-    // Current value storage
-    // For DECIMAL64
-    private long currentValue64;
     // For DECIMAL128
     private long currentValue128Hi;
     private long currentValue128Lo;
@@ -79,80 +62,19 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     private long currentValue256Hl;
     private long currentValue256Lh;
     private long currentValue256Ll;
-
-    /**
-     * Initializes this cursor for the given column data.
-     *
-     * @param dataAddress address of column data
-     * @param dataLength  available bytes
-     * @param rowCount    number of rows
-     * @param typeCode    column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
-     * @param nullable    whether column is nullable
-     * @param nameAddress address of column name UTF-8 bytes
-     * @param nameLength  column name length in bytes
-     * @return bytes consumed from dataAddress
-     */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
-                  long nameAddress, int nameLength) {
-        this.typeCode = typeCode;
-        this.nullable = nullable;
-        this.rowCount = rowCount;
-        this.valueSize = getDecimalValueSize(typeCode);
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength, Utf8s.isAscii(nameAddress, nameLength));
-
-        int offset = 0;
-        int nullCount = 0;
-
-        if (nullable) {
-            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
-            this.nullBitmapAddress = dataAddress;
-            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
-            offset += bitmapSize;
-        } else {
-            this.nullBitmapAddress = 0;
-        }
-
-        // Read scale byte
-        this.scale = Unsafe.getUnsafe().getByte(dataAddress + offset);
-        offset += 1;
-
-        this.valuesAddress = dataAddress + offset;
-        int valueCount = rowCount - nullCount;
-        offset += valueCount * valueSize;
-
-        resetRowPosition();
-        return offset;
-    }
-
-    private static int getDecimalValueSize(byte typeCode) {
-        int type = typeCode & TYPE_MASK;
-        return switch (type) {
-            case TYPE_DECIMAL64 -> 8;
-            case TYPE_DECIMAL128 -> 16;
-            case TYPE_DECIMAL256 -> 32;
-            default -> throw new IllegalArgumentException("Not a decimal type: " + typeCode);
-        };
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
-    @Override
-    public byte getTypeCode() {
-        return typeCode;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
-    @Override
-    public boolean isNull() {
-        return currentIsNull;
-    }
+    // Current value storage
+    // For DECIMAL64
+    private long currentValue64;
+    private int currentValueIndex;
+    // Wire pointers
+    private long nullBitmapAddress;
+    private boolean nullable;
+    private int rowCount;
+    private byte scale;
+    // Configuration
+    private byte typeCode;
+    private int valueSize;
+    private long valuesAddress;
 
     @Override
     public boolean advanceRow() throws QwpParseException {
@@ -174,40 +96,6 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         return false;
     }
 
-    private void readCurrentValue(long address) {
-        int type = typeCode & TYPE_MASK;
-        switch (type) {
-            case TYPE_DECIMAL64:
-                // Big-endian
-                currentValue64 = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
-                break;
-            case TYPE_DECIMAL128:
-                // Big-endian: high then low
-                currentValue128Hi = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
-                currentValue128Lo = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 8));
-                break;
-            case TYPE_DECIMAL256:
-                // Big-endian: hh, hl, lh, ll
-                currentValue256Hh = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
-                currentValue256Hl = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 8));
-                currentValue256Lh = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 16));
-                currentValue256Ll = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 24));
-                break;
-        }
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    @Override
-    public void resetRowPosition() {
-        currentRow = -1;
-        currentValueIndex = 0;
-        currentIsNull = false;
-    }
-
     @Override
     public void clear() {
         nameUtf8.clear();
@@ -221,25 +109,9 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         resetRowPosition();
     }
 
-    // ==================== Getters ====================
-
-    /**
-     * Returns the scale (number of decimal places) for this column.
-     * All values in the column share the same scale.
-     *
-     * @return scale (0-127)
-     */
-    public byte getScale() {
-        return scale;
-    }
-
-    /**
-     * Returns the current row's Decimal64 unscaled value.
-     *
-     * @return unscaled 64-bit value
-     */
-    public long getDecimal64() {
-        return currentValue64;
+    @Override
+    public int getCurrentRow() {
+        return currentRow;
     }
 
     /**
@@ -294,5 +166,127 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
      */
     public long getDecimal256Ll() {
         return currentValue256Ll;
+    }
+
+    /**
+     * Returns the current row's Decimal64 unscaled value.
+     *
+     * @return unscaled 64-bit value
+     */
+    public long getDecimal64() {
+        return currentValue64;
+    }
+
+    @Override
+    public DirectUtf8Sequence getNameUtf8() {
+        return nameUtf8;
+    }
+
+    /**
+     * Returns the scale (number of decimal places) for this column.
+     * All values in the column share the same scale.
+     *
+     * @return scale (0-127)
+     */
+    public byte getScale() {
+        return scale;
+    }
+
+    @Override
+    public byte getTypeCode() {
+        return typeCode;
+    }
+
+    @Override
+    public boolean isNull() {
+        return currentIsNull;
+    }
+
+    @Override
+    public boolean isNullable() {
+        return nullable;
+    }
+
+    /**
+     * Initializes this cursor for the given column data.
+     *
+     * @param dataAddress address of column data
+     * @param dataLength  available bytes
+     * @param rowCount    number of rows
+     * @param typeCode    column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
+     * @param nullable    whether column is nullable
+     * @param nameAddress address of column name UTF-8 bytes
+     * @param nameLength  column name length in bytes
+     * @return bytes consumed from dataAddress
+     */
+    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
+                  long nameAddress, int nameLength) {
+        this.typeCode = typeCode;
+        this.nullable = nullable;
+        this.rowCount = rowCount;
+        this.valueSize = getDecimalValueSize(typeCode);
+        this.nameUtf8.of(nameAddress, nameAddress + nameLength, Utf8s.isAscii(nameAddress, nameLength));
+
+        int offset = 0;
+        int nullCount = 0;
+
+        if (nullable) {
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            this.nullBitmapAddress = dataAddress;
+            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
+            offset += bitmapSize;
+        } else {
+            this.nullBitmapAddress = 0;
+        }
+
+        // Read scale byte
+        this.scale = Unsafe.getUnsafe().getByte(dataAddress + offset);
+        offset += 1;
+
+        this.valuesAddress = dataAddress + offset;
+        int valueCount = rowCount - nullCount;
+        offset += valueCount * valueSize;
+
+        resetRowPosition();
+        return offset;
+    }
+
+    @Override
+    public void resetRowPosition() {
+        currentRow = -1;
+        currentValueIndex = 0;
+        currentIsNull = false;
+    }
+
+    private static int getDecimalValueSize(byte typeCode) {
+        int type = typeCode & TYPE_MASK;
+        return switch (type) {
+            case TYPE_DECIMAL64 -> 8;
+            case TYPE_DECIMAL128 -> 16;
+            case TYPE_DECIMAL256 -> 32;
+            default -> throw new IllegalArgumentException("Not a decimal type: " + typeCode);
+        };
+    }
+
+    private void readCurrentValue(long address) {
+        int type = typeCode & TYPE_MASK;
+        switch (type) {
+            case TYPE_DECIMAL64:
+                // Big-endian
+                currentValue64 = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
+                break;
+            case TYPE_DECIMAL128:
+                // Big-endian: high then low
+                currentValue128Hi = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
+                currentValue128Lo = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 8));
+                break;
+            case TYPE_DECIMAL256:
+                // Big-endian: hh, hl, lh, ll
+                currentValue256Hh = Long.reverseBytes(Unsafe.getUnsafe().getLong(address));
+                currentValue256Hl = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 8));
+                currentValue256Lh = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 16));
+                currentValue256Ll = Long.reverseBytes(Unsafe.getUnsafe().getLong(address + 24));
+                break;
+        }
     }
 }

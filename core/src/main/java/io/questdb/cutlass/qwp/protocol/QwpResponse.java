@@ -51,20 +51,9 @@ import io.questdb.std.ObjList;
  */
 public class QwpResponse {
 
-    private byte statusCode;
     private String errorMessage;
+    private byte statusCode;
     private ObjList<TableError> tableErrors;
-
-    /**
-     * Creates an OK response.
-     *
-     * @return OK response
-     */
-    public static QwpResponse ok() {
-        QwpResponse response = new QwpResponse();
-        response.statusCode = QwpStatusCode.OK;
-        return response;
-    }
 
     /**
      * Creates an error response with a message.
@@ -81,48 +70,6 @@ public class QwpResponse {
     }
 
     /**
-     * Creates a schema required response.
-     *
-     * @param tableName table that needs full schema
-     * @return schema required response
-     */
-    public static QwpResponse schemaRequired(String tableName) {
-        return error(QwpStatusCode.SCHEMA_REQUIRED, "schema not found for table: " + tableName);
-    }
-
-    /**
-     * Creates a schema mismatch response.
-     *
-     * @param tableName  table with mismatched schema
-     * @param columnName column with type mismatch
-     * @return schema mismatch response
-     */
-    public static QwpResponse schemaMismatch(String tableName, String columnName) {
-        return error(QwpStatusCode.SCHEMA_MISMATCH,
-                "column type mismatch [table=" + tableName + ", column=" + columnName + "]");
-    }
-
-    /**
-     * Creates a table not found response.
-     *
-     * @param tableName table that wasn't found
-     * @return table not found response
-     */
-    public static QwpResponse tableNotFound(String tableName) {
-        return error(QwpStatusCode.TABLE_NOT_FOUND, "table not found: " + tableName);
-    }
-
-    /**
-     * Creates a parse error response.
-     *
-     * @param message error details
-     * @return parse error response
-     */
-    public static QwpResponse parseError(String message) {
-        return error(QwpStatusCode.PARSE_ERROR, message);
-    }
-
-    /**
      * Creates an internal error response.
      *
      * @param message error details
@@ -133,12 +80,33 @@ public class QwpResponse {
     }
 
     /**
+     * Creates an OK response.
+     *
+     * @return OK response
+     */
+    public static QwpResponse ok() {
+        QwpResponse response = new QwpResponse();
+        response.statusCode = QwpStatusCode.OK;
+        return response;
+    }
+
+    /**
      * Creates an overloaded response.
      *
      * @return overloaded response
      */
     public static QwpResponse overloaded() {
         return error(QwpStatusCode.OVERLOADED, "server overloaded, retry later");
+    }
+
+    /**
+     * Creates a parse error response.
+     *
+     * @param message error details
+     * @return parse error response
+     */
+    public static QwpResponse parseError(String message) {
+        return error(QwpStatusCode.PARSE_ERROR, message);
     }
 
     /**
@@ -155,12 +123,35 @@ public class QwpResponse {
     }
 
     /**
-     * Gets the status code.
+     * Creates a schema mismatch response.
      *
-     * @return status code
+     * @param tableName  table with mismatched schema
+     * @param columnName column with type mismatch
+     * @return schema mismatch response
      */
-    public byte getStatusCode() {
-        return statusCode;
+    public static QwpResponse schemaMismatch(String tableName, String columnName) {
+        return error(QwpStatusCode.SCHEMA_MISMATCH,
+                "column type mismatch [table=" + tableName + ", column=" + columnName + "]");
+    }
+
+    /**
+     * Creates a schema required response.
+     *
+     * @param tableName table that needs full schema
+     * @return schema required response
+     */
+    public static QwpResponse schemaRequired(String tableName) {
+        return error(QwpStatusCode.SCHEMA_REQUIRED, "schema not found for table: " + tableName);
+    }
+
+    /**
+     * Creates a table not found response.
+     *
+     * @param tableName table that wasn't found
+     * @return table not found response
+     */
+    public static QwpResponse tableNotFound(String tableName) {
+        return error(QwpStatusCode.TABLE_NOT_FOUND, "table not found: " + tableName);
     }
 
     /**
@@ -173,6 +164,15 @@ public class QwpResponse {
     }
 
     /**
+     * Gets the status code.
+     *
+     * @return status code
+     */
+    public byte getStatusCode() {
+        return statusCode;
+    }
+
+    /**
      * Gets the list of table errors (for PARTIAL responses).
      *
      * @return table errors, or null for non-PARTIAL responses
@@ -182,21 +182,21 @@ public class QwpResponse {
     }
 
     /**
-     * Returns true if this is a success response.
-     *
-     * @return true if OK or PARTIAL
-     */
-    public boolean isSuccess() {
-        return QwpStatusCode.isSuccess(statusCode);
-    }
-
-    /**
      * Returns true if this is a retriable error.
      *
      * @return true if retriable
      */
     public boolean isRetriable() {
         return QwpStatusCode.isRetriable(statusCode);
+    }
+
+    /**
+     * Returns true if this is a success response.
+     *
+     * @return true if OK or PARTIAL
+     */
+    public boolean isSuccess() {
+        return QwpStatusCode.isSuccess(statusCode);
     }
 
     @Override
@@ -222,18 +222,14 @@ public class QwpResponse {
      * Represents an error for a specific table in a partial failure.
      */
     public static class TableError {
-        private final int tableIndex;
         private final byte errorCode;
         private final String errorMessage;
+        private final int tableIndex;
 
         public TableError(int tableIndex, byte errorCode, String errorMessage) {
             this.tableIndex = tableIndex;
             this.errorCode = errorCode;
             this.errorMessage = errorMessage;
-        }
-
-        public int getTableIndex() {
-            return tableIndex;
         }
 
         public byte getErrorCode() {
@@ -242,6 +238,10 @@ public class QwpResponse {
 
         public String getErrorMessage() {
             return errorMessage;
+        }
+
+        public int getTableIndex() {
+            return tableIndex;
         }
 
         @Override

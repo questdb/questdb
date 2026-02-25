@@ -29,42 +29,37 @@ package io.questdb.cutlass.qwp.websocket;
  */
 public final class WebSocketOpcode {
     /**
-     * Continuation frame (0x0).
-     * Used for fragmented messages after the initial frame.
-     */
-    public static final int CONTINUATION = 0x00;
-
-    /**
-     * Text frame (0x1).
-     * Payload is UTF-8 encoded text.
-     */
-    public static final int TEXT = 0x01;
-
-    /**
      * Binary frame (0x2).
      * Payload is arbitrary binary data.
      */
     public static final int BINARY = 0x02;
-
-    // Reserved non-control frames: 0x3-0x7
-
     /**
      * Connection close frame (0x8).
      * Indicates that the endpoint wants to close the connection.
      */
     public static final int CLOSE = 0x08;
+    /**
+     * Continuation frame (0x0).
+     * Used for fragmented messages after the initial frame.
+     */
+    public static final int CONTINUATION = 0x00;
 
+    // Reserved non-control frames: 0x3-0x7
     /**
      * Ping frame (0x9).
      * Used for keep-alive and connection health checks.
      */
     public static final int PING = 0x09;
-
     /**
      * Pong frame (0xA).
      * Response to a ping frame.
      */
     public static final int PONG = 0x0A;
+    /**
+     * Text frame (0x1).
+     * Payload is UTF-8 encoded text.
+     */
+    public static final int TEXT = 0x01;
 
     // Reserved control frames: 0xB-0xF
 

@@ -24,8 +24,11 @@
 
 package io.questdb.cutlass.qwp.server;
 
-import io.questdb.cutlass.qwp.protocol.*;
-
+import io.questdb.cutlass.qwp.protocol.QwpColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
+import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
@@ -94,6 +97,31 @@ public class QwpStreamingDecoder implements QuietCloseable {
         this.schemaCache = schemaCache;
     }
 
+    @Override
+    public void close() {
+        reset();
+    }
+
+    /**
+     * Decodes an ILP v4 message from direct memory with delta symbol dictionary support.
+     * <p>
+     * If the message has FLAG_DELTA_SYMBOL_DICT set, the delta symbols are accumulated
+     * to the provided connection dictionary. Symbol columns then reference this dictionary
+     * using global IDs.
+     *
+     * @param messageAddress       address of the complete ILP v4 message
+     * @param messageLength        total message length in bytes
+     * @param connectionSymbolDict connection-level symbol dictionary for delta mode (may be null)
+     * @return message cursor for streaming access
+     * @throws QwpParseException if the message is malformed
+     */
+    public QwpMessageCursor decode(long messageAddress, int messageLength, ObjList<String> connectionSymbolDict)
+            throws QwpParseException {
+        messageCursor.clear();
+        messageCursor.of(messageAddress, messageLength, schemaCache, connectionSymbolDict);
+        return messageCursor;
+    }
+
     /**
      * Decodes an ILP v4 message from direct memory.
      * <p>
@@ -112,36 +140,6 @@ public class QwpStreamingDecoder implements QuietCloseable {
     }
 
     /**
-     * Decodes an ILP v4 message from direct memory with delta symbol dictionary support.
-     * <p>
-     * If the message has FLAG_DELTA_SYMBOL_DICT set, the delta symbols are accumulated
-     * to the provided connection dictionary. Symbol columns then reference this dictionary
-     * using global IDs.
-     *
-     * @param messageAddress           address of the complete ILP v4 message
-     * @param messageLength            total message length in bytes
-     * @param connectionSymbolDict     connection-level symbol dictionary for delta mode (may be null)
-     * @return message cursor for streaming access
-     * @throws QwpParseException if the message is malformed
-     */
-    public QwpMessageCursor decode(long messageAddress, int messageLength, ObjList<String> connectionSymbolDict)
-            throws QwpParseException {
-        messageCursor.clear();
-        messageCursor.of(messageAddress, messageLength, schemaCache, connectionSymbolDict);
-        return messageCursor;
-    }
-
-    /**
-     * Resets the decoder for reuse.
-     * <p>
-     * Call this after processing a message to prepare for the next one.
-     * All cursors are invalidated.
-     */
-    public void reset() {
-        messageCursor.clear();
-    }
-
-    /**
      * Returns the message cursor (for diagnostics).
      */
     public QwpMessageCursor getMessageCursor() {
@@ -155,8 +153,13 @@ public class QwpStreamingDecoder implements QuietCloseable {
         return schemaCache;
     }
 
-    @Override
-    public void close() {
-        reset();
+    /**
+     * Resets the decoder for reuse.
+     * <p>
+     * Call this after processing a message to prepare for the next one.
+     * All cursors are invalidated.
+     */
+    public void reset() {
+        messageCursor.clear();
     }
 }

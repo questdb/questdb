@@ -57,22 +57,22 @@ public final class QwpZigZag {
     }
 
     /**
-     * Encodes a signed 64-bit integer using ZigZag encoding.
-     *
-     * @param value the signed value to encode
-     * @return the ZigZag encoded value (unsigned interpretation)
-     */
-    public static long encode(long value) {
-        return (value << 1) ^ (value >> 63);
-    }
-
-    /**
      * Decodes a ZigZag encoded 64-bit integer.
      *
      * @param value the ZigZag encoded value
      * @return the original signed value
      */
     public static long decode(long value) {
+        return (value >>> 1) ^ -(value & 1);
+    }
+
+    /**
+     * Decodes a ZigZag encoded 32-bit integer.
+     *
+     * @param value the ZigZag encoded value
+     * @return the original signed value
+     */
+    public static int decode(int value) {
         return (value >>> 1) ^ -(value & 1);
     }
 
@@ -87,12 +87,12 @@ public final class QwpZigZag {
     }
 
     /**
-     * Decodes a ZigZag encoded 32-bit integer.
+     * Encodes a signed 64-bit integer using ZigZag encoding.
      *
-     * @param value the ZigZag encoded value
-     * @return the original signed value
+     * @param value the signed value to encode
+     * @return the ZigZag encoded value (unsigned interpretation)
      */
-    public static int decode(int value) {
-        return (value >>> 1) ^ -(value & 1);
+    public static long encode(long value) {
+        return (value << 1) ^ (value >> 63);
     }
 }

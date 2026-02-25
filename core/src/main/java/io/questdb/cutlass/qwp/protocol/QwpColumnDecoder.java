@@ -53,8 +53,8 @@ public interface QwpColumnDecoder {
     /**
      * Calculates the expected size in bytes for encoding this column type.
      *
-     * @param rowCount  number of rows
-     * @param nullable  whether column is nullable
+     * @param rowCount number of rows
+     * @param nullable whether column is nullable
      * @return expected byte size
      */
     int expectedSize(int rowCount, boolean nullable);
@@ -65,14 +65,24 @@ public interface QwpColumnDecoder {
      */
     interface ColumnSink {
         /**
+         * Called for each decoded boolean value.
+         */
+        void putBoolean(int rowIndex, boolean value);
+
+        /**
          * Called for each decoded byte value.
          */
         void putByte(int rowIndex, byte value);
 
         /**
-         * Called for each decoded short value.
+         * Called for each decoded double value.
          */
-        void putShort(int rowIndex, short value);
+        void putDouble(int rowIndex, double value);
+
+        /**
+         * Called for each decoded float value.
+         */
+        void putFloat(int rowIndex, float value);
 
         /**
          * Called for each decoded int value.
@@ -85,19 +95,9 @@ public interface QwpColumnDecoder {
         void putLong(int rowIndex, long value);
 
         /**
-         * Called for each decoded float value.
+         * Called for LONG256 values (256-bit).
          */
-        void putFloat(int rowIndex, float value);
-
-        /**
-         * Called for each decoded double value.
-         */
-        void putDouble(int rowIndex, double value);
-
-        /**
-         * Called for each decoded boolean value.
-         */
-        void putBoolean(int rowIndex, boolean value);
+        void putLong256(int rowIndex, long l0, long l1, long l2, long l3);
 
         /**
          * Called for each null value.
@@ -105,26 +105,39 @@ public interface QwpColumnDecoder {
         void putNull(int rowIndex);
 
         /**
+         * Called for each decoded short value.
+         */
+        void putShort(int rowIndex, short value);
+
+        /**
          * Called for UUID values (128-bit).
          */
         void putUuid(int rowIndex, long hi, long lo);
-
-        /**
-         * Called for LONG256 values (256-bit).
-         */
-        void putLong256(int rowIndex, long l0, long l1, long l2, long l3);
     }
 
     /**
      * Simple array-based sink for testing.
      */
     class ArrayColumnSink implements ColumnSink {
-        private final Object[] values;
         private final boolean[] nulls;
+        private final Object[] values;
 
         public ArrayColumnSink(int rowCount) {
             this.values = new Object[rowCount];
             this.nulls = new boolean[rowCount];
+        }
+
+        public Object getValue(int rowIndex) {
+            return values[rowIndex];
+        }
+
+        public boolean isNull(int rowIndex) {
+            return nulls[rowIndex];
+        }
+
+        @Override
+        public void putBoolean(int rowIndex, boolean value) {
+            values[rowIndex] = value;
         }
 
         @Override
@@ -133,7 +146,12 @@ public interface QwpColumnDecoder {
         }
 
         @Override
-        public void putShort(int rowIndex, short value) {
+        public void putDouble(int rowIndex, double value) {
+            values[rowIndex] = value;
+        }
+
+        @Override
+        public void putFloat(int rowIndex, float value) {
             values[rowIndex] = value;
         }
 
@@ -148,18 +166,8 @@ public interface QwpColumnDecoder {
         }
 
         @Override
-        public void putFloat(int rowIndex, float value) {
-            values[rowIndex] = value;
-        }
-
-        @Override
-        public void putDouble(int rowIndex, double value) {
-            values[rowIndex] = value;
-        }
-
-        @Override
-        public void putBoolean(int rowIndex, boolean value) {
-            values[rowIndex] = value;
+        public void putLong256(int rowIndex, long l0, long l1, long l2, long l3) {
+            values[rowIndex] = new long[]{l0, l1, l2, l3};
         }
 
         @Override
@@ -168,21 +176,13 @@ public interface QwpColumnDecoder {
         }
 
         @Override
-        public void putUuid(int rowIndex, long hi, long lo) {
-            values[rowIndex] = new long[]{hi, lo};
+        public void putShort(int rowIndex, short value) {
+            values[rowIndex] = value;
         }
 
         @Override
-        public void putLong256(int rowIndex, long l0, long l1, long l2, long l3) {
-            values[rowIndex] = new long[]{l0, l1, l2, l3};
-        }
-
-        public Object getValue(int rowIndex) {
-            return values[rowIndex];
-        }
-
-        public boolean isNull(int rowIndex) {
-            return nulls[rowIndex];
+        public void putUuid(int rowIndex, long hi, long lo) {
+            values[rowIndex] = new long[]{hi, lo};
         }
 
         public int size() {

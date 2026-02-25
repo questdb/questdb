@@ -39,17 +39,15 @@ public class QwpWebSocketProcessorState implements Mutable, QuietCloseable {
     private long bufferAddress;
     private int bufferCapacity;
     private int bufferPosition;
-    private String errorMessage;
-    private boolean ok = true;
-
-    // Response state
-    private boolean hasResponse = false;
-    private boolean responseSuccess = false;
-    private int responseErrorCode = 0;
-    private String responseErrorMessage = null;
-
     // Metrics
     private long bytesProcessed = 0;
+    private String errorMessage;
+    // Response state
+    private boolean hasResponse = false;
+    private boolean ok = true;
+    private int responseErrorCode = 0;
+    private String responseErrorMessage = null;
+    private boolean responseSuccess = false;
 
     public QwpWebSocketProcessorState(int initialBufferSize) {
         this.bufferCapacity = initialBufferSize;
@@ -78,159 +76,6 @@ public class QwpWebSocketProcessorState implements Mutable, QuietCloseable {
         bufferPosition += length;
     }
 
-    /**
-     * Ensures the buffer has enough capacity for additional bytes.
-     */
-    private void ensureCapacity(int additional) {
-        int required = bufferPosition + additional;
-        if (required <= bufferCapacity) {
-            return;
-        }
-
-        // Grow buffer
-        int newCapacity = Math.max(bufferCapacity * 2, required);
-        long newAddress = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_HTTP_CONN);
-        if (bufferPosition > 0) {
-            Unsafe.getUnsafe().copyMemory(bufferAddress, newAddress, bufferPosition);
-        }
-        Unsafe.free(bufferAddress, bufferCapacity, MemoryTag.NATIVE_HTTP_CONN);
-        bufferAddress = newAddress;
-        bufferCapacity = newCapacity;
-    }
-
-    /**
-     * Returns the buffer address for reading accumulated data.
-     */
-    public long getBufferAddress() {
-        return bufferAddress;
-    }
-
-    /**
-     * Returns the current position in the buffer (amount of data accumulated).
-     */
-    public int getBufferPosition() {
-        return bufferPosition;
-    }
-
-    /**
-     * Returns the buffer capacity.
-     */
-    public int getBufferCapacity() {
-        return bufferCapacity;
-    }
-
-    /**
-     * Returns true if the state is OK (no error).
-     */
-    public boolean isOk() {
-        return ok;
-    }
-
-    /**
-     * Sets an error message and marks state as not OK.
-     */
-    public void setError(String message) {
-        this.errorMessage = message;
-        this.ok = false;
-    }
-
-    /**
-     * Returns the error message, or null if no error.
-     */
-    public String getErrorMessage() {
-        return errorMessage;
-    }
-
-    /**
-     * Processes the accumulated message data.
-     * After processing, the buffer position is reset but bytesProcessed is incremented.
-     */
-    public void processMessage() {
-        if (!ok) {
-            return; // Don't process when in error state
-        }
-
-        // Update metrics
-        bytesProcessed += bufferPosition;
-
-        // Reset buffer position (data has been processed)
-        bufferPosition = 0;
-    }
-
-    // ==================== RESPONSE STATE ====================
-
-    /**
-     * Returns true if there's a pending response.
-     */
-    public boolean hasResponse() {
-        return hasResponse;
-    }
-
-    /**
-     * Returns true if the response indicates success.
-     */
-    public boolean isResponseSuccess() {
-        return responseSuccess;
-    }
-
-    /**
-     * Returns the error code for error responses.
-     */
-    public int getResponseErrorCode() {
-        return responseErrorCode;
-    }
-
-    /**
-     * Returns the error message for error responses.
-     */
-    public String getResponseErrorMessage() {
-        return responseErrorMessage;
-    }
-
-    /**
-     * Sets a success response.
-     */
-    public void setSuccessResponse() {
-        hasResponse = true;
-        responseSuccess = true;
-        responseErrorCode = 0;
-        responseErrorMessage = null;
-    }
-
-    /**
-     * Sets an error response.
-     *
-     * @param errorCode error code
-     * @param message   error message
-     */
-    public void setErrorResponse(int errorCode, String message) {
-        hasResponse = true;
-        responseSuccess = false;
-        responseErrorCode = errorCode;
-        responseErrorMessage = message;
-    }
-
-    /**
-     * Consumes (clears) the current response state.
-     */
-    public void consumeResponse() {
-        hasResponse = false;
-        responseSuccess = false;
-        responseErrorCode = 0;
-        responseErrorMessage = null;
-    }
-
-    // ==================== METRICS ====================
-
-    /**
-     * Returns the total number of bytes processed.
-     */
-    public long getBytesProcessed() {
-        return bytesProcessed;
-    }
-
-    // ==================== LIFECYCLE ====================
-
     @Override
     public void clear() {
         bufferPosition = 0;
@@ -252,5 +97,152 @@ public class QwpWebSocketProcessorState implements Mutable, QuietCloseable {
             bufferCapacity = 0;
         }
         bufferPosition = 0;
+    }
+
+    /**
+     * Consumes (clears) the current response state.
+     */
+    public void consumeResponse() {
+        hasResponse = false;
+        responseSuccess = false;
+        responseErrorCode = 0;
+        responseErrorMessage = null;
+    }
+
+    /**
+     * Returns the buffer address for reading accumulated data.
+     */
+    public long getBufferAddress() {
+        return bufferAddress;
+    }
+
+    /**
+     * Returns the buffer capacity.
+     */
+    public int getBufferCapacity() {
+        return bufferCapacity;
+    }
+
+    /**
+     * Returns the current position in the buffer (amount of data accumulated).
+     */
+    public int getBufferPosition() {
+        return bufferPosition;
+    }
+
+    /**
+     * Returns the total number of bytes processed.
+     */
+    public long getBytesProcessed() {
+        return bytesProcessed;
+    }
+
+    /**
+     * Returns the error message, or null if no error.
+     */
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    /**
+     * Returns the error code for error responses.
+     */
+    public int getResponseErrorCode() {
+        return responseErrorCode;
+    }
+
+    /**
+     * Returns the error message for error responses.
+     */
+    public String getResponseErrorMessage() {
+        return responseErrorMessage;
+    }
+
+    /**
+     * Returns true if there's a pending response.
+     */
+    public boolean hasResponse() {
+        return hasResponse;
+    }
+
+    /**
+     * Returns true if the state is OK (no error).
+     */
+    public boolean isOk() {
+        return ok;
+    }
+
+    /**
+     * Returns true if the response indicates success.
+     */
+    public boolean isResponseSuccess() {
+        return responseSuccess;
+    }
+
+    /**
+     * Processes the accumulated message data.
+     * After processing, the buffer position is reset but bytesProcessed is incremented.
+     */
+    public void processMessage() {
+        if (!ok) {
+            return; // Don't process when in error state
+        }
+
+        // Update metrics
+        bytesProcessed += bufferPosition;
+
+        // Reset buffer position (data has been processed)
+        bufferPosition = 0;
+    }
+
+    /**
+     * Sets an error message and marks state as not OK.
+     */
+    public void setError(String message) {
+        this.errorMessage = message;
+        this.ok = false;
+    }
+
+    /**
+     * Sets an error response.
+     *
+     * @param errorCode error code
+     * @param message   error message
+     */
+    public void setErrorResponse(int errorCode, String message) {
+        hasResponse = true;
+        responseSuccess = false;
+        responseErrorCode = errorCode;
+        responseErrorMessage = message;
+    }
+
+    /**
+     * Sets a success response.
+     */
+    public void setSuccessResponse() {
+        hasResponse = true;
+        responseSuccess = true;
+        responseErrorCode = 0;
+        responseErrorMessage = null;
+    }
+
+    /**
+     * Ensures the buffer has enough capacity for additional bytes.
+     */
+    private void ensureCapacity(int additional) {
+        int required = bufferPosition + additional;
+        if (required <= bufferCapacity) {
+            return;
+        }
+
+        // Grow buffer
+        int newCapacity = Math.max(bufferCapacity * 2, required);
+        long newAddress = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_HTTP_CONN);
+        if (bufferPosition > 0) {
+            Unsafe.getUnsafe().copyMemory(bufferAddress, newAddress, bufferPosition);
+        }
+        Unsafe.free(bufferAddress, bufferCapacity, MemoryTag.NATIVE_HTTP_CONN);
+        bufferAddress = newAddress;
+        bufferCapacity = newCapacity;
     }
 }
