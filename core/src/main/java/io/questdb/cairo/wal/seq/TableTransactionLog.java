@@ -67,7 +67,7 @@ public class TableTransactionLog implements Closeable {
     private volatile long lastTxn = -1;
     private TableTransactionLogFile txnLogFile;
 
-    TableTransactionLog(CairoConfiguration configuration, WalDirectoryPolicy walDirectoryPolicy) {
+    TableTransactionLog(CairoConfiguration configuration, @NotNull WalDirectoryPolicy walDirectoryPolicy) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.walDirectoryPolicy = walDirectoryPolicy;
