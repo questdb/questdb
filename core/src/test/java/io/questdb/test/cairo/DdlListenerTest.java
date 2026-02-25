@@ -30,12 +30,19 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
 public class DdlListenerTest extends AbstractCairoTest {
+    @After
+    public void tearDown() throws Exception {
+        // reset DDL listener
+        engine.setDdlListener(DefaultDdlListener.INSTANCE);
+        super.tearDown();
+    }
 
     @Test
     public void testDdlListenerWithTable() throws Exception {
@@ -187,7 +194,7 @@ public class DdlListenerTest extends AbstractCairoTest {
     @Test
     public void testDdlListenerWithMatView() throws Exception {
         assertMemoryLeak(() -> {
-            engine.setDdlListener(new DefaultDdlListener());
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
 
             engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
@@ -246,7 +253,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(0, callbackCounters[5]);
 
             // cleanup
-            engine.setDdlListener(new DefaultDdlListener());
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
             engine.execute("DROP TABLE tab");
             drainWalQueue();
         });
@@ -255,7 +262,7 @@ public class DdlListenerTest extends AbstractCairoTest {
     @Test
     public void testDdlListenerWithView() throws Exception {
         assertMemoryLeak(() -> {
-            engine.setDdlListener(new DefaultDdlListener());
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
 
             engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
@@ -316,7 +323,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(0, callbackCounters[5]);
 
             // cleanup
-            engine.setDdlListener(new DefaultDdlListener());
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
             engine.execute("DROP TABLE tab");
             drainWalQueue();
         });

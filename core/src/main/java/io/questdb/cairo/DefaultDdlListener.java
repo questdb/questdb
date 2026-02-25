@@ -27,6 +27,9 @@ package io.questdb.cairo;
 public class DefaultDdlListener implements DdlListener {
     public static final DdlListener INSTANCE = new DefaultDdlListener();
 
+    protected DefaultDdlListener() {
+    }
+
     @Override
     public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
     }
