@@ -48,8 +48,21 @@ jobs:
           ln -sf /opt/apache-maven-3.9.6 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
           echo "PATH=/opt/maven/bin:$PATH" >> $GITHUB_ENV
+      - name: Detect local client profile
+        id: client
+        run: |
+          CLIENT_VERSION=$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml)
+          echo "questdb.client.version=$CLIENT_VERSION"
+          if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
+            echo "SNAPSHOT version detected, activating local-client profile"
+            git submodule update --init java-questdb-client
+            echo "client_profile=-Plocal-client" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release version detected, using Maven Central"
+            echo "client_profile=" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build distribution
-        run: /opt/maven/bin/mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl 'core'
+        run: /opt/maven/bin/mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl 'core' ${{ steps.client.outputs.client_profile }}
         env:
           MAVEN_OPTS: "-XX:+UseParallelGC"
       - name: Unpack distribution
@@ -93,8 +106,21 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
           cache: 'maven'
+      - name: Detect local client profile
+        id: client
+        run: |
+          CLIENT_VERSION=$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml)
+          echo "questdb.client.version=$CLIENT_VERSION"
+          if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
+            echo "SNAPSHOT version detected, activating local-client profile"
+            git submodule update --init java-questdb-client
+            echo "client_profile=-Plocal-client" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release version detected, using Maven Central"
+            echo "client_profile=" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build distribution
-        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
+        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks' ${{ steps.client.outputs.client_profile }}
         env:
           MAVEN_OPTS: "-XX:+UseParallelGC"
       - name: Unpack distribution
