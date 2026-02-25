@@ -1212,4 +1212,49 @@ public class MemoryPURImplTest extends AbstractTest {
             }
         });
     }
+
+    @Test
+    public void testSyncSwapRewindRestoresCleanPrefixFromFile() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = 4096;
+
+            File file = temp.newFile();
+            try (
+                    Path path = new Path();
+                    WalWriterRingManager mgr = new WalWriterRingManager(rf, 64);
+                    WalWriterBufferPool pool = new WalWriterBufferPool(pageSize, 16, MemoryTag.NATIVE_TABLE_WAL_WRITER)
+            ) {
+                pool.setRingManager(mgr);
+                mgr.setPool(pool);
+                pool.registerWithKernel();
+                try (MemoryPURImpl mem = new MemoryPURImpl(ff, path.of(file.getAbsolutePath()).$(),
+                        pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER, 0, mgr, pool)) {
+                    final int entryCount = 32;
+                    final long poison = -1_234_567_890L;
+
+                    for (int i = 0; i < entryCount; i++) {
+                        mem.putLong(i * 10L);
+                    }
+                    mem.syncSwap();
+                    mgr.waitForAll();
+
+                    // Corrupt swapped-in clean prefix to model stale/uninitialized pool memory.
+                    long pageAddr = mem.getPageAddress(0);
+                    Assert.assertTrue(pageAddr > 0);
+                    for (int i = 0; i < entryCount; i++) {
+                        Unsafe.getUnsafe().putLong(pageAddr + (long) i * Long.BYTES, poison);
+                    }
+
+                    int rowCount = 20;
+                    mem.jumpTo((long) rowCount * Long.BYTES);
+
+                    // Mirrors var-size rollback path: read entry at current append address.
+                    long valueAtAppend = Unsafe.getUnsafe().getLong(mem.getAppendAddress());
+                    Assert.assertEquals(rowCount * 10L, valueAtAppend);
+                }
+            }
+        });
+    }
 }

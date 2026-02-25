@@ -192,9 +192,13 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
                 ringManager.waitForPage(columnSlot, i);
             }
         }
-        // If rolling back within the target page, reset dirty start so that
-        // subsequent writes from the rollback point are flushed correctly.
-        if (offset < getPageDirtyStart(targetPage)) {
+        // If rolling back into a clean prefix on the current WRITING page (e.g. after
+        // syncSwap), hydrate bytes up to the first dirty position from file before
+        // rewinding. This preserves historical entries needed by var-size rollback/cancel
+        // paths while keeping syncSwap() copy-free on the hot path.
+        long dirtyStart = getPageDirtyStart(targetPage);
+        if (offset < dirtyStart) {
+            restoreCleanPrefixFromFile(targetPage, dirtyStart);
             setPageDirtyStart(targetPage, offset);
         }
         super.jumpTo(offset);
@@ -409,6 +413,10 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
      * <p>
      * The old buffer is released back to the pool when the CQE completes.
      * No memcpy, no blocking, no snapshot buffer management.
+     * <p>
+     * Important for rollback/rewind semantics: if callers may jump/rewind into the
+     * clean prefix of the swapped page, they must ensure a ring barrier has completed
+     * first so that the persisted file contains that clean prefix.
      */
     public void syncSwap() {
         checkDistressed();
@@ -663,6 +671,41 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         setPageState(page, CONFIRMED);
         setPageBufferIndex(page, bufIdx);
         return buf;
+    }
+
+    private void restoreCleanPrefixFromFile(int page, long dirtyStart) {
+        if (fd == -1 || page >= pageStates.size() || pageStates.getQuick(page) != WRITING) {
+            return;
+        }
+        long addr = page < pages.size() ? pages.getQuick(page) : 0;
+        if (addr == 0) {
+            return;
+        }
+        long pageStart = pageOffset(page);
+        int readLen = (int) (dirtyStart - pageStart);
+        if (readLen <= 0) {
+            return;
+        }
+        // We hydrate from file only on rewind-before-dirty. Callers are expected to
+        // enforce a barrier after swap writes before such rewinds (WalWriter does this
+        // in async commit and segment-roll flows via ringManager.waitForAll()).
+        long bytesRead = ff.read(fd, addr, readLen, pageStart);
+        if (bytesRead < 0) {
+            distressed = true;
+            cqeError = ff.errno();
+            throw CairoException.critical(cqeError)
+                    .put("pread failed [fd=").put(fd).put(", offset=").put(pageStart).put(']');
+        }
+        if (bytesRead != readLen) {
+            distressed = true;
+            cqeError = 0;
+            throw CairoException.critical(0)
+                    .put("pread incomplete [fd=").put(fd)
+                    .put(", offset=").put(pageStart)
+                    .put(", len=").put(readLen)
+                    .put(", read=").put(bytesRead)
+                    .put(']');
+        }
     }
 
     /**

@@ -1279,6 +1279,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             MemoryMA column = columns.getQuick(i);
             if (column != null) {
                 if (column instanceof MemoryPURImpl) {
+                    // swap-based flush; barrier below guarantees pre-swap prefix is durable
+                    // before any segment-roll rewinds can consult historical aux/data bytes
                     ((MemoryPURImpl) column).syncSwap();
                 } else {
                     column.sync(true);
@@ -1991,6 +1993,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     MemoryMA column = columns.getQuick(i);
                     if (column != null) {
                         if (async && ringManager != null && column instanceof MemoryPURImpl) {
+                            // swap-based async write; barrier below ensures committed prefix
+                            // is persisted before rollback/cancel can rewind and read it
                             ((MemoryPURImpl) column).syncSwap();
                         } else {
                             column.sync(async);
