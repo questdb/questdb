@@ -704,6 +704,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             }
 
             // cleanup
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
             engine.execute("DROP TABLE tab");
         });
     }
@@ -775,6 +776,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             }
 
             // cleanup
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
             engine.execute("DROP VIEW v");
             engine.execute("DROP MATERIALIZED VIEW mv");
             engine.execute("DROP TABLE tab");
