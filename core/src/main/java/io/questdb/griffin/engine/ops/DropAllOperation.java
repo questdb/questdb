@@ -25,6 +25,8 @@ public class DropAllOperation implements Operation {
     @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
+            // The return value of compiler execute generally used to decide if a DDL listener callback should be fired.
+            // DROP ALL fires the callback for each dropped table inside compiler.execute(), the return value is ignored here.
             compiler.execute(this, sqlExecutionContext);
         }
         return ImmutableDoneOperationFuture.INSTANCE;
