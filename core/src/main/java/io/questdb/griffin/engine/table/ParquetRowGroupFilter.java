@@ -50,8 +50,8 @@ import org.jetbrains.annotations.TestOnly;
  * row groups can be skipped based on bloom filter conditions.
  */
 public final class ParquetRowGroupFilter {
-    public static final int FILTER_BUFFER_MAX_PAGES = 16;
-    public static final long FILTER_BUFFER_PAGE_SIZE = 4096;
+    public static final int FILTER_BUFFER_MAX_PAGES = Integer.MAX_VALUE;
+    public static final long FILTER_BUFFER_PAGE_SIZE = 128;
     public static final int LONGS_PER_FILTER = 2;
     private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
     private static int rowGroupsSkipped;
