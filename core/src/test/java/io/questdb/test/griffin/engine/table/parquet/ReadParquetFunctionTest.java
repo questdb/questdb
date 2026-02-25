@@ -32,11 +32,14 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
@@ -74,6 +77,81 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, String.valueOf(parallel));
         super.setUp();
         inputRoot = root;
+    }
+
+    @Test
+    public void testBloomFilterPushdown() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 5000;
+            execute("CREATE TABLE x AS (SELECT" +
+                    " CAST(x AS INT) AS id," +
+                    " CAST('val_' || x AS VARCHAR) AS name," +
+                    " rnd_uuid4() AS uid," +
+                    " timestamp_sequence(0, 1_000_000) AS ts" +
+                    " FROM long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x");
+                    DirectLongList bloomFilterColumnIndexes = new DirectLongList(3, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                bloomFilterColumnIndexes.add(0);
+                bloomFilterColumnIndexes.add(1);
+                bloomFilterColumnIndexes.add(2);
+
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        1000,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        bloomFilterColumnIndexes.getAddress(),
+                        (int) bloomFilterColumnIndexes.size(),
+                        0.01
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertQueryNoLeakCheck(
+                        "id\n",
+                        "SELECT id FROM read_parquet('x.parquet') WHERE id = -999",
+                        null, parallel, false
+                );
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                assertQueryNoLeakCheck(
+                        "id\n42\n",
+                        "SELECT id FROM read_parquet('x.parquet') WHERE id = 42",
+                        null, parallel, false
+                );
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertQueryNoLeakCheck(
+                        "name\n",
+                        "SELECT name FROM read_parquet('x.parquet') WHERE name = 'no_such_value'",
+                        null, parallel, false
+                );
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                assertQueryNoLeakCheck(
+                        "name\nval_100\n",
+                        "SELECT name FROM read_parquet('x.parquet') WHERE name = 'val_100'",
+                        null, parallel, false
+                );
+
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertQueryNoLeakCheck(
+                        "id\n",
+                        "SELECT id FROM read_parquet('x.parquet') WHERE id IN (-1, -2, -3)",
+                        null, parallel, false
+                );
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            }
+        });
     }
 
     @Test
