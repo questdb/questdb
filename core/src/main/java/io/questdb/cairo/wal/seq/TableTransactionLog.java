@@ -73,23 +73,22 @@ public class TableTransactionLog implements Closeable {
         this.walDirectoryPolicy = walDirectoryPolicy;
     }
 
-    public static long readMaxStructureVersion(FilesFacade ff, Path path) {
+    public static long readMaxStructureVersion(FilesFacade ff, Path path, boolean allowMixedIO) {
         int pathLen = path.size();
         long logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);
         try {
-            int formatVersion = ff.readNonNegativeInt(logFileFd, 0);
+            int formatVersion = TableTransactionLogV2.readNonNegativeInt(ff, logFileFd, 0, allowMixedIO);
             if (formatVersion < 0) {
                 throw CairoException.critical(0).put("invalid transaction log file: ").put(path).put(", cannot read version at offset 0");
             }
 
-            switch (formatVersion) {
-                case WAL_SEQUENCER_FORMAT_VERSION_V1:
-                    return TableTransactionLogV1.readMaxStructureVersion(logFileFd, ff);
-                case WAL_SEQUENCER_FORMAT_VERSION_V2:
-                    return TableTransactionLogV2.readMaxStructureVersion(path.trimTo(pathLen), logFileFd, ff);
-                default:
-                    throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
-            }
+            return switch (formatVersion) {
+                case WAL_SEQUENCER_FORMAT_VERSION_V1 -> TableTransactionLogV1.readMaxStructureVersion(logFileFd, ff);
+                case WAL_SEQUENCER_FORMAT_VERSION_V2 ->
+                        TableTransactionLogV2.readMaxStructureVersion(path.trimTo(pathLen), logFileFd, ff, true, allowMixedIO);
+                default ->
+                        throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
+            };
         } finally {
             path.trimTo(pathLen);
             ff.close(logFileFd);
@@ -158,14 +157,11 @@ public class TableTransactionLog implements Closeable {
 
     private static TableTransactionLogFile openTxnFile(Path path, CairoConfiguration configuration, WalDirectoryPolicy walDirectoryPolicy) {
         int formatVersion = getFormatVersion(path, configuration.getFilesFacade());
-        switch (formatVersion) {
-            case WAL_SEQUENCER_FORMAT_VERSION_V1:
-                return new TableTransactionLogV1(configuration);
-            case WAL_SEQUENCER_FORMAT_VERSION_V2:
-                return new TableTransactionLogV2(configuration, -1, walDirectoryPolicy);
-            default:
-                throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
-        }
+        return switch (formatVersion) {
+            case WAL_SEQUENCER_FORMAT_VERSION_V1 -> new TableTransactionLogV1(configuration);
+            case WAL_SEQUENCER_FORMAT_VERSION_V2 -> new TableTransactionLogV2(configuration, -1, walDirectoryPolicy);
+            default -> throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
+        };
     }
 
     private void createTxnLogFileInstance() {
