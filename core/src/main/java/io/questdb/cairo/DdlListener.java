@@ -45,6 +45,8 @@ public interface DdlListener {
      */
     void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind);
 
+    // takes 'tableName' instead of 'tableToken' because it is called after the table has been dropped
+    // other callbacks of this interface expect TableToken instead 
     void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions);
 
     void onTableRenamed(TableToken oldTableToken, TableToken newTableToken);
