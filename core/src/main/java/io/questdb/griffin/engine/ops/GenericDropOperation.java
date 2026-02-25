@@ -13,7 +13,6 @@ import org.jetbrains.annotations.Nullable;
 public class GenericDropOperation implements Operation {
     private final String entityName;
     private final int entityNamePosition;
-    private final DoneOperationFuture future = new DoneOperationFuture();
     private final boolean ifExists;
     private final int operationCode;
     private final String sqlText;
@@ -44,7 +43,7 @@ public class GenericDropOperation implements Operation {
                 onTableOrViewOrMatViewDropped(engine.getDdlListener(entityName), entityName);
             }
         }
-        return future;
+        return ImmutableDoneOperationFuture.INSTANCE;
     }
 
     public String getEntityName() {
@@ -62,7 +61,7 @@ public class GenericDropOperation implements Operation {
 
     @Override
     public OperationFuture getOperationFuture() {
-        return future;
+        return ImmutableDoneOperationFuture.INSTANCE;
     }
 
     public String getSqlText() {
