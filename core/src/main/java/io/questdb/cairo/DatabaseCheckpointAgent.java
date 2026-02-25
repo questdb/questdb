@@ -77,8 +77,6 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseCheckpointAgent.class);
-    private final ObjList<String> backupLockedDirNames = new ObjList<>();
-    private final LongList backupLockedSeqTxns = new LongList();
     private final CharSequenceLongHashMap checkpointSeqTxns = new CharSequenceLongHashMap(); // protected with #lock
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -785,8 +783,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
             // Clear backup seq part locks
             engine.getBackupSeqPartLock().clear();
-            backupLockedDirNames.clear();
-            backupLockedSeqTxns.clear();
 
             // reset checkpoint-in-flight flag.
             startedAtTimestamp.set(Numbers.LONG_NULL);

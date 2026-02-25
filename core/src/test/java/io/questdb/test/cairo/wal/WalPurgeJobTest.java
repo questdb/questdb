@@ -1262,7 +1262,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         }
 
         @Override
-        public void deleteSequencerPart(int seqPart) {
+        public void deleteSequencerPart(long seqPart) {
             assert false;
         }
 

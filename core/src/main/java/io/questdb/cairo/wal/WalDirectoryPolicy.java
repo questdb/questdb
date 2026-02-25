@@ -35,7 +35,7 @@ public interface WalDirectoryPolicy {
     boolean isInUse(Path path);
 
     @SuppressWarnings("SameReturnValue")
-    default boolean isSeqPartInUse(Path seqDirPath, int partId) {
+    default boolean isSeqPartInUse(Path seqDirPath, long partId) {
         return false;
     }
 
