@@ -153,17 +153,18 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     // all remaining row groups in this partition were skipped, try next partition
                     continue;
                 } else {
-                return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
+                    return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
+                }
             }
-        }
 
             final PartitionFrame partitionFrame = partitionFrameCursor.next(skipTarget);
             if (partitionFrame != null) {
                 reenterPartitionIndex = partitionFrame.getPartitionIndex();
                 // Track highest partition index seen (for backward cursor, first partition seen has highest index)
-            if (highestOpenPartitionIndex < 0) {
-                highestOpenPartitionIndex = reenterPartitionIndex;
-            }final long lo = partitionFrame.getRowLo();
+                if (highestOpenPartitionIndex < 0) {
+                    highestOpenPartitionIndex = reenterPartitionIndex;
+                }
+                final long lo = partitionFrame.getRowLo();
                 final long hi = partitionFrame.getRowHi();
 
                 if (hi - lo <= skipTarget) {

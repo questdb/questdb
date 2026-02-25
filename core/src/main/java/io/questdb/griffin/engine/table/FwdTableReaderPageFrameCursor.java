@@ -151,9 +151,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     }
                     continue;
                 } else {
-                return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
+                    return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
+                }
             }
-        }
 
             final PartitionFrame partitionFrame = partitionFrameCursor.next(skipTarget);
             if (partitionFrame != null) {
