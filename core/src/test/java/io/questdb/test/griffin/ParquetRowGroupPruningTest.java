@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -35,6 +36,60 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void setUp() {
         ParquetRowGroupFilter.resetRowGroupsSkipped();
         super.setUp();
+    }
+
+    @Test
+    public void testBloomFilterBackwardScan() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (8000, '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = -991 ORDER BY ts DESC",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            42
+                            """,
+                    "SELECT val FROM x WHERE val = 42 ORDER BY ts DESC",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val IN (-1, -2, -3) ORDER BY ts DESC",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2001
+                            1
+                            """,
+                    "SELECT val FROM x WHERE val IN (1, 2001) ORDER BY ts DESC",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+        });
     }
 
     @Test
