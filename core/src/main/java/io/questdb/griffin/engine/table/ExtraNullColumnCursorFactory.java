@@ -303,6 +303,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void seekEstimate(long timestamp) {
+            delegate.seekEstimate(timestamp);
+        }
+
+        @Override
         public void toTop() {
             delegate.toTop();
         }
@@ -595,6 +600,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         public void recordAtRowIndex(Record record, long rowIndex) {
             record = ((ExtraNullColumnRecord) record).getBaseRecord();
             baseCursor.recordAtRowIndex(record, rowIndex);
+        }
+
+        @Override
+        public void seekEstimate(long timestamp) {
+            baseCursor.seekEstimate(timestamp);
         }
 
         @Override
