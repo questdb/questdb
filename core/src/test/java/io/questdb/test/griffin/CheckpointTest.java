@@ -304,7 +304,6 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // wal_table1: seqTxn=1 (one insert)
             // wal_table2: seqTxn=1 (one insert)
-            // mat_view: seqTxn=3 (creation + empty refresh + actual refresh with data)
             TestUtils.assertEventually(() -> {
                 long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(walTable1Token).getSeqTxn();
                 Assert.assertEquals("wal_table1 seqTxn should be 1", 1L, seqTxn);
@@ -313,10 +312,27 @@ public class CheckpointTest extends AbstractCairoTest {
                 long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(walTable2Token).getSeqTxn();
                 Assert.assertEquals("wal_table2 seqTxn should be 1", 1L, seqTxn);
             });
+
+            // Wait until the mat view has applied base-table txn=1.
             TestUtils.assertEventually(() -> {
-                long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(matViewToken).getSeqTxn();
-                Assert.assertEquals("mat_view seqTxn should be 3", 3L, seqTxn);
+                MatViewState viewState = server.getEngine().getMatViewStateStore().getViewState(matViewToken);
+                Assert.assertNotNull("mat_view state should exist", viewState);
+                Assert.assertEquals("mat_view lastRefreshBaseTxn should be 1", 1L, viewState.getLastRefreshBaseTxn());
             });
+            // At this point the view is caught up to the only base-table write in this test.
+            // Read the mat_view seqTxn once, right before CHECKPOINT CREATE.
+            // Two valid startup interleavings exist:
+            // Path A (first refresh before wal_table1 INSERT is applied):
+            //   1) fromTxn=-1,toTxn=0 -> refreshSuccessNoRows() writes resetMatViewState() => seqTxn=1
+            //   2) follow-up refresh updates cached intervals via resetMatViewState() => seqTxn=2
+            //   3) data refresh writes commitMatView() => seqTxn=3
+            // Path B (first refresh after wal_table1 INSERT is applied):
+            //   1) fromTxn=-1,toTxn=1 -> single data refresh writes commitMatView() => seqTxn=1
+            // Not a TOCTOU in this test: after lastRefreshBaseTxn reaches 1 we do not perform any new base-table
+            // commits, and this immediate view has no additional incremental work (fromTxn==toTxn).
+            // So reading mat_view seqTxn once here and comparing it to checkpoint callback value is stable.
+            long matViewSeqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(matViewToken).getSeqTxn();
+            Assert.assertTrue("mat_view seqTxn should be either 1 or 3, was " + matViewSeqTxn, matViewSeqTxn == 1L || matViewSeqTxn == 3L);
 
             // Verify listener not called yet
             Assert.assertEquals("Listener should not be called before checkpoint", 0, events.size());
@@ -347,7 +363,7 @@ public class CheckpointTest extends AbstractCairoTest {
             Assert.assertEquals("wal_table1 seqTxn mismatch", 1L, getSeqTxnForTable(actual, "wal_table1"));
             Assert.assertEquals("wal_table2 seqTxn mismatch", 1L, getSeqTxnForTable(actual, "wal_table2"));
             Assert.assertEquals("test_view seqTxn mismatch", 0L, getSeqTxnForTable(actual, "test_view"));
-            Assert.assertEquals("mat_view seqTxn mismatch", 3L, getSeqTxnForTable(actual, "mat_view"));
+            Assert.assertEquals("mat_view seqTxn mismatch", matViewSeqTxn, getSeqTxnForTable(actual, "mat_view"));
 
             // Verify non-WAL table is NOT present
             for (int i = 0, n = actual.size(); i < n; i++) {
