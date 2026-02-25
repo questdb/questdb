@@ -24,7 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
@@ -35,7 +37,9 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Uuid;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
@@ -97,12 +101,40 @@ public final class ParquetRowGroupFilter {
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BYTE:
                         for (int j = 0; j < valueCount; j++) {
-                            filterValues.putInt(valueFunctions.getQuick(j).getByte(null));
+                            Function f = valueFunctions.getQuick(j);
+                            switch (f.getType()) {
+                                case ColumnType.SHORT:
+                                    filterValues.putInt(f.getShort(null));
+                                    break;
+                                case ColumnType.CHAR:
+                                    filterValues.putInt(f.getChar(null));
+                                    break;
+                                case ColumnType.INT:
+                                    filterValues.putInt(f.getInt(null));
+                                    break;
+                                case ColumnType.LONG:
+                                    // Safe truncation: if long exceeds int range, the truncated
+                                    // value won't match any byte bloom filter entry.
+                                    filterValues.putInt((int) f.getLong(null));
+                                    break;
+                                default:
+                                    filterValues.putInt(f.getByte(null));
+                            }
                         }
                         break;
                     case ColumnType.SHORT:
                         for (int j = 0; j < valueCount; j++) {
-                            filterValues.putInt(valueFunctions.getQuick(j).getShort(null));
+                            Function f = valueFunctions.getQuick(j);
+                            switch (f.getType()) {
+                                case ColumnType.INT:
+                                    filterValues.putInt(f.getInt(null));
+                                    break;
+                                case ColumnType.LONG:
+                                    filterValues.putInt((int) f.getLong(null));
+                                    break;
+                                default:
+                                    filterValues.putInt(f.getShort(null));
+                            }
                         }
                         break;
                     case ColumnType.CHAR:
@@ -112,27 +144,54 @@ public final class ParquetRowGroupFilter {
                         break;
                     case ColumnType.INT:
                         for (int j = 0; j < valueCount; j++) {
-                            filterValues.putInt(valueFunctions.getQuick(j).getInt(null));
+                            Function f = valueFunctions.getQuick(j);
+                            if (f.getType() == ColumnType.LONG) {
+                                filterValues.putInt((int) f.getLong(null));
+                            } else {
+                                filterValues.putInt(f.getInt(null));
+                            }
                         }
                         break;
-                    // don't support timestamp because it may be the value is interval.
-                    case ColumnType.TIMESTAMP:
-                        boolean allTimestamp = true;
+                    case ColumnType.TIMESTAMP: {
+                        boolean allCompatible = true;
                         for (int j = 0; j < valueCount; j++) {
-                            if (!ColumnType.isTimestamp(valueFunctions.getQuick(j).getType())) {
-                                allTimestamp = false;
+                            int vType = valueFunctions.getQuick(j).getType();
+                            if (!ColumnType.isTimestamp(vType) && vType != ColumnType.DATE) {
+                                allCompatible = false;
                                 break;
                             }
                         }
-                        if (!allTimestamp) {
+                        if (!allCompatible) {
                             supported = false;
                             break;
                         }
-                        // fallthrough
+
+                        TimestampDriver driver = ColumnType.getTimestampDriver(columnType);
+                        for (int j = 0; j < valueCount; j++) {
+                            Function f = valueFunctions.getQuick(j);
+                            int vType = f.getType();
+                            if (columnType == vType) {
+                                filterValues.putLong(f.getTimestamp(null));
+                            } else {
+                                filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
+                            }
+                        }
+                        break;
+                    }
                     case ColumnType.LONG:
-                    case ColumnType.DATE:
                         for (int j = 0; j < valueCount; j++) {
                             filterValues.putLong(valueFunctions.getQuick(j).getLong(null));
+                        }
+                        break;
+                    case ColumnType.DATE:
+                        for (int j = 0; j < valueCount; j++) {
+                            Function f = valueFunctions.getQuick(j);
+                            int vType = f.getType();
+                            if (ColumnType.isTimestamp(vType)) {
+                                filterValues.putLong(f.getDate(null));
+                            } else {
+                                filterValues.putLong(f.getLong(null));
+                            }
                         }
                         break;
                     case ColumnType.FLOAT:
@@ -192,8 +251,29 @@ public final class ParquetRowGroupFilter {
                     }
                     case ColumnType.UUID:
                         for (int j = 0; j < valueCount; j++) {
-                            long lo = valueFunctions.getQuick(j).getLong128Lo(null);
-                            long hi = valueFunctions.getQuick(j).getLong128Hi(null);
+                            Function f = valueFunctions.getQuick(j);
+                            long lo;
+                            long hi;
+                            int vType = ColumnType.tagOf(f.getType());
+                            if (vType == ColumnType.STRING || vType == ColumnType.VARCHAR || vType == ColumnType.SYMBOL) {
+                                CharSequence str = f.getStrA(null);
+                                if (str == null) {
+                                    lo = Numbers.LONG_NULL;
+                                    hi = Numbers.LONG_NULL;
+                                } else {
+                                    try {
+                                        Uuid.checkDashesAndLength(str);
+                                        lo = Uuid.parseLo(str);
+                                        hi = Uuid.parseHi(str);
+                                    } catch (NumericException e) {
+                                        supported = false;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                lo = f.getLong128Lo(null);
+                                hi = f.getLong128Hi(null);
+                            }
                             if (lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL) {
                                 filterValues.putLong(lo);
                                 filterValues.putLong(hi);
@@ -247,8 +327,11 @@ public final class ParquetRowGroupFilter {
                 rowGroupsSkipped++;
             }
             return skip;
+        } catch (CairoException e) {
+            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+            return false;
         } catch (Throwable e) {
-            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", e=").$(e).$(']').$();
+            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e.getMessage()).$(']').$();
             return false;
         }
     }

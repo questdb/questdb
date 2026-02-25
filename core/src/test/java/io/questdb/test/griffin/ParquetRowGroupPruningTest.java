@@ -127,6 +127,14 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val = '2020-06-15'::DATE",
                     null, true, false
             );
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2020-06-15T00:00:00.000Z
+                            """,
+                    "SELECT val FROM x WHERE val = '2020-06-15T00:00:00.000000001Z'",
+                    null, true, false
+            );
         });
     }
 
@@ -198,7 +206,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('100000000000000000000.10', '2024-01-01T00:00:00.000000Z'),
                     ('500000000000000000000.50', '2024-01-01T01:00:00.000000Z'),
-                    ('999999999999999999999.99', '2024-01-01T02:00:00.000000Z')
+                    ('999999999999999999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('999999999999999999999.98', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -225,10 +234,11 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DECIMAL(8,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
-                    INSERT INTO x VALUES
-                    ('1000.10', '2024-01-01T00:00:00.000000Z'),
-                    ('50_000.50', '2024-01-01T01:00:00.000000Z'),
-                    ('99_999.99', '2024-01-01T02:00:00.000000Z')
+                     INSERT INTO x VALUES
+                     ('1000.10', '2024-01-01T00:00:00.000000Z'),
+                     ('50000.50', '2024-01-01T01:00:00.000000Z'),
+                     ('99999.99', '2024-01-01T02:00:00.000000Z'),
+                     ('99998.99', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -258,7 +268,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('1000000.10', '2024-01-01T00:00:00.000000Z'),
                     ('5000000.50', '2024-01-01T01:00:00.000000Z'),
-                    ('9999999.99', '2024-01-01T02:00:00.000000Z')
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -288,7 +299,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('1.1', '2024-01-01T00:00:00.000000Z'),
                     ('5.5', '2024-01-01T01:00:00.000000Z'),
-                    ('9.9', '2024-01-01T02:00:00.000000Z')
+                    ('9.9', '2024-01-01T02:00:00.000000Z'),
+                    ('7.9', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -318,7 +330,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     (1.11, '2024-01-01T00:00:00.000000Z'),
                     (5.55, '2024-01-01T01:00:00.000000Z'),
-                    (9.99, '2024-01-01T02:00:00.000000Z')
+                    (9.99, '2024-01-01T02:00:00.000000Z'),
+                    (9.79, '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -348,13 +361,14 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     (1.0, '2024-01-01T00:00:00.000000Z'),
                     (5.0, '2024-01-01T01:00:00.000000Z'),
-                    (10.0, '2024-01-01T02:00:00.000000Z')
+                    (10.0, '2024-01-01T02:00:00.000000Z'),
+                    (12.0, '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
             assertQueryNoLeakCheck(
                     "val\n",
-                    "SELECT val FROM x WHERE val = 3.0::FLOAT",
+                    "SELECT val FROM x WHERE val = 3.0",
                     null, true, false
             );
 
@@ -362,7 +376,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             val
-                            5.0000
+                            5.0
                             """,
                     "SELECT val FROM x WHERE val = 5.0::FLOAT",
                     null, true, false
@@ -378,7 +392,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('1.1.1.1', '2024-01-01T00:00:00.000000Z'),
                     ('10.0.0.1', '2024-01-01T01:00:00.000000Z'),
-                    ('192.168.1.1', '2024-01-01T02:00:00.000000Z')
+                    ('192.168.1.1', '2024-01-01T02:00:00.000000Z'),
+                    ('127.0.0.1', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -408,7 +423,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (50_000, '2024-01-01T01:00:00.000000Z'),
-                    (100_000, '2024-01-01T02:00:00.000000Z')
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -438,7 +454,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (50_000, '2024-01-01T01:00:00.000000Z'),
-                    (100_000, '2024-01-01T02:00:00.000000Z')
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -447,7 +464,6 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val IN (2, 3, 4)",
                     null, true, false
             );
-
 
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             assertQueryNoLeakCheck(
@@ -469,7 +485,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (500_000, '2024-01-01T01:00:00.000000Z'),
-                    (1_000_000, '2024-01-01T02:00:00.000000Z')
+                    (1_000_000, '2024-01-01T02:00:00.000000Z'),
+                    (1_000_001, '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -499,7 +516,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     (to_long128(0, 1), '2024-01-01T00:00:00.000000Z'),
                     (to_long128(0, 50), '2024-01-01T01:00:00.000000Z'),
-                    (to_long128(0, 100), '2024-01-01T02:00:00.000000Z')
+                    (to_long128(0, 100), '2024-01-01T02:00:00.000000Z'),
+                    (to_long128(0, 101), '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -514,7 +532,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             val
-                            00000000-0000-0000-0000-000000000032
+                            00000000-0000-0032-0000-000000000000
                             """,
                     "SELECT val FROM x WHERE val = to_long128(0, 50)",
                     null, true, false
@@ -530,7 +548,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     (1, 'aaa', '2024-01-01T00:00:00.000000Z'),
                     (50, 'mmm', '2024-01-01T01:00:00.000000Z'),
-                    (100, 'zzz', '2024-01-01T02:00:00.000000Z')
+                    (100, 'zzz', '2024-01-01T02:00:00.000000Z'),
+                    (101, 'xxx', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'a,b')");
 
@@ -568,13 +587,14 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     (100, '2024-01-01T00:00:00.000000Z'),
                     (200, '2024-01-01T01:00:00.000000Z'),
-                    (1000, '2024-01-01T02:00:00.000000Z')
+                    (1000, '2024-01-01T02:00:00.000000Z'),
+                    (1010, '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
             assertQueryNoLeakCheck(
                     "val\n",
-                    "SELECT val FROM x WHERE val = 500",
+                    "SELECT val FROM x WHERE val = 501",
                     null, true, false
             );
 
@@ -598,7 +618,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('aaa', '2024-01-01T00:00:00.000000Z'),
                     ('mmm', '2024-01-01T01:00:00.000000Z'),
-                    ('zzz', '2024-01-01T02:00:00.000000Z')
+                    ('zzz', '2024-01-01T02:00:00.000000Z'),
+                    ('xxx', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -628,7 +649,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('alpha', '2024-01-01T00:00:00.000000Z'),
                     ('gamma', '2024-01-01T01:00:00.000000Z'),
-                    ('zeta', '2024-01-01T02:00:00.000000Z')
+                    ('zeta', '2024-01-01T02:00:00.000000Z'),
+                    ('zeta1', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -658,7 +680,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('2020-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
                     ('2020-06-15T12:00:00.000000Z', '2024-01-01T01:00:00.000000Z'),
-                    ('2020-12-31T23:59:59.999999Z', '2024-01-01T02:00:00.000000Z')
+                    ('2020-12-31T23:59:59.999999Z', '2024-01-01T02:00:00.000000Z'),
+                    ('2020-12-30T23:59:59.999999Z', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -677,6 +700,24 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val = '2020-06-15T12:00:00.000000Z'::TIMESTAMP",
                     null, true, false
             );
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2020-06-15T12:00:00.000000Z
+                            """,
+                    "SELECT val FROM x WHERE val = '2020-06-15T12:00:00.000000Z'::TIMESTAMP_NS",
+                    null, true, false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2020-01-01T00:00:00.000000Z
+                            """,
+                    "SELECT val FROM x WHERE val = '2020-01-01'::Date",
+                    null, true, false
+            );
         });
     }
 
@@ -688,13 +729,14 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:00.000000Z'),
                     ('55555555-5555-5555-5555-555555555555', '2024-01-01T01:00:00.000000Z'),
-                    ('99999999-9999-9999-9999-999999999999', '2024-01-01T02:00:00.000000Z')
+                    ('99999999-9999-9999-9999-999999999999', '2024-01-01T02:00:00.000000Z'),
+                    ('99999999-9999-9999-9999-999999999998', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
             assertQueryNoLeakCheck(
                     "val\n",
-                    "SELECT val FROM x WHERE val = '33333333-3333-3333-3333-333333333333'",
+                    "SELECT val FROM x WHERE val = '33333333-3333-3333-3333-333333333334'",
                     null, true, false
             );
 
@@ -707,6 +749,49 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val = '55555555-5555-5555-5555-555555555555'",
                     null, true, false
             );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '33333333-3333-3333-3333-333333333334'::UUID",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            55555555-5555-5555-5555-555555555555
+                            """,
+                    "SELECT val FROM x WHERE val = '55555555-5555-5555-5555-555555555555'::UUID",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = NULL::UUID",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val IN ('33333333-3333-3333-3333-333333333334', '44444444-4444-4444-4444-444444444444')",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            11111111-1111-1111-1111-111111111111
+                            99999999-9999-9999-9999-999999999999
+                            """,
+                    "SELECT val FROM x WHERE val IN ('11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999')",
+                    null, true, false
+            );
         });
     }
 
@@ -717,8 +802,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("""
                     INSERT INTO x VALUES
                     ('abc', '2024-01-01T00:00:00.000000Z'),
-                    ('mno', '2024-01-01T01:00:00.000000Z'),
-                    ('xyz', '2024-01-01T02:00:00.000000Z')
+                    ('❤️', '2024-01-01T01:00:00.000000Z'),
+                    ('xyz', '2024-01-01T02:00:00.000000Z'),
+                    ('xxx', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -732,9 +818,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             val
-                            mno
+                            ❤️
                             """,
-                    "SELECT val FROM x WHERE val = 'mno'",
+                    "SELECT val FROM x WHERE val = '❤️'",
                     null, true, false
             );
         });
@@ -754,7 +840,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     (3, '2024-01-01T02:00:00.000000Z', 10),
                     (4, '2024-01-01T03:00:00.000000Z', 100),
-                    (5, '2024-01-01T04:00:00.000000Z', 1000)
+                    (5, '2024-01-01T04:00:00.000000Z', 1000),
+                    (6, '2024-01-02T01:00:00.000000Z', 10000)
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
@@ -798,9 +885,19 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("""
                     INSERT INTO x VALUES
                     (3, '2024-01-01T02:00:00.000000Z', 1.11),
-                    (4, '2024-01-01T03:00:00.000000Z', 2.22)
+                    (4, '2024-01-01T03:00:00.000000Z', 2.22),
+                    (5, '2024-01-02T01:00:00.000000Z', 3.33)
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tval
+                            """,
+                    "SELECT id, val FROM x WHERE val = 1.14",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
             assertQueryNoLeakCheck(
                     """
