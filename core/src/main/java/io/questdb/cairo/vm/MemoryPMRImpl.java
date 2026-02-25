@@ -133,6 +133,8 @@ public class MemoryPMRImpl extends AbstractMemoryCR implements MemoryMR {
         if (newSize < 0) {
             throw CairoException.critical(0).put("invalid size [size=").put(newSize).put(']');
         }
+        // Must be grow-only. Shrinking breaks callers that reuse mapped pages and assume extend() won't
+        // reduce the logical boundary between cursor/key probes.
         if (newSize > size) {
             size = newSize;
         }
