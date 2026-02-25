@@ -458,7 +458,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean getBitmapIndexReaderPagedEnabled() {
-        return false;
+        return true;
     }
 
     @Override
@@ -473,7 +473,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean getBitmapIndexWriterValuePagedEnabled() {
-        return false;
+        return true;
     }
 
     @Override
