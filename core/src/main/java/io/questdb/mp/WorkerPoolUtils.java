@@ -41,27 +41,10 @@ import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
-import io.questdb.std.AsyncMunmapJob;
-import io.questdb.std.Files;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 
 public class WorkerPoolUtils {
-
-    /**
-     * Sets up the async munmap flag based on configuration.
-     * The dedicated async munmap pool is created in ServerMain.configureWorkerPools()
-     * when async munmap is enabled.
-     *
-     * @deprecated Use ServerMain's dedicated async munmap pool configuration instead.
-     *             This method is kept for backward compatibility but no longer assigns the job.
-     */
-    @Deprecated
-    public static void setupAsyncMunmapJob(WorkerPool pool, CairoEngine engine) {
-        // This method is deprecated - the dedicated pool is now created in ServerMain.
-        // The flag is set in ServerMain.configureWorkerPools() when the dedicated pool is created.
-    }
 
     public static void setupQueryJobs(
             WorkerPool sharedPoolQuery,
