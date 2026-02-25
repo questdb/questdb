@@ -34,11 +34,11 @@ public class BackupSeqPartLock {
     }
 
     public long getLockedSeqTxn(TableToken tableToken) {
-        Long v = lockedSeqTxns.get(tableToken.getTableName());
+        Long v = lockedSeqTxns.get(tableToken.getDirName());
         return v != null ? v : -1L;
     }
 
     public void lock(TableToken tableToken, long seqTxn) {
-        lockedSeqTxns.put(tableToken.getTableName(), seqTxn);
+        lockedSeqTxns.put(tableToken.getDirName(), seqTxn);
     }
 }
