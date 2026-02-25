@@ -4,6 +4,18 @@ steps:
     lfs: false
     submodules: false
   - bash: |
+      CLIENT_VERSION=$(grep -oP '<questdb.client.version>\K[^<]+' core/pom.xml)
+      echo "questdb.client.version=$CLIENT_VERSION"
+      if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
+        echo "SNAPSHOT version detected, activating local-client profile"
+        git submodule update --init java-questdb-client
+        echo "##vso[task.setvariable variable=CLIENT_PROFILE]-P local-client"
+      else
+        echo "Release version detected, using Maven Central"
+        echo "##vso[task.setvariable variable=CLIENT_PROFILE]"
+      fi
+    displayName: "Detect local client profile"
+  - bash: |
       rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
     displayName: "Cleanup dangling test artifacts from /tmp"
     condition: startsWith(variables['poolName'], 'hetzner-')
@@ -137,7 +149,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
+        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition: |
       or(
@@ -155,11 +167,11 @@ steps:
       options:
         "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         -P build-web-console
-         $(MAVEN_RUN_OPTS)"
+         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
@@ -182,7 +194,7 @@ steps:
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -P qdbr-coverage,build-web-console
-        $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"

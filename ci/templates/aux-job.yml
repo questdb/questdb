@@ -23,6 +23,18 @@ jobs:
         fetchDepth: 1
         lfs: false
         submodules: false
+      - bash: |
+          CLIENT_VERSION=$(grep -oP '<questdb.client.version>\K[^<]+' core/pom.xml)
+          echo "questdb.client.version=$CLIENT_VERSION"
+          if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
+            echo "SNAPSHOT version detected, activating local-client profile"
+            git submodule update --init java-questdb-client
+            echo "##vso[task.setvariable variable=CLIENT_PROFILE]-P local-client"
+          else
+            echo "Release version detected, using Maven Central"
+            echo "##vso[task.setvariable variable=CLIENT_PROFILE]"
+          fi
+        displayName: "Detect local client profile"
 
       - template: java-lint.yml
 
@@ -42,7 +54,7 @@ jobs:
           mavenPomFile: "pom.xml"
           mavenOptions: "$(MAVEN_OPTS)"
           options:
-            "compile javadoc:javadoc -DskipTests -P javadoc -P qdbr-release $(MAVEN_RUN_OPTS)"
+            "compile javadoc:javadoc -DskipTests -P javadoc -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
           jdkVersionOption: $(jdk)
 
       # Check bytecode size
