@@ -882,6 +882,67 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinKeyedMultipleSlavePartitions() throws Exception {
+        // Tests seekEstimate with keyed ASOF and multiple slave partitions.
+        // Catches the timestamp scaling bug where seekEstimate overshoots to the
+        // last frame when master=NANO and slave=MICRO, missing correct matches
+        // in middle partitions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Each day has one trade with a distinct symbol
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T12:00:00.000000Z', 'A', 10),
+                                ('2024-01-02T12:00:00.000000Z', 'B', 20),
+                                ('2024-01-03T12:00:00.000000Z', 'C', 30)
+                            """
+            );
+
+            // Prices in 3 partitions (days) with matching symbols
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T06:00:00.000000Z', 'A', 100.0),
+                                ('2024-01-02T06:00:00.000000Z', 'B', 200.0),
+                                ('2024-01-03T06:00:00.000000Z', 'C', 300.0)
+                            """
+            );
+
+            // Each trade matches the latest price <= its timestamp with matching key.
+            // Trade A (day1 12:00) → price 100.0 (day1 06:00, sym A)
+            // Trade B (day2 12:00) → price 200.0 (day2 06:00, sym B)
+            // Trade C (day3 12:00) → price 300.0 (day3 06:00, sym C)
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tavg
+                            A\t100.0
+                            B\t200.0
+                            C\t300.0
+                            """,
+                    """
+                            SELECT t.sym, avg(p.price)
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY t.sym
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyedSomeMasterSymbolsMissing() throws Exception {
         // Some master symbols exist in slave, some don't.
         // Matching symbols produce results, non-matching produce NULLs.
@@ -1269,6 +1330,64 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     sql,
                     null,
                     false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedMultipleSlavePartitions() throws Exception {
+        // Tests seekEstimate with multiple slave partitions (not-keyed path).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Trades span 3 days
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T12:00:00.000000Z', 'A', 10),
+                                ('2024-01-02T12:00:00.000000Z', 'B', 20),
+                                ('2024-01-03T12:00:00.000000Z', 'C', 30)
+                            """
+            );
+
+            // Prices in 3 partitions (days)
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T06:00:00.000000Z', 100.0),
+                                ('2024-01-02T06:00:00.000000Z', 200.0),
+                                ('2024-01-03T06:00:00.000000Z', 300.0)
+                            """
+            );
+
+            // Each trade matches the latest price <= its timestamp.
+            // Trade A (day1 12:00) → price 100.0 (day1 06:00)
+            // Trade B (day2 12:00) → price 200.0 (day2 06:00)
+            // Trade C (day3 12:00) → price 300.0 (day3 06:00)
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tavg
+                            A\t100.0
+                            B\t200.0
+                            C\t300.0
+                            """,
+                    """
+                            SELECT t.sym, avg(p.price)
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY t.sym
+                            """,
+                    null,
+                    true,
                     true
             );
         });

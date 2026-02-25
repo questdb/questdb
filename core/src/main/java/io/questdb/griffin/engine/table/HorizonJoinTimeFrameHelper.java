@@ -301,45 +301,80 @@ public class HorizonJoinTimeFrameHelper {
         }
 
         if (rowLo == Long.MIN_VALUE) {
-            // Navigate through frames to find one containing or before the target
-            while (timeFrameCursor.next()) {
-                final long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
-
-                if (frameEstimateHi <= targetTimestamp) {
-                    // Frame is entirely before target, record as candidate
-                    if (timeFrameCursor.open() > 0) {
-                        bestFrameIndex = timeFrame.getFrameIndex();
-                        bestRowIndex = timeFrame.getRowHi() - 1;
-                        bookmarkCurrentFrame(0);
-                    }
-                    continue;
-                }
-
-                // Frame may contain or straddle the target
-                if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), slaveTsScale) <= targetTimestamp) {
-                    if (timeFrameCursor.open() == 0) {
-                        continue;
-                    }
-
-                    // Scale slave frame timestamps to common unit
+            // Use seekEstimate to binary-search to the target's vicinity, avoiding O(N) linear scan through all
+            // preceding frames. Only seek when there was no bookmark — when we had a bookmark, the cursor is already
+            // positioned at the bookmarked frame (via jumpTo), so next() will correctly continue from frame F+1.
+            if (bookmarkedFrameIndex == -1) {
+                final long nativeTargetTimestamp = slaveTsScale == 1 ? targetTimestamp : targetTimestamp / slaveTsScale;
+                timeFrameCursor.seekEstimate(nativeTargetTimestamp);
+            }
+            if (timeFrame.getFrameIndex() >= 0 && timeFrameCursor.open() > 0) {
+                final long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
+                if (frameTsHi <= targetTimestamp) {
+                    // Seeked frame is entirely <= target, record as best candidate
+                    bestFrameIndex = timeFrame.getFrameIndex();
+                    bestRowIndex = timeFrame.getRowHi() - 1;
+                    bookmarkCurrentFrame(0);
+                } else {
                     final long frameTsLo = scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale);
-                    final long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
+                    if (frameTsLo <= targetTimestamp) {
+                        // Target is within the seeked frame
+                        rowLo = timeFrame.getRowLo();
+                    }
+                }
+            }
 
-                    if (frameTsHi <= targetTimestamp) {
-                        // Entire frame is <= target
-                        bestFrameIndex = timeFrame.getFrameIndex();
-                        bestRowIndex = timeFrame.getRowHi() - 1;
-                        bookmarkCurrentFrame(0);
+            if (rowLo == Long.MIN_VALUE) {
+                // Navigate through remaining frames to find one containing or before the target
+                while (timeFrameCursor.next()) {
+                    final long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
+
+                    if (frameEstimateHi <= targetTimestamp) {
+                        // Frame is entirely before target, record as candidate
+                        if (timeFrameCursor.open() > 0) {
+                            bestFrameIndex = timeFrame.getFrameIndex();
+                            bestRowIndex = timeFrame.getRowHi() - 1;
+                            bookmarkCurrentFrame(0);
+                        }
                         continue;
                     }
 
-                    if (frameTsLo <= targetTimestamp) {
-                        // Target is within this frame, need to search
-                        rowLo = timeFrame.getRowLo();
-                        break;
+                    // Frame may contain or straddle the target
+                    if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), slaveTsScale) <= targetTimestamp) {
+                        if (timeFrameCursor.open() == 0) {
+                            continue;
+                        }
+
+                        // Scale slave frame timestamps to common unit
+                        final long frameTsLo = scaleTimestamp(timeFrame.getTimestampLo(), slaveTsScale);
+                        final long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi() - 1, slaveTsScale);
+
+                        if (frameTsHi <= targetTimestamp) {
+                            // Entire frame is <= target
+                            bestFrameIndex = timeFrame.getFrameIndex();
+                            bestRowIndex = timeFrame.getRowHi() - 1;
+                            bookmarkCurrentFrame(0);
+                            continue;
+                        }
+
+                        if (frameTsLo <= targetTimestamp) {
+                            // Target is within this frame, need to search
+                            rowLo = timeFrame.getRowLo();
+                            break;
+                        }
+
+                        // Frame is entirely after target, return best found so far
+                        if (bestRowIndex != Long.MIN_VALUE) {
+                            bookmarkedFrameIndex = bestFrameIndex;
+                            bookmarkedRowIndex = bestRowIndex;
+                            return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                        }
+                        // Bookmark current frame so subsequent searches with larger timestamps can find it
+                        bookmarkCurrentFrame(0);
+                        return Long.MIN_VALUE;
                     }
 
-                    // Frame is entirely after target, return best found so far
+                    // Frame is entirely after target
                     if (bestRowIndex != Long.MIN_VALUE) {
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
@@ -350,25 +385,15 @@ public class HorizonJoinTimeFrameHelper {
                     return Long.MIN_VALUE;
                 }
 
-                // Frame is entirely after target
-                if (bestRowIndex != Long.MIN_VALUE) {
-                    bookmarkedFrameIndex = bestFrameIndex;
-                    bookmarkedRowIndex = bestRowIndex;
-                    return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                if (rowLo == Long.MIN_VALUE) {
+                    // No more frames, return best found
+                    if (bestRowIndex != Long.MIN_VALUE) {
+                        bookmarkedFrameIndex = bestFrameIndex;
+                        bookmarkedRowIndex = bestRowIndex;
+                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                    }
+                    return Long.MIN_VALUE;
                 }
-                // Bookmark current frame so subsequent searches with larger timestamps can find it
-                bookmarkCurrentFrame(0);
-                return Long.MIN_VALUE;
-            }
-
-            if (rowLo == Long.MIN_VALUE) {
-                // No more frames, return best found
-                if (bestRowIndex != Long.MIN_VALUE) {
-                    bookmarkedFrameIndex = bestFrameIndex;
-                    bookmarkedRowIndex = bestRowIndex;
-                    return Rows.toRowID(bestFrameIndex, bestRowIndex);
-                }
-                return Long.MIN_VALUE;
             }
         }
 
