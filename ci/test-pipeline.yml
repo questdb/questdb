@@ -184,7 +184,7 @@ stages:
             submodules: false
             persistCredentials: true
           - bash: |
-              CLIENT_VERSION=$(grep -oP '<questdb.client.version>\K[^<]+' core/pom.xml)
+              CLIENT_VERSION=$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml)
               echo "questdb.client.version=$CLIENT_VERSION"
               if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
                 echo "SNAPSHOT version detected, activating local-client profile"
