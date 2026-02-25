@@ -104,40 +104,67 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
     }
 
     public final void close(boolean truncate, byte truncateMode) {
-        if (fd != -1) {
-            flushAllWritingPages();
-            ringManager.waitForAll();
-            long sz = truncate ? getAppendOffset() : -1L;
-            releaseAllPageBuffersToPool();
-            super.close();
-            clearPageStates();
+        Throwable error = null;
+        final long currentFd = fd;
+        final long size = truncate ? getAppendOffset() : -1L;
+        if (currentFd != -1) {
             try {
-                Vm.bestEffortClose(ff, LOG, fd, sz, truncateMode);
+                flushAllWritingPages();
+                ringManager.waitForAll();
+            } catch (Throwable th) {
+                error = th;
+                error = drainInFlightIgnoringDistressed(error);
+            }
+        }
+
+        error = releaseResources(error);
+        if (currentFd != -1) {
+            try {
+                Vm.bestEffortClose(ff, LOG, currentFd, size, truncateMode);
+            } catch (Throwable th) {
+                error = mergeFailure(error, th);
             } finally {
                 fd = -1;
             }
-        } else {
-            releaseAllPageBuffersToPool();
-            super.close();
-            clearPageStates();
         }
         allocatedFileSize = 0;
         distressed = false;
         lastSyncedAppendOffset = 0;
+        if (error != null) {
+            throwUnchecked(error);
+        }
     }
 
     @Override
     public long detachFdClose() {
-        long detachedFd = this.fd;
-        flushAllWritingPages();
-        ringManager.waitForAll();
-        releaseAllPageBuffersToPool();
-        super.close();
-        clearPageStates();
+        Throwable error = null;
+        final long detachedFd = this.fd;
+        if (detachedFd != -1) {
+            try {
+                flushAllWritingPages();
+                ringManager.waitForAll();
+            } catch (Throwable th) {
+                error = th;
+                error = drainInFlightIgnoringDistressed(error);
+            }
+        }
+
+        error = releaseResources(error);
         this.fd = -1;
         allocatedFileSize = 0;
         distressed = false;
         lastSyncedAppendOffset = 0;
+
+        if (error != null) {
+            if (detachedFd != -1 && ff != null) {
+                try {
+                    ff.close(detachedFd);
+                } catch (Throwable th) {
+                    error = mergeFailure(error, th);
+                }
+            }
+            throwUnchecked(error);
+        }
         return detachedFd;
     }
 
@@ -594,6 +621,17 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         }
     }
 
+    private Throwable drainInFlightIgnoringDistressed(Throwable error) {
+        try {
+            while (ringManager.getInFlightCount() > 0) {
+                ringManager.submitAndDrainAll();
+            }
+        } catch (Throwable th) {
+            error = mergeFailure(error, th);
+        }
+        return error;
+    }
+
     private void ensureFileSize(long requiredSize) {
         if (requiredSize <= allocatedFileSize) {
             return;
@@ -731,6 +769,25 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         }
     }
 
+    private Throwable releaseResources(Throwable error) {
+        try {
+            releaseAllPageBuffersToPool();
+        } catch (Throwable th) {
+            error = mergeFailure(error, th);
+        }
+        try {
+            super.close();
+        } catch (Throwable th) {
+            error = mergeFailure(error, th);
+        }
+        try {
+            clearPageStates();
+        } catch (Throwable th) {
+            error = mergeFailure(error, th);
+        }
+        return error;
+    }
+
     private void setPageBufferIndex(int page, int bufIdx) {
         while (pageBufferIndices.size() <= page) {
             pageBufferIndices.add(-1);
@@ -835,5 +892,25 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         baseOffset = pageOffset(page + 1) - pageHi;
         appendPointer = newAddr + offsetInPage;
         computeHotPage(page, newAddr);
+    }
+
+    private static Throwable mergeFailure(Throwable original, Throwable next) {
+        if (original == null) {
+            return next;
+        }
+        if (original != next) {
+            original.addSuppressed(next);
+        }
+        return original;
+    }
+
+    private static void throwUnchecked(Throwable error) {
+        if (error instanceof RuntimeException) {
+            throw (RuntimeException) error;
+        }
+        if (error instanceof Error) {
+            throw (Error) error;
+        }
+        throw new RuntimeException(error);
     }
 }

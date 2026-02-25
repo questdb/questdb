@@ -1130,6 +1130,88 @@ public class MemoryPURImplTest extends AbstractTest {
     }
 
     @Test
+    public void testCloseReleasesFdAndPoolWhenDistressed() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = 4096;
+
+            File file = temp.newFile();
+            try (
+                    Path path = new Path();
+                    WalWriterRingManager mgr = new WalWriterRingManager(rf, 64);
+                    WalWriterBufferPool pool = new WalWriterBufferPool(pageSize, 16, MemoryTag.NATIVE_TABLE_WAL_WRITER)
+            ) {
+                pool.setRingManager(mgr);
+                mgr.setPool(pool);
+                pool.registerWithKernel();
+
+                final MemoryPURImpl mem = new MemoryPURImpl(ff, path.of(file.getAbsolutePath()).$(),
+                        pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER, 0, mgr, pool);
+                try {
+                    final int freeBeforeWrite = pool.getFreeCount();
+                    mem.putLong(42);
+                    Assert.assertTrue("write should consume a pooled buffer", pool.getFreeCount() < freeBeforeWrite);
+                    mem.onFsyncError(-5);
+
+                    try {
+                        mem.close();
+                        Assert.fail("expected distressed exception");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "io_uring write error");
+                    }
+
+                    Assert.assertEquals(-1, mem.getFd());
+                    Assert.assertEquals("all pooled buffers should be released", freeBeforeWrite, pool.getFreeCount());
+                } finally {
+                    mem.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDetachFdCloseReleasesPoolWhenDistressed() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
+
+        TestUtils.assertMemoryLeak(() -> {
+            final long pageSize = 4096;
+
+            File file = temp.newFile();
+            try (
+                    Path path = new Path();
+                    WalWriterRingManager mgr = new WalWriterRingManager(rf, 64);
+                    WalWriterBufferPool pool = new WalWriterBufferPool(pageSize, 16, MemoryTag.NATIVE_TABLE_WAL_WRITER)
+            ) {
+                pool.setRingManager(mgr);
+                mgr.setPool(pool);
+                pool.registerWithKernel();
+
+                final MemoryPURImpl mem = new MemoryPURImpl(ff, path.of(file.getAbsolutePath()).$(),
+                        pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER, 0, mgr, pool);
+                try {
+                    final int freeBeforeWrite = pool.getFreeCount();
+                    mem.putLong(42);
+                    Assert.assertTrue("write should consume a pooled buffer", pool.getFreeCount() < freeBeforeWrite);
+                    mem.onFsyncError(-5);
+
+                    try {
+                        mem.detachFdClose();
+                        Assert.fail("expected distressed exception");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "io_uring write error");
+                    }
+
+                    Assert.assertEquals(-1, mem.getFd());
+                    Assert.assertEquals("all pooled buffers should be released", freeBeforeWrite, pool.getFreeCount());
+                } finally {
+                    mem.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPoolBackpressure() throws Exception {
         Assume.assumeTrue(rf.isAvailable());
 
