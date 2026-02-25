@@ -202,22 +202,16 @@ pub fn symbol_to_data_page_only(
         data_buffer.len()
     };
 
-    let page_stats = match (options.write_statistics, bloom_hashes) {
-        (true, Some(h)) => {
-            let mut stats = BinaryMaxMinStats::new(&primitive_type);
-            collect_stats_and_bloom_for_partition(column_values, offsets, chars, &mut stats, h)?;
-            Some(stats.into_parquet_stats(total_null_count))
-        }
-        (true, None) => {
-            let mut stats = BinaryMaxMinStats::new(&primitive_type);
-            update_stats_for_partition(column_values, offsets, chars, &mut stats)?;
-            Some(stats.into_parquet_stats(total_null_count))
-        }
-        (false, Some(h)) => {
-            collect_bloom_hashes_for_partition(column_values, offsets, chars, h)?;
+    let page_stats = if options.write_statistics || bloom_hashes.is_some() {
+        let mut stats = if options.write_statistics {
+            Some(BinaryMaxMinStats::new(&primitive_type))
+        } else {
             None
-        }
-        (false, None) => None,
+        };
+        collect_symbol_metadata(column_values, offsets, chars, stats.as_mut(), bloom_hashes)?;
+        stats.map(|s| s.into_parquet_stats(total_null_count))
+    } else {
+        None
     };
 
     let bits_per_key = util::bit_width(global_max_key as u64);
@@ -244,58 +238,24 @@ pub fn symbol_to_data_page_only(
     Ok(Page::Data(data_page))
 }
 
-fn update_stats_for_partition(
+fn collect_symbol_metadata(
     column_values: &[i32],
     offsets: &[u64],
     chars: &[u8],
-    stats: &mut BinaryMaxMinStats,
+    mut stats: Option<&mut BinaryMaxMinStats>,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<()> {
     for &key in column_values {
         if key >= 0 {
             let k = key as usize;
             if let Some(&offset) = offsets.get(k) {
                 if let Some(utf8_buf) = read_symbol_as_utf8(chars, offset as usize)? {
-                    stats.update(&utf8_buf);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn collect_bloom_hashes_for_partition(
-    column_values: &[i32],
-    offsets: &[u64],
-    chars: &[u8],
-    bloom_hashes: &mut HashSet<u64>,
-) -> ParquetResult<()> {
-    for &key in column_values {
-        if key >= 0 {
-            let k = key as usize;
-            if let Some(&offset) = offsets.get(k) {
-                if let Some(utf8_buf) = read_symbol_as_utf8(chars, offset as usize)? {
-                    bloom_hashes.insert(hash_byte(&utf8_buf));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn collect_stats_and_bloom_for_partition(
-    column_values: &[i32],
-    offsets: &[u64],
-    chars: &[u8],
-    stats: &mut BinaryMaxMinStats,
-    bloom_hashes: &mut HashSet<u64>,
-) -> ParquetResult<()> {
-    for &key in column_values {
-        if key >= 0 {
-            let k = key as usize;
-            if let Some(&offset) = offsets.get(k) {
-                if let Some(utf8_buf) = read_symbol_as_utf8(chars, offset as usize)? {
-                    stats.update(&utf8_buf);
-                    bloom_hashes.insert(hash_byte(&utf8_buf));
+                    if let Some(ref mut s) = stats {
+                        s.update(&utf8_buf);
+                    }
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_byte(&utf8_buf));
+                    }
                 }
             }
         }
