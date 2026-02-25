@@ -3193,7 +3193,10 @@ mod tests {
             encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
 
         assert_eq!(result.null_count, 100);
-        assert!(bloom_hashes.is_empty(), "Bloom filter should be empty for all nulls");
+        assert!(
+            bloom_hashes.is_empty(),
+            "Bloom filter should be empty for all nulls"
+        );
     }
 
     #[test]

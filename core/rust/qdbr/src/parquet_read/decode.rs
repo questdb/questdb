@@ -796,7 +796,7 @@ impl ParquetDecoder {
                 .as_ref()
                 .and_then(|m| m.statistics.as_ref())
                 .and_then(|s| s.null_count)
-                .map_or(true, |c| c > 0);
+                .is_none_or(|c| c > 0);
             let bitset =
                 parquet2::bloom_filter::read_from_slice(column_metadata, file_data).unwrap_or(&[]);
 

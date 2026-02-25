@@ -1087,7 +1087,10 @@ mod tests {
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
             .expect("can_skip");
-        assert!(can_skip, "should skip: none of the filter values are in the row group");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
 
         let present_vals_be = i8_to_be_bytes_vec(&[0, 15, 99]);
         let filters = [ColumnFilterPacked {
@@ -1173,7 +1176,10 @@ mod tests {
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
             .expect("can_skip");
-        assert!(can_skip, "should skip: none of the filter values are in the row group");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
 
         let present_vals_be = i16_to_be_bytes_vec(&[0, 105, 999]);
         let filters = [ColumnFilterPacked {
@@ -1257,7 +1263,10 @@ mod tests {
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
             .expect("can_skip");
-        assert!(can_skip, "should skip: none of the filter values are in the row group");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
 
         let present_vals_be = i32_to_be_bytes_vec(&[0, 10005, 99999]);
         let filters = [ColumnFilterPacked {
@@ -1341,7 +1350,10 @@ mod tests {
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
             .expect("can_skip");
-        assert!(can_skip, "should skip: none of the filter values are in the row group");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
 
         let present_vals_be = i64_to_be_bytes_vec(&[0, 105, 999]);
         let filters = [ColumnFilterPacked {
@@ -1367,9 +1379,7 @@ mod tests {
         use std::collections::HashSet;
 
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let col1: Vec<TestDecimal128> = (100u64..110)
-            .map(|v| TestDecimal128(0, v))
-            .collect();
+        let col1: Vec<TestDecimal128> = (100u64..110).map(|v| TestDecimal128(0, v)).collect();
         let row_count = col1.len();
 
         let decimal_type = ColumnType::new_decimal(38, 0).unwrap();
@@ -1433,8 +1443,12 @@ mod tests {
             bytes
         };
 
-        let absent_vals: Vec<[u8; 16]> = [0u64, 1, 50, 999].iter().map(|&v| to_be_128(0, v)).collect();
-        let absent_vals_flat: Vec<u8> = absent_vals.iter().flat_map(|b| b.iter().copied()).collect();
+        let absent_vals: Vec<[u8; 16]> = [0u64, 1, 50, 999]
+            .iter()
+            .map(|&v| to_be_128(0, v))
+            .collect();
+        let absent_vals_flat: Vec<u8> =
+            absent_vals.iter().flat_map(|b| b.iter().copied()).collect();
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: absent_vals_flat.as_ptr() as u64,
@@ -1442,10 +1456,17 @@ mod tests {
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
             .expect("can_skip");
-        assert!(can_skip, "should skip: none of the filter values are in the row group");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
 
-        let present_vals: Vec<[u8; 16]> = [0u64, 105, 999].iter().map(|&v| to_be_128(0, v)).collect();
-        let present_vals_flat: Vec<u8> = present_vals.iter().flat_map(|b| b.iter().copied()).collect();
+        let present_vals: Vec<[u8; 16]> =
+            [0u64, 105, 999].iter().map(|&v| to_be_128(0, v)).collect();
+        let present_vals_flat: Vec<u8> = present_vals
+            .iter()
+            .flat_map(|b| b.iter().copied())
+            .collect();
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: present_vals_flat.as_ptr() as u64,
@@ -1746,9 +1767,7 @@ mod tests {
 
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         // Data range: 100..110 (hi=0, lo=100..110)
-        let col1: Vec<TestDecimal128> = (100u64..110)
-            .map(|v| TestDecimal128(0, v))
-            .collect();
+        let col1: Vec<TestDecimal128> = (100u64..110).map(|v| TestDecimal128(0, v)).collect();
         let row_count = col1.len();
         let decimal_type = ColumnType::new_decimal(38, 0).unwrap();
 
@@ -1796,8 +1815,14 @@ mod tests {
         };
 
         // All values outside [100, 109]
-        let outside_vals: Vec<[u8; 16]> = [0u64, 50, 200, 999].iter().map(|&v| to_be_128(0, v)).collect();
-        let outside_vals_flat: Vec<u8> = outside_vals.iter().flat_map(|b| b.iter().copied()).collect();
+        let outside_vals: Vec<[u8; 16]> = [0u64, 50, 200, 999]
+            .iter()
+            .map(|&v| to_be_128(0, v))
+            .collect();
+        let outside_vals_flat: Vec<u8> = outside_vals
+            .iter()
+            .flat_map(|b| b.iter().copied())
+            .collect();
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: outside_vals_flat.as_ptr() as u64,
@@ -1808,8 +1833,10 @@ mod tests {
         assert!(can_skip, "should skip: all values outside [100, 109]");
 
         // One value inside [100, 109]
-        let inside_vals: Vec<[u8; 16]> = [0u64, 105, 999].iter().map(|&v| to_be_128(0, v)).collect();
-        let inside_vals_flat: Vec<u8> = inside_vals.iter().flat_map(|b| b.iter().copied()).collect();
+        let inside_vals: Vec<[u8; 16]> =
+            [0u64, 105, 999].iter().map(|&v| to_be_128(0, v)).collect();
+        let inside_vals_flat: Vec<u8> =
+            inside_vals.iter().flat_map(|b| b.iter().copied()).collect();
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: inside_vals_flat.as_ptr() as u64,
