@@ -47,41 +47,41 @@ public class QwpGorillaEncoderTest {
 
     @Test
     public void testGetBucket7Bit() {
-        // DoD in [-63, 64] should use bucket 1 (9 bits)
+        // DoD in [-64, 63] should use bucket 1 (9 bits)
         Assert.assertEquals(1, QwpGorillaDecoder.getBucket(1));
         Assert.assertEquals(1, QwpGorillaDecoder.getBucket(-1));
         Assert.assertEquals(1, QwpGorillaDecoder.getBucket(63));
         Assert.assertEquals(1, QwpGorillaDecoder.getBucket(-63));
-        Assert.assertEquals(1, QwpGorillaDecoder.getBucket(64));
+        Assert.assertEquals(1, QwpGorillaDecoder.getBucket(-64));
     }
 
     @Test
     public void testGetBucket9Bit() {
-        // DoD in [-255, 256] but outside [-63, 64] should use bucket 2 (12 bits)
-        Assert.assertEquals(2, QwpGorillaDecoder.getBucket(65));
-        Assert.assertEquals(2, QwpGorillaDecoder.getBucket(-64));
+        // DoD in [-256, 255] but outside [-64, 63] should use bucket 2 (12 bits)
+        Assert.assertEquals(2, QwpGorillaDecoder.getBucket(64));
+        Assert.assertEquals(2, QwpGorillaDecoder.getBucket(-65));
         Assert.assertEquals(2, QwpGorillaDecoder.getBucket(255));
         Assert.assertEquals(2, QwpGorillaDecoder.getBucket(-255));
-        Assert.assertEquals(2, QwpGorillaDecoder.getBucket(256));
+        Assert.assertEquals(2, QwpGorillaDecoder.getBucket(-256));
     }
 
     @Test
     public void testGetBucket12Bit() {
-        // DoD in [-2047, 2048] but outside [-255, 256] should use bucket 3 (16 bits)
-        Assert.assertEquals(3, QwpGorillaDecoder.getBucket(257));
-        Assert.assertEquals(3, QwpGorillaDecoder.getBucket(-256));
+        // DoD in [-2048, 2047] but outside [-256, 255] should use bucket 3 (16 bits)
+        Assert.assertEquals(3, QwpGorillaDecoder.getBucket(256));
+        Assert.assertEquals(3, QwpGorillaDecoder.getBucket(-257));
         Assert.assertEquals(3, QwpGorillaDecoder.getBucket(2047));
         Assert.assertEquals(3, QwpGorillaDecoder.getBucket(-2047));
-        Assert.assertEquals(3, QwpGorillaDecoder.getBucket(2048));
+        Assert.assertEquals(3, QwpGorillaDecoder.getBucket(-2048));
     }
 
     @Test
     public void testGetBucket32Bit() {
-        // DoD outside [-2047, 2048] should use bucket 4 (36 bits)
-        Assert.assertEquals(4, QwpGorillaDecoder.getBucket(2049));
-        Assert.assertEquals(4, QwpGorillaDecoder.getBucket(-2048));
-        Assert.assertEquals(4, QwpGorillaDecoder.getBucket(100000));
-        Assert.assertEquals(4, QwpGorillaDecoder.getBucket(-100000));
+        // DoD outside [-2048, 2047] should use bucket 4 (36 bits)
+        Assert.assertEquals(4, QwpGorillaDecoder.getBucket(2048));
+        Assert.assertEquals(4, QwpGorillaDecoder.getBucket(-2049));
+        Assert.assertEquals(4, QwpGorillaDecoder.getBucket(100_000));
+        Assert.assertEquals(4, QwpGorillaDecoder.getBucket(-100_000));
         Assert.assertEquals(4, QwpGorillaDecoder.getBucket(Integer.MAX_VALUE));
         Assert.assertEquals(4, QwpGorillaDecoder.getBucket(Integer.MIN_VALUE));
     }
@@ -96,19 +96,22 @@ public class QwpGorillaEncoderTest {
         // Bucket 1: 9 bits (2 prefix + 7 value)
         Assert.assertEquals(9, QwpGorillaDecoder.getBitsRequired(1));
         Assert.assertEquals(9, QwpGorillaDecoder.getBitsRequired(-1));
-        Assert.assertEquals(9, QwpGorillaDecoder.getBitsRequired(64));
+        Assert.assertEquals(9, QwpGorillaDecoder.getBitsRequired(63));
+        Assert.assertEquals(9, QwpGorillaDecoder.getBitsRequired(-64));
 
         // Bucket 2: 12 bits (3 prefix + 9 value)
-        Assert.assertEquals(12, QwpGorillaDecoder.getBitsRequired(65));
-        Assert.assertEquals(12, QwpGorillaDecoder.getBitsRequired(256));
+        Assert.assertEquals(12, QwpGorillaDecoder.getBitsRequired(64));
+        Assert.assertEquals(12, QwpGorillaDecoder.getBitsRequired(255));
+        Assert.assertEquals(12, QwpGorillaDecoder.getBitsRequired(-256));
 
         // Bucket 3: 16 bits (4 prefix + 12 value)
-        Assert.assertEquals(16, QwpGorillaDecoder.getBitsRequired(257));
-        Assert.assertEquals(16, QwpGorillaDecoder.getBitsRequired(2048));
+        Assert.assertEquals(16, QwpGorillaDecoder.getBitsRequired(256));
+        Assert.assertEquals(16, QwpGorillaDecoder.getBitsRequired(2047));
+        Assert.assertEquals(16, QwpGorillaDecoder.getBitsRequired(-2048));
 
         // Bucket 4: 36 bits (4 prefix + 32 value)
-        Assert.assertEquals(36, QwpGorillaDecoder.getBitsRequired(2049));
-        Assert.assertEquals(36, QwpGorillaDecoder.getBitsRequired(-2048));
+        Assert.assertEquals(36, QwpGorillaDecoder.getBitsRequired(2048));
+        Assert.assertEquals(36, QwpGorillaDecoder.getBitsRequired(-2049));
     }
 
     // ==================== Constant Delta Encoding Tests ====================

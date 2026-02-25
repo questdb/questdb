@@ -25,7 +25,9 @@
 package io.questdb.test.cutlass.http.qwp;
 
 import io.questdb.cutlass.qwp.protocol.QwpSchemaHash;
+import io.questdb.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -33,6 +35,8 @@ import org.junit.Test;
 import java.nio.charset.StandardCharsets;
 
 public class QwpSchemaHashTest {
+
+    private static final byte TYPE_LONG = 0x05;
 
     @Test
     public void testEmptySchema() {
@@ -234,6 +238,49 @@ public class QwpSchemaHashTest {
         hasher.reset(0);
         hasher.update(data1);
         Assert.assertEquals(hash1, hasher.getValue());
+    }
+
+    @Test
+    public void testSchemaHashDirectInvalidSurrogatePair() {
+        ObjList<QwpTableBuffer.ColumnBuffer> invalidCols = new ObjList<>();
+        invalidCols.add(new QwpTableBuffer.ColumnBuffer("\uD800X", TYPE_LONG, false));
+
+        ObjList<QwpTableBuffer.ColumnBuffer> expectedCols = new ObjList<>();
+        expectedCols.add(new QwpTableBuffer.ColumnBuffer("?X", TYPE_LONG, false));
+
+        long hashInvalid = QwpSchemaHash.computeSchemaHashDirect(invalidCols);
+        long hashExpected = QwpSchemaHash.computeSchemaHashDirect(expectedCols);
+        Assert.assertEquals(hashExpected, hashInvalid);
+    }
+
+    @Test
+    public void testSchemaHashInvalidSurrogatePair() {
+        byte[] types = {TYPE_LONG};
+
+        // "\uD800X" has a high surrogate followed by non-low-surrogate 'X'.
+        // The high surrogate becomes '?' and 'X' is preserved,
+        // so the hash should equal the hash of "?X".
+        long hashInvalid = QwpSchemaHash.computeSchemaHash(
+                new String[]{"\uD800X"}, types
+        );
+        long hashExpected = QwpSchemaHash.computeSchemaHash(
+                new String[]{"?X"}, types
+        );
+        Assert.assertEquals(hashExpected, hashInvalid);
+    }
+
+    @Test
+    public void testSchemaHashLoneSurrogate() {
+        byte[] types = {TYPE_LONG};
+
+        // Lone low surrogate should also become '?'
+        long hashInvalid = QwpSchemaHash.computeSchemaHash(
+                new String[]{"\uDC00col"}, types
+        );
+        long hashExpected = QwpSchemaHash.computeSchemaHash(
+                new String[]{"?col"}, types
+        );
+        Assert.assertEquals(hashExpected, hashInvalid);
     }
 
     @Test

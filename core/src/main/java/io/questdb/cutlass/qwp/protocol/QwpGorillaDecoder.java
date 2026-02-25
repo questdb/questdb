@@ -32,9 +32,9 @@ package io.questdb.cutlass.qwp.protocol;
  * D = (t[n] - t[n-1]) - (t[n-1] - t[n-2])
  *
  * if D == 0:              write '0'              (1 bit)
- * elif D in [-63, 64]:    write '10' + 7-bit     (9 bits)
- * elif D in [-255, 256]:  write '110' + 9-bit    (12 bits)
- * elif D in [-2047, 2048]: write '1110' + 12-bit (16 bits)
+ * elif D in [-64, 63]:    write '10' + 7-bit     (9 bits)
+ * elif D in [-256, 255]:  write '110' + 9-bit    (12 bits)
+ * elif D in [-2048, 2047]: write '1110' + 12-bit (16 bits)
  * else:                   write '1111' + 32-bit  (36 bits)
  * </pre>
  * <p>
@@ -43,13 +43,13 @@ package io.questdb.cutlass.qwp.protocol;
  */
 public class QwpGorillaDecoder {
 
-    private static final int BUCKET_12BIT_MAX = 2048;
-    private static final int BUCKET_12BIT_MIN = -2047;
-    private static final int BUCKET_7BIT_MAX = 64;
+    private static final int BUCKET_12BIT_MAX = 2047;
+    private static final int BUCKET_12BIT_MIN = -2048;
+    private static final int BUCKET_7BIT_MAX = 63;
     // Bucket boundaries (two's complement signed ranges)
-    private static final int BUCKET_7BIT_MIN = -63;
-    private static final int BUCKET_9BIT_MAX = 256;
-    private static final int BUCKET_9BIT_MIN = -255;
+    private static final int BUCKET_7BIT_MIN = -64;
+    private static final int BUCKET_9BIT_MAX = 255;
+    private static final int BUCKET_9BIT_MIN = -256;
     private final QwpBitReader bitReader;
     private long prevDelta;
     // State for decoding
@@ -114,9 +114,9 @@ public class QwpGorillaDecoder {
      * The encoding format is:
      * <ul>
      *   <li>'0' = delta-of-delta is 0 (1 bit)</li>
-     *   <li>'10' + 7-bit signed = delta-of-delta in [-63, 64] (9 bits)</li>
-     *   <li>'110' + 9-bit signed = delta-of-delta in [-255, 256] (12 bits)</li>
-     *   <li>'1110' + 12-bit signed = delta-of-delta in [-2047, 2048] (16 bits)</li>
+     *   <li>'10' + 7-bit signed = delta-of-delta in [-64, 63] (9 bits)</li>
+     *   <li>'110' + 9-bit signed = delta-of-delta in [-256, 255] (12 bits)</li>
+     *   <li>'1110' + 12-bit signed = delta-of-delta in [-2048, 2047] (16 bits)</li>
      *   <li>'1111' + 32-bit signed = any other delta-of-delta (36 bits)</li>
      * </ul>
      *

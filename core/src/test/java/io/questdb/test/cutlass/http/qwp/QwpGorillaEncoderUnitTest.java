@@ -413,21 +413,26 @@ public class QwpGorillaEncoderUnitTest {
         QwpGorillaEncoder encoder = new QwpGorillaEncoder();
         QwpGorillaDecoder decoder = new QwpGorillaDecoder();
 
-        // Test values safely within each bucket (avoiding exact boundaries
-        // where signed overflow can occur)
-        // t0=0, t1=1000, delta0=1000
-        // For DoD=X: delta1 = 1000+X, so t2 = 2000+X
+        // Test values at exact bucket boundaries.
+        // t0=0, t1=10_000, delta0=10_000
+        // For DoD=X: delta1 = 10_000+X, so t2 = 20_000+X
 
         long[][] bucketTests = {
-                {0L, 1000L, 2000L},        // DoD = 0 (bucket 0)
-                {0L, 1000L, 2050L},        // DoD = 50 (bucket 1, safe mid-range)
-                {0L, 1000L, 1950L},        // DoD = -50 (bucket 1, safe mid-range)
-                {0L, 1000L, 2100L},        // DoD = 100 (bucket 2, safe)
-                {0L, 1000L, 1900L},        // DoD = -100 (bucket 2, safe)
-                {0L, 1000L, 2500L},        // DoD = 500 (bucket 3, safe)
-                {0L, 1000L, 1500L},        // DoD = -500 (bucket 3, safe)
-                {0L, 1000L, 12000L},       // DoD = 10000 (bucket 4, safe)
-                {0L, 1000L, -8000L},       // DoD = -10000 (bucket 4, safe)
+                {0L, 10_000L, 20_000L},         // DoD = 0 (bucket 0)
+                {0L, 10_000L, 20_063L},         // DoD = 63 (bucket 1 max)
+                {0L, 10_000L, 19_936L},         // DoD = -64 (bucket 1 min)
+                {0L, 10_000L, 20_064L},         // DoD = 64 (bucket 2 start)
+                {0L, 10_000L, 19_935L},         // DoD = -65 (bucket 2 start)
+                {0L, 10_000L, 20_255L},         // DoD = 255 (bucket 2 max)
+                {0L, 10_000L, 19_744L},         // DoD = -256 (bucket 2 min)
+                {0L, 10_000L, 20_256L},         // DoD = 256 (bucket 3 start)
+                {0L, 10_000L, 19_743L},         // DoD = -257 (bucket 3 start)
+                {0L, 10_000L, 22_047L},         // DoD = 2047 (bucket 3 max)
+                {0L, 10_000L, 17_952L},         // DoD = -2048 (bucket 3 min)
+                {0L, 10_000L, 22_048L},         // DoD = 2048 (bucket 4 start)
+                {0L, 10_000L, 17_951L},         // DoD = -2049 (bucket 4 start)
+                {0L, 10_000L, 110_000L},        // DoD = 100_000 (bucket 4, large)
+                {0L, 10_000L, -80_000L},        // DoD = -100_000 (bucket 4, large)
         };
 
         for (long[] tc : bucketTests) {

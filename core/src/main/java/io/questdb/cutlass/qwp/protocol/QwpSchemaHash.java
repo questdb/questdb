@@ -84,11 +84,18 @@ public final class QwpSchemaHash {
                 } else if (c >= 0xD800 && c <= 0xDBFF && j + 1 < len) {
                     // Surrogate pair (4 bytes)
                     char c2 = name.charAt(++j);
-                    int codePoint = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
-                    hasher.update((byte) (0xF0 | (codePoint >> 18)));
-                    hasher.update((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
-                    hasher.update((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
-                    hasher.update((byte) (0x80 | (codePoint & 0x3F)));
+                    if (Character.isLowSurrogate(c2)) {
+                        int codePoint = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+                        hasher.update((byte) (0xF0 | (codePoint >> 18)));
+                        hasher.update((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
+                        hasher.update((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
+                        hasher.update((byte) (0x80 | (codePoint & 0x3F)));
+                    } else {
+                        hasher.update((byte) '?');
+                        j--;
+                    }
+                } else if (Character.isSurrogate(c)) {
+                    hasher.update((byte) '?');
                 } else {
                     // Three bytes
                     hasher.update((byte) (0xE0 | (c >> 12)));
@@ -127,11 +134,18 @@ public final class QwpSchemaHash {
                     hasher.update((byte) (0x80 | (c & 0x3F)));
                 } else if (c >= 0xD800 && c <= 0xDBFF && j + 1 < len) {
                     char c2 = name.charAt(++j);
-                    int codePoint = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
-                    hasher.update((byte) (0xF0 | (codePoint >> 18)));
-                    hasher.update((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
-                    hasher.update((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
-                    hasher.update((byte) (0x80 | (codePoint & 0x3F)));
+                    if (Character.isLowSurrogate(c2)) {
+                        int codePoint = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+                        hasher.update((byte) (0xF0 | (codePoint >> 18)));
+                        hasher.update((byte) (0x80 | ((codePoint >> 12) & 0x3F)));
+                        hasher.update((byte) (0x80 | ((codePoint >> 6) & 0x3F)));
+                        hasher.update((byte) (0x80 | (codePoint & 0x3F)));
+                    } else {
+                        hasher.update((byte) '?');
+                        j--;
+                    }
+                } else if (Character.isSurrogate(c)) {
+                    hasher.update((byte) '?');
                 } else {
                     hasher.update((byte) (0xE0 | (c >> 12)));
                     hasher.update((byte) (0x80 | ((c >> 6) & 0x3F)));

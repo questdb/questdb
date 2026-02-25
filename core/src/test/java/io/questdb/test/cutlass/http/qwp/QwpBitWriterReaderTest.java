@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http.qwp;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.qwp.protocol.QwpBitReader;
 import io.questdb.cutlass.qwp.protocol.QwpBitWriter;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
@@ -166,6 +167,28 @@ public class QwpBitWriterReaderTest {
     }
 
     @Test
+    public void testFlushThrowsOnOverflow() {
+        long ptr = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(ptr, 1);
+            // Write 8 bits to fill the single byte
+            writer.writeBits(0xFF, 8);
+            // Write a few more bits that sit in the bit buffer
+            writer.writeBits(0x3, 4);
+            // Flush should throw because there's no room for the partial byte
+            try {
+                writer.flush();
+                Assert.fail("expected CairoException on buffer overflow during flush");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("buffer overflow"));
+            }
+        } finally {
+            Unsafe.free(ptr, 1, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testReadBeyondWritten() throws QwpParseException {
         long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -260,6 +283,95 @@ public class QwpBitWriterReaderTest {
             Assert.assertEquals(value, reader.readLong());
         } finally {
             Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testWriteLongThrowsOnOverflow() {
+        long ptr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(ptr, 8);
+            writer.writeLong(42L);
+            try {
+                writer.writeLong(99L);
+                Assert.fail("expected CairoException on buffer overflow");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("buffer overflow"));
+            }
+        } finally {
+            Unsafe.free(ptr, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testWriteBitsThrowsOnOverflow() {
+        long ptr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(ptr, 4);
+            // Fill the buffer (32 bits = 4 bytes)
+            writer.writeBits(0xFFFF_FFFFL, 32);
+            // Next write should throw — buffer is full
+            try {
+                writer.writeBits(1, 8);
+                Assert.fail("expected CairoException on buffer overflow");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("buffer overflow"));
+            }
+        } finally {
+            Unsafe.free(ptr, 4, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testWriteBitsWithinCapacitySucceeds() {
+        long ptr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(ptr, 8);
+            writer.writeBits(0xDEAD_BEEF_CAFE_BABEL, 64);
+            writer.flush();
+            Assert.assertEquals(8, writer.getPosition() - ptr);
+            Assert.assertEquals(0xDEAD_BEEF_CAFE_BABEL, Unsafe.getUnsafe().getLong(ptr));
+        } finally {
+            Unsafe.free(ptr, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testWriteByteThrowsOnOverflow() {
+        long ptr = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(ptr, 1);
+            writer.writeByte(0x42);
+            try {
+                writer.writeByte(0x43);
+                Assert.fail("expected CairoException on buffer overflow");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("buffer overflow"));
+            }
+        } finally {
+            Unsafe.free(ptr, 1, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testWriteIntThrowsOnOverflow() {
+        long ptr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(ptr, 4);
+            writer.writeInt(42);
+            try {
+                writer.writeInt(99);
+                Assert.fail("expected CairoException on buffer overflow");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("buffer overflow"));
+            }
+        } finally {
+            Unsafe.free(ptr, 4, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
