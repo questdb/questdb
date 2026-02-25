@@ -133,7 +133,9 @@ public class MemoryPMRImpl extends AbstractMemoryCR implements MemoryMR {
         if (newSize < 0) {
             throw CairoException.critical(0).put("invalid size [size=").put(newSize).put(']');
         }
-        size = newSize;
+        if (newSize > size) {
+            size = newSize;
+        }
     }
 
     @Override

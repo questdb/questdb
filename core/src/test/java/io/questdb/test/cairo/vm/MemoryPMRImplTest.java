@@ -117,6 +117,26 @@ public class MemoryPMRImplTest extends AbstractTest {
     }
 
     @Test
+    public void testExtendDoesNotShrinkLogicalSize() throws Exception {
+        try (Path path = new Path().of(root).concat(testName.getMethodName())) {
+            createLongFile(path, 3L * Files.PAGE_SIZE / Long.BYTES);
+            TestUtils.assertMemoryLeak(() -> {
+                try (MemoryPMRImpl paged = new MemoryPMRImpl(Files.PAGE_SIZE, 2)) {
+                    paged.of(FF, path.$(), Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE, -1);
+
+                    final long initialSize = paged.size();
+                    final long tailOffset = initialSize - Long.BYTES;
+                    final long expectedTailValue = paged.getLong(tailOffset);
+                    paged.extend(initialSize / 2);
+
+                    Assert.assertEquals(initialSize, paged.size());
+                    Assert.assertEquals(expectedTailValue, paged.getLong(tailOffset));
+                }
+            });
+        }
+    }
+
+    @Test
     public void testPinnedPageIsNotEvicted() throws Exception {
         try (Path path = new Path().of(root).concat(testName.getMethodName())) {
             createLongFile(path, 6L * Files.PAGE_SIZE / Long.BYTES);
