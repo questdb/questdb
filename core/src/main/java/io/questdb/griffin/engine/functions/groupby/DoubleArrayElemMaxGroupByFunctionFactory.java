@@ -57,7 +57,7 @@ public class DoubleArrayElemMaxGroupByFunctionFactory implements FunctionFactory
         return new DoubleArrayElemMaxGroupByFunction(args.getQuick(0));
     }
 
-    private static class DoubleArrayElemMaxGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
+    private static final class DoubleArrayElemMaxGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
 
         public DoubleArrayElemMaxGroupByFunction(@NotNull Function arg) {
             super(arg);

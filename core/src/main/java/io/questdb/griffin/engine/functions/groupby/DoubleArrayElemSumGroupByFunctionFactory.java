@@ -57,7 +57,7 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
         return new DoubleArrayElemSumGroupByFunction(args.getQuick(0));
     }
 
-    private static class DoubleArrayElemSumGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
+    private static final class DoubleArrayElemSumGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
 
         public DoubleArrayElemSumGroupByFunction(@NotNull Function arg) {
             super(arg);

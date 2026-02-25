@@ -136,6 +136,77 @@ import io.questdb.std.str.Utf8Sequence;
 public abstract class ArrayView implements QuietCloseable {
 
     /**
+     * Computes row-major strides for the given shape and returns the total flat length
+     * (product of all dimensions).
+     * <p>
+     * For shape {@code {3, 4}}: strides = {@code {4, 1}}, returns 12.
+     * <p>
+     * Unlike {@link MutableArray#resetToDefaultStrides}, this is a pure function on
+     * plain arrays — no overflow checking, no instance mutation.
+     *
+     * @param shape   dimension lengths (read)
+     * @param strides destination for computed strides (written, same length as shape)
+     * @return total flat element count (product of all dimension lengths)
+     */
+    public static int computeRowMajorStrides(int[] shape, int[] strides) {
+        int stride = 1;
+        for (int d = shape.length - 1; d >= 0; d--) {
+            strides[d] = stride;
+            stride *= shape[d];
+        }
+        return stride;
+    }
+
+    /**
+     * Converts multi-dimensional coordinates to a flat index using the given strides.
+     * Inverse of {@link #flatIndexToCoords}.
+     *
+     * @param coords  coordinate vector (same length as strides)
+     * @param strides row-major strides for the target shape
+     * @return flat index
+     */
+    public static int coordsToFlatIndex(int[] coords, int[] strides) {
+        int fi = 0;
+        for (int d = 0; d < coords.length; d++) {
+            fi += coords[d] * strides[d];
+        }
+        return fi;
+    }
+
+    /**
+     * Decomposes a flat index into multi-dimensional coordinates using the given strides.
+     * Inverse of {@link #coordsToFlatIndex}.
+     *
+     * @param flatIndex flat index to decompose
+     * @param strides   row-major strides for the shape
+     * @param coords    destination for computed coordinates (written, same length as strides)
+     */
+    public static void flatIndexToCoords(int flatIndex, int[] strides, int[] coords) {
+        int remaining = flatIndex;
+        for (int d = 0; d < strides.length; d++) {
+            coords[d] = remaining / strides[d];
+            remaining %= strides[d];
+        }
+    }
+
+    /**
+     * Increments coordinates in row-major order (rightmost dimension varies fastest).
+     *
+     * @param coords coordinate vector (modified in place)
+     * @param shape  the shape bounds for each dimension
+     * @return true if the increment produced a valid position, false if it wrapped past the origin
+     */
+    public static boolean incrementCoords(int[] coords, int[] shape) {
+        for (int d = shape.length - 1; d >= 0; d--) {
+            if (++coords[d] < shape[d]) {
+                return true;
+            }
+            coords[d] = 0;
+        }
+        return false;
+    }
+
+    /**
      * Maximum size of any given dimension.
      * <p>Why:
      * <ul>

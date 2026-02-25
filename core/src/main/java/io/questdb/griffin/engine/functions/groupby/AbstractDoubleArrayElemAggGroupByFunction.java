@@ -43,28 +43,101 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Shared base for element-wise array aggregate GROUP BY functions (array_elem_max, array_elem_min, array_elem_sum).
+ * Shared base for element-wise array aggregate GROUP BY functions
+ * (array_elem_max, array_elem_min, array_elem_sum, array_elem_avg).
  * <p>
- * Per-group state in MapValue uses 2 LONG slots:
+ * Supports N-dimensional arrays. Per-group state in MapValue uses 3 LONG slots:
  * <pre>
- * valueIndex:     LONG -> ptr to compact block [int dataSize][int dim0][double acc[N]]
- * valueIndex + 1: LONG -> N (accumulator length)
+ * valueIndex + 0: LONG  ptr to compact block (0 = NULL group)
+ * valueIndex + 1: LONG  accFlatLen — number of meaningful elements
+ * valueIndex + 2: LONG  capacity — allocated element count (&gt;= accFlatLen)
  * </pre>
- * ptr == 0 means all inputs were NULL so far (result is NULL).
- * Uninitialized positions use Double.NaN as sentinel for "no finite value seen".
+ *
+ * <h3>Compact block layout</h3>
+ * <pre>
+ * [int dataSize][int shape[0]] ... [int shape[nDims-1]][double data[capacity]]
+ *  └─ headerSize bytes ──────────────────────────────┘
+ * </pre>
+ * {@code dataSize = accFlatLen * Double.BYTES} — covers meaningful data only, not the
+ * overallocated tail. This is what {@link ArrayTypeDriver#getCompactPlainValue} reads.
+ *
+ * <h3>Sentinel values</h3>
+ * <ul>
+ *   <li>{@code ptr == 0}: all inputs seen so far were NULL; group result is NULL.</li>
+ *   <li>{@code Double.NaN} in a data slot: no finite value has been accumulated at that position yet.
+ *       First finite value replaces NaN outright; subsequent values go through {@link #combine}.</li>
+ * </ul>
+ *
+ * <h3>Overallocation</h3>
+ * Allocation is expensive at every dimensionality, and nD shape changes additionally require
+ * a coordinate remap of the entire accumulator. To reduce realloc frequency, data blocks are
+ * overallocated by a factor of {@code pow(1.5, nDims)} (1D: 1.5x, 2D: 2.25x, 3D: 3.375x).
+ * {@code capacity} tracks the allocated element count separately from {@code accFlatLen} so
+ * 1D growth can often extend in-place without reallocation.
+ *
+ * <h3>Shape growth</h3>
+ * When a new input has a larger dimension than the current accumulator, the shape grows to
+ * the per-dimension max. For 1D, if the new flat length fits within capacity, positions are
+ * extended in-place (no remap needed — flat indices are unchanged). For nD, or when capacity
+ * is exceeded, a new block is allocated and old values are remapped via coordinate conversion.
+ *
+ * <h3>Extensibility</h3>
+ * Subclasses must implement {@link #combine} for the element-wise aggregation operation.
+ * The avg variant additionally overrides {@link #accumulateInput} and {@link #mergeValues}
+ * for count tracking, and uses the hook methods ({@link #onComputeFirst}, {@link #onShapeGrow},
+ * {@link #onMergeShallowCopy}, {@link #onMergeShapeGrow}) to maintain its per-element count
+ * arrays in sync with shape changes.
  */
 public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
-    private static final int HEADER_SIZE = Integer.BYTES + Integer.BYTES; // dataSize + dim0
+
+    /** Base for the overallocation factor {@code pow(OVERALLOC_BASE, nDims)}: 1D → 1.5x, 2D → 2.25x, 3D → 3.375x. */
+    private static final double OVERALLOC_BASE = 1.5;
+
+    /** Scratch: current accumulator shape, read from the compact block header. */
+    protected final int[] accShape;
+    /** Scratch: row-major strides for the current accumulator shape. */
+    protected final int[] accStrides;
+    /** The single array-column argument to this aggregate function. */
     protected final Function arg;
+    /** Scratch: coordinate vector for flat-index ↔ multi-dim conversions. */
+    protected final int[] coords;
+    /** Byte size of the compact block header: {@code Integer.BYTES * (1 + nDims)}. */
+    protected final int headerSize;
+    /** Scratch: shape of the current input array. */
+    protected final int[] inputShape;
+    /** Number of array dimensions (1 for {@code DOUBLE[]}, 2 for {@code DOUBLE[][]}, etc.). */
+    protected final int nDims;
+    /** Scratch: the grown shape = per-dimension max of accShape and inputShape. */
+    protected final int[] newShape;
+    /** Scratch: row-major strides for the grown (or input) shape. */
+    protected final int[] newStrides;
+    /** Group-by memory allocator, set before any compute calls. */
+    protected GroupByAllocator allocator;
+    /** Index of this function's first slot in the MapValue. */
+    protected int valueIndex;
+    /** Reusable view returned from {@link #getArray} — points into the compact block. */
     private final BorrowedArray borrowedArray = new BorrowedArray();
-    private final int nDims;
-    private GroupByAllocator allocator;
-    private int valueIndex;
 
     public AbstractDoubleArrayElemAggGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.type = arg.getType();
         this.nDims = ColumnType.decodeArrayDimensionality(type);
+        this.headerSize = Integer.BYTES * (1 + nDims);
+        this.accShape = new int[nDims];
+        this.inputShape = new int[nDims];
+        this.newShape = new int[nDims];
+        this.accStrides = new int[nDims];
+        this.newStrides = new int[nDims];
+        this.coords = new int[nDims];
+    }
+
+    /**
+     * Fills data positions {@code [from, to)} with {@code Double.NaN}.
+     */
+    static void nanFill(long dataPtr, int from, int to) {
+        for (int i = from; i < to; i++) {
+            Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, Double.NaN);
+        }
     }
 
     @Override
@@ -72,28 +145,60 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         Misc.free(arg);
     }
 
+    /**
+     * Initializes a new group with the first non-null input array.
+     * Allocates the compact block with overallocation, copies input values,
+     * NaN-fills the overallocated tail, and notifies subclasses via {@link #onComputeFirst}.
+     */
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         ArrayView array = arg.getArray(record);
         if (array == null || array.isNull() || array.getFlatViewLength() == 0) {
-            mapValue.putLong(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);
+            setNull(mapValue);
             return;
         }
-        int n = array.getFlatViewLength();
-        long blockSize = HEADER_SIZE + (long) n * Double.BYTES;
+        int flatLen = array.getFlatViewLength();
+        int capacity = Math.max(flatLen, (int) (flatLen * Math.pow(OVERALLOC_BASE, nDims)));
+        long blockSize = headerSize + (long) capacity * Double.BYTES;
         long ptr = allocator.malloc(blockSize);
-        int dataSize = n * Double.BYTES;
-        Unsafe.getUnsafe().putInt(ptr, dataSize);
-        Unsafe.getUnsafe().putInt(ptr + Integer.BYTES, n);
-        long dataPtr = ptr + HEADER_SIZE;
-        for (int i = 0; i < n; i++) {
-            Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, array.getDouble(i));
+
+        writeHeaderFromArray(ptr, array, flatLen);
+        long dataPtr = ptr + headerSize;
+        if (array.isVanilla()) {
+            for (int i = 0; i < flatLen; i++) {
+                Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, array.getDouble(i));
+            }
+        } else {
+            // Non-vanilla: iterate by coordinate, use array strides to read, write in row-major order.
+            for (int d = 0; d < nDims; d++) {
+                inputShape[d] = array.getDimLen(d);
+                coords[d] = 0;
+            }
+            int outFi = 0;
+            do {
+                int inputFi = 0;
+                for (int d = 0; d < nDims; d++) {
+                    inputFi += coords[d] * array.getStride(d);
+                }
+                Unsafe.getUnsafe().putDouble(dataPtr + (long) outFi * Double.BYTES, array.getDouble(inputFi));
+                outFi++;
+            } while (ArrayView.incrementCoords(coords, inputShape));
         }
+        nanFill(dataPtr, flatLen, capacity);
+
         mapValue.putLong(valueIndex, ptr);
-        mapValue.putLong(valueIndex + 1, n);
+        mapValue.putLong(valueIndex + 1, flatLen);
+        mapValue.putLong(valueIndex + 2, capacity);
+        onComputeFirst(mapValue, array, flatLen, capacity);
     }
 
+    /**
+     * Aggregates a subsequent row into an existing group.
+     * <p>
+     * If the input shape exceeds the accumulator shape in any dimension, the accumulator is
+     * grown (1D in-place if capacity allows, otherwise full realloc + remap). After any
+     * shape adjustment, values are accumulated via {@link #accumulateInput}.
+     */
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         ArrayView array = arg.getArray(record);
@@ -105,35 +210,17 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
             computeFirst(mapValue, record, rowId);
             return;
         }
-        int accLen = (int) mapValue.getLong(valueIndex + 1);
-        int inputLen = array.getFlatViewLength();
-        if (inputLen > accLen) {
-            long oldBlockSize = HEADER_SIZE + (long) accLen * Double.BYTES;
-            long newBlockSize = HEADER_SIZE + (long) inputLen * Double.BYTES;
-            ptr = allocator.realloc(ptr, oldBlockSize, newBlockSize);
-            int dataSize = inputLen * Double.BYTES;
-            Unsafe.getUnsafe().putInt(ptr, dataSize);
-            Unsafe.getUnsafe().putInt(ptr + Integer.BYTES, inputLen);
-            long dataPtr = ptr + HEADER_SIZE;
-            for (int i = accLen; i < inputLen; i++) {
-                Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, Double.NaN);
-            }
-            mapValue.putLong(valueIndex, ptr);
-            mapValue.putLong(valueIndex + 1, inputLen);
+
+        readShapeFromHeader(ptr, accShape);
+        for (int d = 0; d < nDims; d++) {
+            inputShape[d] = array.getDimLen(d);
         }
-        long dataPtr = ptr + HEADER_SIZE;
-        for (int i = 0; i < inputLen; i++) {
-            double inputVal = array.getDouble(i);
-            if (Numbers.isFinite(inputVal)) {
-                long addr = dataPtr + (long) i * Double.BYTES;
-                double accVal = Unsafe.getUnsafe().getDouble(addr);
-                if (Numbers.isFinite(accVal)) {
-                    Unsafe.getUnsafe().putDouble(addr, combine(accVal, inputVal));
-                } else {
-                    Unsafe.getUnsafe().putDouble(addr, inputVal);
-                }
-            }
+        boolean shapeChanged = computeMaxShape();
+        if (shapeChanged) {
+            growAccumulator(mapValue, (int) mapValue.getLong(valueIndex + 1));
         }
+
+        accumulateInput(mapValue.getLong(valueIndex) + headerSize, array, shapeChanged ? newShape : accShape, mapValue);
     }
 
     @Override
@@ -141,6 +228,11 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         return arg;
     }
 
+    /**
+     * Returns the accumulated result as an array view.
+     * For max/min/sum the compact block already holds the final values;
+     * avg overrides this to divide sum by count.
+     */
     @Override
     public ArrayView getArray(Record rec) {
         long ptr = rec.getLong(valueIndex);
@@ -165,7 +257,9 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG); // ptr
-        columnTypes.add(ColumnType.LONG); // length
+        columnTypes.add(ColumnType.LONG); // accFlatLen
+        columnTypes.add(ColumnType.LONG); // capacity
+        initExtraValueTypes(columnTypes);
     }
 
     @Override
@@ -183,6 +277,13 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         return false;
     }
 
+    /**
+     * Merges two partial group results from parallel execution.
+     * <p>
+     * If dest is empty, shallow-copies src's pointer and slots (no data copy).
+     * Otherwise, grows dest's shape if needed (same logic as {@link #computeNext}),
+     * then combines values via {@link #mergeValues}.
+     */
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcPtr = srcValue.getLong(valueIndex);
@@ -191,39 +292,24 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         }
         long destPtr = destValue.getLong(valueIndex);
         if (destPtr == 0) {
+            // Dest empty: shallow-copy src's block pointer and metadata.
             destValue.putLong(valueIndex, srcPtr);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+            destValue.putLong(valueIndex + 2, srcValue.getLong(valueIndex + 2));
+            onMergeShallowCopy(destValue, srcValue);
             return;
         }
-        int destLen = (int) destValue.getLong(valueIndex + 1);
-        int srcLen = (int) srcValue.getLong(valueIndex + 1);
-        if (srcLen > destLen) {
-            long oldBlockSize = HEADER_SIZE + (long) destLen * Double.BYTES;
-            long newBlockSize = HEADER_SIZE + (long) srcLen * Double.BYTES;
-            destPtr = allocator.realloc(destPtr, oldBlockSize, newBlockSize);
-            Unsafe.getUnsafe().putInt(destPtr, srcLen * Double.BYTES);
-            Unsafe.getUnsafe().putInt(destPtr + Integer.BYTES, srcLen);
-            long dataPtr = destPtr + HEADER_SIZE;
-            for (int i = destLen; i < srcLen; i++) {
-                Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, Double.NaN);
-            }
-            destValue.putLong(valueIndex, destPtr);
-            destValue.putLong(valueIndex + 1, srcLen);
+
+        int srcFlatLen = (int) srcValue.getLong(valueIndex + 1);
+        readShapeFromHeader(destPtr, accShape);
+        readShapeFromHeader(srcPtr, inputShape);
+        boolean shapeChanged = computeMaxShape();
+        if (shapeChanged) {
+            growAccumulator(destValue, (int) destValue.getLong(valueIndex + 1));
         }
-        long destDataPtr = destPtr + HEADER_SIZE;
-        long srcDataPtr = srcPtr + HEADER_SIZE;
-        for (int i = 0; i < srcLen; i++) {
-            double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
-            if (Numbers.isFinite(srcVal)) {
-                long addr = destDataPtr + (long) i * Double.BYTES;
-                double destVal = Unsafe.getUnsafe().getDouble(addr);
-                if (Numbers.isFinite(destVal)) {
-                    Unsafe.getUnsafe().putDouble(addr, combine(destVal, srcVal));
-                } else {
-                    Unsafe.getUnsafe().putDouble(addr, srcVal);
-                }
-            }
-        }
+
+        long destDataPtr = destValue.getLong(valueIndex) + headerSize;
+        mergeValues(destDataPtr, srcPtr + headerSize, shapeChanged ? newShape : accShape, inputShape, srcFlatLen, destValue, srcValue);
     }
 
     @Override
@@ -235,6 +321,8 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
+        mapValue.putLong(valueIndex + 2, 0);
+        setNullExtra(mapValue);
     }
 
     @Override
@@ -242,5 +330,304 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         return UnaryFunction.super.supportsParallelism();
     }
 
+    /**
+     * The element-wise aggregation operation.
+     * Called when both the accumulator and the input have a finite value at a position.
+     *
+     * @return the combined value (e.g. {@code Math.max(a, b)}, {@code a + b})
+     */
     protected abstract double combine(double accVal, double inputVal);
+
+    /**
+     * Allows subclasses to register additional MapValue slots (e.g. count, countPtr for avg).
+     */
+    protected void initExtraValueTypes(ArrayColumnTypes columnTypes) {
+    }
+
+    /**
+     * Called after the first non-null array is stored in a new group.
+     * Base slots (ptr, accFlatLen, capacity) have already been written.
+     * Subclasses can use this to initialize auxiliary state (e.g. per-element counts).
+     */
+    protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatLen, int capacity) {
+    }
+
+    /**
+     * Called when merge shallow-copies src into an empty dest.
+     * Subclasses should copy their extra MapValue slots from src to dest.
+     */
+    protected void onMergeShallowCopy(MapValue destValue, MapValue srcValue) {
+    }
+
+    /**
+     * Called when the accumulator shape grows (from either computeNext or merge).
+     * The base class has already remapped its double[] data and updated its 3 base
+     * MapValue slots; subclasses should remap their auxiliary arrays (e.g. counts).
+     * <p>
+     * When {@code needsRemap} is true, {@link #accStrides} and {@link #newStrides}
+     * are populated and coordinate conversion is required. When false, old flat
+     * indices are preserved and data can be bulk-copied.
+     *
+     * @param mapValue    the group's MapValue (base slots already updated)
+     * @param oldFlatLen  number of elements before growth
+     * @param newCapacity allocated element count after growth
+     * @param needsRemap  true if old and new flat layouts differ (strides changed)
+     */
+    protected void onShapeGrow(MapValue mapValue, int oldFlatLen, long newCapacity, boolean needsRemap) {
+    }
+
+    /**
+     * Reads the nDims shape integers from a compact block header into the given array.
+     */
+    protected void readShapeFromHeader(long ptr, int[] shape) {
+        long shapePtr = ptr + Integer.BYTES;
+        for (int d = 0; d < nDims; d++) {
+            shape[d] = Unsafe.getUnsafe().getInt(shapePtr + (long) d * Integer.BYTES);
+        }
+    }
+
+    /**
+     * Allows subclasses to zero their extra MapValue slots when a group is set to null.
+     */
+    protected void setNullExtra(MapValue mapValue) {
+    }
+
+    /**
+     * Accumulates values from a single input array into the group's data buffer.
+     * <p>
+     * For 1D, flat indices match between input and accumulator so values are combined directly.
+     * For nD, each input flat index is converted to coordinates (via input strides), then mapped
+     * to the accumulator's flat index (via accumulator strides), because the two may have
+     * different shapes and therefore different flat layouts.
+     * <p>
+     * NaN input values are skipped. If the accumulator position holds NaN (no prior finite value),
+     * the input value replaces it outright; otherwise {@link #combine} is called.
+     * <p>
+     * The avg subclass overrides this to additionally track per-position counts.
+     *
+     * @param dataPtr         pointer to the accumulator's data section (past the header)
+     * @param array           the input array for this row
+     * @param currentAccShape the accumulator's current shape (after any growth)
+     * @param mapValue        the group's MapValue (for subclass access to extra slots)
+     */
+    protected void accumulateInput(long dataPtr, ArrayView array, int[] currentAccShape, MapValue mapValue) {
+        int inputFlatLen = array.getFlatViewLength();
+        if (array.isVanilla() && innerDimsMatch(inputShape, currentAccShape)) {
+            // Flat path: input is vanilla row-major and inner dimensions match, so flat indices are identical.
+            for (int i = 0; i < inputFlatLen; i++) {
+                double inputVal = array.getDouble(i);
+                if (Numbers.isFinite(inputVal)) {
+                    long addr = dataPtr + (long) i * Double.BYTES;
+                    double accVal = Unsafe.getUnsafe().getDouble(addr);
+                    Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? combine(accVal, inputVal) : inputVal);
+                }
+            }
+        } else {
+            // Coordinate path: iterate input coordinates, use array strides for non-vanilla support.
+            ArrayView.computeRowMajorStrides(currentAccShape, accStrides);
+            for (int d = 0; d < nDims; d++) {
+                coords[d] = 0;
+            }
+            do {
+                int inputFi = 0;
+                for (int d = 0; d < nDims; d++) {
+                    inputFi += coords[d] * array.getStride(d);
+                }
+                double inputVal = array.getDouble(inputFi);
+                if (Numbers.isFinite(inputVal)) {
+                    int accFi = ArrayView.coordsToFlatIndex(coords, accStrides);
+                    long addr = dataPtr + (long) accFi * Double.BYTES;
+                    double accVal = Unsafe.getUnsafe().getDouble(addr);
+                    Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? combine(accVal, inputVal) : inputVal);
+                }
+            } while (ArrayView.incrementCoords(coords, inputShape));
+        }
+    }
+
+    /**
+     * Merges src's accumulated values into dest during parallel GROUP BY.
+     * Same coordinate-mapping logic as {@link #accumulateInput} but reads from
+     * off-heap src data instead of an {@link ArrayView}.
+     * <p>
+     * The avg subclass overrides this to additionally merge per-position counts.
+     *
+     * @param destDataPtr pointer to dest's data section
+     * @param srcDataPtr  pointer to src's data section
+     * @param destShape   dest's current shape (after any growth)
+     * @param srcShape    src's shape
+     * @param srcFlatLen  number of elements in src's data
+     * @param destValue   dest's MapValue (for subclass access to extra slots)
+     * @param srcValue    src's MapValue (for subclass access to extra slots)
+     */
+    protected void mergeValues(long destDataPtr, long srcDataPtr, int[] destShape, int[] srcShape, int srcFlatLen, MapValue destValue, MapValue srcValue) {
+        if (innerDimsMatch(srcShape, destShape)) {
+            // Flat path: inner dimensions match, so flat indices are identical.
+            for (int i = 0; i < srcFlatLen; i++) {
+                double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
+                if (Numbers.isFinite(srcVal)) {
+                    long addr = destDataPtr + (long) i * Double.BYTES;
+                    double destVal = Unsafe.getUnsafe().getDouble(addr);
+                    Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(destVal) ? combine(destVal, srcVal) : srcVal);
+                }
+            }
+        } else {
+            ArrayView.computeRowMajorStrides(destShape, accStrides);
+            ArrayView.computeRowMajorStrides(srcShape, newStrides);
+            for (int fi = 0; fi < srcFlatLen; fi++) {
+                double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) fi * Double.BYTES);
+                if (Numbers.isFinite(srcVal)) {
+                    ArrayView.flatIndexToCoords(fi, newStrides, coords);
+                    int destFi = ArrayView.coordsToFlatIndex(coords, accStrides);
+                    long addr = destDataPtr + (long) destFi * Double.BYTES;
+                    double destVal = Unsafe.getUnsafe().getDouble(addr);
+                    Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(destVal) ? combine(destVal, srcVal) : srcVal);
+                }
+            }
+        }
+    }
+
+    /**
+     * Computes {@link #newShape} as the per-dimension max of {@link #accShape} and
+     * {@link #inputShape}. Both must be populated before calling.
+     *
+     * @return true if any dimension of newShape exceeds accShape
+     */
+    private boolean computeMaxShape() {
+        boolean changed = false;
+        for (int d = 0; d < nDims; d++) {
+            newShape[d] = Math.max(accShape[d], inputShape[d]);
+            if (newShape[d] != accShape[d]) {
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Returns true when inner dimensions (d &ge; 1) match between two shapes.
+     * When they match, row-major strides agree and flat indices are identical
+     * between the two layouts — only dimension 0 (the outermost) may differ,
+     * meaning one array may simply be shorter. This allows a flat linear scan
+     * without coordinate conversion.
+     * <p>
+     * For {@code nDims <= 1} the loop body never executes, returning true — which
+     * is correct since 1D always uses the flat path.
+     */
+    protected boolean innerDimsMatch(int[] shape1, int[] shape2) {
+        for (int d = 1; d < nDims; d++) {
+            if (shape1[d] != shape2[d]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Checks whether growing from {@link #accShape} to {@link #newShape} requires a
+     * coordinate remap of existing data.
+     * <p>
+     * Remap is unnecessary when all row-major strides agree on dimensions with more
+     * than one element — i.e., only dimensions with {@code accShape[d] <= 1} or the
+     * outermost varying dimension grew. Examples: (1,10)→(1,20), (10,1)→(20,1),
+     * (10,5)→(20,5) all preserve flat indices.
+     * <p>
+     * When this returns true, {@link #accStrides} is populated as a side effect.
+     */
+    private boolean checkNeedsRemap() {
+        if (nDims <= 1) {
+            return false;
+        }
+        ArrayView.computeRowMajorStrides(accShape, accStrides);
+        for (int d = 0; d < nDims; d++) {
+            if (accShape[d] > 1 && accStrides[d] != newStrides[d]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Grows the accumulator's compact block to fit {@link #newShape}.
+     * <p>
+     * Three cases based on {@link #checkNeedsRemap()} and capacity:
+     * <ol>
+     *   <li>No remap + fits in capacity → in-place NaN-fill tail</li>
+     *   <li>No remap + capacity exceeded → new block, bulk copy, NaN-fill tail</li>
+     *   <li>Remap needed → new block, NaN-fill all, coordinate remap</li>
+     * </ol>
+     * Updates the 3 base MapValue slots (ptr, accFlatLen, capacity) and calls
+     * {@link #onShapeGrow} so subclasses can grow their auxiliary arrays.
+     */
+    private void growAccumulator(MapValue mapValue, int accFlatLen) {
+        int newFlatLen = ArrayView.computeRowMajorStrides(newShape, newStrides);
+        long ptr = mapValue.getLong(valueIndex);
+        long capacity = mapValue.getLong(valueIndex + 2);
+        boolean needsRemap = checkNeedsRemap();
+
+        if (!needsRemap && newFlatLen <= capacity) {
+            // In-place extension: flat indices unchanged, NaN-fill the tail.
+            long dataPtr = ptr + headerSize;
+            nanFill(dataPtr, accFlatLen, newFlatLen);
+            writeHeader(ptr, newShape, newFlatLen);
+            mapValue.putLong(valueIndex + 1, newFlatLen);
+            onShapeGrow(mapValue, accFlatLen, capacity, needsRemap);
+        } else {
+            long newCapacity = Math.max(newFlatLen, (long) (newFlatLen * Math.pow(OVERALLOC_BASE, nDims)));
+            long newBlockSize = headerSize + newCapacity * Double.BYTES;
+            long newPtr = allocator.malloc(newBlockSize);
+            writeHeader(newPtr, newShape, newFlatLen);
+            long newDataPtr = newPtr + headerSize;
+
+            if (needsRemap) {
+                nanFill(newDataPtr, 0, (int) newCapacity);
+                remapData(ptr + headerSize, accFlatLen, accStrides, newDataPtr, newStrides);
+            } else {
+                // Flat layout preserved: bulk copy + NaN-fill tail.
+                Unsafe.getUnsafe().copyMemory(ptr + headerSize, newDataPtr, (long) accFlatLen * Double.BYTES);
+                nanFill(newDataPtr, accFlatLen, (int) newCapacity);
+            }
+
+            mapValue.putLong(valueIndex, newPtr);
+            mapValue.putLong(valueIndex + 1, newFlatLen);
+            mapValue.putLong(valueIndex + 2, newCapacity);
+            onShapeGrow(mapValue, accFlatLen, newCapacity, needsRemap);
+        }
+    }
+
+    /**
+     * Copies each element from the old data layout to the new data layout,
+     * translating flat indices through coordinates to account for changed strides.
+     */
+    private void remapData(long oldDataPtr, int oldFlatLen, int[] oldStrides, long newDataPtr, int[] targetStrides) {
+        for (int fi = 0; fi < oldFlatLen; fi++) {
+            ArrayView.flatIndexToCoords(fi, oldStrides, coords);
+            int newFi = ArrayView.coordsToFlatIndex(coords, targetStrides);
+            Unsafe.getUnsafe().putDouble(
+                    newDataPtr + (long) newFi * Double.BYTES,
+                    Unsafe.getUnsafe().getDouble(oldDataPtr + (long) fi * Double.BYTES)
+            );
+        }
+    }
+
+    /**
+     * Writes the compact block header: dataSize (in bytes) followed by nDims shape integers.
+     */
+    private void writeHeader(long ptr, int[] shape, int flatLen) {
+        Unsafe.getUnsafe().putInt(ptr, flatLen * Double.BYTES);
+        long shapePtr = ptr + Integer.BYTES;
+        for (int d = 0; d < nDims; d++) {
+            Unsafe.getUnsafe().putInt(shapePtr + (long) d * Integer.BYTES, shape[d]);
+        }
+    }
+
+    /**
+     * Writes the compact block header, reading shape dimensions from an ArrayView.
+     */
+    private void writeHeaderFromArray(long ptr, ArrayView array, int flatLen) {
+        Unsafe.getUnsafe().putInt(ptr, flatLen * Double.BYTES);
+        long shapePtr = ptr + Integer.BYTES;
+        for (int d = 0; d < nDims; d++) {
+            Unsafe.getUnsafe().putInt(shapePtr + (long) d * Integer.BYTES, array.getDimLen(d));
+        }
+    }
 }

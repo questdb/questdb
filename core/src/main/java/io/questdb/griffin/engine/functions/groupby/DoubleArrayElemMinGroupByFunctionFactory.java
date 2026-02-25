@@ -57,7 +57,7 @@ public class DoubleArrayElemMinGroupByFunctionFactory implements FunctionFactory
         return new DoubleArrayElemMinGroupByFunction(args.getQuick(0));
     }
 
-    private static class DoubleArrayElemMinGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
+    private static final class DoubleArrayElemMinGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
 
         public DoubleArrayElemMinGroupByFunction(@NotNull Function arg) {
             super(arg);

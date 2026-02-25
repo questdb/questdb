@@ -69,11 +69,82 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
     }
 
     @Test
+    public void test2dIncrementalNoRemap() throws Exception {
+        assertGroupByTyped("DOUBLE[][]", "[[37.0,74.0,111.0,220.0,275.0,600.0,700.0]]",
+                "ARRAY[[1.0, 2.0, 3.0]]",
+                "ARRAY[[10.0, 20.0, 30.0, 40.0, 50.0]]",
+                "ARRAY[[100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0]]"
+        );
+    }
+
+    @Test
+    public void test2dMixedNoRemapThenRemap() throws Exception {
+        assertGroupByTyped("DOUBLE[][]",
+                "[[37.0,74.0,111.0,148.0,500.0,600.0],[375.0,430.0,485.0,540.0,1100.0,1200.0]]",
+                "ARRAY[[1.0, 2.0, 3.0, 4.0]]",
+                "ARRAY[[10.0, 20.0, 30.0, 40.0], [50.0, 60.0, 70.0, 80.0]]",
+                "ARRAY[[100.0, 200.0, 300.0, 400.0, 500.0, 600.0], [700.0, 800.0, 900.0, 1000.0, 1100.0, 1200.0]]"
+        );
+    }
+
+    @Test
+    public void test2dNoRemapInnerGrowsOuterOne() throws Exception {
+        assertGroupByTyped("DOUBLE[][]", "[[5.5,11.0,16.5,40.0,50.0]]",
+                "ARRAY[[1.0, 2.0, 3.0]]",
+                "ARRAY[[10.0, 20.0, 30.0, 40.0, 50.0]]"
+        );
+    }
+
+    @Test
+    public void test2dNoRemapOuterGrows() throws Exception {
+        assertGroupByTyped("DOUBLE[][]",
+                "[[5.5,11.0,16.5],[22.0,27.5,33.0],[70.0,80.0,90.0],[100.0,110.0,120.0]]",
+                "ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]",
+                "ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0], [70.0, 80.0, 90.0], [100.0, 110.0, 120.0]]"
+        );
+    }
+
+    @Test
+    public void test2dRemapInnerGrows() throws Exception {
+        assertGroupByTyped("DOUBLE[][]",
+                "[[5.5,11.0,16.5,40.0,50.0],[32.0,37.5,43.0,90.0,100.0]]",
+                "ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]",
+                "ARRAY[[10.0, 20.0, 30.0, 40.0, 50.0], [60.0, 70.0, 80.0, 90.0, 100.0]]"
+        );
+    }
+
+    @Test
     public void test2dShrinkingThenGrowing() throws Exception {
         assertGroupByTyped("DOUBLE[][]", "[[7.0,15.0,36.0],[28.5,36.0,72.0],[84.0,96.0,108.0]]",
                 "ARRAY[[3.0, 6.0], [9.0, 12.0]]",
                 "ARRAY[[6.0]]",
                 "ARRAY[[12.0, 24.0, 36.0], [48.0, 60.0, 72.0], [84.0, 96.0, 108.0]]"
+        );
+    }
+
+    @Test
+    public void test2dAvgRemapWithNan() throws Exception {
+        assertGroupByTyped("DOUBLE[][]",
+                "[[5.5,20.0,16.5,null,50.0],[60.0,5.0,43.0,90.0,100.0]]",
+                "ARRAY[[1.0, null, 3.0], [null, 5.0, 6.0]]",
+                "ARRAY[[10.0, 20.0, 30.0, null, 50.0], [60.0, null, 80.0, 90.0, 100.0]]"
+        );
+    }
+
+    @Test
+    public void test3dNoRemapInnermostGrowsAllOuterOne() throws Exception {
+        assertGroupByTyped("DOUBLE[][][]", "[[[5.5,11.0,16.5,40.0,50.0]]]",
+                "ARRAY[[[1.0, 2.0, 3.0]]]",
+                "ARRAY[[[10.0, 20.0, 30.0, 40.0, 50.0]]]"
+        );
+    }
+
+    @Test
+    public void test3dRemapInnermostGrowsOuterGtOne() throws Exception {
+        assertGroupByTyped("DOUBLE[][][]",
+                "[[[5.5,11.0,16.5,40.0,50.0]],[[32.0,37.5,43.0,90.0,100.0]]]",
+                "ARRAY[[[1.0, 2.0, 3.0]], [[4.0, 5.0, 6.0]]]",
+                "ARRAY[[[10.0, 20.0, 30.0, 40.0, 50.0]], [[60.0, 70.0, 80.0, 90.0, 100.0]]]"
         );
     }
 
