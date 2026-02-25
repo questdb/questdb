@@ -178,7 +178,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         this.metrics = configuration.getMetrics();
 
         try {
-            this.ringManager = createRingManager(configuration);
+            WalWriterRingManager ringManager;
+            try {
+                ringManager = createRingManager(configuration);
+            } catch (CairoException ex) {
+                if (!ex.isOutOfMemory()) {
+                    throw ex;
+                }
+                // Ring creation may allocate native resources; keep WAL writer usable on OOM.
+                LOG.info().$("io_uring ring init failed due to OOM, falling back to mmap [table=").$(tableToken)
+                        .$(", msg=").$safe(ex.getFlyweightMessage())
+                        .I$();
+                ringManager = null;
+            }
             lockWal();
             mkWalDir();
 
@@ -190,16 +202,36 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             columnCount = metadata.getColumnCount();
             timestampIndex = metadata.getTimestampIndex();
 
+            WalWriterBufferPool bufferPool = null;
             if (ringManager != null) {
-                int poolSize = Math.max(64, columnCount * 2 * 3);
-                this.bufferPool = new WalWriterBufferPool(
-                        getDataAppendPageSize(), poolSize, MemoryTag.NATIVE_TABLE_WAL_WRITER
-                );
-                bufferPool.setRingManager(ringManager);
-                ringManager.setPool(bufferPool);
-                bufferPool.registerWithKernel();
-                ringManager.registerFilesSparse(columnCount * 2 + 16);
+                final int poolSize = Math.max(64, columnCount * 2 * 3);
+                try {
+                    bufferPool = new WalWriterBufferPool(
+                            getDataAppendPageSize(),
+                            poolSize,
+                            MemoryTag.NATIVE_TABLE_WAL_WRITER
+                    );
+                    bufferPool.setRingManager(ringManager);
+                    ringManager.setPool(bufferPool);
+                    bufferPool.registerWithKernel();
+                    ringManager.registerFilesSparse(columnCount * 2 + 16);
+                } catch (CairoException ex) {
+                    if (!ex.isOutOfMemory()) {
+                        throw ex;
+                    }
+                    // io_uring introduces extra native allocations for the pooled buffers.
+                    // On OOM we should still be able to open the WAL writer and persist
+                    // metadata-only state transitions (e.g. materialized view invalidation),
+                    // so fall back to mmap writes.
+                    LOG.info().$("io_uring init failed due to OOM, falling back to mmap [table=").$(tableToken)
+                            .$(", msg=").$safe(ex.getFlyweightMessage())
+                            .I$();
+                    bufferPool = Misc.free(bufferPool);
+                    ringManager = Misc.free(ringManager);
+                }
             }
+            this.ringManager = ringManager;
+            this.bufferPool = bufferPool;
 
             columns = new ObjList<>(columnCount * 2);
             nullSetters = new ObjList<>(columnCount);
