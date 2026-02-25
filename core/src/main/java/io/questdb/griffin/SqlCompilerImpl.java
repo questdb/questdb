@@ -3870,6 +3870,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(createMatViewOp.getTableNamePosition(), "materialized view already exists");
                 }
+                QueryProgress.logEnd(sqlId, createMatViewOp.getSqlText(), executionContext, beginNanos);
                 return false;
             } else {
                 CharSequence volumeAlias = createMatViewOp.getVolumeAlias();
@@ -3976,6 +3977,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     createTableOp.updateOperationFutureTableToken(tt);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
+                }
+                if (needRegister) {
+                    QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
                 }
                 return false;
             } else {
@@ -4166,6 +4170,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(createViewOp.getTableNamePosition(), "view already exists");
                 }
+                QueryProgress.logEnd(sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
                 return false;
             } else {
                 final ViewDefinition viewDefinition;
