@@ -351,10 +351,6 @@ public final class ParquetRowGroupFilter {
         }
     }
 
-    public static long encodeColumnAndCount(int columnIndex, int count) {
-        return (columnIndex & 0xFFFFFFFFL) | ((long) count << 32);
-    }
-
     @TestOnly
     public static int getRowGroupsSkipped() {
         return rowGroupsSkipped;
@@ -363,5 +359,9 @@ public final class ParquetRowGroupFilter {
     @TestOnly
     public static void resetRowGroupsSkipped() {
         rowGroupsSkipped = 0;
+    }
+
+    private static long encodeColumnAndCount(int columnIndex, int count) {
+        return (columnIndex & 0xFFFFFFFFL) | ((long) count << 32);
     }
 }
