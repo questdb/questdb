@@ -117,6 +117,10 @@ public final class ParquetRowGroupFilter {
                                     // value won't match any byte bloom filter entry.
                                     filterValues.putInt((int) f.getLong(null));
                                     break;
+                                case ColumnType.FLOAT:
+                                case ColumnType.DOUBLE:
+                                    filterValues.putInt((int) f.getDouble(null));
+                                    break;
                                 default:
                                     filterValues.putInt(f.getByte(null));
                             }
@@ -131,6 +135,10 @@ public final class ParquetRowGroupFilter {
                                     break;
                                 case ColumnType.LONG:
                                     filterValues.putInt((int) f.getLong(null));
+                                    break;
+                                case ColumnType.FLOAT:
+                                case ColumnType.DOUBLE:
+                                    filterValues.putInt((int) f.getDouble(null));
                                     break;
                                 default:
                                     filterValues.putInt(f.getShort(null));
@@ -147,6 +155,8 @@ public final class ParquetRowGroupFilter {
                             Function f = valueFunctions.getQuick(j);
                             if (f.getType() == ColumnType.LONG) {
                                 filterValues.putInt((int) f.getLong(null));
+                            } else if (f.getType() == ColumnType.FLOAT || f.getType() == ColumnType.DOUBLE) {
+                                filterValues.putInt((int) f.getDouble(null));
                             } else {
                                 filterValues.putInt(f.getInt(null));
                             }
@@ -180,7 +190,12 @@ public final class ParquetRowGroupFilter {
                     }
                     case ColumnType.LONG:
                         for (int j = 0; j < valueCount; j++) {
-                            filterValues.putLong(valueFunctions.getQuick(j).getLong(null));
+                            Function f = valueFunctions.getQuick(j);
+                            if (f.getType() == ColumnType.FLOAT || f.getType() == ColumnType.DOUBLE) {
+                                filterValues.putLong((long) f.getDouble(null));
+                            } else {
+                                filterValues.putLong(f.getLong(null));
+                            }
                         }
                         break;
                     case ColumnType.DATE:
@@ -331,7 +346,7 @@ public final class ParquetRowGroupFilter {
             LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
             return false;
         } catch (Throwable e) {
-            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e.getMessage()).$(']').$();
+            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e).$(']').$();
             return false;
         }
     }
