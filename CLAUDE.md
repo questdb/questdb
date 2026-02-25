@@ -160,6 +160,8 @@ cmake --build build/release --config Release
 - **utils/** - Build utilities
 - **examples/** - Usage examples
 - **win64svc/** - Windows service wrapper
+- **java-questdb-client** - Java client for data ingestion (legacy ILP and
+  Questdb's QWP)
 
 ### Core Package Layout (`core/src/main/java/io/questdb/`)
 
