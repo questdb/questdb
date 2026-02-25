@@ -291,9 +291,11 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
             if (e.isAuthorizationError()) {
                 reject(Status.SECURITY_ERROR, e.getFlyweightMessage().toString(), fd);
-            } else {
+            } else if (e.isCritical()) {
                 tudCache.setDistressed();
                 reject(Status.INTERNAL_ERROR, e.getFlyweightMessage().toString(), fd);
+            } else {
+                reject(Status.NOT_ACCEPTING_WRITES, e.getFlyweightMessage().toString(), fd);
             }
         } catch (Throwable e) {
             LOG.critical().$('[').$(fd).$("] unexpected error: ").$(e).$();

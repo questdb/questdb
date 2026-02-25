@@ -160,8 +160,7 @@ public class QwpTudCache implements QuietCloseable {
         }
 
         if (!engine.isWalTable(tableToken)) {
-            // Cannot insert into non-WAL table
-            return null;
+            throw CairoException.nonCritical().put("cannot insert into non-WAL table: ").put(tableNameUtf16);
         }
 
         TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetryEvent.ILP_RESERVE_WRITER);
