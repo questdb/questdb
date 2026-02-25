@@ -108,10 +108,12 @@ public class O3ParquetMergeStrategy {
      * Computes the merge strategy between existing row groups and incoming O3 data.
      * <p>
      * The algorithm uses both min and max timestamps to detect true overlap:
-     * - O3 data that overlaps with a row group (o3Ts >= rgMin AND o3Ts <= rgMax) is merged
-     * - O3 data in gaps between row groups creates new row groups (COPY_O3)
-     * - Exception: if an adjacent row group is "small" (< smallRowGroupThreshold rows),
-     * the O3 data is merged into that row group instead of creating a new one
+     * <ul>
+     * <li>O3 data that overlaps with a row group (o3Ts &gt;= rgMin AND o3Ts &lt;= rgMax) is merged</li>
+     * <li>O3 data in gaps between row groups creates new row groups (COPY_O3)</li>
+     * <li>Exception: if an adjacent row group is "small" (&lt; smallRowGroupThreshold rows),
+     * the O3 data is merged into that row group instead of creating a new one</li>
+     * </ul>
      * <p>
      * Row group bounds are provided as triples (min, max, rowCount) in the rowGroupBounds list.
      * Use {@link #addRowGroupBounds} to populate the list.
