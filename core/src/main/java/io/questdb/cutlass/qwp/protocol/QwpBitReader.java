@@ -318,7 +318,7 @@ public class QwpBitReader {
      * @return true if sufficient bits available, false otherwise
      */
     private boolean ensureBits(int bitsNeeded) {
-        while (bitsInBuffer < bitsNeeded && currentAddress < endAddress) {
+        while (bitsInBuffer < bitsNeeded && bitsInBuffer <= 56 && currentAddress < endAddress) {
             byte b = Unsafe.getUnsafe().getByte(currentAddress++);
             bitBuffer |= (long) (b & 0xFF) << bitsInBuffer;
             bitsInBuffer += 8;
