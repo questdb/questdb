@@ -32,6 +32,7 @@ import io.questdb.cairo.wal.WalWriterRingManager;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -184,6 +185,24 @@ public class MemoryPURImplTest extends AbstractTest {
 
         TestUtils.assertMemoryLeak(() -> {
             final long pageSize = 4096;
+            class TrackingFilesFacade extends TestFilesFacadeImpl {
+                long lastAllocateSize = -1;
+                long lastFallocateLen = -1;
+
+                @Override
+                public boolean allocate(long fd, long size) {
+                    lastAllocateSize = size;
+                    return super.allocate(fd, size);
+                }
+
+                @Override
+                public boolean fallocateKeepSize(long fd, long offset, long len) {
+                    lastFallocateLen = len;
+                    // Force the fallback path to make requested size observable.
+                    return false;
+                }
+            }
+            TrackingFilesFacade trackingFf = new TrackingFilesFacade();
 
             File file = temp.newFile();
             try (
@@ -194,13 +213,15 @@ public class MemoryPURImplTest extends AbstractTest {
                 pool.setRingManager(mgr);
                 mgr.setPool(pool);
                 pool.registerWithKernel();
-                try (MemoryPURImpl mem = new MemoryPURImpl(ff, path.of(file.getAbsolutePath()).$(),
+                try (MemoryPURImpl mem = new MemoryPURImpl(trackingFf, path.of(file.getAbsolutePath()).$(),
                         pageSize, MemoryTag.NATIVE_TABLE_WAL_WRITER, 0, mgr, pool)) {
                     for (int i = 0; i < 10; i++) {
                         mem.putLong(i);
                     }
                 }
             }
+            Assert.assertEquals(pageSize, trackingFf.lastFallocateLen);
+            Assert.assertEquals(pageSize, trackingFf.lastAllocateSize);
         });
     }
 

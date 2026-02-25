@@ -636,8 +636,7 @@ public class MemoryPURImpl extends MemoryPARWImpl implements MemoryMAR, WalWrite
         if (requiredSize <= allocatedFileSize) {
             return;
         }
-        long chunkSize = getExtendSegmentSize() * 4;
-        long newSize = Math.max(requiredSize, allocatedFileSize + chunkSize);
+        long newSize = requiredSize;
         newSize = ((newSize + getExtendSegmentSize() - 1) / getExtendSegmentSize()) * getExtendSegmentSize();
 
         if (!ff.fallocateKeepSize(fd, allocatedFileSize, newSize - allocatedFileSize)) {
