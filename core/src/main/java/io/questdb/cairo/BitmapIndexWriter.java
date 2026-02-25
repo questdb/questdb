@@ -44,14 +44,13 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable, Mutable {
-    private static final boolean FLAT_VALUES = System.getProperty("qdb.index.continuous.values") != null;
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
     private static final long MAX_VALUE_OFFSET = 37L;
     private final CairoConfiguration configuration;
     private final Cursor cursor = new Cursor();
     private final FilesFacade ff;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
-    private final MemoryMARW valueMem = FLAT_VALUES ? Vm.getCMARWInstance() : new MemoryPMARWImpl();
+    private final MemoryMARW valueMem;
     private int blockCapacity;
     private int blockValueCountMod;
     private int keyCount = -1;
@@ -69,6 +68,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     public BitmapIndexWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+        this.valueMem = configuration.getBitmapIndexWriterValuePagedEnabled() ? new MemoryPMARWImpl() : Vm.getCMARWInstance();
     }
 
     public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {

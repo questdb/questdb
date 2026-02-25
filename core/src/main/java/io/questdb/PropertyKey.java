@@ -60,6 +60,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_BITMAP_INDEX_READER_PAGED_ENABLED("cairo.bitmap.index.reader.paged.enabled"),
     CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE("cairo.bitmap.index.reader.paged.page.size"),
     CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES("cairo.bitmap.index.reader.paged.max.pages"),
+    CAIRO_BITMAP_INDEX_WRITER_VALUE_PAGED_ENABLED("cairo.bitmap.index.writer.value.paged.enabled"),
     CAIRO_INDEX_VALUE_BLOCK_SIZE("cairo.index.value.block.size"),
     CAIRO_MAX_SWAP_FILE_COUNT("cairo.max.swap.file.count"),
     CAIRO_PARALLEL_INDEX_THRESHOLD("cairo.parallel.index.threshold"),

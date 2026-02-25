@@ -472,6 +472,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getBitmapIndexWriterValuePagedEnabled() {
+        return false;
+    }
+
+    @Override
     public int getIndexValueBlockSize() {
         return 256;
     }

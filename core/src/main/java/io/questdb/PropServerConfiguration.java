@@ -285,6 +285,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean bitmapIndexReaderPagedEnabled;
     private final int bitmapIndexReaderPagedMaxPages;
     private final long bitmapIndexReaderPagedPageSize;
+    private final boolean bitmapIndexWriterValuePagedEnabled;
     private final int indexValueBlockSize;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final String installRoot;
@@ -1492,6 +1493,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (bitmapIndexReaderPagedMaxPages < 2) {
                 throw new ServerConfigurationException(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES.getPropertyPath() + " must be >= 2");
             }
+            this.bitmapIndexWriterValuePagedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_BITMAP_INDEX_WRITER_VALUE_PAGED_ENABLED, false);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
@@ -3666,6 +3668,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getBitmapIndexReaderPagedPageSize() {
             return bitmapIndexReaderPagedPageSize;
+        }
+
+        @Override
+        public boolean getBitmapIndexWriterValuePagedEnabled() {
+            return bitmapIndexWriterValuePagedEnabled;
         }
 
         @Override

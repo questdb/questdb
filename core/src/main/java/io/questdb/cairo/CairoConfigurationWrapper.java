@@ -452,6 +452,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getBitmapIndexWriterValuePagedEnabled() {
+        return getDelegate().getBitmapIndexWriterValuePagedEnabled();
+    }
+
+    @Override
     public int getIndexValueBlockSize() {
         return getDelegate().getIndexValueBlockSize();
     }

@@ -225,6 +225,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getCairoConfiguration().getBitmapIndexReaderPagedEnabled());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getBitmapIndexReaderPagedMaxPages());
         Assert.assertEquals(128L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getBitmapIndexReaderPagedPageSize());
+        Assert.assertFalse(configuration.getCairoConfiguration().getBitmapIndexWriterValuePagedEnabled());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getIndexValueBlockSize());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getMaxSwapFileCount());
         Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
@@ -1987,6 +1988,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getBitmapIndexReaderPagedEnabled());
         Assert.assertEquals(4, configuration.getBitmapIndexReaderPagedMaxPages());
         Assert.assertEquals(32L * Numbers.SIZE_1MB, configuration.getBitmapIndexReaderPagedPageSize());
+        Assert.assertTrue(configuration.getBitmapIndexWriterValuePagedEnabled());
         Assert.assertEquals(1024, configuration.getIndexValueBlockSize());
         Assert.assertEquals(23, configuration.getMaxSwapFileCount());
         Assert.assertEquals(509, configuration.getMkDirMode());
