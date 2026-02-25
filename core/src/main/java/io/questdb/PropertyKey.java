@@ -256,6 +256,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_ENABLED("cairo.o3.enabled"),
     CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY("cairo.query.cache.event.queue.capacity"),
     CAIRO_IO_URING_ENABLED("cairo.iouring.enabled"),
+    CAIRO_MADVISE_RANDOM_MMAP_CACHE_ENABLED("cairo.madvise.random.mmap.cache.enabled"),
     CAIRO_MAX_CRASH_FILES("cairo.max.crash.files"),
     CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT("cairo.legacy.string.column.type.default"),
     CIRCUIT_BREAKER_THROTTLE("circuit.breaker.throttle"),

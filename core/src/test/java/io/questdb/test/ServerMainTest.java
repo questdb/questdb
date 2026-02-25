@@ -508,6 +508,13 @@ public class ServerMainTest extends AbstractBootstrapTest {
 
                     final String[] expectedProps = (
                             "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
+                                    "async.munmap.worker.affinity\tQDB_ASYNC_MUNMAP_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "async.munmap.worker.haltOnError\tQDB_ASYNC_MUNMAP_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "async.munmap.worker.nap.threshold\tQDB_ASYNC_MUNMAP_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
+                                    "async.munmap.worker.priority\tQDB_ASYNC_MUNMAP_WORKER_PRIORITY\t10\tdefault\tfalse\tfalse\n" +
+                                    "async.munmap.worker.sleep.threshold\tQDB_ASYNC_MUNMAP_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
+                                    "async.munmap.worker.sleep.timeout\tQDB_ASYNC_MUNMAP_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
+                                    "async.munmap.worker.yield.threshold\tQDB_ASYNC_MUNMAP_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "binarydata.encoding.maxlength\tQDB_BINARYDATA_ENCODING_MAXLENGTH\t32768\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.copy\tQDB_CAIRO_ATTACH_PARTITION_COPY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.suffix\tQDB_CAIRO_ATTACH_PARTITION_SUFFIX\t.attachable\tdefault\tfalse\tfalse\n" +
@@ -532,11 +539,16 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.inactive.reader.max.open.partitions\tQDB_CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.inactive.reader.ttl\tQDB_CAIRO_INACTIVE_READER_TTL\t120000\tdefault\tfalse\tfalse\n" +
                                     "cairo.inactive.writer.ttl\tQDB_CAIRO_INACTIVE_WRITER_TTL\t600000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.bitmap.index.reader.paged.enabled\tQDB_CAIRO_BITMAP_INDEX_READER_PAGED_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.bitmap.index.reader.paged.max.pages\tQDB_CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES\t64\tdefault\tfalse\tfalse\n" +
+                                    "cairo.bitmap.index.reader.paged.page.size\tQDB_CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE\t134217728\tdefault\tfalse\tfalse\n" +
+                                    "cairo.bitmap.index.writer.value.paged.enabled\tQDB_CAIRO_BITMAP_INDEX_WRITER_VALUE_PAGED_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.index.value.block.size\tQDB_CAIRO_INDEX_VALUE_BLOCK_SIZE\t256\tdefault\tfalse\tfalse\n" +
                                     "cairo.iouring.enabled\tQDB_CAIRO_IOURING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.latestby.queue.capacity\tQDB_CAIRO_LATESTBY_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.legacy.string.column.type.default\tQDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.lexer.pool.capacity\tQDB_CAIRO_LEXER_POOL_CAPACITY\t2048\tdefault\tfalse\tfalse\n" +
+                                    "cairo.madvise.random.mmap.cache.enabled\tQDB_CAIRO_MADVISE_RANDOM_MMAP_CACHE_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.crash.files\tQDB_CAIRO_MAX_CRASH_FILES\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.file.name.length\tQDB_CAIRO_MAX_FILE_NAME_LENGTH\t127\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.swap.file.count\tQDB_CAIRO_MAX_SWAP_FILE_COUNT\t30\tdefault\tfalse\tfalse\n" +

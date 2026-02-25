@@ -134,6 +134,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
         try {
             FilesFacade ff = configuration.getFilesFacade();
+            int madviseOpts = Files.MADVISE_RANDOM_MMAP_CACHE_ENABLED ? Files.POSIX_MADV_RANDOM : -1;
             LPSZ name = BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             keyMem.of(
                     ff,
@@ -142,7 +143,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     BitmapIndexUtils.getKeyEntryOffset(0),
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
-                    Files.POSIX_MADV_RANDOM
+                    madviseOpts
             );
             this.clock = configuration.getMillisecondClock();
 
@@ -161,7 +162,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
-                    Files.POSIX_MADV_RANDOM
+                    madviseOpts
             );
         } catch (Throwable e) {
             close();

@@ -832,6 +832,8 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMadviseRandomMmapCacheEnabled();
+
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();

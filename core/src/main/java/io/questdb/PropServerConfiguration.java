@@ -328,6 +328,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale logTimestampLocale;
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
+    private final boolean madviseRandomMmapCacheEnabled;
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshIntervals;
@@ -1734,6 +1735,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
+            this.madviseRandomMmapCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MADVISE_RANDOM_MMAP_CACHE_ENABLED, false);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
@@ -4673,6 +4675,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isMadviseRandomMmapCacheEnabled() {
+            return madviseRandomMmapCacheEnabled;
         }
 
         @Override

@@ -1462,6 +1462,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMadviseRandomMmapCacheEnabled() {
+        return getDelegate().isMadviseRandomMmapCacheEnabled();
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return getDelegate().isMatViewEnabled();
     }
