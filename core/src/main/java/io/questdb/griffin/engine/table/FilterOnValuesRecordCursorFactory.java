@@ -78,7 +78,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         final int nKeyValues = keyValues.size();
         this.columnIndex = columnIndex;
