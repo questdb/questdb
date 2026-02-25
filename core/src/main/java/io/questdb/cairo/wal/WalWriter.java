@@ -204,7 +204,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
             WalWriterBufferPool bufferPool = null;
             if (ringManager != null) {
-                final int poolSize = Math.max(64, columnCount * 2 * 3);
+                final int poolSize = columnCount * 2 * 3;
                 try {
                     bufferPool = new WalWriterBufferPool(
                             getDataAppendPageSize(),
