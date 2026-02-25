@@ -1472,6 +1472,22 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackValuesOnEmptyIndexKeepsValueMemSizeZero() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.rollbackValues(42);
+                Assert.assertEquals(0, writer.getValueMemSize());
+            }
+
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                Assert.assertEquals(0, reader.getKeyCount());
+            }
+        });
+    }
+
+    @Test
     public void testTableReaderUsesContiguousForwardReaderWhenPagedDisabled() {
         disablePagedBitmapIndexReader();
         createIndexedSymbolTableForReaderModeTest();

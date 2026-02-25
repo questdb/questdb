@@ -387,6 +387,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     public void rollbackValues(long maxValue) {
 
         long maxValueBlockOffset = 0;
+        boolean hasValues = false;
         for (int k = 0; k < keyCount; k++) {
             long offset = BitmapIndexUtils.getKeyEntryOffset(k);
             long valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
@@ -408,12 +409,15 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                     keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, seekValueCount);
                 }
 
-                if (seekValueBlockOffset > maxValueBlockOffset) {
-                    maxValueBlockOffset = seekValueBlockOffset;
+                if (seekValueCount > 0) {
+                    hasValues = true;
+                    if (seekValueBlockOffset > maxValueBlockOffset) {
+                        maxValueBlockOffset = seekValueBlockOffset;
+                    }
                 }
             }
         }
-        valueMemSize = maxValueBlockOffset + blockCapacity;
+        valueMemSize = hasValues ? maxValueBlockOffset + blockCapacity : 0;
         updateValueMemSize();
         setMaxValue(maxValue);
     }
