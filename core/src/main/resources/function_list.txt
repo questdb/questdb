@@ -879,6 +879,16 @@ io.questdb.griffin.engine.functions.math.IPv4MinusIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4StrNetmaskFunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory
 
+# array_elem_max/min/avg/sum: group-by (single-arg) before element-wise (vararg)
+io.questdb.griffin.engine.functions.groupby.DoubleArrayElemMaxGroupByFunctionFactory
+io.questdb.griffin.engine.functions.array.DoubleArrayElemMaxFunctionFactory
+io.questdb.griffin.engine.functions.groupby.DoubleArrayElemMinGroupByFunctionFactory
+io.questdb.griffin.engine.functions.array.DoubleArrayElemMinFunctionFactory
+io.questdb.griffin.engine.functions.groupby.DoubleArrayElemAvgGroupByFunctionFactory
+io.questdb.griffin.engine.functions.array.DoubleArrayElemAvgFunctionFactory
+io.questdb.griffin.engine.functions.groupby.DoubleArrayElemSumGroupByFunctionFactory
+io.questdb.griffin.engine.functions.array.DoubleArrayElemSumFunctionFactory
+
 #        db    888888888888  888888888888  88888888888  888b      88  888888888888  88    ,ad8888ba,    888b      88
 #       d88b        88            88       88           8888b     88       88       88   d8"'    `"8b   8888b     88
 #      d8'`8b       88            88       88           88 `8b    88       88       88  d8'        `8b  88 `8b    88

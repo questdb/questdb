@@ -1,0 +1,207 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin.engine.functions.groupby;
+
+import org.junit.Test;
+
+public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDoubleArrayElemGroupByFunctionTest {
+
+    @Override
+    protected String funcName() {
+        return "array_elem_avg";
+    }
+    @Test
+    public void test2dAllSameShape() throws Exception {
+        assertGroupByTyped("DOUBLE[][]", "[[5.0,6.0],[7.0,8.0]]",
+                "ARRAY[[1.0, 2.0], [3.0, 4.0]]",
+                "ARRAY[[5.0, 6.0], [7.0, 8.0]]",
+                "ARRAY[[9.0, 10.0], [11.0, 12.0]]"
+        );
+    }
+
+    @Test
+    public void test2dAvgShapeGrowthPlusCounts() throws Exception {
+        // row1=(2,2) all finite, row2=(3,3) with NaN at [0][0]
+        // [0][0] count=1 (only row1), positions [2][*] count=1 (only row2)
+        assertGroupByTyped("DOUBLE[][]", "[[1.0,11.0,30.0],[21.5,27.0,60.0],[70.0,80.0,90.0]]",
+                "ARRAY[[1.0, 2.0], [3.0, 4.0]]",
+                "ARRAY[[null, 20.0, 30.0], [40.0, 50.0, 60.0], [70.0, 80.0, 90.0]]"
+        );
+    }
+
+    @Test
+    public void test2dFirstRowNull() throws Exception {
+        assertGroupByTyped("DOUBLE[][]", "[[5.5,11.0,3.0],[17.0,22.5,6.0],[50.0,60.0,null]]",
+                "null",
+                "ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]",
+                "ARRAY[[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]]"
+        );
+    }
+
+    @Test
+    public void test2dGrowingBothDims() throws Exception {
+        assertGroupByTyped("DOUBLE[][]", "[[5.5,11.0,30.0],[21.5,27.0,60.0],[70.0,80.0,90.0]]",
+                "ARRAY[[1.0, 2.0], [3.0, 4.0]]",
+                "ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0], [70.0, 80.0, 90.0]]"
+        );
+    }
+
+    @Test
+    public void test2dShrinkingThenGrowing() throws Exception {
+        assertGroupByTyped("DOUBLE[][]", "[[7.0,15.0,36.0],[28.5,36.0,72.0],[84.0,96.0,108.0]]",
+                "ARRAY[[3.0, 6.0], [9.0, 12.0]]",
+                "ARRAY[[6.0]]",
+                "ARRAY[[12.0, 24.0, 36.0], [48.0, 60.0, 72.0], [84.0, 96.0, 108.0]]"
+        );
+    }
+
+    @Test
+    public void testAllNanRowInMiddle() throws Exception {
+        assertGroupBy("[2.0,3.0]",
+                "ARRAY[1.0, 2.0]",
+                "ARRAY[null, null]",
+                "ARRAY[3.0, 4.0]"
+        );
+    }
+
+    @Test
+    public void testAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("INSERT INTO tab VALUES (null)");
+            execute("INSERT INTO tab VALUES (null)");
+            assertQueryNoLeakCheck("arr\nnull\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+        });
+    }
+
+    @Test
+    public void testAvgKeyedDifferentNanPatternsPerGroup() throws Exception {
+        assertKeyedGroupBy(
+                "grp\tarr\n1\t[2.0,4.0]\n2\t[null,4.0]\n",
+                new String[][]{
+                        {"1", "ARRAY[1.0, null]", "ARRAY[3.0, 4.0]"},
+                        {"2", "ARRAY[null, 2.0]", "ARRAY[null, 6.0]"}
+                }
+        );
+    }
+
+    @Test
+    public void testAvgVariableModeFromFirstRow() throws Exception {
+        assertGroupBy("[2.5,5.0,4.5]",
+                "ARRAY[1.0, null, 3.0]",
+                "ARRAY[4.0, 5.0, 6.0]"
+        );
+    }
+
+    @Test
+    public void testCrossNanDifferentPositions() throws Exception {
+        assertGroupBy("[2.5,4.0,4.0]",
+                "ARRAY[null, 2.0, 3.0]",
+                "ARRAY[1.0, null, 5.0]",
+                "ARRAY[4.0, 6.0, null]"
+        );
+    }
+
+    @Test
+    public void testKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp INT, arr DOUBLE[])");
+            execute("INSERT INTO tab VALUES (1, ARRAY[10.0, 20.0])");
+            execute("INSERT INTO tab VALUES (1, ARRAY[30.0, 40.0])");
+            execute("INSERT INTO tab VALUES (2, ARRAY[100.0, 200.0])");
+            assertQueryNoLeakCheck("grp\tarr\n1\t[20.0,30.0]\n2\t[100.0,200.0]\n",
+                    "SELECT grp, array_elem_avg(arr) arr FROM tab ORDER BY grp", null, true, true);
+        });
+    }
+
+    @Test
+    public void testNanElements() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("INSERT INTO tab VALUES (ARRAY[3.0, null, 6.0])");
+            execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0, 2.0])");
+            assertQueryNoLeakCheck("arr\n[2.0,2.0,4.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+        });
+    }
+
+    @Test
+    public void testNotKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
+            execute("INSERT INTO tab VALUES (ARRAY[3.0, 4.0])");
+            assertQueryNoLeakCheck("arr\n[2.0,3.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+        });
+    }
+
+    @Test
+    public void testNullArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("INSERT INTO tab VALUES (null)");
+            execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
+            assertQueryNoLeakCheck("arr\n[1.0,2.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+        });
+    }
+
+    @Test
+    public void testSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', ARRAY[1.0, 2.0])");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:30:00', ARRAY[3.0, 4.0])");
+            execute("INSERT INTO tab VALUES ('2024-01-01T01:00:00', ARRAY[10.0, 20.0])");
+            assertQueryNoLeakCheck("ts\tarr\n2024-01-01T00:00:00.000000Z\t[2.0,3.0]\n2024-01-01T01:00:00.000000Z\t[10.0,20.0]\n",
+                    "SELECT ts, array_elem_avg(arr) arr FROM tab SAMPLE BY 1h", "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
+            assertQueryNoLeakCheck("arr\n[1.0,2.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+        });
+    }
+
+    @Test
+    public void testVariableLengthArrays() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
+            execute("INSERT INTO tab VALUES (ARRAY[3.0, 4.0, 5.0])");
+            assertQueryNoLeakCheck("arr\n[2.0,3.0,5.0]\n", "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+        });
+    }
+
+    @Test
+    public void testVariableLengthPlusNan() throws Exception {
+        assertGroupBy("[1.0,3.0,5.0]",
+                "ARRAY[1.0, 2.0]",
+                "ARRAY[null, 4.0, 5.0]"
+        );
+    }
+}
