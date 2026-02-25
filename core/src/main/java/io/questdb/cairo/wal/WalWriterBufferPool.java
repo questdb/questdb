@@ -44,12 +44,12 @@ import java.io.Closeable;
 public class WalWriterBufferPool implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(WalWriterBufferPool.class);
-    private long[] addresses;
     private final long bufferSize;
+    private final int memoryTag;
+    private long[] addresses;
     private int capacity;
     private int freeCount;
     private int[] freeStack;
-    private final int memoryTag;
     private boolean registered;
     private WalWriterRingManager ringManager;
 
@@ -168,7 +168,7 @@ public class WalWriterBufferPool implements Closeable {
             }
             int ret = ringManager.registerBuffers(iovsAddr, capacity);
             if (ret < 0) {
-                LOG.info().$("io_uring_register_buffers failed, falling back to IORING_OP_WRITE [errno=").$(- ret)
+                LOG.info().$("io_uring_register_buffers failed, falling back to IORING_OP_WRITE [errno=").$(-ret)
                         .$(", buffers=").$(capacity)
                         .$(", bufferSize=").$(bufferSize)
                         .I$();
