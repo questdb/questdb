@@ -667,23 +667,19 @@ public class QwpTableBuffer {
         }
 
         public void addSymbol(String value) {
-            ensureCapacity();
             if (value == null) {
-                if (nullable) {
-                    markNull(size);
-                }
-                // Null symbols don't take space in the value buffer
-                size++;
-            } else {
-                int idx = symbolDict.get(value);
-                if (idx == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
-                    idx = symbolList.size();
-                    symbolDict.put(value, idx);
-                    symbolList.add(value);
-                }
-                symbolIndices[valueCount++] = idx;
-                size++;
+                addNull();
+                return;
             }
+            ensureCapacity();
+            int idx = symbolDict.get(value);
+            if (idx == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+                idx = symbolList.size();
+                symbolDict.put(value, idx);
+                symbolList.add(value);
+            }
+            symbolIndices[valueCount++] = idx;
+            size++;
         }
 
         /**
@@ -694,36 +690,33 @@ public class QwpTableBuffer {
          * @param globalId the global ID from GlobalSymbolDictionary
          */
         public void addSymbolWithGlobalId(String value, int globalId) {
-            ensureCapacity();
             if (value == null) {
-                if (nullable) {
-                    markNull(size);
-                }
-                size++;
-            } else {
-                // Add to local dictionary (for backward compatibility with existing encoder)
-                int localIdx = symbolDict.get(value);
-                if (localIdx == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
-                    localIdx = symbolList.size();
-                    symbolDict.put(value, localIdx);
-                    symbolList.add(value);
-                }
-                symbolIndices[valueCount] = localIdx;
-
-                // Also store global ID for delta encoding
-                if (globalSymbolIds == null) {
-                    globalSymbolIds = new int[capacity];
-                }
-                globalSymbolIds[valueCount] = globalId;
-
-                // Track max global ID for this column
-                if (globalId > maxGlobalSymbolId) {
-                    maxGlobalSymbolId = globalId;
-                }
-
-                valueCount++;
-                size++;
+                addNull();
+                return;
             }
+            ensureCapacity();
+            // Add to local dictionary (for backward compatibility with existing encoder)
+            int localIdx = symbolDict.get(value);
+            if (localIdx == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+                localIdx = symbolList.size();
+                symbolDict.put(value, localIdx);
+                symbolList.add(value);
+            }
+            symbolIndices[valueCount] = localIdx;
+
+            // Also store global ID for delta encoding
+            if (globalSymbolIds == null) {
+                globalSymbolIds = new int[capacity];
+            }
+            globalSymbolIds[valueCount] = globalId;
+
+            // Track max global ID for this column
+            if (globalId > maxGlobalSymbolId) {
+                maxGlobalSymbolId = globalId;
+            }
+
+            valueCount++;
+            size++;
         }
 
         public void addUuid(long high, long low) {
