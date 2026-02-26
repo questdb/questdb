@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
 import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullArrayConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
@@ -152,7 +153,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(type).getTimestampConstantNull();
             default -> {
                 if (ColumnType.isArray(type)) {
-                    yield NullConstant.NULL;
+                    yield new NullArrayConstant(type);
                 }
                 if (ColumnType.isDecimal(type)) {
                     yield DecimalUtil.createNullDecimalConstant(

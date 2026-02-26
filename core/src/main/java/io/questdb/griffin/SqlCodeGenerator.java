@@ -781,7 +781,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return false;
                 }
 
-                if (columnAst.rhs.type != LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
+                if (columnAst.rhs.type != LITERAL) {
+                    return false;
+                }
+                int argColIndex = metadata.getColumnIndex(columnAst.rhs.token);
+                if (argColIndex < 0) {
+                    return false;
+                }
+                if (ColumnType.isArray(metadata.getColumnType(argColIndex))) {
                     return false;
                 }
             }
