@@ -370,7 +370,7 @@ public class QwpWebSocketSenderTest {
     private QwpWebSocketSender createUnconnectedAsyncSender() {
         return QwpWebSocketSender.createForTesting("localhost", 9000,
                 500, 0, 0L,  // autoFlushRows, autoFlushBytes, autoFlushIntervalNanos
-                8, 16);      // inFlightWindowSize, sendQueueCapacity
+                8);          // inFlightWindowSize
     }
 
     /**
@@ -378,10 +378,10 @@ public class QwpWebSocketSenderTest {
      */
     private QwpWebSocketSender createUnconnectedAsyncSenderWithFlowControl(
             int autoFlushRows, int autoFlushBytes, long autoFlushIntervalNanos,
-            int inFlightWindowSize, int sendQueueCapacity) {
+            int inFlightWindowSize) {
         return QwpWebSocketSender.createForTesting("localhost", 9000,
                 autoFlushRows, autoFlushBytes, autoFlushIntervalNanos,
-                inFlightWindowSize, sendQueueCapacity);
+                inFlightWindowSize);
     }
 
     private static MicrobatchBuffer getActiveBuffer(QwpWebSocketSender sender) throws Exception {
@@ -417,7 +417,7 @@ public class QwpWebSocketSenderTest {
         private boolean failOnce = true;
 
         private ThrowingOnceWebSocketSendQueue() {
-            super(new NoOpWebSocketClient(), null, 1, 50, 50);
+            super(new NoOpWebSocketClient(), null, 50, 50);
         }
 
         @Override

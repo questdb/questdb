@@ -86,8 +86,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                    windowSize,
-                    QwpWebSocketSender.DEFAULT_SEND_QUEUE_CAPACITY);
+                    windowSize);
         }
     }
 
@@ -2099,7 +2098,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 int inFlightWindowSize = 100;
-                int sendQueueCapacity = 200;
                 int totalRows = 10000;
 
                 // Create sender with high in-flight window
@@ -2108,8 +2106,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         10,                             // autoFlushRows = 10: batch every 10 rows
                         Integer.MAX_VALUE,              // autoFlushBytes: disabled
                         TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
-                        inFlightWindowSize,
-                        sendQueueCapacity
+                        inFlightWindowSize
                 )) {
                     for (int i = 0; i < totalRows; i++) {
                         sender.table("ws_ack_test")
@@ -2773,8 +2770,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         5,                              // autoFlushRows = 5: small batches
                         Integer.MAX_VALUE,              // autoFlushBytes: disabled
                         TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
-                        10,                             // inFlightWindow
-                        20                              // sendQueueCapacity
+                        10                              // inFlightWindow
                 )) {
                     // Send multiple small batches
                     for (int batch = 0; batch < 10; batch++) {

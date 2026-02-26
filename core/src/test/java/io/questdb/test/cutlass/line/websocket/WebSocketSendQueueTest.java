@@ -56,7 +56,7 @@ public class WebSocketSendQueueTest {
         try {
             // Keep window full so I/O thread cannot drain pending slot.
             window.addInFlight(0);
-            queue = new WebSocketSendQueue(client, window, 1, 100, 500);
+            queue = new WebSocketSendQueue(client, window, 100, 500);
             queue.enqueue(batch0);
 
             try {
@@ -84,7 +84,7 @@ public class WebSocketSendQueueTest {
 
         try {
             window.addInFlight(0);
-            queue = new WebSocketSendQueue(client, window, 1, 2_000, 500);
+            queue = new WebSocketSendQueue(client, window, 2_000, 500);
             final WebSocketSendQueue finalQueue = queue;
             queue.enqueue(batch0);
 
@@ -141,7 +141,7 @@ public class WebSocketSendQueueTest {
                 return false;
             });
 
-            queue = new WebSocketSendQueue(client, window, 1, 1_000, 500);
+            queue = new WebSocketSendQueue(client, window, 1_000, 500);
             assertTrue("Expected close callback", closeDelivered.await(2, TimeUnit.SECONDS));
 
             try {
@@ -175,7 +175,7 @@ public class WebSocketSendQueueTest {
                 return false;
             });
 
-            queue = new WebSocketSendQueue(client, window, 1, 1_000, 500);
+            queue = new WebSocketSendQueue(client, window, 1_000, 500);
             assertTrue("Expected invalid payload callback", payloadDelivered.await(2, TimeUnit.SECONDS));
 
             try {
@@ -204,7 +204,7 @@ public class WebSocketSendQueueTest {
                 throw new RuntimeException("recv-fail");
             });
 
-            queue = new WebSocketSendQueue(client, window, 1, 1_000, 500);
+            queue = new WebSocketSendQueue(client, window, 1_000, 500);
             assertTrue("Expected receive attempt", receiveAttempted.await(2, TimeUnit.SECONDS));
             long deadline = System.currentTimeMillis() + 2_000;
             while (queue.getLastError() == null && System.currentTimeMillis() < deadline) {
@@ -234,7 +234,7 @@ public class WebSocketSendQueueTest {
             client.setSendBehavior((dataPtr, length) -> {
                 throw new RuntimeException("send-fail");
             });
-            queue = new WebSocketSendQueue(client, null, 1, 1_000, 500);
+            queue = new WebSocketSendQueue(client, null, 1_000, 500);
             queue.enqueue(batch);
 
             try {
