@@ -155,17 +155,19 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
 
     @Test
     public void testRoundTrip() {
-        // Write a frame, then parse it - verify consistency
+        // Write a masked frame, then parse it - verify consistency
         long buf = allocateBuffer(256);
         try {
             int payloadLen = 100;
+            int maskKey = 0x12345678;
 
-            // Write
+            // Write masked header
             int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, payloadLen, false);
+                    WebSocketOpcode.BINARY, payloadLen, maskKey);
             for (int i = 0; i < payloadLen; i++) {
                 Unsafe.getUnsafe().putByte(buf + headerLen + i, (byte) i);
             }
+            WebSocketFrameWriter.maskPayload(buf + headerLen, payloadLen, maskKey);
 
             // Parse
             WebSocketFrameParser parser = new WebSocketFrameParser();
@@ -199,7 +201,6 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
 
             // Parse
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.setServerMode(true);  // Expect masked frames
             int consumed = parser.parse(buf, buf + headerLen + payload.length);
 
             Assert.assertEquals(headerLen + payload.length, consumed);
@@ -335,18 +336,19 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     public void testWriteCompleteCloseFrame() {
         long buf = allocateBuffer(64);
         try {
-            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, 1000, "Normal");
+            String reason = "Normal";
+            byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
+            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, 1000, reason);
 
-            // Verify header
-            Assert.assertEquals((byte) 0x88, Unsafe.getUnsafe().getByte(buf));  // CLOSE
-
-            // Parse what we wrote
-            WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + totalLen);
-
-            Assert.assertEquals(totalLen, consumed);
-            Assert.assertEquals(WebSocketOpcode.CLOSE, parser.getOpcode());
-            Assert.assertTrue(parser.isFin());
+            // Verify header byte (FIN + CLOSE)
+            Assert.assertEquals((byte) 0x88, Unsafe.getUnsafe().getByte(buf));
+            // Verify payload length: 2 (status code) + reason bytes
+            Assert.assertEquals((byte) (2 + reasonBytes.length), Unsafe.getUnsafe().getByte(buf + 1));
+            // Verify total length: 2 (header) + 2 (code) + reason
+            Assert.assertEquals(2 + 2 + reasonBytes.length, totalLen);
+            // Verify status code
+            short code = Short.reverseBytes(Unsafe.getUnsafe().getShort(buf + 2));
+            Assert.assertEquals(1000, code);
         } finally {
             freeBuffer(buf, 64);
         }

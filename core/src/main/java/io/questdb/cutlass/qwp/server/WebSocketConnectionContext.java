@@ -82,7 +82,6 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
         this.sendBuffer = new WebSocketBuffer(bufferSize);
         this.fragmentBuffer = new WebSocketBuffer(bufferSize);
         this.parser = new WebSocketFrameParser();
-        this.parser.setServerMode(true);  // Expect masked frames from clients
     }
 
     @Override

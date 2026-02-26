@@ -96,7 +96,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         this.httpConfiguration = httpConfiguration;
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
-        this.frameParser.setServerMode(true);  // Expect masked frames from clients
     }
 
     /**

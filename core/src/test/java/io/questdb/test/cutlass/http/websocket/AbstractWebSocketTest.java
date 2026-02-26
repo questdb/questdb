@@ -75,7 +75,7 @@ public abstract class AbstractWebSocketTest extends AbstractTest {
         } else {
             frame[offset++] = (byte) (0x80 | 127);
             for (int i = 7; i >= 0; i--) {
-                frame[offset++] = (byte) ((payloadLen >> (i * 8)) & 0xFF);
+                frame[offset++] = (byte) (((long) payloadLen >> (i * 8)) & 0xFF);
             }
         }
 

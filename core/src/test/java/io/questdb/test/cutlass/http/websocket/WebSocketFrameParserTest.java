@@ -35,37 +35,40 @@ import java.nio.charset.StandardCharsets;
 import java.util.Random;
 
 /**
- * Comprehensive tests for WebSocket frame parsing.
- * Tests MUST pass before implementation is considered complete.
+ * Tests for the server-side WebSocket frame parser.
+ * The server parser expects masked frames (from clients)
+ * and rejects unmasked frames.
  */
 public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
-    // ==================== FRAME STRUCTURE TESTS ====================
+    private static final byte[] MASK_KEY = {0x12, 0x34, 0x56, 0x78};
 
     @Test
     public void testControlFrameBetweenFragments() {
-        // Control frames can appear between data fragments
         long buf = allocateBuffer(64);
         try {
             WebSocketFrameParser parser = new WebSocketFrameParser();
 
-            // First data fragment
-            writeBytes(buf, (byte) 0x01, (byte) 0x02, (byte) 'H', (byte) 'i');
-            parser.parse(buf, buf + 4);
+            // First data fragment (masked)
+            byte[] frame1 = createMaskedFrame(WebSocketOpcode.TEXT, new byte[]{'H', 'i'}, false);
+            writeBytes(buf, frame1);
+            parser.parse(buf, buf + frame1.length);
             Assert.assertFalse(parser.isFin());
             Assert.assertEquals(WebSocketOpcode.TEXT, parser.getOpcode());
 
-            // Ping in the middle (control frame, FIN must be 1)
+            // Ping in the middle (control frame, FIN must be 1, masked)
             parser.reset();
-            writeBytes(buf, (byte) 0x89, (byte) 0x00);
-            parser.parse(buf, buf + 2);
+            byte[] frame2 = createMaskedFrame(WebSocketOpcode.PING, new byte[0], true);
+            writeBytes(buf, frame2);
+            parser.parse(buf, buf + frame2.length);
             Assert.assertTrue(parser.isFin());
             Assert.assertEquals(WebSocketOpcode.PING, parser.getOpcode());
 
-            // Final data fragment
+            // Final data fragment (masked)
             parser.reset();
-            writeBytes(buf, (byte) 0x80, (byte) 0x01, (byte) '!');
-            parser.parse(buf, buf + 3);
+            byte[] frame3 = createMaskedFrame(WebSocketOpcode.CONTINUATION, new byte[]{'!'}, true);
+            writeBytes(buf, frame3);
+            parser.parse(buf, buf + frame3.length);
             Assert.assertTrue(parser.isFin());
             Assert.assertEquals(WebSocketOpcode.CONTINUATION, parser.getOpcode());
         } finally {
@@ -110,25 +113,19 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         Assert.assertFalse(WebSocketOpcode.isValid(0xF));
     }
 
-    // ==================== MASKING TESTS ====================
-
     @Test
     public void testParse16BitLength() {
-        // Length 126 = use next 2 bytes as 16-bit length
         int payloadLen = 1000;
         long buf = allocateBuffer(payloadLen + 16);
         try {
-            writeBytes(buf,
-                    (byte) 0x82,           // FIN + BINARY
-                    (byte) 126,            // 16-bit length follows
-                    (byte) (payloadLen >> 8),   // Length high byte
-                    (byte) (payloadLen & 0xFF)  // Length low byte
-            );
+            byte[] payload = new byte[payloadLen];
+            byte[] frame = createMaskedFrame(WebSocketOpcode.BINARY, payload);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + 4 + payloadLen);
+            int consumed = parser.parse(buf, buf + frame.length);
 
-            Assert.assertEquals(4 + payloadLen, consumed);
+            Assert.assertEquals(frame.length, consumed);
             Assert.assertEquals(payloadLen, parser.getPayloadLength());
         } finally {
             freeBuffer(buf, payloadLen + 16);
@@ -137,40 +134,39 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
     @Test
     public void testParse64BitLength() {
-        // Length 127 = use next 8 bytes as 64-bit length
-        long payloadLen = 70000L;  // > 65535
-        long buf = allocateBuffer((int) payloadLen + 16);
+        int payloadLen = 70_000;
+        long buf = allocateBuffer(payloadLen + 16);
         try {
-            Unsafe.getUnsafe().putByte(buf, (byte) 0x82);
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 127);
-            Unsafe.getUnsafe().putLong(buf + 2, Long.reverseBytes(payloadLen));
+            byte[] payload = new byte[payloadLen];
+            byte[] frame = createMaskedFrame(WebSocketOpcode.BINARY, payload);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + 10 + payloadLen);
+            int consumed = parser.parse(buf, buf + frame.length);
 
-            Assert.assertEquals(10 + payloadLen, consumed);
+            Assert.assertEquals(frame.length, consumed);
             Assert.assertEquals(payloadLen, parser.getPayloadLength());
         } finally {
-            freeBuffer(buf, (int) payloadLen + 16);
+            freeBuffer(buf, payloadLen + 16);
         }
     }
 
     @Test
     public void testParse7BitLength() {
-        // Payload length 0-125 uses 7-bit length field
         for (int len = 0; len <= 125; len++) {
             long buf = allocateBuffer(256);
             try {
-                writeBytes(buf, (byte) 0x82, (byte) len);
-                // Write dummy payload
+                byte[] payload = new byte[len];
                 for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(buf + 2 + i, (byte) i);
+                    payload[i] = (byte) i;
                 }
+                byte[] frame = createMaskedFrame(WebSocketOpcode.BINARY, payload);
+                writeBytes(buf, frame);
 
                 WebSocketFrameParser parser = new WebSocketFrameParser();
-                int consumed = parser.parse(buf, buf + 2 + len);
+                int consumed = parser.parse(buf, buf + frame.length);
 
-                Assert.assertEquals(2 + len, consumed);
+                Assert.assertEquals(frame.length, consumed);
                 Assert.assertEquals(len, parser.getPayloadLength());
             } finally {
                 freeBuffer(buf, 256);
@@ -182,10 +178,11 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testParseBinaryFrame() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x82, (byte) 0x00);  // FIN + BINARY, empty
+            byte[] frame = createMaskedFrame(WebSocketOpcode.BINARY, new byte[0]);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 2);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketOpcode.BINARY, parser.getOpcode());
         } finally {
@@ -193,21 +190,17 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== OPCODE TESTS ====================
-
     @Test
     public void testParseCloseFrame() {
         long buf = allocateBuffer(16);
         try {
             // Close with code 1000 (normal closure)
-            writeBytes(buf,
-                    (byte) 0x88,  // FIN + CLOSE
-                    (byte) 0x02,  // Length 2 (just the code)
-                    (byte) 0x03, (byte) 0xE8  // 1000 in big-endian
-            );
+            byte[] payload = {(byte) 0x03, (byte) 0xE8};
+            byte[] frame = createMaskedFrame(WebSocketOpcode.CLOSE, payload);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 4);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketOpcode.CLOSE, parser.getOpcode());
             Assert.assertEquals(2, parser.getPayloadLength());
@@ -218,13 +211,13 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
     @Test
     public void testParseCloseFrameEmpty() {
-        // Close frame with no body is valid
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x88, (byte) 0x00);
+            byte[] frame = createMaskedFrame(WebSocketOpcode.CLOSE, new byte[0]);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 2);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketOpcode.CLOSE, parser.getOpcode());
             Assert.assertEquals(0, parser.getPayloadLength());
@@ -239,16 +232,16 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         try {
             String reason = "Normal closure";
             byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
+            byte[] payload = new byte[2 + reasonBytes.length];
+            payload[0] = (byte) 0x03;
+            payload[1] = (byte) 0xE8;  // 1000 in big-endian
+            System.arraycopy(reasonBytes, 0, payload, 2, reasonBytes.length);
 
-            Unsafe.getUnsafe().putByte(buf, (byte) 0x88);  // CLOSE
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) (2 + reasonBytes.length));
-            Unsafe.getUnsafe().putShort(buf + 2, Short.reverseBytes((short) 1000));
-            for (int i = 0; i < reasonBytes.length; i++) {
-                Unsafe.getUnsafe().putByte(buf + 4 + i, reasonBytes[i]);
-            }
+            byte[] frame = createMaskedFrame(WebSocketOpcode.CLOSE, payload);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 4 + reasonBytes.length);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketOpcode.CLOSE, parser.getOpcode());
             Assert.assertEquals(2 + reasonBytes.length, parser.getPayloadLength());
@@ -261,10 +254,12 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testParseContinuationFrame() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x00, (byte) 0x05, (byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0x04, (byte) 0x05);
+            byte[] frame = createMaskedFrame(WebSocketOpcode.CONTINUATION,
+                    new byte[]{0x01, 0x02, 0x03, 0x04, 0x05}, false);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 7);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketOpcode.CONTINUATION, parser.getOpcode());
             Assert.assertFalse(parser.isFin());
@@ -278,7 +273,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         long buf = allocateBuffer(16);
         try {
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf);  // Empty range
+            int consumed = parser.parse(buf, buf);
 
             Assert.assertEquals(0, consumed);
         } finally {
@@ -290,49 +285,51 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testParseEmptyPayload() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x82, (byte) 0x00);
+            byte[] frame = createMaskedFrame(WebSocketOpcode.BINARY, new byte[0]);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + 2);
+            int consumed = parser.parse(buf, buf + frame.length);
 
-            Assert.assertEquals(2, consumed);
+            Assert.assertEquals(frame.length, consumed);
             Assert.assertEquals(0, parser.getPayloadLength());
         } finally {
             freeBuffer(buf, 16);
         }
     }
 
-    // ==================== FRAGMENTATION TESTS ====================
-
     @Test
     public void testParseFragmentedMessage() {
         long buf = allocateBuffer(64);
         try {
-            // First fragment: opcode=TEXT, FIN=0
-            writeBytes(buf, (byte) 0x01, (byte) 0x03, (byte) 'H', (byte) 'e', (byte) 'l');
-
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + 5);
 
-            Assert.assertEquals(5, consumed);
+            // First fragment: opcode=TEXT, FIN=0
+            byte[] frame1 = createMaskedFrame(WebSocketOpcode.TEXT, new byte[]{'H', 'e', 'l'}, false);
+            writeBytes(buf, frame1);
+            int consumed = parser.parse(buf, buf + frame1.length);
+
+            Assert.assertEquals(frame1.length, consumed);
             Assert.assertFalse(parser.isFin());
             Assert.assertEquals(WebSocketOpcode.TEXT, parser.getOpcode());
 
             // Continuation: opcode=CONTINUATION, FIN=0
             parser.reset();
-            writeBytes(buf, (byte) 0x00, (byte) 0x02, (byte) 'l', (byte) 'o');
-            consumed = parser.parse(buf, buf + 4);
+            byte[] frame2 = createMaskedFrame(WebSocketOpcode.CONTINUATION, new byte[]{'l', 'o'}, false);
+            writeBytes(buf, frame2);
+            consumed = parser.parse(buf, buf + frame2.length);
 
-            Assert.assertEquals(4, consumed);
+            Assert.assertEquals(frame2.length, consumed);
             Assert.assertFalse(parser.isFin());
             Assert.assertEquals(WebSocketOpcode.CONTINUATION, parser.getOpcode());
 
             // Final fragment: opcode=CONTINUATION, FIN=1
             parser.reset();
-            writeBytes(buf, (byte) 0x80, (byte) 0x01, (byte) '!');
-            consumed = parser.parse(buf, buf + 3);
+            byte[] frame3 = createMaskedFrame(WebSocketOpcode.CONTINUATION, new byte[]{'!'}, true);
+            writeBytes(buf, frame3);
+            consumed = parser.parse(buf, buf + frame3.length);
 
-            Assert.assertEquals(3, consumed);
+            Assert.assertEquals(frame3.length, consumed);
             Assert.assertTrue(parser.isFin());
             Assert.assertEquals(WebSocketOpcode.CONTINUATION, parser.getOpcode());
         } finally {
@@ -344,7 +341,8 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testParseIncompleteHeader16BitLength() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x82, (byte) 126, (byte) 0x01);  // Missing 2nd length byte
+            // Masked frame with 16-bit length, but only provide 3 bytes (missing 2nd length byte)
+            writeBytes(buf, (byte) 0x82, (byte) (0x80 | 126), (byte) 0x01);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
             int consumed = parser.parse(buf, buf + 3);
@@ -356,18 +354,16 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== INCOMPLETE DATA TESTS ====================
-
     @Test
     public void testParseIncompleteHeader1Byte() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x82);  // Only first byte
+            writeBytes(buf, (byte) 0x82);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
             int consumed = parser.parse(buf, buf + 1);
 
-            Assert.assertEquals(0, consumed);  // Need more data
+            Assert.assertEquals(0, consumed);
             Assert.assertEquals(WebSocketFrameParser.STATE_NEED_MORE, parser.getState());
         } finally {
             freeBuffer(buf, 16);
@@ -378,7 +374,8 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testParseIncompleteHeader64BitLength() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x82, (byte) 127, (byte) 0, (byte) 0, (byte) 0, (byte) 0);  // Only 4 of 8 length bytes
+            // Masked frame with 64-bit length, but only provide 6 bytes (missing length bytes)
+            writeBytes(buf, (byte) 0x82, (byte) (0x80 | 127), (byte) 0, (byte) 0, (byte) 0, (byte) 0);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
             int consumed = parser.parse(buf, buf + 6);
@@ -396,7 +393,6 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
             writeBytes(buf, (byte) 0x82, (byte) 0x85, (byte) 0x12, (byte) 0x34);  // Only 2 of 4 mask bytes
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.setServerMode(true);  // Expect masked frames
             int consumed = parser.parse(buf, buf + 4);
 
             Assert.assertEquals(0, consumed);
@@ -409,13 +405,15 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testParseIncompletePayload() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x82, (byte) 0x05, (byte) 0x01, (byte) 0x02);  // Only 2 of 5 payload bytes
+            // Masked frame: FIN + BINARY, MASK + length 5, mask key, but only 2 payload bytes
+            writeBytes(buf, (byte) 0x82, (byte) 0x85,
+                    MASK_KEY[0], MASK_KEY[1], MASK_KEY[2], MASK_KEY[3],
+                    (byte) 0x01, (byte) 0x02);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + 4);
+            int consumed = parser.parse(buf, buf + 8);
 
-            // Parser should return header size, indicating header parsed but payload incomplete
-            Assert.assertEquals(2, consumed);
+            Assert.assertEquals(6, consumed);  // header (2) + mask key (4)
             Assert.assertEquals(5, parser.getPayloadLength());
             Assert.assertEquals(WebSocketFrameParser.STATE_NEED_PAYLOAD, parser.getState());
         } finally {
@@ -425,30 +423,16 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
     @Test
     public void testParseMaskedFrame() {
-        // Client->Server frames MUST be masked
         long buf = allocateBuffer(32);
         try {
-            // "hello" masked with key 0x12345678
             byte[] payload = "hello".getBytes(StandardCharsets.UTF_8);
-            byte[] maskKey = {0x12, 0x34, 0x56, 0x78};
-
-            writeBytes(buf,
-                    (byte) 0x82,                    // FIN + BINARY
-                    (byte) (0x80 | payload.length), // MASK bit + length
-                    maskKey[0], maskKey[1], maskKey[2], maskKey[3]
-            );
-
-            // Write masked payload
-            for (int i = 0; i < payload.length; i++) {
-                Unsafe.getUnsafe().putByte(buf + 6 + i,
-                        (byte) (payload[i] ^ maskKey[i % 4]));
-            }
+            byte[] frame = createMaskedFrame(WebSocketOpcode.BINARY, payload, true, MASK_KEY);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.setServerMode(true);  // Expect masked frames
-            int consumed = parser.parse(buf, buf + 6 + payload.length);
+            int consumed = parser.parse(buf, buf + frame.length);
 
-            Assert.assertEquals(6 + payload.length, consumed);
+            Assert.assertEquals(frame.length, consumed);
             Assert.assertTrue(parser.isMasked());
             Assert.assertEquals(0x78563412, parser.getMaskKey()); // Little-endian int
         } finally {
@@ -458,19 +442,19 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
     @Test
     public void testParseMaxControlFrameSize() {
-        // Control frames can have up to 125 bytes payload
         long buf = allocateBuffer(256);
         try {
-            Unsafe.getUnsafe().putByte(buf, (byte) 0x89);  // PING
-            Unsafe.getUnsafe().putByte(buf + 1, (byte) 125);
+            byte[] payload = new byte[125];
             for (int i = 0; i < 125; i++) {
-                Unsafe.getUnsafe().putByte(buf + 2 + i, (byte) i);
+                payload[i] = (byte) i;
             }
+            byte[] frame = createMaskedFrame(WebSocketOpcode.PING, payload);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + 127);
+            int consumed = parser.parse(buf, buf + frame.length);
 
-            Assert.assertEquals(127, consumed);
+            Assert.assertEquals(frame.length, consumed);
             Assert.assertEquals(125, parser.getPayloadLength());
             Assert.assertNotEquals(WebSocketFrameParser.STATE_ERROR, parser.getState());
         } finally {
@@ -478,55 +462,32 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== ERROR CASES ====================
-
-    @Test
-    public void testParseMinimalFrame() {
-        // Single byte payload, no mask (server->client style for testing)
-        // 0x82 = FIN + BINARY, 0x01 = length 1, 0xFF = payload
-        long buf = allocateBuffer(16);
-        try {
-            writeBytes(buf, (byte) 0x82, (byte) 0x01, (byte) 0xFF);
-
-            WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + 3);
-
-            Assert.assertEquals(3, consumed);
-            Assert.assertTrue(parser.isFin());
-            Assert.assertEquals(WebSocketOpcode.BINARY, parser.getOpcode());
-            Assert.assertEquals(1, parser.getPayloadLength());
-            Assert.assertFalse(parser.isMasked());
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
     @Test
     public void testParseMultipleFramesInBuffer() {
-        long buf = allocateBuffer(32);
+        long buf = allocateBuffer(64);
         try {
-            // Two complete frames back-to-back
-            writeBytes(buf,
-                    (byte) 0x82, (byte) 0x02, (byte) 0x01, (byte) 0x02,  // Frame 1: binary, 2 bytes
-                    (byte) 0x81, (byte) 0x03, (byte) 'a', (byte) 'b', (byte) 'c'  // Frame 2: text, 3 bytes
-            );
+            byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, new byte[]{0x01, 0x02});
+            byte[] frame2 = createMaskedFrame(WebSocketOpcode.TEXT, new byte[]{'a', 'b', 'c'});
+
+            writeBytes(buf, frame1);
+            for (int i = 0; i < frame2.length; i++) {
+                Unsafe.getUnsafe().putByte(buf + frame1.length + i, frame2[i]);
+            }
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
 
-            // Parse first frame
-            int consumed = parser.parse(buf, buf + 9);
-            Assert.assertEquals(4, consumed);
+            int consumed = parser.parse(buf, buf + frame1.length + frame2.length);
+            Assert.assertEquals(frame1.length, consumed);
             Assert.assertEquals(WebSocketOpcode.BINARY, parser.getOpcode());
             Assert.assertEquals(2, parser.getPayloadLength());
 
-            // Parse second frame
             parser.reset();
-            consumed = parser.parse(buf + 4, buf + 9);
-            Assert.assertEquals(5, consumed);
+            consumed = parser.parse(buf + frame1.length, buf + frame1.length + frame2.length);
+            Assert.assertEquals(frame2.length, consumed);
             Assert.assertEquals(WebSocketOpcode.TEXT, parser.getOpcode());
             Assert.assertEquals(3, parser.getPayloadLength());
         } finally {
-            freeBuffer(buf, 32);
+            freeBuffer(buf, 64);
         }
     }
 
@@ -534,10 +495,11 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testParsePingFrame() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x89, (byte) 0x04, (byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0x04);
+            byte[] frame = createMaskedFrame(WebSocketOpcode.PING, new byte[]{0x01, 0x02, 0x03, 0x04});
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 6);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketOpcode.PING, parser.getOpcode());
             Assert.assertEquals(4, parser.getPayloadLength());
@@ -550,10 +512,11 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testParsePongFrame() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x8A, (byte) 0x04, (byte) 0x01, (byte) 0x02, (byte) 0x03, (byte) 0x04);
+            byte[] frame = createMaskedFrame(WebSocketOpcode.PONG, new byte[]{0x01, 0x02, 0x03, 0x04});
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 6);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketOpcode.PONG, parser.getOpcode());
         } finally {
@@ -565,10 +528,11 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testParseTextFrame() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x81, (byte) 0x00);  // FIN + TEXT, empty
+            byte[] frame = createMaskedFrame(WebSocketOpcode.TEXT, new byte[0]);
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 2);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketOpcode.TEXT, parser.getOpcode());
         } finally {
@@ -578,13 +542,13 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
     @Test
     public void testRejectCloseFrameWith1BytePayload() {
-        // Close frame payload must be 0 or >= 2 bytes (for status code)
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x88, (byte) 0x01, (byte) 0x00);
+            byte[] frame = createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x00});
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 3);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketFrameParser.STATE_ERROR, parser.getState());
             Assert.assertEquals(WebSocketCloseCode.PROTOCOL_ERROR, parser.getErrorCode());
@@ -598,7 +562,8 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         long buf = allocateBuffer(16);
         try {
             // Ping with FIN=0 (fragmented control frame - not allowed)
-            writeBytes(buf, (byte) 0x09, (byte) 0x00);
+            // RSV/opcode check and control-frame-fragmentation check happen before mask check
+            writeBytes(buf, (byte) 0x09, (byte) 0x80);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
             parser.parse(buf, buf + 2);
@@ -611,31 +576,20 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testRejectMaskedServerFrame() {
-        // When parser is in client mode, server frames MUST NOT be masked
-        long buf = allocateBuffer(16);
-        try {
-            writeBytes(buf, (byte) 0x82, (byte) 0x81, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0xFF);
-
-            WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.setServerMode(false);  // Client mode - expect unmasked
-            parser.parse(buf, buf + 7);
-
-            Assert.assertEquals(WebSocketFrameParser.STATE_ERROR, parser.getState());
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
     public void testRejectOversizeControlFrame() {
         long buf = allocateBuffer(256);
         try {
-            // Ping with 126 byte payload (> 125 limit for control frames)
-            writeBytes(buf, (byte) 0x89, (byte) 126, (byte) 0x00, (byte) 0x7E);
+            // Masked ping with 126-byte payload (> 125 limit for control frames)
+            // byte0: FIN + PING, byte1: MASK + 126 (16-bit length), 2 length bytes, 4 mask bytes
+            writeBytes(buf,
+                    (byte) 0x89,           // FIN + PING
+                    (byte) (0x80 | 126),   // MASK + 16-bit length follows
+                    (byte) 0x00, (byte) 0x7E,  // 126 in big-endian
+                    MASK_KEY[0], MASK_KEY[1], MASK_KEY[2], MASK_KEY[3]
+            );
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 4);
+            parser.parse(buf, buf + 8);
 
             Assert.assertEquals(WebSocketFrameParser.STATE_ERROR, parser.getState());
             Assert.assertEquals(WebSocketCloseCode.PROTOCOL_ERROR, parser.getErrorCode());
@@ -644,13 +598,11 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== EDGE CASES ====================
-
     @Test
     public void testRejectRSV2Bit() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0xA2, (byte) 0x00);  // RSV2 set
+            writeBytes(buf, (byte) 0xA2, (byte) 0x80);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
             parser.parse(buf, buf + 2);
@@ -665,7 +617,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testRejectRSV3Bit() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x92, (byte) 0x00);  // RSV3 set
+            writeBytes(buf, (byte) 0x92, (byte) 0x80);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
             parser.parse(buf, buf + 2);
@@ -680,8 +632,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testRejectReservedBits() {
         long buf = allocateBuffer(16);
         try {
-            // RSV1 bit set (0x40)
-            writeBytes(buf, (byte) 0xC2, (byte) 0x00);
+            writeBytes(buf, (byte) 0xC2, (byte) 0x80);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
             parser.parse(buf, buf + 2);
@@ -698,7 +649,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         for (int opcode : new int[]{3, 4, 5, 6, 7, 0xB, 0xC, 0xD, 0xE, 0xF}) {
             long buf = allocateBuffer(16);
             try {
-                writeBytes(buf, (byte) (0x80 | opcode), (byte) 0x00);
+                writeBytes(buf, (byte) (0x80 | opcode), (byte) 0x80);
 
                 WebSocketFrameParser parser = new WebSocketFrameParser();
                 parser.parse(buf, buf + 2);
@@ -711,17 +662,13 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== CLOSE FRAME PARSING ====================
-
     @Test
     public void testRejectUnmaskedClientFrame() {
-        // When parser is in server mode, client frames MUST be masked
         long buf = allocateBuffer(16);
         try {
             writeBytes(buf, (byte) 0x82, (byte) 0x01, (byte) 0xFF);  // No mask bit
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.setServerMode(true);  // Expect masked frames
             parser.parse(buf, buf + 3);
 
             Assert.assertEquals(WebSocketFrameParser.STATE_ERROR, parser.getState());
@@ -733,16 +680,20 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
     @Test
     public void testRejectZeroLengthIn16BitField() {
-        // Using 126 length indicator but value < 126 is not minimal encoding
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x82, (byte) 126, (byte) 0x00, (byte) 0x05);  // Length 5 in 16-bit
+            // Masked frame with non-minimal 16-bit length encoding (value 5)
+            writeBytes(buf,
+                    (byte) 0x82,           // FIN + BINARY
+                    (byte) (0x80 | 126),   // MASK + 16-bit length
+                    (byte) 0x00, (byte) 0x05,  // Length 5 in 16-bit
+                    MASK_KEY[0], MASK_KEY[1], MASK_KEY[2], MASK_KEY[3]
+            );
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
             parser.setStrictMode(true);
-            parser.parse(buf, buf + 4);
+            parser.parse(buf, buf + 8);
 
-            // Some implementations allow this, strict mode should reject
             Assert.assertEquals(WebSocketFrameParser.STATE_ERROR, parser.getState());
         } finally {
             freeBuffer(buf, 16);
@@ -753,10 +704,11 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
     public void testReset() {
         long buf = allocateBuffer(16);
         try {
-            writeBytes(buf, (byte) 0x82, (byte) 0x02, (byte) 0x01, (byte) 0x02);
+            byte[] frame = createMaskedFrame(WebSocketOpcode.BINARY, new byte[]{0x01, 0x02});
+            writeBytes(buf, frame);
 
             WebSocketFrameParser parser = new WebSocketFrameParser();
-            parser.parse(buf, buf + 4);
+            parser.parse(buf, buf + frame.length);
 
             Assert.assertEquals(WebSocketOpcode.BINARY, parser.getOpcode());
             Assert.assertEquals(2, parser.getPayloadLength());
@@ -771,11 +723,8 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== OPCODE UTILITY TESTS ====================
-
     @Test
     public void testUnmaskLargePayload() {
-        // Test SIMD-optimizable path with large aligned payload
         int len = 4096;
         long buf = allocateBuffer(len);
         try {
@@ -806,7 +755,6 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
             byte[] original = "hello".getBytes(StandardCharsets.UTF_8);
             byte[] maskKey = {0x12, 0x34, 0x56, 0x78};
 
-            // Write masked data
             for (int i = 0; i < original.length; i++) {
                 Unsafe.getUnsafe().putByte(buf + i,
                         (byte) (original[i] ^ maskKey[i % 4]));
@@ -825,7 +773,6 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
     @Test
     public void testUnmaskPayloadUnaligned() {
-        // Test unmasking with lengths not divisible by 4
         for (int len = 1; len <= 20; len++) {
             long buf = allocateBuffer(32);
             try {
@@ -833,7 +780,6 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
                 for (int i = 0; i < len; i++) original[i] = (byte) (i + 1);
                 byte[] maskKey = {0x37, 0x42, (byte) 0xAB, (byte) 0xCD};
 
-                // Mask
                 for (int i = 0; i < len; i++) {
                     Unsafe.getUnsafe().putByte(buf + i,
                             (byte) (original[i] ^ maskKey[i % 4]));
@@ -850,4 +796,5 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
             }
         }
     }
+
 }
