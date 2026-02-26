@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -187,7 +188,7 @@ public class DoubleArraySortFunctionFactory implements FunctionFactory {
                 return array;
             }
             if (lastDim > sortBuffer.length) {
-                sortBuffer = new double[lastDim];
+                sortBuffer = new double[Numbers.ceilPow2(lastDim)];
             }
             if (arr.isVanilla()) {
                 sortVanilla(arr, descending, nullsFirst, sortBuffer, memory);

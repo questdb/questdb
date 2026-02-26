@@ -25,7 +25,9 @@
 package io.questdb.test.griffin.engine.functions.array;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class DoubleArrayReverseFunctionFactoryTest extends AbstractCairoTest {
@@ -46,6 +48,14 @@ public class DoubleArrayReverseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiDimNonVanilla() throws SqlException {
+        // sliced 3x3 array [1:, 2:] gives 3x2 non-vanilla with reversed inner arrays
+        assertSqlWithTypes(
+                "array_reverse\n[[1.0,3.0],[2.0,4.0],[6.0,7.0]]:DOUBLE[][]\n",
+                "SELECT array_reverse(ARRAY[ [5.0, 3.0, 1.0], [6.0, 4.0, 2.0], [9.0, 7.0, 6.0] ][1:, 2:])");
+    }
+
+    @Test
     public void testMultiDimensional() throws SqlException {
         assertSqlWithTypes(
                 "array_reverse\n[[2.0,1.0],[4.0,3.0]]:DOUBLE[][]\n",
@@ -57,6 +67,28 @@ public class DoubleArrayReverseFunctionFactoryTest extends AbstractCairoTest {
         assertSqlWithTypes(
                 "array_reverse\nnull:DOUBLE[]\n",
                 "SELECT array_reverse(null::double[])");
+    }
+
+    @Test
+    public void testParallel() throws Exception {
+        execute("CREATE TABLE tmp AS (SELECT rnd_symbol('a','b','v') sym, rnd_double_array(1, 0) book FROM long_sequence(10000))");
+
+        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // double-reverse preserves all values, so sum must be identical
+                        String original = "SELECT sym, round(sum(array_sum(book)), 2) s FROM tmp GROUP BY sym ORDER BY 1";
+                        TestUtils.printSql(engine, sqlExecutionContext, original, sink);
+                        String expected = sink.toString();
+
+                        String reversed = "SELECT sym, round(sum(array_sum(array_reverse(array_reverse(book)))), 2) s FROM tmp GROUP BY sym ORDER BY 1";
+                        TestUtils.assertSql(engine, sqlExecutionContext, reversed, sink, expected);
+                    },
+                    configuration,
+                    LOG
+            );
+        }
     }
 
     @Test
