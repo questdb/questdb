@@ -3595,7 +3595,7 @@ mod tests {
     }
 
     #[test]
-    fn test_f32_bloom_filter_rle_to_bitpacked_fallback() {
+    fn test_f32_bloom_filter_rle_to_bitpacked_fallback_during_probe() {
         let mut data: Vec<f32> = (0..100).map(|i| i as f32).collect();
         data.push(f32::NAN);
         data.extend((101..150).map(|i| i as f32));
@@ -3626,9 +3626,47 @@ mod tests {
     }
 
     #[test]
-    fn test_i64_bloom_filter_rle_to_bitpacked_fallback() {
+    fn test_f32_bloom_filter_rle_to_bitpacked_fallback_mid_scan() {
+        let mut data: Vec<f32> = (0..300).map(|i| i as f32).collect();
+        data.push(f32::NAN); // NaN at index 300, after probe window (256)
+        data.extend((301..400).map(|i| i as f32));
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 399);
+
+        for i in 0..256 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} from probe phase",
+                i
+            );
+        }
+        for i in 256..300 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} from verify phase before fallback",
+                i
+            );
+        }
+        for i in 301..400 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_rle_to_bitpacked_fallback_during_probe() {
         let mut data: Vec<i64> = (0..100).collect();
-        data.push(i64::MIN); // null marker
+        data.push(i64::MIN);
         data.extend(101..150);
 
         let mut buffer = Vec::new();
@@ -3657,9 +3695,47 @@ mod tests {
     }
 
     #[test]
-    fn test_i32_bloom_filter_rle_to_bitpacked_fallback() {
+    fn test_i64_bloom_filter_rle_to_bitpacked_fallback_mid_scan() {
+        let mut data: Vec<i64> = (0..150).collect();
+        data.push(i64::MIN);
+        data.extend(151..200);
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 199);
+
+        for i in 0i64..128 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} from probe phase",
+                i
+            );
+        }
+        for i in 128i64..150 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} from verify phase before fallback",
+                i
+            );
+        }
+        for i in 151i64..200 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_rle_to_bitpacked_fallback_during_probe() {
         let mut data: Vec<i32> = (0..100).collect();
-        data.push(i32::MIN); // null marker
+        data.push(i32::MIN);
         data.extend(101..150);
 
         let mut buffer = Vec::new();
@@ -3679,6 +3755,44 @@ mod tests {
             );
         }
         for i in 101i32..150 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_rle_to_bitpacked_fallback_mid_scan() {
+        let mut data: Vec<i32> = (0..300).collect();
+        data.push(i32::MIN);
+        data.extend(301..400);
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 399);
+
+        for i in 0i32..256 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} from probe phase",
+                i
+            );
+        }
+        for i in 256i32..300 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} from verify phase before fallback",
+                i
+            );
+        }
+        for i in 301i32..400 {
             assert!(
                 bloom_hashes.contains(&hash_native(i)),
                 "missing value {} after fallback",

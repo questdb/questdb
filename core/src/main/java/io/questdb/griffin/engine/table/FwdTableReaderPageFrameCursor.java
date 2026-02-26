@@ -166,6 +166,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.partitionLo = lo;
                     frame.partitionHi = hi;
                     frame.format = partitionFrame.getPartitionFormat();
+                    frame.rowGroupIndex = -1;
+                    frame.rowGroupLo = -1;
+                    frame.rowGroupHi = -1;
                     if (frame.format == PartitionFormat.PARQUET) {
                         frame.partitionDecoder = partitionFrame.getParquetDecoder();
                     }
