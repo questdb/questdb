@@ -214,11 +214,15 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
 
     private static boolean isNullable(int columnType) {
         switch (columnType) {
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
             case ColumnType.UUID:
             case ColumnType.IPv4:
+            // BOOLEAN, BYTE, SHORT use bitmap-based nulls (.n files) instead of sentinel values.
+            // Column type conversion between bitmap-null and sentinel-null types does not yet
+            // create destination .n files, so we keep these as non-nullable for fuzz testing
+            // to avoid exercising broken conversion paths.
             case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
                 return false;
             default:
                 return true;

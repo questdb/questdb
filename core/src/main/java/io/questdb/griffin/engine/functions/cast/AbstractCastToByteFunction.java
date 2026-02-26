@@ -37,11 +37,6 @@ public abstract class AbstractCastToByteFunction extends ByteFunction implements
      */
     protected final Function arg;
 
-    /**
-     * Constructs a new cast to byte function.
-     *
-     * @param arg the function argument to cast
-     */
     public AbstractCastToByteFunction(Function arg) {
         this.arg = arg;
     }

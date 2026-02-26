@@ -28,18 +28,19 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UInt16Function;
-import io.questdb.std.Numbers;
 
 public class UInt16Constant extends UInt16Function implements ConstantFunction {
-    public static final UInt16Constant NULL = new UInt16Constant(Numbers.UINT16_NULL);
+    public static final UInt16Constant NULL = new UInt16Constant((short) 0, true);
+    private final boolean isNull;
     private final short value;
 
-    public UInt16Constant(short value) {
+    private UInt16Constant(short value, boolean isNull) {
         this.value = value;
+        this.isNull = isNull;
     }
 
     public static UInt16Constant newInstance(short value) {
-        return value != Numbers.UINT16_NULL ? new UInt16Constant(value) : NULL;
+        return new UInt16Constant(value, false);
     }
 
     @Override
@@ -53,14 +54,19 @@ public class UInt16Constant extends UInt16Function implements ConstantFunction {
             return true;
         }
         if (obj instanceof UInt16Constant that) {
-            return this.value == that.value;
+            return this.isNull == that.isNull && this.value == that.value;
         }
         return false;
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return isNull;
+    }
+
+    @Override
     public boolean isNullConstant() {
-        return value == Numbers.UINT16_NULL;
+        return isNull;
     }
 
     @Override

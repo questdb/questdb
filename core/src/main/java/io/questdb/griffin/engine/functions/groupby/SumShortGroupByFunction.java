@@ -53,14 +53,23 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final short value = arg.getShort(record);
-        mapValue.putLong(valueIndex, value);
+        if (arg.isNull(record)) {
+            mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        } else {
+            mapValue.putLong(valueIndex, arg.getShort(record));
+        }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final short value = arg.getShort(record);
-        mapValue.addLong(valueIndex, value);
+        if (!arg.isNull(record)) {
+            final long sum = mapValue.getLong(valueIndex);
+            if (sum != Numbers.LONG_NULL) {
+                mapValue.putLong(valueIndex, sum + arg.getShort(record));
+            } else {
+                mapValue.putLong(valueIndex, arg.getShort(record));
+            }
+        }
     }
 
     @Override
@@ -139,7 +148,7 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return false;
     }
 
     @Override

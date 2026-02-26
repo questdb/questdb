@@ -60,9 +60,8 @@ public class CursorPrinter {
     public static void printColumn(Record record, RecordMetadata metadata, int columnIndex, CharSink<?> sink, boolean symbolAsString, boolean printTypes, String nullStringValue) {
         final int columnType = metadata.getColumnType(columnIndex);
         if (columnType == ColumnType.UINT16) {
-            final short value = record.getShort(columnIndex);
-            if (value != Numbers.UINT16_NULL) {
-                sink.put(Short.toUnsignedInt(value));
+            if (!record.isNull(columnIndex)) {
+                sink.put(Short.toUnsignedInt(record.getShort(columnIndex)));
             } else {
                 sink.put(nullStringValue);
             }
@@ -72,9 +71,8 @@ public class CursorPrinter {
             return;
         }
         if (columnType == ColumnType.UINT32) {
-            final int value = record.getInt(columnIndex);
-            if (value != Numbers.UINT32_NULL) {
-                sink.put(Integer.toUnsignedLong(value));
+            if (!record.isNull(columnIndex)) {
+                sink.put(Integer.toUnsignedLong(record.getInt(columnIndex)));
             } else {
                 sink.put(nullStringValue);
             }
@@ -84,9 +82,8 @@ public class CursorPrinter {
             return;
         }
         if (columnType == ColumnType.UINT64) {
-            final long value = record.getLong(columnIndex);
-            if (value != Numbers.UINT64_NULL) {
-                sink.put(Long.toUnsignedString(value));
+            if (!record.isNull(columnIndex)) {
+                sink.put(Long.toUnsignedString(record.getLong(columnIndex)));
             } else {
                 sink.put(nullStringValue);
             }
@@ -135,7 +132,11 @@ public class CursorPrinter {
                 sink.put(sym != null ? sym : nullStringValue);
                 break;
             case ColumnType.SHORT:
-                sink.put(record.getShort(columnIndex));
+                if (!record.isNull(columnIndex)) {
+                    sink.put(record.getShort(columnIndex));
+                } else {
+                    sink.put(nullStringValue);
+                }
                 break;
             case ColumnType.CHAR:
                 char c = record.getChar(columnIndex);
@@ -159,11 +160,18 @@ public class CursorPrinter {
                 putGeoHash(record.getGeoLong(columnIndex), ColumnType.getGeoHashBits(columnType), sink);
                 break;
             case ColumnType.BYTE:
-                // as int
-                sink.put(record.getByte(columnIndex));
+                if (!record.isNull(columnIndex)) {
+                    sink.put(record.getByte(columnIndex));
+                } else {
+                    sink.put(nullStringValue);
+                }
                 break;
             case ColumnType.BOOLEAN:
-                sink.put(record.getBool(columnIndex));
+                if (!record.isNull(columnIndex)) {
+                    sink.put(record.getBool(columnIndex));
+                } else {
+                    sink.put(nullStringValue);
+                }
                 break;
             case ColumnType.BINARY:
                 BinarySequence bin = record.getBin(columnIndex);

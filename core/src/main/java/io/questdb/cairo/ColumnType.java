@@ -572,6 +572,16 @@ public final class ColumnType {
         return columnType == NULL;
     }
 
+    /**
+     * Returns true if this column type uses a separate null bitmap (.n file)
+     * rather than a sentinel value to represent nulls.
+     */
+    public static boolean needsNullBitmap(int columnType) {
+        int tag = tagOf(columnType);
+        return tag == BOOLEAN || tag == BYTE || tag == SHORT
+                || isUInt16(columnType) || isUInt32(columnType) || isUInt64(columnType);
+    }
+
     public static boolean isParseableType(int colType) {
         return isTimestamp(colType) || colType == LONG256;
     }

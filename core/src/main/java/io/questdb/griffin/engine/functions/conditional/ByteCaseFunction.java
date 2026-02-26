@@ -48,4 +48,9 @@ class ByteCaseFunction extends ByteFunction implements CaseFunction {
     public byte getByte(Record rec) {
         return picker.pick(rec).getByte(rec);
     }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return picker.pick(rec).isNull(rec);
+    }
 }

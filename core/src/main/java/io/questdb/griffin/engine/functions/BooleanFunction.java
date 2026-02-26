@@ -34,6 +34,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -60,6 +61,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public byte getByte(Record rec) {
+        if (isNull(rec)) return 0;
         return (byte) (getBool(rec) ? 1 : 0);
     }
 
@@ -70,6 +72,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public long getDate(Record rec) {
+        if (isNull(rec)) return Numbers.LONG_NULL;
         return getBool(rec) ? 1 : 0;
     }
 
@@ -105,11 +108,13 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
+        if (isNull(rec)) return Double.NaN;
         return getBool(rec) ? 1 : 0;
     }
 
     @Override
     public float getFloat(Record rec) {
+        if (isNull(rec)) return Float.NaN;
         return getBool(rec) ? 1 : 0;
     }
 
@@ -140,6 +145,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public int getInt(Record rec) {
+        if (isNull(rec)) return Numbers.INT_NULL;
         return getBool(rec) ? 1 : 0;
     }
 
@@ -150,6 +156,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public long getLong(Record rec) {
+        if (isNull(rec)) return Numbers.LONG_NULL;
         return getBool(rec) ? 1 : 0;
     }
 
@@ -185,6 +192,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public short getShort(Record rec) {
+        if (isNull(rec)) return 0;
         return (short) (getBool(rec) ? 1 : 0);
     }
 
@@ -215,6 +223,7 @@ public abstract class BooleanFunction implements Function {
 
     @Override
     public long getTimestamp(Record rec) {
+        if (isNull(rec)) return Numbers.LONG_NULL;
         return getBool(rec) ? 1 : 0;
     }
 

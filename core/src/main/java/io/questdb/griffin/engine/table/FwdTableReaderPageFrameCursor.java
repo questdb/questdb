@@ -49,6 +49,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
+    private final LongList nullBitmapPageAddresses = new LongList();
+    private final LongList nullBitmapPageSizes = new LongList();
     private final LongList pageSizes = new LongList();
     private final int sharedQueryWorkerCount;
     // Track the lowest partition index that has not been released yet
@@ -187,6 +189,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private void clearAddresses() {
         columnPageAddresses.setAll(2 * columnCount, 0);
+        nullBitmapPageAddresses.setAll(columnCount, 0);
+        nullBitmapPageSizes.setAll(columnCount, 0);
         pageSizes.setAll(2 * columnCount, -1);
     }
 
@@ -249,6 +253,17 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 // (for var-sized types column_size_hint is 0)
                 pageSizes.setQuick(2 * i, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 0));
                 pageSizes.setQuick(2 * i + 1, 0);
+            }
+
+            // Null bitmap: address points to byte 0 of the partition bitmap.
+            // isNull() uses partitionLo + rowIndex to compute the absolute bit position.
+            final MemoryR bitmapMem = reader.getNullBitmapColumn(base, columnIndex);
+            if (bitmapMem != null && partitionHiAdjusted > 0) {
+                nullBitmapPageAddresses.setQuick(i, bitmapMem.getPageAddress(0));
+                nullBitmapPageSizes.setQuick(i, bitmapMem.size());
+            } else {
+                nullBitmapPageAddresses.setQuick(i, 0);
+                nullBitmapPageSizes.setQuick(i, 0);
             }
         }
 
@@ -379,6 +394,16 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public byte getFormat() {
             return format;
+        }
+
+        @Override
+        public long getNullBitmapAddress(int columnIndex) {
+            return nullBitmapPageAddresses.getQuick(columnIndex);
+        }
+
+        @Override
+        public long getNullBitmapSize(int columnIndex) {
+            return nullBitmapPageSizes.getQuick(columnIndex);
         }
 
         @Override

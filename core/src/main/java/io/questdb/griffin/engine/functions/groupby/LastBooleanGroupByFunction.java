@@ -41,6 +41,7 @@ public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
         if (count > 0) {
             final long addr = ptr + count - 1;
             mapValue.putBool(valueIndex + 1, Unsafe.getUnsafe().getByte(addr) != 0);
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
@@ -63,6 +64,7 @@ public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
         if (srcRowId > destRowId) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putBool(valueIndex + 1, srcValue.getBool(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 }

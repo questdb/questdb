@@ -49,6 +49,11 @@ public class CastByteToShortFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNull(Record rec) {
+            return arg.isNull(rec);
+        }
+
+        @Override
         public short getShort(Record rec) {
             return arg.getByte(rec);
         }

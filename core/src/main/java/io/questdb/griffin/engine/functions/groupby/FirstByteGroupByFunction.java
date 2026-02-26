@@ -48,13 +48,21 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     public void computeBatch(MapValue mapValue, long ptr, int count) {
         if (count > 0) {
             mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr));
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        if (arg.isNull(record)) {
+            mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+            mapValue.putByte(valueIndex + 1, (byte) 0);
+            mapValue.putBool(valueIndex + 2, true);
+            return;
+        }
         mapValue.putLong(valueIndex, rowId);
         mapValue.putByte(valueIndex + 1, arg.getByte(record));
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
@@ -72,6 +80,11 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     @Override
     public byte getByte(Record rec) {
         return rec.getByte(valueIndex + 1);
+    }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return rec.getBool(valueIndex + 2);
     }
 
     @Override
@@ -97,8 +110,9 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // row id
-        columnTypes.add(ColumnType.BYTE); // value
+        columnTypes.add(ColumnType.LONG);    // row id
+        columnTypes.add(ColumnType.BYTE);    // value
+        columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
@@ -118,6 +132,7 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
         if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putByte(valueIndex + 1, srcValue.getByte(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, false);
         }
     }
 
@@ -127,16 +142,19 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
         // an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putByte(valueIndex + 1, value);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        setByte(mapValue, (byte) 0);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putByte(valueIndex + 1, (byte) 0);
+        mapValue.putBool(valueIndex + 2, true);
     }
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return false;
     }
 
     @Override

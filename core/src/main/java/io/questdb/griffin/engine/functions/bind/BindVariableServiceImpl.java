@@ -979,12 +979,18 @@ public class BindVariableServiceImpl implements BindVariableService {
     private static void setDate0(Function function, long value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = function.getType();
         switch (ColumnType.tagOf(functionType)) {
-            case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsByte(value, ColumnType.LONG) : 0;
+            case ColumnType.BYTE: {
+                ByteBindVariable bv = (ByteBindVariable) function;
+                bv.isNullValue = value == Numbers.LONG_NULL;
+                bv.value = bv.isNullValue ? 0 : SqlUtil.implicitCastAsByte(value, ColumnType.LONG);
                 break;
-            case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsShort(value, ColumnType.LONG) : 0;
+            }
+            case ColumnType.SHORT: {
+                ShortBindVariable sv = (ShortBindVariable) function;
+                sv.isNullValue = value == Numbers.LONG_NULL;
+                sv.value = sv.isNullValue ? 0 : SqlUtil.implicitCastAsShort(value, ColumnType.LONG);
                 break;
+            }
             case ColumnType.INT:
                 ((IntBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsInt(value, ColumnType.LONG) : Numbers.INT_NULL;
                 break;
@@ -1126,12 +1132,18 @@ public class BindVariableServiceImpl implements BindVariableService {
     private static void setInt0(Function function, int value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
-            case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = value != Numbers.INT_NULL ? SqlUtil.implicitCastAsByte(value, ColumnType.INT) : 0;
+            case ColumnType.BYTE: {
+                ByteBindVariable bv = (ByteBindVariable) function;
+                bv.isNullValue = value == Numbers.INT_NULL;
+                bv.value = bv.isNullValue ? 0 : SqlUtil.implicitCastAsByte(value, ColumnType.INT);
                 break;
-            case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = value != Numbers.INT_NULL ? SqlUtil.implicitCastAsShort(value, ColumnType.INT) : 0;
+            }
+            case ColumnType.SHORT: {
+                ShortBindVariable sv = (ShortBindVariable) function;
+                sv.isNullValue = value == Numbers.INT_NULL;
+                sv.value = sv.isNullValue ? 0 : SqlUtil.implicitCastAsShort(value, ColumnType.INT);
                 break;
+            }
             case ColumnType.INT:
                 ((IntBindVariable) function).value = value;
                 break;
@@ -1171,12 +1183,18 @@ public class BindVariableServiceImpl implements BindVariableService {
     private static void setLong0(Function function, long value, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
-            case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsByte(value, ColumnType.LONG) : 0;
+            case ColumnType.BYTE: {
+                ByteBindVariable bv = (ByteBindVariable) function;
+                bv.isNullValue = value == Numbers.LONG_NULL;
+                bv.value = bv.isNullValue ? 0 : SqlUtil.implicitCastAsByte(value, ColumnType.LONG);
                 break;
-            case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsShort(value, ColumnType.LONG) : 0;
+            }
+            case ColumnType.SHORT: {
+                ShortBindVariable sv = (ShortBindVariable) function;
+                sv.isNullValue = value == Numbers.LONG_NULL;
+                sv.value = sv.isNullValue ? 0 : SqlUtil.implicitCastAsShort(value, ColumnType.LONG);
                 break;
+            }
             case ColumnType.INT:
                 ((IntBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsInt(value, ColumnType.LONG) : Numbers.INT_NULL;
                 break;
@@ -1281,10 +1299,21 @@ public class BindVariableServiceImpl implements BindVariableService {
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
         final int type = function.getType();
         switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN ->
-                    ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
-            case ColumnType.BYTE -> ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);
-            case ColumnType.SHORT -> ((ShortBindVariable) function).value = SqlUtil.implicitCastStrAsShort(value);
+            case ColumnType.BOOLEAN -> {
+                BooleanBindVariable boolVar = (BooleanBindVariable) function;
+                boolVar.isNullValue = value == null;
+                boolVar.value = value != null && SqlKeywords.isTrueKeyword(value);
+            }
+            case ColumnType.BYTE -> {
+                ByteBindVariable bv = (ByteBindVariable) function;
+                bv.isNullValue = value == null;
+                bv.value = value != null ? SqlUtil.implicitCastStrAsByte(value) : 0;
+            }
+            case ColumnType.SHORT -> {
+                ShortBindVariable sv = (ShortBindVariable) function;
+                sv.isNullValue = value == null;
+                sv.value = value != null ? SqlUtil.implicitCastStrAsShort(value) : 0;
+            }
             case ColumnType.CHAR -> ((CharBindVariable) function).value = SqlUtil.implicitCastStrAsChar(value);
             case ColumnType.IPv4 -> ((IPv4BindVariable) function).value = SqlUtil.implicitCastStrAsIPv4(value);
             case ColumnType.INT -> ((IntBindVariable) function).value = SqlUtil.implicitCastStrAsInt(value);
@@ -1313,12 +1342,18 @@ public class BindVariableServiceImpl implements BindVariableService {
     private static void setTimestamp0(Function function, long value, int timestampType, @Nullable CharSequence name, int index) throws SqlException {
         final int functionType = (function.getType());
         switch (ColumnType.tagOf(functionType)) {
-            case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsByte(value, timestampType) : 0;
+            case ColumnType.BYTE: {
+                ByteBindVariable bv = (ByteBindVariable) function;
+                bv.isNullValue = value == Numbers.LONG_NULL;
+                bv.value = bv.isNullValue ? 0 : SqlUtil.implicitCastAsByte(value, timestampType);
                 break;
-            case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsShort(value, timestampType) : 0;
+            }
+            case ColumnType.SHORT: {
+                ShortBindVariable sv = (ShortBindVariable) function;
+                sv.isNullValue = value == Numbers.LONG_NULL;
+                sv.value = sv.isNullValue ? 0 : SqlUtil.implicitCastAsShort(value, timestampType);
                 break;
+            }
             case ColumnType.INT:
                 ((IntBindVariable) function).value = value != Numbers.LONG_NULL ? SqlUtil.implicitCastAsInt(value, timestampType) : Numbers.INT_NULL;
                 break;
@@ -1375,15 +1410,24 @@ public class BindVariableServiceImpl implements BindVariableService {
     ) throws SqlException {
         final int functionType = function.getType();
         switch (ColumnType.tagOf(functionType)) {
-            case ColumnType.BOOLEAN:
-                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
+            case ColumnType.BOOLEAN: {
+                BooleanBindVariable boolVar = (BooleanBindVariable) function;
+                boolVar.isNullValue = value == null;
+                boolVar.value = SqlKeywords.isTrueKeyword(value);
                 break;
-            case ColumnType.BYTE:
-                ((ByteBindVariable) function).value = SqlUtil.implicitCastVarcharAsByte(value);
+            }
+            case ColumnType.BYTE: {
+                ByteBindVariable bv = (ByteBindVariable) function;
+                bv.isNullValue = value == null;
+                bv.value = value != null ? SqlUtil.implicitCastVarcharAsByte(value) : 0;
                 break;
-            case ColumnType.SHORT:
-                ((ShortBindVariable) function).value = SqlUtil.implicitCastVarcharAsShort(value);
+            }
+            case ColumnType.SHORT: {
+                ShortBindVariable sv = (ShortBindVariable) function;
+                sv.isNullValue = value == null;
+                sv.value = value != null ? SqlUtil.implicitCastVarcharAsShort(value) : 0;
                 break;
+            }
             case ColumnType.CHAR:
                 ((CharBindVariable) function).value = SqlUtil.implicitCastVarcharAsChar(value);
                 break;

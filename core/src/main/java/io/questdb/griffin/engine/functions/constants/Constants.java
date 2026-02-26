@@ -126,10 +126,10 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
         nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
         nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
-        nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
+        nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.NULL);
         nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
-        nullConstants.extendAndSet(ColumnType.BOOLEAN, BooleanConstant.FALSE);
+        nullConstants.extendAndSet(ColumnType.BOOLEAN, BooleanConstant.NULL);
         nullConstants.extendAndSet(ColumnType.DOUBLE, DoubleConstant.NULL);
         nullConstants.extendAndSet(ColumnType.FLOAT, FloatConstant.NULL);
         nullConstants.extendAndSet(ColumnType.BINARY, NullBinConstant.INSTANCE);

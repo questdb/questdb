@@ -28,8 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -46,8 +48,10 @@ public class EqShortFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        // IS NULL / IS NOT NULL: one arg is NullConstant, check isNull() on the other
         if (args.getQuick(0).isNullConstant() || args.getQuick(1).isNullConstant()) {
-            return BooleanConstant.FALSE;
+            Function other = args.getQuick(0).isNullConstant() ? args.getQuick(1) : args.getQuick(0);
+            return new IsNullCheckFunc(other);
         }
         return new Func(args.getQuick(0), args.getQuick(1));
     }
@@ -59,7 +63,40 @@ public class EqShortFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            final boolean leftNull = left.isNull(rec);
+            final boolean rightNull = right.isNull(rec);
+            if (leftNull || rightNull) {
+                return negated != (leftNull && rightNull);
+            }
             return negated != (left.getShort(rec) == right.getShort(rec));
+        }
+    }
+
+    private static class IsNullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+
+        public IsNullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != arg.isNull(rec);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val("!=null");
+            } else {
+                sink.val("=null");
+            }
         }
     }
 }

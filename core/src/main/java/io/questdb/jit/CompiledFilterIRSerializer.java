@@ -1098,6 +1098,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeNull(long offset, int position, int typeCode, int columnType) throws SqlException {
+        // Bitmap-null types cannot use sentinel-based null checks in JIT.
+        // Throwing here forces fallback to interpreted mode which correctly reads the null bitmap.
+        if (ColumnType.needsNullBitmap(columnType)) {
+            throw SqlException.position(position).put("bitmap-null type is not supported by JIT: ").put(ColumnType.nameOf(columnType));
+        }
         switch (typeCode) {
             case I1_TYPE:
                 if (!isGeoHash(columnType)) {

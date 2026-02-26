@@ -37,11 +37,6 @@ public abstract class AbstractCastToShortFunction extends ShortFunction implemen
      */
     protected final Function arg;
 
-    /**
-     * Constructs a new cast to short function.
-     *
-     * @param arg the function argument to cast
-     */
     public AbstractCastToShortFunction(Function arg) {
         this.arg = arg;
     }

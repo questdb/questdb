@@ -76,6 +76,9 @@ public class LtIntFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             if (unsigned32) {
+                if (left.isNull(rec) || right.isNull(rec)) {
+                    return false;
+                }
                 return Numbers.lessThanUInt32(
                         left.getInt(rec),
                         right.getInt(rec),

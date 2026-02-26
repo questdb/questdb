@@ -56,6 +56,11 @@ public class UInt16Column extends UInt16Function implements ColumnFunction {
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return rec.isNull(columnIndex);
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

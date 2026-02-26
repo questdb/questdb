@@ -189,6 +189,11 @@ public class DelegatingRecord implements Record {
         return base.getVarcharSize(col);
     }
 
+    @Override
+    public boolean isNull(int col) {
+        return base.isNull(col);
+    }
+
     public void of(Record base) {
         this.base = base;
     }

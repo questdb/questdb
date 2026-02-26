@@ -35,10 +35,10 @@ public class SimulatedDeleteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table balances (cust_id int, balance_ccy symbol, balance double, inactive boolean, timestamp timestamp) timestamp(timestamp);");
 
-            execute("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);");
-            execute("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);");
-            execute("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);");
-            execute("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);");
+            execute("insert into balances (cust_id, balance_ccy, balance, inactive, timestamp) values (1, 'USD', 1500.00, false, 6000000001);");
+            execute("insert into balances (cust_id, balance_ccy, balance, inactive, timestamp) values (1, 'EUR', 650.50, false, 6000000002);");
+            execute("insert into balances (cust_id, balance_ccy, balance, inactive, timestamp) values (2, 'USD', 900.75, false, 6000000003);");
+            execute("insert into balances (cust_id, balance_ccy, balance, inactive, timestamp) values (2, 'EUR', 880.20, false, 6000000004);");
             execute("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);");
 
             assertSql(

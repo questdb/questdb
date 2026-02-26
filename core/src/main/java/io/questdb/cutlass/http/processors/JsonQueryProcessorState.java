@@ -447,11 +447,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putBooleanValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getBool(col));
+        if (rec.isNull(col)) {
+            response.putAscii("null");
+        } else {
+            response.put(rec.getBool(col));
+        }
     }
 
     private static void putByteValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put((int) rec.getByte(col));
+        if (rec.isNull(col)) {
+            response.putAscii("null");
+        } else {
+            response.put((int) rec.getByte(col));
+        }
     }
 
     private static void putCharValue(HttpChunkedResponse response, Record rec, int col) {
@@ -557,21 +565,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putUInt16Value(HttpChunkedResponse response, Record rec, int col) {
-        final short value = rec.getShort(col);
-        if (value == Numbers.UINT16_NULL) {
+        if (rec.isNull(col)) {
             response.putAscii("null");
             return;
         }
-        response.put(Short.toUnsignedInt(value));
+        response.put(Short.toUnsignedInt(rec.getShort(col)));
     }
 
     private static void putUInt32Value(HttpChunkedResponse response, Record rec, int col, boolean quoteLargeNum) {
-        final int value = rec.getInt(col);
-        if (value == Numbers.UINT32_NULL) {
+        if (rec.isNull(col)) {
             response.putAscii("null");
             return;
         }
-        final long unsignedValue = Integer.toUnsignedLong(value);
+        final long unsignedValue = Integer.toUnsignedLong(rec.getInt(col));
         if (quoteLargeNum && unsignedValue > Integer.MAX_VALUE) {
             response.putAscii('"').put(unsignedValue).putAscii('"');
             return;
@@ -580,11 +586,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putUInt64Value(HttpChunkedResponse response, Record rec, int col, boolean quoteLargeNum) {
-        final long value = rec.getLong(col);
-        if (value == Numbers.UINT64_NULL) {
+        if (rec.isNull(col)) {
             response.putAscii("null");
             return;
         }
+        final long value = rec.getLong(col);
         if (quoteLargeNum) {
             response.putAscii('"').put(Long.toUnsignedString(value)).putAscii('"');
             return;
@@ -623,7 +629,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putShortValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getShort(col));
+        if (rec.isNull(col)) {
+            response.putAscii("null");
+        } else {
+            response.put(rec.getShort(col));
+        }
     }
 
     private static void putStrValue(HttpChunkedResponse response, Record rec, int col) {

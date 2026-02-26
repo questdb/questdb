@@ -56,6 +56,11 @@ public class UInt64Column extends UInt64Function implements ColumnFunction {
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return rec.isNull(columnIndex);
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

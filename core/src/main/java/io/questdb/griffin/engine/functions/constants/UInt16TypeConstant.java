@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.UInt16Function;
-import io.questdb.std.Numbers;
 
 public class UInt16TypeConstant extends UInt16Function implements TypeConstant {
     public static final UInt16TypeConstant INSTANCE = new UInt16TypeConstant();
@@ -37,6 +36,11 @@ public class UInt16TypeConstant extends UInt16Function implements TypeConstant {
 
     @Override
     public short getShort(Record rec) {
-        return Numbers.UINT16_NULL;
+        return 0;
+    }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return true;
     }
 }

@@ -225,6 +225,11 @@ public class ExtraNullColumnRecord implements Record {
         return col < columnSplit ? base.getVarcharSize(col) : 0;
     }
 
+    @Override
+    public boolean isNull(int col) {
+        return col >= columnSplit || base.isNull(col);
+    }
+
     public void of(Record record) {
         this.base = record;
     }

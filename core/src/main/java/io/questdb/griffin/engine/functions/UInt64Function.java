@@ -107,20 +107,18 @@ public abstract class UInt64Function implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        final long value = getLong(rec);
-        if (value != Numbers.UINT64_NULL) {
-            return Numbers.longToUnsignedDouble(value);
+        if (isNull(rec)) {
+            return Double.NaN;
         }
-        return Double.NaN;
+        return Numbers.longToUnsignedDouble(getLong(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        final long value = getLong(rec);
-        if (value != Numbers.UINT64_NULL) {
-            return Numbers.longToUnsignedFloat(value);
+        if (isNull(rec)) {
+            return Float.NaN;
         }
-        return Float.NaN;
+        return Numbers.longToUnsignedFloat(getLong(rec));
     }
 
     @Override
@@ -242,4 +240,5 @@ public abstract class UInt64Function implements Function {
     public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
+
 }

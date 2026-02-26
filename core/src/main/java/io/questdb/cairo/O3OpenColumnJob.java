@@ -2190,6 +2190,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVFd = openRW(ff, BitmapIndexUtils.valueFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
+            // Write .n null bitmap file for the new partition
+            writeNullBitmapForNewPartition(
+                    pathToNewPartition, pNewLen, columnName, columnNameTxn,
+                    srcOooLo, srcOooHi, tableWriter, ff
+            );
         } catch (Throwable e) {
             LOG.error().$("append new partition error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
@@ -2262,6 +2267,75 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 indexWriter,
                 partitionUpdateSinkAddr
         );
+    }
+
+    private static void writeNullBitmapForNewPartition(
+            Path pathToNewPartition,
+            int pNewLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            long srcOooLo,
+            long srcOooHi,
+            TableWriter tableWriter,
+            FilesFacade ff
+    ) {
+        int colIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
+        if (colIndex < 0) {
+            return;
+        }
+        long bitmapAddr = tableWriter.getO3NullBitmapAddr(colIndex);
+        if (bitmapAddr == 0) {
+            return;
+        }
+        long rowCount = srcOooHi - srcOooLo + 1;
+        long bitmapByteSize = (rowCount + 7) >> 3;
+        long nFd = 0;
+        long nAddr = 0;
+        try {
+            nFd = openRW(ff, nFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            nAddr = mapRW(ff, nFd, bitmapByteSize, MemoryTag.MMAP_O3);
+
+            int srcBitOff = (int) (srcOooLo & 7);
+            long srcByteStart = srcOooLo >> 3;
+
+            if (srcBitOff == 0) {
+                // Byte-aligned: simple copy
+                Vect.memcpy(nAddr, bitmapAddr + srcByteStart, bitmapByteSize);
+            } else {
+                // Non-aligned: shift bits
+                Vect.memset(nAddr, bitmapByteSize, 0);
+                for (long i = 0; i < rowCount; i++) {
+                    long srcBit = srcOooLo + i;
+                    byte srcByte = Unsafe.getUnsafe().getByte(bitmapAddr + (srcBit >> 3));
+                    boolean isNull = ((srcByte >> (int) (srcBit & 7)) & 1) != 0;
+                    if (isNull) {
+                        long dstByte = i >> 3;
+                        int dstBitIdx = (int) (i & 7);
+                        long addr = nAddr + dstByte;
+                        Unsafe.getUnsafe().putByte(addr, (byte) (Unsafe.getUnsafe().getByte(addr) | (1 << dstBitIdx)));
+                    }
+                }
+            }
+
+            // Mask trailing bits in the last byte
+            int trailingBits = (int) (rowCount & 7);
+            if (trailingBits > 0 && bitmapByteSize > 0) {
+                byte lastByte = Unsafe.getUnsafe().getByte(nAddr + bitmapByteSize - 1);
+                Unsafe.getUnsafe().putByte(nAddr + bitmapByteSize - 1, (byte) (lastByte & ((1 << trailingBits) - 1)));
+            }
+        } catch (Throwable e) {
+            LOG.error().$("failed to write null bitmap for new partition [table=").$(tableWriter.getTableToken())
+                    .$(", column=").$(columnName)
+                    .$(", e=").$(e)
+                    .I$();
+        } finally {
+            if (nAddr != 0) {
+                ff.munmap(nAddr, bitmapByteSize, MemoryTag.MMAP_O3);
+            }
+            if (nFd > 0) {
+                ff.close(nFd);
+            }
+        }
     }
 
     private static void appendTimestampColumn(

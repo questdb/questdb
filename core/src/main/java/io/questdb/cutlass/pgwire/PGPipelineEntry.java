@@ -1688,14 +1688,21 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outColBinBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        utf8Sink.putNetworkInt(Byte.BYTES);
-        utf8Sink.put(record.getBool(columnIndex) ? (byte) 1 : (byte) 0);
+        if (record.isNull(columnIndex)) {
+            utf8Sink.setNullValue();
+        } else {
+            utf8Sink.putNetworkInt(Byte.BYTES);
+            utf8Sink.put(record.getBool(columnIndex) ? (byte) 1 : (byte) 0);
+        }
     }
 
     private void outColBinByte(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final byte value = record.getByte(columnIndex);
-        utf8Sink.putNetworkInt(Short.BYTES);
-        utf8Sink.putNetworkShort(value);
+        if (record.isNull(columnIndex)) {
+            utf8Sink.setNullValue();
+        } else {
+            utf8Sink.putNetworkInt(Short.BYTES);
+            utf8Sink.putNetworkShort(record.getByte(columnIndex));
+        }
     }
 
     private void outColBinDate(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -1996,28 +2003,29 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outColBinShort(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final short value = record.getShort(columnIndex);
-        utf8Sink.putNetworkInt(Short.BYTES);
-        utf8Sink.putNetworkShort(value);
+        if (record.isNull(columnIndex)) {
+            utf8Sink.setNullValue();
+        } else {
+            utf8Sink.putNetworkInt(Short.BYTES);
+            utf8Sink.putNetworkShort(record.getShort(columnIndex));
+        }
     }
 
     private void outColBinUInt16(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final short value = record.getShort(columnIndex);
-        if (value != Numbers.UINT16_NULL) {
-            utf8Sink.putNetworkInt(Integer.BYTES);
-            utf8Sink.putNetworkInt(Short.toUnsignedInt(value));
-        } else {
+        if (record.isNull(columnIndex)) {
             utf8Sink.setNullValue();
+        } else {
+            utf8Sink.putNetworkInt(Integer.BYTES);
+            utf8Sink.putNetworkInt(Short.toUnsignedInt(record.getShort(columnIndex)));
         }
     }
 
     private void outColBinUInt32(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final int value = record.getInt(columnIndex);
-        if (value != Numbers.UINT32_NULL) {
-            utf8Sink.putNetworkInt(Long.BYTES);
-            utf8Sink.putNetworkLong(Integer.toUnsignedLong(value));
-        } else {
+        if (record.isNull(columnIndex)) {
             utf8Sink.setNullValue();
+        } else {
+            utf8Sink.putNetworkInt(Long.BYTES);
+            utf8Sink.putNetworkLong(Integer.toUnsignedLong(record.getInt(columnIndex)));
         }
     }
 
@@ -2121,14 +2129,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outColTxtBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        utf8Sink.putNetworkInt(Byte.BYTES);
-        utf8Sink.put(record.getBool(columnIndex) ? 't' : 'f');
+        if (record.isNull(columnIndex)) {
+            utf8Sink.setNullValue();
+        } else {
+            utf8Sink.putNetworkInt(Byte.BYTES);
+            utf8Sink.put(record.getBool(columnIndex) ? 't' : 'f');
+        }
     }
 
     private void outColTxtByte(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        long a = utf8Sink.skipInt();
-        utf8Sink.put((int) record.getByte(columnIndex));
-        utf8Sink.putLenEx(a);
+        if (record.isNull(columnIndex)) {
+            utf8Sink.setNullValue();
+        } else {
+            long a = utf8Sink.skipInt();
+            utf8Sink.put((int) record.getByte(columnIndex));
+            utf8Sink.putLenEx(a);
+        }
     }
 
     private void outColTxtDate(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2307,41 +2323,42 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outColTxtShort(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final long a = utf8Sink.skipInt();
-        utf8Sink.put(record.getShort(columnIndex));
-        utf8Sink.putLenEx(a);
+        if (record.isNull(columnIndex)) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(record.getShort(columnIndex));
+            utf8Sink.putLenEx(a);
+        }
     }
 
     private void outColTxtUInt16(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final short value = record.getShort(columnIndex);
-        if (value != Numbers.UINT16_NULL) {
-            final long a = utf8Sink.skipInt();
-            utf8Sink.put(Short.toUnsignedInt(value));
-            utf8Sink.putLenEx(a);
-        } else {
+        if (record.isNull(columnIndex)) {
             utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(Short.toUnsignedInt(record.getShort(columnIndex)));
+            utf8Sink.putLenEx(a);
         }
     }
 
     private void outColTxtUInt32(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final int value = record.getInt(columnIndex);
-        if (value != Numbers.UINT32_NULL) {
-            final long a = utf8Sink.skipInt();
-            utf8Sink.put(Integer.toUnsignedLong(value));
-            utf8Sink.putLenEx(a);
-        } else {
+        if (record.isNull(columnIndex)) {
             utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(Integer.toUnsignedLong(record.getInt(columnIndex)));
+            utf8Sink.putLenEx(a);
         }
     }
 
     private void outColTxtUInt64(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final long value = record.getLong(columnIndex);
-        if (value != Numbers.UINT64_NULL) {
-            final long a = utf8Sink.skipInt();
-            utf8Sink.put(Long.toUnsignedString(value));
-            utf8Sink.putLenEx(a);
-        } else {
+        if (record.isNull(columnIndex)) {
             utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(Long.toUnsignedString(record.getLong(columnIndex)));
+            utf8Sink.putLenEx(a);
         }
     }
 

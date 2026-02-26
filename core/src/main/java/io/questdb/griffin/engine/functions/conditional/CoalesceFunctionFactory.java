@@ -110,9 +110,19 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case DATE -> argsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, argsSize);
             case TIMESTAMP ->
                     argsSize == 2 ? new TwoTimestampCoalesceFunction(args, returnType) : new TimestampCoalesceFunction(args, returnType);
-            case LONG -> argsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, argsSize);
+            case LONG -> {
+                if (ColumnType.isUInt64(returnType)) {
+                    yield new UInt64CoalesceFunction(args);
+                }
+                yield argsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, argsSize);
+            }
             case LONG256 -> argsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
-            case INT -> argsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, argsSize);
+            case INT -> {
+                if (ColumnType.isUInt32(returnType)) {
+                    yield new UInt32CoalesceFunction(args);
+                }
+                yield argsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, argsSize);
+            }
             case IPv4 -> argsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, argsSize);
             case FLOAT ->
                     argsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, argsSize);
@@ -132,9 +142,17 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             case VARCHAR ->
                     argsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, argsSize);
             case UUID -> argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
-            case BOOLEAN, SHORT, BYTE, CHAR ->
-                // Null on these data types not supported
+            case CHAR ->
+                // Null on CHAR not supported
                     args.getQuick(0);
+            case BOOLEAN -> new BooleanCoalesceFunction(args);
+            case BYTE -> new ByteCoalesceFunction(args);
+            case SHORT -> {
+                if (ColumnType.isUInt16(returnType)) {
+                    yield new UInt16CoalesceFunction(args);
+                }
+                yield new ShortCoalesceFunction(args);
+            }
             case DECIMAL8 ->
                     argsSize == 2 ? new TwoDecimal8CoalesceFunction(returnType, args) : new Decimal8CoalesceFunction(returnType, args, argsSize);
             case DECIMAL16 ->

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -32,9 +33,11 @@ import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class CountLongGroupByFunction extends AbstractCountGroupByFunction {
+    private final boolean useBitmapNull;
 
     public CountLongGroupByFunction(@NotNull Function arg) {
         super(arg);
+        this.useBitmapNull = ColumnType.needsNullBitmap(arg.getType());
     }
 
     @Override
@@ -49,8 +52,7 @@ public class CountLongGroupByFunction extends AbstractCountGroupByFunction {
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (useBitmapNull ? !arg.isNull(record) : arg.getLong(record) != Numbers.LONG_NULL) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -59,14 +61,13 @@ public class CountLongGroupByFunction extends AbstractCountGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (useBitmapNull ? !arg.isNull(record) : arg.getLong(record) != Numbers.LONG_NULL) {
             mapValue.addLong(valueIndex, 1);
         }
     }
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !useBitmapNull;
     }
 }

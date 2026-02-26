@@ -144,11 +144,10 @@ public abstract class UInt16Function implements Function {
 
     @Override
     public int getInt(Record rec) {
-        final short value = getShort(rec);
-        if (value != Numbers.UINT16_NULL) {
-            return Short.toUnsignedInt(value);
+        if (isNull(rec)) {
+            return Numbers.INT_NULL;
         }
-        return Numbers.INT_NULL;
+        return Short.toUnsignedInt(getShort(rec));
     }
 
     @Override
@@ -241,4 +240,5 @@ public abstract class UInt16Function implements Function {
     public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
+
 }

@@ -281,6 +281,11 @@ public class VirtualFunctionRecord implements ColumnTypes, Record, QuietCloseabl
         return getFunction(col).getVarcharSize(internalJoinRecord);
     }
 
+    @Override
+    public boolean isNull(int col) {
+        return getFunction(col).isNull(internalJoinRecord);
+    }
+
     public void of(Record record) {
         this.baseRecord = record;
         this.internalJoinRecord.of(this, record);

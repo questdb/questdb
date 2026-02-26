@@ -41,6 +41,7 @@ public class LastByteGroupByFunction extends FirstByteGroupByFunction {
         if (count > 0) {
             final long addr = ptr + count - 1;
             mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(addr));
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
@@ -63,6 +64,7 @@ public class LastByteGroupByFunction extends FirstByteGroupByFunction {
         if (srcRowId > destRowId) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putByte(valueIndex + 1, srcValue.getByte(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 }

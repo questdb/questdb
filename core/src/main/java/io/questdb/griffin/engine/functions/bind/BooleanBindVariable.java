@@ -30,16 +30,23 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.Mutable;
 
 public class BooleanBindVariable extends BooleanFunction implements Mutable {
+    boolean isNullValue;
     boolean value;
 
     @Override
     public void clear() {
         this.value = false;
+        this.isNullValue = false;
     }
 
     @Override
     public boolean getBool(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return isNullValue;
     }
 
     @Override

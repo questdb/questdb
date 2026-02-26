@@ -514,12 +514,19 @@ public class SqlOptimiser implements Mutable {
                 return false;
             }
             case ColumnType.SHORT: {
-                // short and byte doesn't have null
+                if (record.isNull(0)) {
+                    sink.put("NULL");
+                    return true;
+                }
                 final short val = record.getShort(0);
                 sink.put(val);
                 return false;
             }
             case ColumnType.BYTE: {
+                if (record.isNull(0)) {
+                    sink.put("NULL");
+                    return true;
+                }
                 final byte val = record.getByte(0);
                 sink.put(val);
                 return false;
@@ -570,6 +577,10 @@ public class SqlOptimiser implements Mutable {
                 return false;
             }
             case ColumnType.BOOLEAN: {
+                if (record.isNull(0)) {
+                    sink.put("NULL");
+                    return true;
+                }
                 sink.put(record.getBool(0));
                 return false;
             }

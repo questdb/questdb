@@ -107,20 +107,18 @@ public abstract class UInt32Function implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        final int value = getInt(rec);
-        if (value != Numbers.UINT32_NULL) {
-            return Integer.toUnsignedLong(value);
+        if (isNull(rec)) {
+            return Double.NaN;
         }
-        return Double.NaN;
+        return Integer.toUnsignedLong(getInt(rec));
     }
 
     @Override
     public float getFloat(Record rec) {
-        final int value = getInt(rec);
-        if (value != Numbers.UINT32_NULL) {
-            return Integer.toUnsignedLong(value);
+        if (isNull(rec)) {
+            return Float.NaN;
         }
-        return Float.NaN;
+        return Integer.toUnsignedLong(getInt(rec));
     }
 
     @Override
@@ -155,11 +153,10 @@ public abstract class UInt32Function implements Function {
 
     @Override
     public long getLong(Record rec) {
-        final int value = getInt(rec);
-        if (value != Numbers.UINT32_NULL) {
-            return Integer.toUnsignedLong(value);
+        if (isNull(rec)) {
+            return Numbers.LONG_NULL;
         }
-        return Numbers.LONG_NULL;
+        return Integer.toUnsignedLong(getInt(rec));
     }
 
     @Override
@@ -246,4 +243,5 @@ public abstract class UInt32Function implements Function {
     public final int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
+
 }

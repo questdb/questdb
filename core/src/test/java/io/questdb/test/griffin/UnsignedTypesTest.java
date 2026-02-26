@@ -108,7 +108,7 @@ public class UnsignedTypesTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnsignedSentinelValuesMapToNull() throws Exception {
+    public void testUnsignedSentinelValuesAreValidValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table ut_sentinel(u16 uint16, u32 uint32, u64 uint64)");
             execute(
@@ -118,10 +118,12 @@ public class UnsignedTypesTest extends AbstractCairoTest {
                             "(-1, -1, -1)"
             );
 
+            // With bitmap-based null support, former sentinel values are now valid unsigned values.
+            // Null is only produced by explicit NULL insertion, not by sentinel bit patterns.
             assertSql(
                     "u16\tu32\tu64\n" +
-                            "\t\t\n" +
                             "0\t0\t0\n" +
+                            "32768\t2147483648\t9223372036854775808\n" +
                             "65535\t4294967295\t18446744073709551615\n",
                     "select u16, u32, u64 from ut_sentinel order by u16, u32, u64"
             );
@@ -167,6 +169,158 @@ public class UnsignedTypesTest extends AbstractCairoTest {
                 TableUtils.dFile(path.trimTo(partitionLen), "u64");
                 assertUInt64Packed(path);
             }
+        });
+    }
+
+    @Test
+    public void testUInt16FullUnsignedRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ut_range16(val UINT16)");
+            // 32768 was previously stolen by UINT16_NULL sentinel (Short.MIN_VALUE)
+            execute("INSERT INTO ut_range16 VALUES (0), (1), (32767::UINT16), (32768::UINT16), (65535::UINT16), (NULL)");
+
+            assertSql(
+                    """
+                            val
+                            0
+                            1
+                            32767
+                            32768
+                            65535
+                            \
+
+                            """,
+                    "SELECT val FROM ut_range16"
+            );
+            // Verify 32768 is NOT null
+            assertSql("cnt\n5\n", "SELECT COUNT(*) AS cnt FROM ut_range16 WHERE val IS NOT NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM ut_range16 WHERE val IS NULL");
+        });
+    }
+
+    @Test
+    public void testUInt32FullUnsignedRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ut_range32(val UINT32)");
+            // 2147483648 was previously stolen by UINT32_NULL sentinel (Integer.MIN_VALUE)
+            execute("INSERT INTO ut_range32 VALUES (0), (1), (2147483647::UINT32), (2147483648::UINT32), (4294967295::UINT32), (NULL)");
+
+            assertSql(
+                    """
+                            val
+                            0
+                            1
+                            2147483647
+                            2147483648
+                            4294967295
+                            \
+
+                            """,
+                    "SELECT val FROM ut_range32"
+            );
+            assertSql("cnt\n5\n", "SELECT COUNT(*) AS cnt FROM ut_range32 WHERE val IS NOT NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM ut_range32 WHERE val IS NULL");
+        });
+    }
+
+    @Test
+    public void testUInt64FullUnsignedRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ut_range64(val UINT64)");
+            // 9223372036854775808 was previously stolen by UINT64_NULL sentinel (Long.MIN_VALUE)
+            execute("""
+                    INSERT INTO ut_range64 VALUES
+                    (0),
+                    (1),
+                    (9223372036854775807::UINT64),
+                    ((-9223372036854775807 - 1)::UINT64),
+                    (-1::UINT64),
+                    (NULL)
+                    """);
+
+            assertSql(
+                    """
+                            val
+                            0
+                            1
+                            9223372036854775807
+                            9223372036854775808
+                            18446744073709551615
+                            \
+
+                            """,
+                    "SELECT val FROM ut_range64"
+            );
+            assertSql("cnt\n5\n", "SELECT COUNT(*) AS cnt FROM ut_range64 WHERE val IS NOT NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM ut_range64 WHERE val IS NULL");
+        });
+    }
+
+    @Test
+    public void testUIntNullCoalesce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ut_coal(a UINT32, b UINT32)");
+            execute("INSERT INTO ut_coal VALUES (NULL, 10), (5, NULL), (NULL, NULL)");
+
+            assertSql(
+                    """
+                            c
+                            10
+                            5
+                            \
+
+                            """,
+                    "SELECT COALESCE(a, b) AS c FROM ut_coal"
+            );
+        });
+    }
+
+    @Test
+    public void testUIntNullComparisons() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ut_cmp_null(val UINT32)");
+            execute("INSERT INTO ut_cmp_null VALUES (0), (100), (NULL)");
+
+            // Verify the null bitmap on disk
+            TableToken token = engine.verifyTableName("ut_cmp_null");
+            try (Path path = new Path()) {
+                int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                TableUtils.setPathForNativePartition(path.trimTo(rootLen), ColumnType.TIMESTAMP_MICRO, PartitionBy.NONE, 0, -1L);
+                int partLen = path.size();
+
+                // Read .n file
+                TableUtils.nFile(path, "val", -1);
+                long nLen = configuration.getFilesFacade().length(path.$());
+                Assert.assertTrue("bitmap file should exist with size >= 1, got " + nLen, nLen >= 1);
+
+                try (MemoryMR nmem = Vm.getCMRInstance()) {
+                    nmem.of(configuration.getFilesFacade(), path.$(), nLen, nLen, MemoryTag.MMAP_DEFAULT);
+                    byte bitmapByte = nmem.getByte(0);
+                    Assert.assertEquals("bitmap byte should be 0x04 (null at row 2)", 0x04, bitmapByte);
+                }
+            }
+
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM ut_cmp_null WHERE val IS NOT NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM ut_cmp_null WHERE val IS NULL");
+        });
+    }
+
+    @Test
+    public void testUIntNullCaseWhen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ut_case(val UINT32)");
+            execute("INSERT INTO ut_case VALUES (1), (NULL), (3)");
+
+            assertSql(
+                    """
+                            c
+                            one
+                            \
+
+                            other
+                            """,
+                    "SELECT CASE WHEN val = 1 THEN 'one' WHEN val IS NULL THEN NULL ELSE 'other' END AS c FROM ut_case"
+            );
         });
     }
 

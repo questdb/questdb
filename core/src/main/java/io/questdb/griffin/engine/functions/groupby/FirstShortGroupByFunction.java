@@ -48,13 +48,21 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     public void computeBatch(MapValue mapValue, long ptr, int count) {
         if (count > 0) {
             mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(ptr));
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        if (arg.isNull(record)) {
+            mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+            mapValue.putShort(valueIndex + 1, (short) 0);
+            mapValue.putBool(valueIndex + 2, true);
+            return;
+        }
         mapValue.putLong(valueIndex, rowId);
         mapValue.putShort(valueIndex + 1, arg.getShort(record));
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
@@ -80,6 +88,11 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return rec.getBool(valueIndex + 2);
+    }
+
+    @Override
     public short getShort(Record rec) {
         return rec.getShort(valueIndex + 1);
     }
@@ -97,8 +110,9 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);  // row id
-        columnTypes.add(ColumnType.SHORT); // value
+        columnTypes.add(ColumnType.LONG);    // row id
+        columnTypes.add(ColumnType.SHORT);   // value
+        columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
@@ -118,12 +132,15 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
         if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putShort(valueIndex + 1, srcValue.getShort(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, false);
         }
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        setShort(mapValue, (short) 0);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putShort(valueIndex + 1, (short) 0);
+        mapValue.putBool(valueIndex + 2, true);
     }
 
     public void setShort(MapValue mapValue, short value) {
@@ -131,11 +148,12 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
         // an empty value, so it's ok to reset the row id field here.
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putShort(valueIndex + 1, value);
+        mapValue.putBool(valueIndex + 2, false);
     }
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return false;
     }
 
     @Override

@@ -28,22 +28,23 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UInt32Function;
-import io.questdb.std.Numbers;
 
 public class UInt32Constant extends UInt32Function implements ConstantFunction {
-    public static final UInt32Constant NULL = new UInt32Constant(Numbers.UINT32_NULL);
-    public static final UInt32Constant ZERO = new UInt32Constant(0);
+    public static final UInt32Constant NULL = new UInt32Constant(0, true);
+    public static final UInt32Constant ZERO = new UInt32Constant(0, false);
+    private final boolean isNull;
     private final int value;
 
-    public UInt32Constant(int value) {
+    private UInt32Constant(int value, boolean isNull) {
         this.value = value;
+        this.isNull = isNull;
     }
 
     public static UInt32Constant newInstance(int value) {
         if (value == 0) {
             return ZERO;
         }
-        return value != Numbers.UINT32_NULL ? new UInt32Constant(value) : NULL;
+        return new UInt32Constant(value, false);
     }
 
     @Override
@@ -57,14 +58,19 @@ public class UInt32Constant extends UInt32Function implements ConstantFunction {
             return true;
         }
         if (obj instanceof UInt32Constant that) {
-            return this.value == that.value;
+            return this.isNull == that.isNull && this.value == that.value;
         }
         return false;
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return isNull;
+    }
+
+    @Override
     public boolean isNullConstant() {
-        return value == Numbers.UINT32_NULL;
+        return isNull;
     }
 
     @Override

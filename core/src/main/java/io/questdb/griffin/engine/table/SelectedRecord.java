@@ -248,6 +248,11 @@ public class SelectedRecord implements Record {
         return base.getVarcharSize(getColumnIndex(col));
     }
 
+    @Override
+    public boolean isNull(int col) {
+        return base.isNull(getColumnIndex(col));
+    }
+
     public void of(Record record) {
         this.base = record;
     }

@@ -45,6 +45,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -223,6 +224,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Metrics metrics;
     private final boolean mixedIOFlag;
     private final int mkDirMode;
+    private final ObjList<MemoryMA> nullBitmapColumns;
     private final ObjList<Runnable> nullSetters;
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
@@ -278,6 +280,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
+    private int bitmapBitCount;
     private BlockFileWriter blockFileWriter;
     private int columnCount;
     private long commitRowCount;
@@ -306,6 +309,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int metaSwapIndex;
     private long minSplitPartitionTimestamp;
     private long noOpRowCount;
+    private ObjList<MemoryCMOR> o3BitmapColumns;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private long o3CommitBatchTimestampMin = Long.MAX_VALUE;
     private long o3EffectiveLag = 0L;
@@ -313,6 +317,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long o3MasterRef = -1L;
     private ObjList<MemoryCARW> o3MemColumns1;
     private ObjList<MemoryCARW> o3MemColumns2;
+    // Per-column O3 null bitmap addresses (set before processO3Block, read by O3 jobs).
+    // For merge case: native memory allocated during bitmap merge.
+    // For non-merge case: addresses from o3BitmapColumns.
+    private long[] o3NullBitmapAddrs;
+    // Per-column sizes for allocations that need freeing. 0 means address is from o3BitmapColumns (not owned).
+    private long[] o3NullBitmapAllocSizes;
     private ObjList<Runnable> o3NullSetters1;
     private ObjList<Runnable> o3NullSetters2;
     private PagedDirectLongList o3PartitionUpdateSink;
@@ -500,11 +510,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.columns = new ObjList<>(columnCount * 2);
             this.o3MemColumns1 = new ObjList<>(columnCount * 2);
             this.o3MemColumns2 = new ObjList<>(columnCount * 2);
+            this.o3NullBitmapAddrs = new long[columnCount];
+            this.o3NullBitmapAllocSizes = new long[columnCount];
             this.o3Columns = this.o3MemColumns1;
             this.activeColumns = columns;
             this.symbolMapWriters = new ObjList<>(columnCount);
             this.indexers = new ObjList<>(columnCount);
             this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
+            this.nullBitmapColumns = new ObjList<>(columnCount);
             this.nullSetters = new ObjList<>(columnCount);
             this.o3NullSetters1 = new ObjList<>(columnCount);
             this.o3NullSetters2 = new ObjList<>(columnCount);
@@ -2317,6 +2330,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getMinTimestamp();
     }
 
+    public long getO3NullBitmapAddr(int columnIndex) {
+        if (o3NullBitmapAddrs != null && columnIndex >= 0 && columnIndex < o3NullBitmapAddrs.length) {
+            return o3NullBitmapAddrs[columnIndex];
+        }
+        return 0;
+    }
+
     public long getO3RowCount() {
         return hasO3() ? getO3RowCount0() : 0L;
     }
@@ -2456,6 +2476,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean hasO3() {
         return o3MasterRef > -1;
+    }
+
+    private boolean hasO3NullBitmapData() {
+        if (o3NullBitmapAddrs == null) {
+            return false;
+        }
+        for (long addr : o3NullBitmapAddrs) {
+            if (addr != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -3173,15 +3205,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int columnType, MemoryA dataMem, MemoryA auxMem, int columnIndex, ObjList<MapWriter> symbolWriters) {
         if (columnType == ColumnType.UINT16) {
-            nullers.add(() -> dataMem.putShort(Numbers.UINT16_NULL));
+            nullers.add(() -> dataMem.putShort((short) 0));
             return;
         }
         if (columnType == ColumnType.UINT32) {
-            nullers.add(() -> dataMem.putInt(Numbers.UINT32_NULL));
+            nullers.add(() -> dataMem.putInt(0));
             return;
         }
         if (columnType == ColumnType.UINT64) {
-            nullers.add(() -> dataMem.putLong(Numbers.UINT64_NULL));
+            nullers.add(() -> dataMem.putLong(0L));
             return;
         }
         short columnTag = ColumnType.tagOf(columnType);
@@ -3405,6 +3437,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ff.append(fd, address, len) != len) {
             throw CairoException.critical(ff.errno()).put("cannot append data [fd=")
                     .put(fd).put(", len=").put(len).put(']');
+        }
+    }
+
+    private void appendBitmapNotNull(int columnIndex) {
+        MemoryMA bitmapMem = getNullBitmapColumn(columnIndex);
+        if (bitmapMem != null && bitmapMem.isOpen()) {
+            if (bitmapBitCount == 0 || bitmapMem.getAppendOffset() == 0) {
+                bitmapMem.putByte((byte) 0);
+            }
+            // else: bit is already 0 in the current byte (memory is zero-initialized)
         }
     }
 
@@ -4046,6 +4088,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 m.close(truncate);
             }
         }
+        for (int i = 0, n = nullBitmapColumns.size(); i < n; i++) {
+            MemoryMA m = nullBitmapColumns.getQuick(i);
+            if (m != null && m != NullMemory.INSTANCE) {
+                m.close(truncate);
+            }
+        }
     }
 
     /**
@@ -4198,6 +4246,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         configureNullSetters(nullSetters, type, dataMem, auxMem, index, symbolMapWriters);
         configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
         configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
+
+        // Null bitmap (.n) file for this column
+        final MemoryMA bitmapMem;
+        if (type > 0 && ColumnType.needsNullBitmap(type)) {
+            bitmapMem = Vm.getPMARInstance(configuration);
+        } else {
+            bitmapMem = NullMemory.INSTANCE;
+        }
+        nullBitmapColumns.extendAndSet(index, bitmapMem);
 
         if (indexFlag && type > 0) {
             indexers.extendAndSet(index, new SymbolColumnIndexer(configuration));
@@ -4445,6 +4502,154 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return identical;
     }
 
+    private void copyO3BitmapToActivePartition(long srcOooLo, long srcOooHi, long dstRowOffset) {
+        long rowCount = srcOooHi - srcOooLo + 1;
+        if (rowCount <= 0) {
+            return;
+        }
+        for (int col = 0; col < columnCount; col++) {
+            int colType = metadata.getColumnType(col);
+            if (colType < 0) {
+                continue;
+            }
+            MemoryMA dstBitmapMem = getNullBitmapColumn(col);
+            if (dstBitmapMem == null || !dstBitmapMem.isOpen()) {
+                continue;
+            }
+            long bitmapAddr = getO3NullBitmapAddr(col);
+            if (bitmapAddr == 0) {
+                // No bitmap source — fill with zeros (not null)
+                long dstByteEnd = (dstRowOffset + rowCount + 7) >> 3;
+                dstBitmapMem.jumpTo(dstByteEnd);
+                long dstByteStart = dstRowOffset >> 3;
+                for (long i = dstByteStart; i < dstByteEnd; i++) {
+                    Unsafe.getUnsafe().putByte(dstBitmapMem.addressOf(i), (byte) 0);
+                }
+                continue;
+            }
+            // Copy bitmap bits [srcOooLo, srcOooHi] to active partition at [dstRowOffset, dstRowOffset+rowCount)
+            long dstByteEnd = (dstRowOffset + rowCount + 7) >> 3;
+            dstBitmapMem.jumpTo(dstByteEnd);
+            int srcBitOff = (int) (srcOooLo & 7);
+            long srcByteStart = srcOooLo >> 3;
+            int dstBitOff = (int) (dstRowOffset & 7);
+            long dstByteStart = dstRowOffset >> 3;
+            long copyByteCount = dstByteEnd - dstByteStart;
+
+            if (srcBitOff == 0 && dstBitOff == 0) {
+                Vect.memcpy(dstBitmapMem.addressOf(dstByteStart), bitmapAddr + srcByteStart, copyByteCount);
+            } else {
+                // General per-bit copy
+                for (long i = 0; i < rowCount; i++) {
+                    long srcBit = srcOooLo + i;
+                    long dstBit = dstRowOffset + i;
+                    byte srcByte = Unsafe.getUnsafe().getByte(bitmapAddr + (srcBit >> 3));
+                    boolean isNull = ((srcByte >> (int) (srcBit & 7)) & 1) != 0;
+                    long dstByteIdx = dstBit >> 3;
+                    int dstBitIdx = (int) (dstBit & 7);
+                    long dstAddr = dstBitmapMem.addressOf(dstByteIdx);
+                    byte existing = Unsafe.getUnsafe().getByte(dstAddr);
+                    if (isNull) {
+                        Unsafe.getUnsafe().putByte(dstAddr, (byte) (existing | (1 << dstBitIdx)));
+                    } else {
+                        Unsafe.getUnsafe().putByte(dstAddr, (byte) (existing & ~(1 << dstBitIdx)));
+                    }
+                }
+            }
+            // Mask trailing bits in the last byte
+            int trailingBits = (int) ((dstRowOffset + rowCount) & 7);
+            if (trailingBits > 0 && dstByteEnd > 0) {
+                long lastAddr = dstBitmapMem.addressOf(dstByteEnd - 1);
+                byte lastByte = Unsafe.getUnsafe().getByte(lastAddr);
+                Unsafe.getUnsafe().putByte(lastAddr, (byte) (lastByte & ((1 << trailingBits) - 1)));
+            }
+        }
+    }
+
+    private void copyWalBitmapToPartition(int columnIndex, long srcRowOffset, long dstRowOffset, long rowCount) {
+        if (rowCount == 0) {
+            return;
+        }
+
+        MemoryMA dstBitmapMem = getNullBitmapColumn(columnIndex);
+        if (dstBitmapMem == null) {
+            return;
+        }
+
+        long dstByteEnd = (dstRowOffset + rowCount + 7) >> 3;
+        dstBitmapMem.jumpTo(dstByteEnd);
+
+        ObjList<MemoryCMOR> bitmapColumns = o3BitmapColumns;
+        MemoryCR srcBitmapMem = bitmapColumns != null && columnIndex < bitmapColumns.size()
+                ? bitmapColumns.getQuick(columnIndex) : null;
+
+        if (srcBitmapMem == null) {
+            // No bitmap source — fill with zeros (not null) for new rows
+            long dstByteStart = dstRowOffset >> 3;
+            for (long i = dstByteStart; i < dstByteEnd; i++) {
+                Unsafe.getUnsafe().putByte(dstBitmapMem.addressOf(i), (byte) 0);
+            }
+            return;
+        }
+
+        long srcAddr = srcBitmapMem.addressOf(0);
+        int srcBitOff = (int) (srcRowOffset & 7);
+        long srcByteStart = srcRowOffset >> 3;
+        int dstBitOff = (int) (dstRowOffset & 7);
+        long dstByteStart = dstRowOffset >> 3;
+        long copyByteCount = dstByteEnd - dstByteStart;
+
+        if (srcBitOff == 0 && dstBitOff == 0) {
+            // Both byte-aligned: simple memcpy
+            Vect.memcpy(dstBitmapMem.addressOf(dstByteStart), srcAddr + srcByteStart, copyByteCount);
+        } else if (srcBitOff == dstBitOff) {
+            // Same bit offset: copy with first/last byte masking
+            long srcBitmapByteCount = (srcRowOffset + rowCount + 7) >> 3;
+            for (long i = 0; i < copyByteCount; i++) {
+                long srcByteIdx = srcByteStart + i;
+                int lo = Unsafe.getUnsafe().getByte(srcAddr + srcByteIdx) & 0xFF;
+                int hi = (srcByteIdx + 1 < srcBitmapByteCount)
+                        ? Unsafe.getUnsafe().getByte(srcAddr + srcByteIdx + 1) & 0xFF
+                        : 0;
+                byte shifted = (byte) ((lo >>> srcBitOff) | (hi << (8 - srcBitOff)));
+
+                long dstByteIdx = dstByteStart + i;
+                if (i == 0 && dstBitOff != 0) {
+                    // Preserve low bits of first destination byte
+                    byte existing = Unsafe.getUnsafe().getByte(dstBitmapMem.addressOf(dstByteIdx));
+                    int mask = (1 << dstBitOff) - 1;
+                    shifted = (byte) ((existing & mask) | (shifted << dstBitOff));
+                }
+                Unsafe.getUnsafe().putByte(dstBitmapMem.addressOf(dstByteIdx), shifted);
+            }
+        } else {
+            // General case: per-bit copy
+            for (long i = 0; i < rowCount; i++) {
+                long srcBit = srcRowOffset + i;
+                long dstBit = dstRowOffset + i;
+                byte srcByte = Unsafe.getUnsafe().getByte(srcAddr + (srcBit >> 3));
+                boolean isNull = ((srcByte >> (srcBit & 7)) & 1) != 0;
+                long dstByteIdx = dstBit >> 3;
+                int dstBitIdx = (int) (dstBit & 7);
+                long dstAddr = dstBitmapMem.addressOf(dstByteIdx);
+                byte existing = Unsafe.getUnsafe().getByte(dstAddr);
+                if (isNull) {
+                    Unsafe.getUnsafe().putByte(dstAddr, (byte) (existing | (1 << dstBitIdx)));
+                } else {
+                    Unsafe.getUnsafe().putByte(dstAddr, (byte) (existing & ~(1 << dstBitIdx)));
+                }
+            }
+        }
+
+        // Mask trailing bits in the last byte
+        int trailingBits = (int) ((dstRowOffset + rowCount) & 7);
+        if (trailingBits > 0 && dstByteEnd > 0) {
+            long lastAddr = dstBitmapMem.addressOf(dstByteEnd - 1);
+            byte lastByte = Unsafe.getUnsafe().getByte(lastAddr);
+            Unsafe.getUnsafe().putByte(lastAddr, (byte) (lastByte & ((1 << trailingBits) - 1)));
+        }
+    }
+
     private void cthAppendWalColumnToLastPartition(
             int columnIndex,
             int columnType,
@@ -4564,6 +4769,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
                 }
             }
+
+            // Copy null bitmap from WAL segment to main table
+            if (!designatedTimestamp) {
+                copyWalBitmapToPartition(columnIndex, columnRowCount, dstRowCount, copyRowCount);
+            }
         } catch (Throwable th) {
             handleColumnTaskException(
                     "could not copy WAL column",
@@ -4585,6 +4795,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // do not merge timestamp columns
             cthMergeWalFixColumnWithLag(columnIndex, columnType, mergedTimestampAddress, mergeCount, lagRows, mappedRowLo, mappedRowHi);
         }
+        // Merge null bitmap alongside column data (for all column types)
+        cthMergeBitmapWithLag(columnIndex, mergedTimestampAddress, mergeCount, lagRows);
     }
 
     private void cthMergeWalFixColumnWithLag(int columnIndex, int columnType, long mergeIndex, long mergeCount, long lagRows, long mappedRowLo, long mappedRowHi) {
@@ -4666,6 +4878,87 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     mappedRowHi,
                     e
             );
+        }
+    }
+
+    private void cthMergeBitmapWithLag(int columnIndex, long mergeIndex, long mergeCount, long lagRows) {
+        if (o3ErrorCount.get() > 0 || mergeCount == 0) {
+            return;
+        }
+        try {
+            // Get lag bitmap source
+            MemoryMA lagBitmapMem = getNullBitmapColumn(columnIndex);
+            long lagBitmapMappedAddr = 0;
+            long lagBitmapBitOffset = 0;
+            long lagBitmapByteOffset = 0;
+            long lagBitmapByteSize = 0;
+
+            if (lagBitmapMem != null && lagBitmapMem.isOpen() && lagRows > 0) {
+                lagBitmapBitOffset = txWriter.getTransientRowCount() - getColumnTop(columnIndex);
+                lagBitmapByteOffset = lagBitmapBitOffset >> 3;
+                long lagBitmapBitShift = lagBitmapBitOffset & 7;
+                lagBitmapByteSize = ((lagBitmapBitShift + lagRows + 7) >> 3);
+                lagBitmapMappedAddr = mapAppendColumnBuffer(lagBitmapMem, lagBitmapByteOffset, lagBitmapByteSize, false);
+            }
+
+            try {
+                // Get WAL bitmap source
+                long walBitmapAddr = 0;
+                if (o3BitmapColumns != null && columnIndex < o3BitmapColumns.size()) {
+                    MemoryCR walBm = o3BitmapColumns.getQuick(columnIndex);
+                    if (walBm != null && walBm.size() > 0) {
+                        walBitmapAddr = walBm.addressOf(0);
+                    }
+                }
+
+                // Allocate destination bitmap
+                long destBitmapSize = (mergeCount + 7) >> 3;
+                long destBitmapAddr = Unsafe.malloc(destBitmapSize, MemoryTag.NATIVE_O3);
+                Vect.memset(destBitmapAddr, destBitmapSize, 0);
+
+                long lagBitmapBase = Math.abs(lagBitmapMappedAddr);
+                long lagBitShift = lagBitmapBitOffset & 7;
+
+                // Merge bits following the merge index
+                for (long i = 0; i < mergeCount; i++) {
+                    long indexEntry = Unsafe.getUnsafe().getLong(mergeIndex + i * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES);
+                    long pick = indexEntry >>> 63; // 0 = WAL, 1 = lag
+                    long row = indexEntry & 0x7FFFFFFFFFFFFFFFL;
+
+                    boolean isNull = false;
+                    if (pick == 1 && lagBitmapBase != 0) {
+                        // Lag source: bit at position (lagBitShift + row) in the mapped region
+                        long bitPos = lagBitShift + row;
+                        byte b = Unsafe.getUnsafe().getByte(lagBitmapBase + (bitPos >> 3));
+                        isNull = ((b >> (int) (bitPos & 7)) & 1) != 0;
+                    } else if (pick == 0 && walBitmapAddr != 0) {
+                        // WAL source: bit at position (row) in the WAL bitmap
+                        byte b = Unsafe.getUnsafe().getByte(walBitmapAddr + (row >> 3));
+                        isNull = ((b >> (int) (row & 7)) & 1) != 0;
+                    }
+
+                    if (isNull) {
+                        long destByte = i >> 3;
+                        int destBit = (int) (i & 7);
+                        long addr = destBitmapAddr + destByte;
+                        Unsafe.getUnsafe().putByte(addr, (byte) (Unsafe.getUnsafe().getByte(addr) | (1 << destBit)));
+                    }
+                }
+
+                // Store merged bitmap (thread-safe: each column writes to its own index)
+                o3NullBitmapAddrs[columnIndex] = destBitmapAddr;
+                o3NullBitmapAllocSizes[columnIndex] = destBitmapSize;
+            } finally {
+                if (lagBitmapMappedAddr != 0) {
+                    mapAppendColumnBufferRelease(lagBitmapMappedAddr, lagBitmapByteOffset, lagBitmapByteSize);
+                }
+            }
+        } catch (Throwable e) {
+            LOG.error().$("could not merge WAL bitmap [table=").$(tableToken)
+                    .$(", column=").$(columnIndex)
+                    .$(", e=").$(e)
+                    .I$();
+            o3BumpErrorCount(CairoException.isCairoOomError(e));
         }
     }
 
@@ -5378,6 +5671,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return true;
     }
 
+    private void ensureO3NullBitmapArrays() {
+        if (o3NullBitmapAddrs == null || o3NullBitmapAddrs.length < columnCount) {
+            // Free any existing allocations before resizing
+            freeO3MergedBitmaps();
+            o3NullBitmapAddrs = new long[columnCount];
+            o3NullBitmapAllocSizes = new long[columnCount];
+        } else {
+            // Zero out for fresh merge
+            for (int i = 0; i < columnCount; i++) {
+                o3NullBitmapAddrs[i] = 0;
+                o3NullBitmapAllocSizes[i] = 0;
+            }
+        }
+    }
+
     private void enforceTtl(long wallClockMicros) {
         partitionRemoveCandidates.clear();
         final int ttl = metadata.getTtlHoursOrMonths();
@@ -5471,6 +5779,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // We start with ensuring append memory is in ready-to-use state. When max timestamp changes, we need to
         // move append memory to a new set of files. Otherwise, we stay on the same set but advance to append position.
         avoidIndexOnCommit = o3ErrorCount.get() == 0;
+        freeO3MergedBitmaps();
         if (o3LagRowCount == 0) {
             clearO3();
             LOG.debug().$("lag segment is empty").$();
@@ -5508,6 +5817,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metrics.tableWriterMetrics().incrementO3Commits();
     }
 
+    private void freeO3MergedBitmaps() {
+        if (o3NullBitmapAllocSizes != null) {
+            for (int i = 0; i < o3NullBitmapAllocSizes.length; i++) {
+                if (o3NullBitmapAllocSizes[i] > 0 && o3NullBitmapAddrs[i] != 0) {
+                    Unsafe.free(o3NullBitmapAddrs[i], o3NullBitmapAllocSizes[i], MemoryTag.NATIVE_O3);
+                }
+                o3NullBitmapAddrs[i] = 0;
+                o3NullBitmapAllocSizes[i] = 0;
+            }
+        }
+    }
+
     private Utf8Sequence formatPartitionForTimestamp(long partitionTimestamp, long nameTxn) {
         utf8Sink.clear();
         setSinkForNativePartition(utf8Sink, timestampType, partitionBy, partitionTimestamp, nameTxn);
@@ -5533,6 +5854,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         freeAndRemoveColumnPair(columns, pi, si);
         freeAndRemoveO3ColumnPair(o3MemColumns1, pi, si);
         freeAndRemoveO3ColumnPair(o3MemColumns2, pi, si);
+        if (columnIndex < nullBitmapColumns.size()) {
+            Misc.free(nullBitmapColumns.getAndSetQuick(columnIndex, NullMemory.INSTANCE));
+        }
         if (columnIndex < indexers.size()) {
             Misc.free(indexers.getAndSetQuick(columnIndex, null));
             populateDenseIndexerList();
@@ -5603,6 +5927,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             return Long.MAX_VALUE;
         }
+    }
+
+    private MemoryMA getNullBitmapColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        MemoryMA mem = nullBitmapColumns.getQuick(column);
+        return mem != NullMemory.INSTANCE ? mem : null;
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -5782,6 +6112,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else if (ColumnType.isSymbol(columnType) && isIndexed) {
             linkFile(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn), keyFileName(other.trimTo(plen), newName, newColumnNameTxn));
             linkFile(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn), valueFileName(other.trimTo(plen), newName, newColumnNameTxn));
+        }
+        // Link null bitmap file (best effort, may not exist for old partitions)
+        LPSZ nSrc = nFile(path.trimTo(plen), columnName, columnNameTxn);
+        if (ff.exists(nSrc)) {
+            linkFile(ff, nSrc, nFile(other.trimTo(plen), newName, newColumnNameTxn));
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
@@ -6947,6 +7282,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         Files.POSIX_MADV_RANDOM
                 );
             }
+            // Open null bitmap (.n) file
+            MemoryMA bitmapMem = getNullBitmapColumn(columnIndex);
+            if (bitmapMem != null) {
+                bitmapMem.of(
+                        ff,
+                        nFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                        dataAppendPageSize,
+                        -1,
+                        MemoryTag.MMAP_TABLE_WRITER,
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
+                );
+            }
         } finally {
             path.trimTo(pathTrimToLen);
         }
@@ -6978,6 +7326,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (txWriter.getTransientRowCount() > 0) {
                 // write top offset to the column version file
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, columnNameTxn, txWriter.getTransientRowCount());
+                // Pre-fill the null bitmap for the column top rows. All pre-existing
+                // rows are null for the new column, so we fill with 0xFF bytes.
+                // The last byte must only set bits for actual column-top rows to
+                // avoid marking future rows as null.
+                MemoryMA bitmapMem = getNullBitmapColumn(columnIndex);
+                if (bitmapMem != null) {
+                    long rowCount = txWriter.getTransientRowCount();
+                    long fullBytes = rowCount >> 3;
+                    int remainingBits = (int) (rowCount & 7);
+                    for (long j = 0; j < fullBytes; j++) {
+                        bitmapMem.putByte((byte) 0xFF);
+                    }
+                    if (remainingBits > 0) {
+                        bitmapMem.putByte((byte) ((1 << remainingBits) - 1));
+                    }
+                }
             }
 
             if (indexFlag) {
@@ -7490,6 +7854,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                         }
 
+                        // Copy O3 null bitmaps to the active partition for the append case
+                        if (hasO3NullBitmapData()) {
+                            copyO3BitmapToActivePartition(srcOooLo, srcOooHi, srcDataMax);
+                        }
+
                         addPhysicallyWrittenRows(srcOooBatchRowSize);
                     } else {
                         if (flattenTimestamp && o3RowCount > 0) {
@@ -7701,6 +8070,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
             segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
             o3Columns = segmentFileCache.getWalMappedColumns();
+            o3BitmapColumns = segmentFileCache.getWalBitmapMappedColumns();
             final long newMinLagTimestamp = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
             long initialPartitionTimestampHi = partitionTimestampHi;
 
@@ -7856,6 +8226,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 if (needsOrdering) {
+                    // Prepare bitmap merge arrays before dispatching column tasks
+                    ensureO3NullBitmapArrays();
                     dispatchColumnTasks(timestampAddr, totalUncommitted, walLagRowCount, rowLo, rowHi, cthMergeWalColumnWithLag);
                     swapO3ColumnsExcept(timestampIndex);
 
@@ -7866,6 +8238,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     walLagRowCount = 0L;
                     o3Columns = o3MemColumns1;
                     copiedToMemory = true;
+                    // o3NullBitmapAddrs is now populated by cthMergeBitmapWithLag (called during merge)
                 } else {
                     // Wal column can are lazily mapped to improve performance. It works ok, except in this case
                     // where access getAddress() calls are concurrent. Map them eagerly now.
@@ -7873,6 +8246,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     timestampAddr = walTimestampColumn.addressOf(0);
                     copiedToMemory = false;
+                    // Set O3 bitmap source from WAL bitmap columns
+                    setupO3NullBitmapFromWal();
                 }
 
                 // We could commit some portion of the lag into the partitions and keep some data in the lag
@@ -8678,6 +9053,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (rowLo < rowHi) {
                 segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
                 o3Columns = segmentFileCache.getWalMappedColumns();
+                o3BitmapColumns = segmentFileCache.getWalBitmapMappedColumns();
 
                 try {
                     MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
@@ -8692,6 +9068,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // WAL columns are lazily mapped to improve performance. It works ok, except in this case
                         // where access getAddress() calls are concurrent. Map them eagerly now.
                         segmentFileCache.mmapWalColsEager();
+                        setupO3NullBitmapFromWal();
 
                         processWalCommitFinishApply(0, timestampAddr, rowLo, rowHi, pressureControl, false, partitionTimestampHi);
                     } else {
@@ -8720,6 +9097,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 o3TimestampMax
                         );
                         assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                        ensureO3NullBitmapArrays();
                         dispatchColumnTasks(timestampAddr, totalUncommitted, 0, rowLo, rowHi, cthMergeWalColumnWithLag);
                         swapO3ColumnsExcept(timestampIndex);
                         o3Columns = o3MemColumns1;
@@ -9304,6 +9682,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
             removeFileOrLog(ff, dFile(path, columnName, columnNameTxn));
             removeFileOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
+            removeFileOrLog(ff, nFile(path.trimTo(plen), columnName, columnNameTxn));
             removeFileOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
             removeFileOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
             path.trimTo(pathSize);
@@ -9769,8 +10148,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 if (rowValueIsNotNull.getQuick(i) < masterRef) {
                     activeNullSetters.getQuick(i).run();
+                    setNullBitmapBit(i);
+                } else {
+                    appendBitmapNotNull(i);
                 }
             }
+            bitmapBitCount = (bitmapBitCount + 1) & 7;
             masterRef++;
         }
     }
@@ -9837,6 +10220,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             recordLength += setColumnAppendPosition(i, rowCount, doubleAllocate);
         }
         avgRecordSize = rowCount > 0 ? recordLength / rowCount : Math.max(avgRecordSize, recordLength);
+        setBitmapAppendPosition(rowCount);
+    }
+
+    private void setBitmapAppendPosition(long rowCount) {
+        // All columns share the same row count within a partition, so bitmap bit
+        // position is the same for all columns.
+        bitmapBitCount = (int) (rowCount & 7);
+        long bitmapByteCount = (rowCount + 7) >> 3;
+        for (int i = 0; i < columnCount; i++) {
+            MemoryMA bitmapMem = getNullBitmapColumn(i);
+            if (bitmapMem != null && bitmapMem.isOpen() && metadata.getColumnType(i) > 0) {
+                bitmapMem.jumpTo(bitmapByteCount);
+            }
+        }
     }
 
     private long setColumnAppendPosition(int columnIndex, long size, boolean doubleAllocate) {
@@ -9879,9 +10276,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void setNullBitmapBit(int columnIndex) {
+        MemoryMA bitmapMem = getNullBitmapColumn(columnIndex);
+        if (bitmapMem == null || !bitmapMem.isOpen()) {
+            return;
+        }
+        long appendOffset = bitmapMem.getAppendOffset();
+        if (bitmapBitCount == 0 || appendOffset == 0) {
+            // Start a new byte with the null bit at the appropriate position.
+            bitmapMem.putByte((byte) (1 << bitmapBitCount));
+        } else {
+            long lastByteOffset = appendOffset - 1;
+            long addr = bitmapMem.addressOf(lastByteOffset);
+            byte existing = Unsafe.getUnsafe().getByte(addr);
+            Unsafe.getUnsafe().putByte(addr, (byte) (existing | (1 << bitmapBitCount)));
+        }
+    }
+
     private void setRowValueNotNull(int columnIndex) {
         assert rowValueIsNotNull.getQuick(columnIndex) != masterRef;
         rowValueIsNotNull.setQuick(columnIndex, masterRef);
+    }
+
+    private void setupO3NullBitmapFromWal() {
+        ensureO3NullBitmapArrays();
+        if (o3BitmapColumns != null) {
+            for (int i = 0; i < columnCount && i < o3BitmapColumns.size(); i++) {
+                MemoryCR bm = o3BitmapColumns.getQuick(i);
+                if (bm != null && bm.size() > 0) {
+                    o3NullBitmapAddrs[i] = bm.addressOf(0);
+                    o3NullBitmapAllocSizes[i] = 0; // not owned, don't free
+                }
+            }
+        }
     }
 
     /**
@@ -10260,6 +10687,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (m2 != null) {
                 m2.sync(async);
             }
+            final MemoryMA bm = getNullBitmapColumn(i);
+            if (bm != null) {
+                bm.sync(async);
+            }
         }
     }
 
@@ -10353,6 +10784,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     auxMem.truncate();
                     ColumnType.getDriver(columnType).configureAuxMemMA(auxMem);
                 }
+                MemoryMA bitmapMem = getNullBitmapColumn(i);
+                if (bitmapMem != null) {
+                    bitmapMem.truncate();
+                }
                 if (metadata.isIndexed(i)) {
                     // Reset indexer column top
                     indexers.get(i).resetColumnTop();
@@ -10360,6 +10795,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
         }
+        bitmapBitCount = 0;
     }
 
     private void updateIndexes() {

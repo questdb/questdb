@@ -502,6 +502,7 @@ public class RecordToRowCopierUtils {
         int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
         int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
+        int rIsNull = asm.poolInterfaceMethod(Record.class, "isNull", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
         int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymA", "(I)Ljava/lang/CharSequence;");
@@ -616,6 +617,13 @@ public class RecordToRowCopierUtils {
         int transferShortToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferShortToDecimal", "(Lio/questdb/cairo/TableWriter$Row;ISLio/questdb/std/Decimal256;I)V");
         int transferIntToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferIntToDecimal", "(Lio/questdb/cairo/TableWriter$Row;IILio/questdb/std/Decimal256;I)V");
         int transferLongToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferLongToDecimal", "(Lio/questdb/cairo/TableWriter$Row;IJLio/questdb/std/Decimal256;I)V");
+
+        int copyBoolNullAware = asm.poolMethod(RecordToRowCopierUtils.class, "copyBoolNullAware", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;II)V");
+        int copyByteNullAware = asm.poolMethod(RecordToRowCopierUtils.class, "copyByteNullAware", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyShortNullAware = asm.poolMethod(RecordToRowCopierUtils.class, "copyShortNullAware", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToByte = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToByte", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToShort = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToShort", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToBool = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToBool", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
 
         // Pool column type constants
         int toColumnType_0 = asm.getPoolCount();
@@ -737,16 +745,73 @@ public class RecordToRowCopierUtils {
                     timestampTypeRef = toColumnType_0 + 2 * i;
                 }
 
-                if (fromColumnTypeTag == ColumnType.NULL && toColumnType == ColumnType.UINT16) {
-                    asm.aload(3);
-                    asm.iconst(toColumnWriterIndex);
-                    asm.iconst(Numbers.UINT16_NULL);
-                    asm.invokeInterface(wPutShort, 2);
-                    continue;
+                if (fromColumnTypeTag == ColumnType.NULL) {
+                    if (toColumnTypeTag == ColumnType.BOOLEAN || toColumnTypeTag == ColumnType.BYTE || toColumnTypeTag == ColumnType.SHORT
+                            || toColumnType == ColumnType.UINT16 || toColumnType == ColumnType.UINT32 || toColumnType == ColumnType.UINT64) {
+                        continue; // Let null setter handle bitmap-based null types
+                    }
+                    fromColumnTypeTag = toColumnTypeTag;
                 }
 
-                if (fromColumnTypeTag == ColumnType.NULL) {
-                    fromColumnTypeTag = toColumnTypeTag;
+                // Use null-aware static helpers for BOOLEAN/BYTE/SHORT to avoid
+                // branch bytecode (which requires stack map frames).
+                if (fromColumnTypeTag == ColumnType.BOOLEAN && toColumnTypeTag == ColumnType.BOOLEAN) {
+                    asm.aload(2);
+                    asm.aload(3);
+                    asm.iconst(i);
+                    asm.iconst(toColumnWriterIndex);
+                    asm.invokeStatic(copyBoolNullAware);
+                    continue;
+                }
+                if (fromColumnTypeTag == ColumnType.BYTE && !ColumnType.isDecimalType(toColumnTypeTag)) {
+                    asm.aload(2);
+                    asm.aload(3);
+                    asm.iconst(i);
+                    asm.iconst(toColumnWriterIndex);
+                    asm.iconst(toColumnTypeTag);
+                    asm.invokeStatic(copyByteNullAware);
+                    continue;
+                }
+                if (fromColumnTypeTag == ColumnType.SHORT && !ColumnType.isDecimalType(toColumnTypeTag)) {
+                    asm.aload(2);
+                    asm.aload(3);
+                    asm.iconst(i);
+                    asm.iconst(toColumnWriterIndex);
+                    asm.iconst(toColumnTypeTag);
+                    asm.invokeStatic(copyShortNullAware);
+                    continue;
+                }
+                // Cross-type copies from numeric types TO bitmap-null targets:
+                // use null-aware helpers that check source isNull() before converting.
+                // Only for source types handled by copyAnyTo* (INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP).
+                if (isNumericSourceForBitmapTarget(fromColumnTypeTag)) {
+                    if (toColumnTypeTag == ColumnType.BYTE) {
+                        asm.aload(2);
+                        asm.aload(3);
+                        asm.iconst(i);
+                        asm.iconst(toColumnWriterIndex);
+                        asm.iconst(fromColumnTypeTag);
+                        asm.invokeStatic(copyAnyToByte);
+                        continue;
+                    }
+                    if (toColumnTypeTag == ColumnType.SHORT) {
+                        asm.aload(2);
+                        asm.aload(3);
+                        asm.iconst(i);
+                        asm.iconst(toColumnWriterIndex);
+                        asm.iconst(fromColumnTypeTag);
+                        asm.invokeStatic(copyAnyToShort);
+                        continue;
+                    }
+                    if (toColumnTypeTag == ColumnType.BOOLEAN) {
+                        asm.aload(2);
+                        asm.aload(3);
+                        asm.iconst(i);
+                        asm.iconst(toColumnWriterIndex);
+                        asm.iconst(fromColumnTypeTag);
+                        asm.invokeStatic(copyAnyToBool);
+                        continue;
+                    }
                 }
 
                 // Generate bytecode for this column (same logic as single-method approach)
@@ -1584,6 +1649,7 @@ public class RecordToRowCopierUtils {
                         }
                         break;
                 }
+
             }
 
             asm.return_();
@@ -1650,6 +1716,7 @@ public class RecordToRowCopierUtils {
         int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
         int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
+        int rIsNull = asm.poolInterfaceMethod(Record.class, "isNull", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
         int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymA", "(I)Ljava/lang/CharSequence;");
@@ -1768,6 +1835,13 @@ public class RecordToRowCopierUtils {
         int transferIntToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferIntToDecimal", "(Lio/questdb/cairo/TableWriter$Row;IILio/questdb/std/Decimal256;I)V");
         int transferLongToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferLongToDecimal", "(Lio/questdb/cairo/TableWriter$Row;IJLio/questdb/std/Decimal256;I)V");
 
+        int copyBoolNullAware = asm.poolMethod(RecordToRowCopierUtils.class, "copyBoolNullAware", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;II)V");
+        int copyByteNullAware = asm.poolMethod(RecordToRowCopierUtils.class, "copyByteNullAware", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyShortNullAware = asm.poolMethod(RecordToRowCopierUtils.class, "copyShortNullAware", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToByte = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToByte", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToShort = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToShort", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToBool = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToBool", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
         int n = toColumnFilter.getColumnCount();
@@ -1874,16 +1948,71 @@ public class RecordToRowCopierUtils {
                 timestampTypeRef = toColumnType_0 + 2 * i;
             }
 
-            if (fromColumnTypeTag == ColumnType.NULL && toColumnType == ColumnType.UINT16) {
-                asm.aload(3);
-                asm.iconst(toColumnWriterIndex);
-                asm.iconst(Numbers.UINT16_NULL);
-                asm.invokeInterface(wPutShort, 2);
-                continue;
+            if (fromColumnTypeTag == ColumnType.NULL) {
+                if (toColumnTypeTag == ColumnType.BOOLEAN || toColumnTypeTag == ColumnType.BYTE || toColumnTypeTag == ColumnType.SHORT
+                        || toColumnType == ColumnType.UINT16 || toColumnType == ColumnType.UINT32 || toColumnType == ColumnType.UINT64) {
+                    continue; // Let null setter handle bitmap-based null types
+                }
+                fromColumnTypeTag = toColumnTypeTag;
             }
 
-            if (fromColumnTypeTag == ColumnType.NULL) {
-                fromColumnTypeTag = toColumnTypeTag;
+            // Use null-aware static helpers for BOOLEAN/BYTE/SHORT to avoid
+            // branch bytecode (which requires stack map frames).
+            if (fromColumnTypeTag == ColumnType.BOOLEAN && toColumnTypeTag == ColumnType.BOOLEAN) {
+                asm.aload(2);
+                asm.aload(3);
+                asm.iconst(i);
+                asm.iconst(toColumnWriterIndex);
+                asm.invokeStatic(copyBoolNullAware);
+                continue;
+            }
+            if (fromColumnTypeTag == ColumnType.BYTE && !ColumnType.isDecimalType(toColumnTypeTag)) {
+                asm.aload(2);
+                asm.aload(3);
+                asm.iconst(i);
+                asm.iconst(toColumnWriterIndex);
+                asm.iconst(toColumnTypeTag);
+                asm.invokeStatic(copyByteNullAware);
+                continue;
+            }
+            if (fromColumnTypeTag == ColumnType.SHORT && !ColumnType.isDecimalType(toColumnTypeTag)) {
+                asm.aload(2);
+                asm.aload(3);
+                asm.iconst(i);
+                asm.iconst(toColumnWriterIndex);
+                asm.iconst(toColumnTypeTag);
+                asm.invokeStatic(copyShortNullAware);
+                continue;
+            }
+            // Cross-type copies from numeric types TO bitmap-null targets: use null-aware helpers
+            if (isNumericSourceForBitmapTarget(fromColumnTypeTag)) {
+                if (toColumnTypeTag == ColumnType.BYTE) {
+                    asm.aload(2);
+                    asm.aload(3);
+                    asm.iconst(i);
+                    asm.iconst(toColumnWriterIndex);
+                    asm.iconst(fromColumnTypeTag);
+                    asm.invokeStatic(copyAnyToByte);
+                    continue;
+                }
+                if (toColumnTypeTag == ColumnType.SHORT) {
+                    asm.aload(2);
+                    asm.aload(3);
+                    asm.iconst(i);
+                    asm.iconst(toColumnWriterIndex);
+                    asm.iconst(fromColumnTypeTag);
+                    asm.invokeStatic(copyAnyToShort);
+                    continue;
+                }
+                if (toColumnTypeTag == ColumnType.BOOLEAN) {
+                    asm.aload(2);
+                    asm.aload(3);
+                    asm.iconst(i);
+                    asm.iconst(toColumnWriterIndex);
+                    asm.iconst(fromColumnTypeTag);
+                    asm.invokeStatic(copyAnyToBool);
+                    continue;
+                }
             }
 
             // todo: this branch is not great, but we need parser
@@ -2843,6 +2972,7 @@ public class RecordToRowCopierUtils {
                     // every non-null-type is an error
                     assert fromColumnType == ColumnType.NULL;
             }
+
         }
 
         asm.return_();
@@ -2959,5 +3089,157 @@ public class RecordToRowCopierUtils {
             }
         }
         return true;
+    }
+
+    // Null-aware copy helpers for BOOLEAN/BYTE/SHORT types.
+    // These are called via invokestatic from bytecode-generated copiers to avoid
+    // branch instructions (which require stack map frames that BytecodeAssembler
+    // does not support).
+
+    public static void copyBoolNullAware(Record rec, TableWriter.Row row, int fromCol, int toCol) {
+        if (!rec.isNull(fromCol)) {
+            row.putBool(toCol, rec.getBool(fromCol));
+        }
+    }
+
+    public static void copyByteNullAware(Record rec, TableWriter.Row row, int fromCol, int toCol, int toTypeTag) {
+        if (rec.isNull(fromCol)) {
+            return;
+        }
+        byte value = rec.getByte(fromCol);
+        switch (toTypeTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE -> row.putByte(toCol, value);
+            case ColumnType.SHORT -> row.putShort(toCol, value);
+            case ColumnType.INT -> row.putInt(toCol, value);
+            case ColumnType.LONG -> row.putLong(toCol, value);
+            case ColumnType.DATE -> row.putDate(toCol, value);
+            case ColumnType.TIMESTAMP -> row.putTimestamp(toCol, value);
+            case ColumnType.FLOAT -> row.putFloat(toCol, value);
+            case ColumnType.DOUBLE -> row.putDouble(toCol, value);
+        }
+    }
+
+    public static void copyShortNullAware(Record rec, TableWriter.Row row, int fromCol, int toCol, int toTypeTag) {
+        if (rec.isNull(fromCol)) {
+            return;
+        }
+        short value = rec.getShort(fromCol);
+        switch (toTypeTag) {
+            case ColumnType.BYTE -> row.putByte(toCol, SqlUtil.implicitCastShortAsByte(value));
+            case ColumnType.SHORT -> row.putShort(toCol, value);
+            case ColumnType.INT -> row.putInt(toCol, value);
+            case ColumnType.LONG -> row.putLong(toCol, value);
+            case ColumnType.DATE -> row.putDate(toCol, value);
+            case ColumnType.TIMESTAMP -> row.putTimestamp(toCol, value);
+            case ColumnType.FLOAT -> row.putFloat(toCol, value);
+            case ColumnType.DOUBLE -> row.putDouble(toCol, value);
+        }
+    }
+
+    // General null-aware copy helpers for ANY source type → bitmap-null target (BYTE/SHORT/BOOLEAN).
+    // Used when the source type is not BYTE/SHORT/BOOLEAN itself (those have specific helpers above).
+
+    // Get value once and check sentinel inline to avoid double-evaluating functions like rnd_float().
+    public static void copyAnyToByte(Record rec, TableWriter.Row row, int fromCol, int toCol, int fromTypeTag) {
+        switch (fromTypeTag) {
+            case ColumnType.INT -> {
+                int v = rec.getInt(fromCol);
+                if (v != Numbers.INT_NULL) row.putByte(toCol, SqlUtil.implicitCastIntAsByte(v));
+            }
+            case ColumnType.LONG -> {
+                long v = rec.getLong(fromCol);
+                if (v != Numbers.LONG_NULL) row.putByte(toCol, SqlUtil.implicitCastLongAsByte(v));
+            }
+            case ColumnType.FLOAT -> {
+                float v = rec.getFloat(fromCol);
+                if (!Float.isNaN(v)) row.putByte(toCol, SqlUtil.implicitCastFloatAsByte(v));
+            }
+            case ColumnType.DOUBLE -> {
+                double v = rec.getDouble(fromCol);
+                if (!Double.isNaN(v)) row.putByte(toCol, SqlUtil.implicitCastDoubleAsByte(v));
+            }
+            case ColumnType.SHORT -> {
+                // SHORT uses bitmap null, not sentinel; check isNull on record
+                if (!rec.isNull(fromCol)) row.putByte(toCol, SqlUtil.implicitCastShortAsByte(rec.getShort(fromCol)));
+            }
+            case ColumnType.BYTE -> {
+                if (!rec.isNull(fromCol)) row.putByte(toCol, rec.getByte(fromCol));
+            }
+            case ColumnType.BOOLEAN -> {
+                if (!rec.isNull(fromCol)) row.putByte(toCol, (byte) (rec.getBool(fromCol) ? 1 : 0));
+            }
+            case ColumnType.TIMESTAMP, ColumnType.DATE -> {
+                long v = rec.getLong(fromCol);
+                if (v != Numbers.LONG_NULL) row.putByte(toCol, SqlUtil.implicitCastLongAsByte(v));
+            }
+        }
+    }
+
+    public static void copyAnyToShort(Record rec, TableWriter.Row row, int fromCol, int toCol, int fromTypeTag) {
+        switch (fromTypeTag) {
+            case ColumnType.INT -> {
+                int v = rec.getInt(fromCol);
+                if (v != Numbers.INT_NULL) row.putShort(toCol, SqlUtil.implicitCastIntAsShort(v));
+            }
+            case ColumnType.LONG -> {
+                long v = rec.getLong(fromCol);
+                if (v != Numbers.LONG_NULL) row.putShort(toCol, SqlUtil.implicitCastLongAsShort(v));
+            }
+            case ColumnType.FLOAT -> {
+                float v = rec.getFloat(fromCol);
+                if (!Float.isNaN(v)) row.putShort(toCol, SqlUtil.implicitCastFloatAsShort(v));
+            }
+            case ColumnType.DOUBLE -> {
+                double v = rec.getDouble(fromCol);
+                if (!Double.isNaN(v)) row.putShort(toCol, SqlUtil.implicitCastDoubleAsShort(v));
+            }
+            case ColumnType.BYTE -> {
+                if (!rec.isNull(fromCol)) row.putShort(toCol, rec.getByte(fromCol));
+            }
+            case ColumnType.SHORT -> {
+                if (!rec.isNull(fromCol)) row.putShort(toCol, rec.getShort(fromCol));
+            }
+            case ColumnType.BOOLEAN -> {
+                if (!rec.isNull(fromCol)) row.putShort(toCol, (short) (rec.getBool(fromCol) ? 1 : 0));
+            }
+            case ColumnType.TIMESTAMP, ColumnType.DATE -> {
+                long v = rec.getLong(fromCol);
+                if (v != Numbers.LONG_NULL) row.putShort(toCol, SqlUtil.implicitCastLongAsShort(v));
+            }
+        }
+    }
+
+    private static boolean isNumericSourceForBitmapTarget(int fromTypeTag) {
+        return fromTypeTag == ColumnType.INT
+                || fromTypeTag == ColumnType.LONG
+                || fromTypeTag == ColumnType.FLOAT
+                || fromTypeTag == ColumnType.DOUBLE
+                || fromTypeTag == ColumnType.DATE
+                || fromTypeTag == ColumnType.TIMESTAMP
+                || fromTypeTag == ColumnType.BOOLEAN
+                || fromTypeTag == ColumnType.BYTE
+                || fromTypeTag == ColumnType.SHORT;
+    }
+
+    public static void copyAnyToBool(Record rec, TableWriter.Row row, int fromCol, int toCol, int fromTypeTag) {
+        switch (fromTypeTag) {
+            case ColumnType.BOOLEAN -> {
+                if (!rec.isNull(fromCol)) row.putBool(toCol, rec.getBool(fromCol));
+            }
+            case ColumnType.BYTE -> {
+                if (!rec.isNull(fromCol)) row.putBool(toCol, rec.getByte(fromCol) != 0);
+            }
+            case ColumnType.SHORT -> {
+                if (!rec.isNull(fromCol)) row.putBool(toCol, rec.getShort(fromCol) != 0);
+            }
+            case ColumnType.INT -> {
+                int v = rec.getInt(fromCol);
+                if (v != Numbers.INT_NULL) row.putBool(toCol, v != 0);
+            }
+            case ColumnType.LONG -> {
+                long v = rec.getLong(fromCol);
+                if (v != Numbers.LONG_NULL) row.putBool(toCol, v != 0);
+            }
+        }
     }
 }

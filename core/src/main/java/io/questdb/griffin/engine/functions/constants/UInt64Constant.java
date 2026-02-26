@@ -28,22 +28,23 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UInt64Function;
-import io.questdb.std.Numbers;
 
 public class UInt64Constant extends UInt64Function implements ConstantFunction {
-    public static final UInt64Constant NULL = new UInt64Constant(Numbers.UINT64_NULL);
-    public static final UInt64Constant ZERO = new UInt64Constant(0);
+    public static final UInt64Constant NULL = new UInt64Constant(0, true);
+    public static final UInt64Constant ZERO = new UInt64Constant(0, false);
+    private final boolean isNull;
     private final long value;
 
-    public UInt64Constant(long value) {
+    private UInt64Constant(long value, boolean isNull) {
         this.value = value;
+        this.isNull = isNull;
     }
 
     public static UInt64Constant newInstance(long value) {
         if (value == 0) {
             return ZERO;
         }
-        return value != Numbers.UINT64_NULL ? new UInt64Constant(value) : NULL;
+        return new UInt64Constant(value, false);
     }
 
     @Override
@@ -57,14 +58,19 @@ public class UInt64Constant extends UInt64Function implements ConstantFunction {
             return true;
         }
         if (obj instanceof UInt64Constant that) {
-            return this.value == that.value;
+            return this.isNull == that.isNull && this.value == that.value;
         }
         return false;
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return isNull;
+    }
+
+    @Override
     public boolean isNullConstant() {
-        return value == Numbers.UINT64_NULL;
+        return isNull;
     }
 
     @Override

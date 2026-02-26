@@ -38,7 +38,7 @@ public class DedupWalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testDedupNoPartitionRewriteByte() throws Exception {
-        assertMemoryLeak(() -> testSameAndShuffledInserts("byte", "0", "123", "127", "22"));
+        assertMemoryLeak(() -> testSameAndShuffledInserts("byte", "", "123", "127", "22"));
     }
 
     @Test
@@ -65,7 +65,7 @@ public class DedupWalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testDedupNoPartitionRewriteShort() throws Exception {
-        assertMemoryLeak(() -> testSameAndShuffledInserts("short", "0", "123", "2342", "22"));
+        assertMemoryLeak(() -> testSameAndShuffledInserts("short", "", "123", "2342", "22"));
     }
 
     @Test

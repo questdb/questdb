@@ -30,6 +30,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ShortFunction;
 
 public class ShortConstant extends ShortFunction implements ConstantFunction {
+    public static final ShortConstant NULL = new NullShortConstant();
     public static final ShortConstant ZERO = new ShortConstant((short) 0);
     private final short value;
 
@@ -60,5 +61,26 @@ public class ShortConstant extends ShortFunction implements ConstantFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(value);
+    }
+
+    private static final class NullShortConstant extends ShortConstant {
+        private NullShortConstant() {
+            super((short) 0);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            return true;
+        }
+
+        @Override
+        public boolean isNullConstant() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("null");
+        }
     }
 }

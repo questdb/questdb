@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.UInt64Function;
-import io.questdb.std.Numbers;
 
 public class UInt64TypeConstant extends UInt64Function implements TypeConstant {
     public static final UInt64TypeConstant INSTANCE = new UInt64TypeConstant();
@@ -37,6 +36,11 @@ public class UInt64TypeConstant extends UInt64Function implements TypeConstant {
 
     @Override
     public long getLong(Record rec) {
-        return Numbers.UINT64_NULL;
+        return 0;
+    }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return true;
     }
 }

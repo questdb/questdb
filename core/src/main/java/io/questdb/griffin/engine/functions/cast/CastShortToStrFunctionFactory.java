@@ -65,6 +65,7 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
+            if (arg.isNull(rec)) return null;
             sinkA.clear();
             sinkA.put(arg.getShort(rec));
             return sinkA;
@@ -72,6 +73,7 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrB(Record rec) {
+            if (arg.isNull(rec)) return null;
             sinkB.clear();
             sinkB.put(arg.getShort(rec));
             return sinkB;

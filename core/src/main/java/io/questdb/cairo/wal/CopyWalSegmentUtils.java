@@ -39,6 +39,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -54,6 +55,7 @@ public class CopyWalSegmentUtils {
             int options,
             MemoryMA primaryColumn,
             MemoryMA secondaryColumn,
+            @Nullable MemoryMA bitmapColumn,
             @Transient Path walPath,
             int newSegment,
             CharSequence columnName,
@@ -78,6 +80,12 @@ public class CopyWalSegmentUtils {
             secondaryFd = -1;
         }
         columnRollSink.setDestSecondaryFd(secondaryFd);
+
+        long bitmapFd = -1;
+        if (bitmapColumn != null) {
+            bitmapFd = openRW(ff, nFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE), LOG, options);
+        }
+        columnRollSink.setDestBitmapFd(bitmapFd);
 
         boolean success;
         if (columnType == newColumnType) {
@@ -178,6 +186,63 @@ public class CopyWalSegmentUtils {
                     .put(", columnType=").put(columnType)
                     .put(", newColumnType=").put(newColumnType).put("]");
         }
+
+        if (bitmapFd > -1 && bitmapColumn != null) {
+            copyBitmapFile(ff, bitmapColumn, bitmapFd, startRowNumber, rowCount, columnRollSink, commitMode);
+        }
+    }
+
+    private static void copyBitmapFile(
+            FilesFacade ff,
+            MemoryMA bitmapColumn,
+            long bitmapFd,
+            long startRowNumber,
+            long rowCount,
+            SegmentColumnRollSink columnRollSink,
+            int commitMode
+    ) {
+        long dstBitmapByteCount = (rowCount + 7) >> 3;
+        long srcBitmapByteCount = (startRowNumber + rowCount + 7) >> 3;
+
+        long srcAddr = TableUtils.mapRO(ff, bitmapColumn.getFd(), srcBitmapByteCount, MEMORY_TAG);
+        try {
+            long dstAddr = TableUtils.mapRW(ff, bitmapFd, dstBitmapByteCount, MEMORY_TAG);
+            try {
+                int srcBitOffset = (int) (startRowNumber & 7);
+                long srcByteStart = startRowNumber >> 3;
+
+                if (srcBitOffset == 0) {
+                    Unsafe.getUnsafe().copyMemory(srcAddr + srcByteStart, dstAddr, dstBitmapByteCount);
+                } else {
+                    for (long i = 0; i < dstBitmapByteCount; i++) {
+                        int lo = Unsafe.getUnsafe().getByte(srcAddr + srcByteStart + i) & 0xFF;
+                        int hi = (srcByteStart + i + 1 < srcBitmapByteCount)
+                                ? Unsafe.getUnsafe().getByte(srcAddr + srcByteStart + i + 1) & 0xFF
+                                : 0;
+                        byte result = (byte) ((lo >>> srcBitOffset) | (hi << (8 - srcBitOffset)));
+                        Unsafe.getUnsafe().putByte(dstAddr + i, result);
+                    }
+                }
+
+                // Mask out trailing bits in the last byte if rowCount is not byte-aligned
+                int trailingBits = (int) (rowCount & 7);
+                if (trailingBits > 0 && dstBitmapByteCount > 0) {
+                    long lastByteAddr = dstAddr + dstBitmapByteCount - 1;
+                    byte lastByte = Unsafe.getUnsafe().getByte(lastByteAddr);
+                    Unsafe.getUnsafe().putByte(lastByteAddr, (byte) (lastByte & ((1 << trailingBits) - 1)));
+                }
+
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(dstAddr, dstBitmapByteCount, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(dstAddr, dstBitmapByteCount, MEMORY_TAG);
+            }
+        } finally {
+            ff.munmap(srcAddr, srcBitmapByteCount, MEMORY_TAG);
+        }
+
+        columnRollSink.setDestBitmapSize(dstBitmapByteCount);
     }
 
     private static boolean copyFixLenFile(

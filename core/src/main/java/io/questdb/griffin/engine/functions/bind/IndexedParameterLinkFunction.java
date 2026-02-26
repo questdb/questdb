@@ -309,6 +309,11 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return getBase().isNull(rec);
+    }
+
+    @Override
     public boolean isNonDeterministic() {
         return true;
     }

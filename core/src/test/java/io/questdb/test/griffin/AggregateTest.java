@@ -224,10 +224,10 @@ public class AggregateTest extends AbstractCairoTest {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL", ":SYMBOL"),
-                new TypeVal(ColumnType.BOOLEAN, "false:BOOLEAN", "false:BOOLEAN"),
-                new TypeVal(ColumnType.BYTE, "0:BYTE", "0:BYTE"),
+                new TypeVal(ColumnType.BOOLEAN, ":BOOLEAN", "true:BOOLEAN"),
+                new TypeVal(ColumnType.BYTE, ":BYTE", "1:BYTE"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR"),
-                new TypeVal(ColumnType.SHORT, "0:SHORT", "0:SHORT"),
+                new TypeVal(ColumnType.SHORT, ":SHORT", "1:SHORT"),
                 new TypeVal(ColumnType.INT, "null:INT", "null:INT"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "null:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", ":DATE"),
@@ -1292,10 +1292,10 @@ public class AggregateTest extends AbstractCairoTest {
         String[] aggregateFunctions = {"last"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL", "abc:SYMBOL"),
-                new TypeVal(ColumnType.BOOLEAN, "false:BOOLEAN", "true:BOOLEAN"),
-                new TypeVal(ColumnType.BYTE, "0:BYTE", "1:BYTE"),
+                new TypeVal(ColumnType.BOOLEAN, ":BOOLEAN", "true:BOOLEAN"),
+                new TypeVal(ColumnType.BYTE, ":BYTE", "1:BYTE"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
-                new TypeVal(ColumnType.SHORT, "0:SHORT", "1:SHORT"),
+                new TypeVal(ColumnType.SHORT, ":SHORT", "1:SHORT"),
                 new TypeVal(ColumnType.INT, "null:INT", "1:INT"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
@@ -1318,9 +1318,9 @@ public class AggregateTest extends AbstractCairoTest {
     public void testMaxAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"max"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.BYTE, "0:INT", "1:INT"),
+                new TypeVal(ColumnType.BYTE, "null:INT", "1:INT"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
-                new TypeVal(ColumnType.SHORT, "0:INT", "1:INT"),
+                new TypeVal(ColumnType.SHORT, "null:INT", "1:INT"),
                 new TypeVal(ColumnType.INT, "null:INT", "1:INT"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
@@ -1338,9 +1338,9 @@ public class AggregateTest extends AbstractCairoTest {
     public void testMinAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"min"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.BYTE, "0:INT", "0:INT"),
+                new TypeVal(ColumnType.BYTE, "null:INT", "1:INT"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR"),
-                new TypeVal(ColumnType.SHORT, "0:INT", "0:INT"),
+                new TypeVal(ColumnType.SHORT, "null:INT", "1:INT"),
                 new TypeVal(ColumnType.INT, "null:INT", "1:INT"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
@@ -1940,8 +1940,8 @@ public class AggregateTest extends AbstractCairoTest {
     public void testSumAggregationsWithTypes() throws Exception {
         String[] aggregateFunctions = {"sum"};
         TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.BYTE, "0:LONG", "1:LONG"),
-                new TypeVal(ColumnType.SHORT, "0:LONG", "1:LONG"),
+                new TypeVal(ColumnType.BYTE, "null:LONG", "1:LONG"),
+                new TypeVal(ColumnType.SHORT, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.INT, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
