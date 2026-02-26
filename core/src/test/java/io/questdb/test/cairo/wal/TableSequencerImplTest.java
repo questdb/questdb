@@ -304,7 +304,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 addColumn(ww, "newCol" + i, ColumnType.INT);
                 try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
                     Assert.assertEquals(i + 1, metadata.getMetadataVersion());
-                    long seqMeta = TableTransactionLog.readMaxStructureVersion(engine.getConfiguration().getFilesFacade(), path, engine.getConfiguration().isWriterMixedIOEnabled());
+                    long seqMeta = TableTransactionLog.readMaxStructureVersion(engine.getConfiguration().getFilesFacade(), path);
                     Assert.assertEquals(metadata.getMetadataVersion(), seqMeta);
                 }
             }

@@ -93,12 +93,12 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         rootPath = new Path();
     }
 
-    public static long readMaxStructureVersion(Path path, long logFileFd, FilesFacade ff, boolean bypassWalFdCache, boolean allowMixedIO) {
-        long lastTxn = readNonNegativeLong(ff, logFileFd, MAX_TXN_OFFSET_64, allowMixedIO);
+    public static long readMaxStructureVersion(Path path, long logFileFd, FilesFacade ff, boolean bypassWalFdCache) {
+        long lastTxn = ff.readNonNegativeLong(logFileFd, MAX_TXN_OFFSET_64);
         if (lastTxn < 0) {
             return -1;
         }
-        int partTransactionCount = readNonNegativeInt(ff, logFileFd, HEADER_SEQ_PART_SIZE_32, allowMixedIO);
+        int partTransactionCount = ff.readNonNegativeInt(logFileFd, HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             return -1;
         }
@@ -113,7 +113,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             try {
                 partFd = openPartFileRO(ff, path.$(), bypassWalFdCache);
                 long fileReadOffset = (prevTxn % partTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET;
-                return readNonNegativeLong(ff, partFd, fileReadOffset, allowMixedIO);
+                return ff.readNonNegativeLong(partFd, fileReadOffset);
             } finally {
                 if (partFd > -1) {
                     ff.close(partFd);
@@ -195,15 +195,14 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @Override
     public TransactionLogCursor getCursor(long txnLo, @Transient Path path) {
-        boolean allowMixedIO = configuration.isWriterMixedIOEnabled();
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor == null) {
-            cursor = new TransactionLogCursorImpl(ff, configuration.getBypassWalFdCache(), allowMixedIO, txnLo, path, partTransactionCount);
+            cursor = new TransactionLogCursorImpl(ff, configuration.getBypassWalFdCache(), txnLo, path, partTransactionCount);
             tlTransactionLogCursor.set(cursor);
             return cursor;
         }
         try {
-            return cursor.of(ff, configuration.getBypassWalFdCache(), allowMixedIO, txnLo, path, partTransactionCount);
+            return cursor.of(ff, configuration.getBypassWalFdCache(), txnLo, path, partTransactionCount);
         } catch (Throwable th) {
             cursor.close();
             throw th;
@@ -332,44 +331,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
     }
 
-    static int readNonNegativeInt(FilesFacade ff, long fd, long offset, boolean allowMixedIO) {
-        if (allowMixedIO) {
-            return ff.readNonNegativeInt(fd, offset);
-        }
-        long mapSize = offset + Integer.BYTES;
-        long addr = ff.mmap(fd, mapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
-        if (addr == FilesFacade.MAP_FAILED) {
-            return -1;
-        }
-        try {
-            Unsafe.getUnsafe().loadFence();
-            return Unsafe.getUnsafe().getInt(addr + offset);
-        } finally {
-            ff.munmap(addr, mapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
-        }
-    }
-
-    static long readNonNegativeLong(FilesFacade ff, long fd, long offset, boolean allowMixedIO) {
-        if (allowMixedIO) {
-            return ff.readNonNegativeLong(fd, offset);
-        }
-        long mapSize = offset + Long.BYTES;
-        long addr = ff.mmap(fd, mapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
-        if (addr == FilesFacade.MAP_FAILED) {
-            return -1;
-        }
-        try {
-            Unsafe.getUnsafe().loadFence();
-            return Unsafe.getUnsafe().getLong(addr + offset);
-        } finally {
-            ff.munmap(addr, mapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
-        }
-    }
-
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
         private final Path rootPath;
         private long address;
-        private boolean allowMixedIO;
         private boolean bypassFdCache;
         private FilesFacade ff;
         private long headerFd;
@@ -382,10 +346,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private long txnLo;
         private long txnOffset;
 
-        public TransactionLogCursorImpl(FilesFacade ff, boolean bypassWalFdCache, boolean allowMixedIO, long txnLo, final @Transient Path path, int partTransactionCount) {
+        public TransactionLogCursorImpl(FilesFacade ff, boolean bypassWalFdCache, long txnLo, final @Transient Path path, int partTransactionCount) {
             rootPath = new Path();
             try {
-                of(ff, bypassWalFdCache, allowMixedIO, txnLo, path, partTransactionCount);
+                of(ff, bypassWalFdCache, txnLo, path, partTransactionCount);
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -408,7 +372,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         @Override
         public boolean extend() {
-            final long newTxnCount = readNonNegativeLong(ff, headerFd, MAX_TXN_OFFSET_64, allowMixedIO);
+            final long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
             boolean extended = newTxnCount > txnCount;
             if (extended) {
                 txnCount = newTxnCount;
@@ -487,7 +451,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public boolean hasNext() {
             if (txn >= txnCount) {
-                txnCount = readNonNegativeLong(ff, headerFd, MAX_TXN_OFFSET_64, allowMixedIO);
+                txnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
                 if (txn >= txnCount) {
                     return false;
                 }
@@ -553,14 +517,14 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @NotNull
-        private TransactionLogCursorImpl of(FilesFacade ff, boolean bypassFdCache, boolean allowMixedIO, long txnLo, @Transient Path path, int partTransactionCount) {
+        private TransactionLogCursorImpl of(FilesFacade ff, boolean bypassFdCache, long txnLo, @Transient Path path, int partTransactionCount) {
+            this.ff = ff;
+            close();
             this.partTransactionCount = partTransactionCount;
             partMapSize = partTransactionCount * RECORD_SIZE;
-            this.ff = ff;
-            this.allowMixedIO = allowMixedIO;
             this.headerFd = openFileRO(ff, path, bypassFdCache);
             this.bypassFdCache = bypassFdCache;
-            long newTxnCount = readNonNegativeLong(ff, headerFd, MAX_TXN_OFFSET_64, allowMixedIO);
+            long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
             rootPath.of(path);
 
             if (newTxnCount > -1L) {

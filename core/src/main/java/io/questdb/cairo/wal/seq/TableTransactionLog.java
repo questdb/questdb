@@ -73,11 +73,11 @@ public class TableTransactionLog implements Closeable {
         this.walDirectoryPolicy = walDirectoryPolicy;
     }
 
-    public static long readMaxStructureVersion(FilesFacade ff, Path path, boolean allowMixedIO) {
+    public static long readMaxStructureVersion(FilesFacade ff, Path path) {
         int pathLen = path.size();
         long logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);
         try {
-            int formatVersion = TableTransactionLogV2.readNonNegativeInt(ff, logFileFd, 0, allowMixedIO);
+            int formatVersion = ff.readNonNegativeInt(logFileFd, 0);
             if (formatVersion < 0) {
                 throw CairoException.critical(0).put("invalid transaction log file: ").put(path).put(", cannot read version at offset 0");
             }
@@ -85,7 +85,7 @@ public class TableTransactionLog implements Closeable {
             return switch (formatVersion) {
                 case WAL_SEQUENCER_FORMAT_VERSION_V1 -> TableTransactionLogV1.readMaxStructureVersion(logFileFd, ff);
                 case WAL_SEQUENCER_FORMAT_VERSION_V2 ->
-                        TableTransactionLogV2.readMaxStructureVersion(path.trimTo(pathLen), logFileFd, ff, true, allowMixedIO);
+                        TableTransactionLogV2.readMaxStructureVersion(path.trimTo(pathLen), logFileFd, ff, true);
                 default ->
                         throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
             };
