@@ -108,17 +108,17 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            engine.execute("ALTER TABLE tab ADD COLUMN z VARCHAR");
+            execute("ALTER TABLE tab ADD COLUMN z VARCHAR");
             drainWalQueue();
-            engine.execute("ALTER TABLE tab RENAME COLUMN z TO v");
+            execute("ALTER TABLE tab RENAME COLUMN z TO v");
             drainWalQueue();
-            engine.execute("ALTER TABLE tab DROP COLUMN v");
+            execute("ALTER TABLE tab DROP COLUMN v");
             drainWalQueue();
-            engine.execute("RENAME TABLE tab TO tab2");
+            execute("RENAME TABLE tab TO tab2");
             drainWalQueue();
-            engine.execute("DROP TABLE tab2");
+            execute("DROP TABLE tab2");
             drainWalQueue();
 
             for (int callbackCounter : callbackCounters) {
@@ -168,11 +168,11 @@ public class DdlListenerTest extends AbstractCairoTest {
             });
 
             // Create 2 non-WAL tables and 1 view
-            engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            engine.execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m)");
+            execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m)");
 
-            engine.execute("DROP ALL");
+            execute("DROP ALL");
 
             Assert.assertEquals(0, callbackCounters[0]);
             Assert.assertEquals(0, callbackCounters[1]);
@@ -183,10 +183,10 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(Set.of("tab1", "tab2", "v"), droppedNames);
 
             droppedNames.clear();
-            engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
 
-            engine.execute("DROP ALL TABLES");
+            execute("DROP ALL TABLES");
 
             Assert.assertEquals(0, callbackCounters[0]);
             Assert.assertEquals(0, callbackCounters[1]);
@@ -251,15 +251,15 @@ public class DdlListenerTest extends AbstractCairoTest {
             });
 
             // Create 2 tables, 1 materialized view, 1 view
-            engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            engine.execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
-            engine.execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m)");
+            execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab1 SAMPLE BY 1m)");
             drainWalQueue();
 
-            engine.execute("DROP ALL");
+            execute("DROP ALL");
             drainWalQueue();
 
             Assert.assertEquals(0, callbackCounters[0]);
@@ -271,11 +271,11 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertEquals(Set.of("tab1", "tab2", "mv", "v"), droppedNames);
 
             droppedNames.clear();
-            engine.execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            engine.execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
 
-            engine.execute("DROP ALL TABLES");
+            execute("DROP ALL TABLES");
             drainWalQueue();
 
             Assert.assertEquals(0, callbackCounters[0]);
@@ -304,7 +304,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, z INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, z INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             try (TableWriter writer = getWriter("tab")) {
                 writer.removeColumn("z", AllowAllSecurityContext.INSTANCE, true);
             }
@@ -313,7 +313,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             Assert.assertTrue(cascadeReceived[0]);
 
             // cleanup
-            engine.execute("DROP TABLE tab");
+            execute("DROP TABLE tab");
         });
     }
 
@@ -353,14 +353,14 @@ public class DdlListenerTest extends AbstractCairoTest {
             };
 
             // set up table with no-op listener, then switch to the throwing one
-            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             engine.setDdlListener(throwingListener);
 
             final TableToken tableToken = engine.verifyTableName("tab");
 
             // ADD COLUMN
             assertListenerException("onColumnAdded",
-                    () -> engine.execute("ALTER TABLE tab ADD COLUMN z VARCHAR"));
+                    () -> execute("ALTER TABLE tab ADD COLUMN z VARCHAR"));
             drainWalQueue();
             // ADD COLUMN is not transactional, callback of the listener is fired after the column has been added.
             // The column should exist even when the callback fails.
@@ -370,7 +370,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // RENAME COLUMN — TableWriter wraps in CairoException
             assertListenerException("onColumnRenamed",
-                    () -> engine.execute("ALTER TABLE tab RENAME COLUMN z TO v"));
+                    () -> execute("ALTER TABLE tab RENAME COLUMN z TO v"));
             drainWalQueue();
             // RENAME COLUMN is not transactional, callback of the listener is fired after the column has been renamed.
             // The column should be renamed even when the callback fails.
@@ -381,7 +381,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // DROP COLUMN — TableWriter wraps in CairoError
             assertListenerException("onColumnDropped",
-                    () -> engine.execute("ALTER TABLE tab DROP COLUMN v"));
+                    () -> execute("ALTER TABLE tab DROP COLUMN v"));
             drainWalQueue();
             // DROP COLUMN is not transactional, callback of the listener is fired after the column has been dropped.
             // The column should be removed even when the callback fails.
@@ -391,7 +391,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // CREATE MATERIALIZED VIEW
             assertListenerException("onTableOrViewOrMatViewCreated",
-                    () -> engine.execute("CREATE MATERIALIZED VIEW mv3 AS (SELECT ts, avg(x) AS avg_x FROM tab SAMPLE BY 10m) PARTITION BY DAY"));
+                    () -> execute("CREATE MATERIALIZED VIEW mv3 AS (SELECT ts, avg(x) AS avg_x FROM tab SAMPLE BY 10m) PARTITION BY DAY"));
             drainWalQueue();
             // CREATE MATERIALIZED VIEW is transactional - the mat view is not created, if the DDL listener throws
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("mv3"));
@@ -399,7 +399,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // CREATE VIEW
             assertListenerException("onTableOrViewOrMatViewCreated",
-                    () -> engine.execute("CREATE VIEW v3 AS (SELECT ts, avg(x) AS avg_x FROM tab SAMPLE BY 10m)"));
+                    () -> execute("CREATE VIEW v3 AS (SELECT ts, avg(x) AS avg_x FROM tab SAMPLE BY 10m)"));
             drainWalQueue();
             // CREATE VIEW is transactional - the view is not created, if the DDL listener throws
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("v3"));
@@ -407,7 +407,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // RENAME TABLE
             assertListenerException("onTableRenamed",
-                    () -> engine.execute("RENAME TABLE tab TO tab2"));
+                    () -> execute("RENAME TABLE tab TO tab2"));
             drainWalQueue();
             // RENAME TABLE is not transactional, callback of the listener is fired after the table has been renamed.
             // The rename should succeed even when the callback fails.
@@ -416,7 +416,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // DROP TABLE
             assertListenerException("onTableOrViewOrMatViewDropped",
-                    () -> engine.execute("DROP TABLE tab2"));
+                    () -> execute("DROP TABLE tab2"));
             drainWalQueue();
             // DROP TABLE is not transactional, callback of the listener is fired after the table has been dropped.
             // The drop should succeed even when the callback fails.
@@ -424,14 +424,14 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // CREATE TABLE - non-WAL
             assertListenerException("onTableOrViewOrMatViewCreated",
-                    () -> engine.execute("CREATE TABLE tab3(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL"));
+                    () -> execute("CREATE TABLE tab3(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL"));
             // CREATE TABLE is transactional - the table is not created, if the DDL listener throws
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("tab3"));
             Assert.assertNull(engine.getTableTokenIfExists("tab3"));
 
             // CREATE TABLE - WAL
             assertListenerException("onTableOrViewOrMatViewCreated",
-                    () -> engine.execute("CREATE TABLE tab3(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"));
+                    () -> execute("CREATE TABLE tab3(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"));
             drainWalQueue();
             // CREATE TABLE is transactional - the table is not created, if the DDL listener throws
             Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("tab3"));
@@ -495,12 +495,12 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            engine.execute("ALTER TABLE tab ADD COLUMN z VARCHAR");
-            engine.execute("ALTER TABLE tab RENAME COLUMN z TO v");
-            engine.execute("ALTER TABLE tab DROP COLUMN v");
-            engine.execute("RENAME TABLE tab TO tab2");
-            engine.execute("DROP TABLE tab2");
+            execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE tab ADD COLUMN z VARCHAR");
+            execute("ALTER TABLE tab RENAME COLUMN z TO v");
+            execute("ALTER TABLE tab DROP COLUMN v");
+            execute("RENAME TABLE tab TO tab2");
+            execute("DROP TABLE tab2");
 
             for (int callbackCounter : callbackCounters) {
                 Assert.assertEquals(1, callbackCounter);
@@ -513,7 +513,7 @@ public class DdlListenerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             engine.setDdlListener(DefaultDdlListener.INSTANCE);
 
-            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
 
             final int[] callbackCounters = new int[6];
@@ -557,9 +557,9 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            engine.execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
-            engine.execute("DROP MATERIALIZED VIEW mv");
+            execute("DROP MATERIALIZED VIEW mv");
             drainWalQueue();
 
             Assert.assertEquals(0, callbackCounters[0]);
@@ -571,7 +571,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // cleanup
             engine.setDdlListener(DefaultDdlListener.INSTANCE);
-            engine.execute("DROP TABLE tab");
+            execute("DROP TABLE tab");
             drainWalQueue();
         });
     }
@@ -581,7 +581,7 @@ public class DdlListenerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             engine.setDdlListener(DefaultDdlListener.INSTANCE);
 
-            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
 
             final int[] callbackCounters = new int[6];
@@ -625,11 +625,11 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            engine.execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
+            execute("CREATE VIEW v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
             drainWalQueue();
-            engine.execute("ALTER VIEW v AS (SELECT ts, max(x) FROM tab SAMPLE BY 10m)");
+            execute("ALTER VIEW v AS (SELECT ts, max(x) FROM tab SAMPLE BY 10m)");
             drainWalQueue();
-            engine.execute("DROP VIEW v");
+            execute("DROP VIEW v");
             drainWalQueue();
 
             Assert.assertEquals(0, callbackCounters[0]);
@@ -641,7 +641,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // cleanup
             engine.setDdlListener(DefaultDdlListener.INSTANCE);
-            engine.execute("DROP TABLE tab");
+            execute("DROP TABLE tab");
             drainWalQueue();
         });
     }
@@ -684,15 +684,15 @@ public class DdlListenerTest extends AbstractCairoTest {
             });
 
             // dropping non-existent table should not fire
-            engine.execute("DROP TABLE IF EXISTS tab");
+            execute("DROP TABLE IF EXISTS tab");
 
             for (int callbackCounter : callbackCounters) {
                 Assert.assertEquals(0, callbackCounter);
             }
 
             // create and then drop should fire
-            engine.execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            engine.execute("DROP TABLE IF EXISTS tab");
+            execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("DROP TABLE IF EXISTS tab");
 
             Assert.assertEquals(0, callbackCounters[0]);
             Assert.assertEquals(0, callbackCounters[1]);
@@ -740,29 +740,29 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            engine.execute("DROP TABLE IF EXISTS tab");
+            execute("DROP TABLE IF EXISTS tab");
             drainWalQueue();
-            engine.execute("DROP MATERIALIZED VIEW IF EXISTS mv");
+            execute("DROP MATERIALIZED VIEW IF EXISTS mv");
             drainWalQueue();
-            engine.execute("DROP VIEW IF EXISTS v");
+            execute("DROP VIEW IF EXISTS v");
             drainWalQueue();
 
             for (int callbackCounter : callbackCounters) {
                 Assert.assertEquals(0, callbackCounter);
             }
 
-            engine.execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            engine.execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
-            engine.execute("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
+            execute("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
             drainWalQueue();
 
-            engine.execute("DROP VIEW IF EXISTS v");
+            execute("DROP VIEW IF EXISTS v");
             drainWalQueue();
-            engine.execute("DROP MATERIALIZED VIEW IF EXISTS mv");
+            execute("DROP MATERIALIZED VIEW IF EXISTS mv");
             drainWalQueue();
-            engine.execute("DROP TABLE IF EXISTS tab");
+            execute("DROP TABLE IF EXISTS tab");
             drainWalQueue();
 
             Assert.assertEquals(0, callbackCounters[0]);
@@ -811,7 +811,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            engine.execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
 
             Assert.assertEquals(0, callbackCounters[0]);
             Assert.assertEquals(0, callbackCounters[1]);
@@ -824,7 +824,7 @@ public class DdlListenerTest extends AbstractCairoTest {
             callbackCounters[4] = 0;
 
             // second time should not fire
-            engine.execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
 
             for (int callbackCounter : callbackCounters) {
                 Assert.assertEquals(0, callbackCounter);
@@ -832,7 +832,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // cleanup
             engine.setDdlListener(DefaultDdlListener.INSTANCE);
-            engine.execute("DROP TABLE tab");
+            execute("DROP TABLE tab");
         });
     }
 
@@ -873,11 +873,11 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
             });
 
-            engine.execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            engine.execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
-            engine.execute("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
+            execute("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
             drainWalQueue();
 
             Assert.assertEquals(0, callbackCounters[0]);
@@ -891,11 +891,11 @@ public class DdlListenerTest extends AbstractCairoTest {
             callbackCounters[4] = 0;
 
             // second time should not fire
-            engine.execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE IF NOT EXISTS tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            engine.execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW IF NOT EXISTS mv AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
-            engine.execute("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
+            execute("CREATE VIEW IF NOT EXISTS v AS (SELECT ts, avg(x) FROM tab SAMPLE BY 1m)");
             drainWalQueue();
 
             for (int callbackCounter : callbackCounters) {
@@ -904,9 +904,9 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // cleanup
             engine.setDdlListener(DefaultDdlListener.INSTANCE);
-            engine.execute("DROP VIEW v");
-            engine.execute("DROP MATERIALIZED VIEW mv");
-            engine.execute("DROP TABLE tab");
+            execute("DROP VIEW v");
+            execute("DROP MATERIALIZED VIEW mv");
+            execute("DROP TABLE tab");
             drainWalQueue();
         });
     }
