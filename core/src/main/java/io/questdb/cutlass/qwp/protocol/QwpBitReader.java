@@ -51,7 +51,6 @@ public class QwpBitReader {
     private int bitsInBuffer;
     private long currentAddress;
     private long endAddress;
-    private long startAddress;
     // Total bits available for reading (from reset)
     private long totalBitsAvailable;
     // Total bits already consumed
@@ -61,18 +60,6 @@ public class QwpBitReader {
      * Creates a new bit reader. Call {@link #reset} before use.
      */
     public QwpBitReader() {
-    }
-
-    /**
-     * Aligns the reader to the next byte boundary by skipping any partial bits.
-     *
-     * @throws QwpParseException if alignment fails
-     */
-    public void alignToByte() throws QwpParseException {
-        int remainder = (int) (totalBitsRead % 8);
-        if (remainder != 0) {
-            skipBits(8 - remainder);
-        }
     }
 
     /**
@@ -91,16 +78,6 @@ public class QwpBitReader {
      */
     public long getBitPosition() {
         return totalBitsRead;
-    }
-
-    /**
-     * Returns the current byte address being read.
-     * Note: This is approximate due to bit buffering.
-     *
-     * @return current address
-     */
-    public long getCurrentAddress() {
-        return currentAddress;
     }
 
     /**
@@ -195,16 +172,6 @@ public class QwpBitReader {
     }
 
     /**
-     * Reads a complete byte, ensuring byte alignment first.
-     *
-     * @return the byte value (0-255)
-     * @throws QwpParseException if not enough data
-     */
-    public int readByte() throws QwpParseException {
-        return (int) readBits(8) & 0xFF;
-    }
-
-    /**
      * Reads a complete 32-bit integer in little-endian order.
      *
      * @return the integer value
@@ -248,26 +215,12 @@ public class QwpBitReader {
      * @param length  the number of bytes available to read
      */
     public void reset(long address, long length) {
-        this.startAddress = address;
         this.currentAddress = address;
         this.endAddress = address + length;
         this.bitBuffer = 0;
         this.bitsInBuffer = 0;
         this.totalBitsAvailable = length * 8L;
         this.totalBitsRead = 0;
-    }
-
-    /**
-     * Resets the reader to read from the specified byte array.
-     *
-     * @param buf    the byte array
-     * @param offset the starting offset
-     * @param length the number of bytes available
-     */
-    public void reset(byte[] buf, int offset, int length) {
-        // For byte array, we'll store position info differently
-        // This is mainly for testing - in production we use direct memory
-        throw new UnsupportedOperationException("Use direct memory version");
     }
 
     /**
