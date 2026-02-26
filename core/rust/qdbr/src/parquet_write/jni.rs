@@ -241,43 +241,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_sliceRowGroup(
-    mut env: JNIEnv,
-    _class: JClass,
-    updater: *mut ParquetUpdater,
-    rg_index: jshort,
-    row_lo: jint,
-    row_hi: jint,
-    file_ptr: jlong,
-    file_size: jlong,
-) {
-    if updater.is_null() {
-        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-        err.add_context("error in PartitionUpdater.sliceRowGroup");
-        return err.into_cairo_exception().throw(&mut env);
-    }
-
-    let parquet_updater = unsafe { &mut *updater };
-    match parquet_updater.slice_row_group(
-        rg_index,
-        row_lo as usize,
-        row_hi as usize,
-        file_ptr as *const u8,
-        file_size as u64,
-    ) {
-        Ok(_) => (),
-        Err(mut err) => {
-            err.add_context(format!(
-                "could not slice row group {} with range [{}, {}]",
-                rg_index, row_lo, row_hi
-            ));
-            err.add_context("error in PartitionUpdater.sliceRowGroup");
-            err.into_cairo_exception().throw(&mut env)
-        }
-    }
-}
-
-#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_insertRowGroup(
     mut env: JNIEnv,
     _class: JClass,

@@ -78,6 +78,14 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         int rowGroupSize = 500 + rnd.nextInt(2000);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
 
+        // Randomize rewrite thresholds so that rewrite mode is exercised with
+        // high probability across multiple O3 rounds on small partitions.
+        // ratio 0.1-0.5, absolute max 4KB-64KB (reachable with small row groups).
+        double rewriteRatio = 0.1 + rnd.nextDouble() * 0.4;
+        long rewriteMaxBytes = 4096 + rnd.nextLong(60_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(rewriteRatio));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, rewriteMaxBytes);
+
         int initialRowCount = 2000 + rnd.nextInt(5000);
         fuzzer.setFuzzCounts(
                 true,           // isO3
@@ -123,6 +131,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     .$("starting all-parquet fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
                     .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", rewriteRatio=").$(rewriteRatio)
+                    .$(", rewriteMaxBytes=").$(rewriteMaxBytes)
                     .$(", partitionTs=").$(partitionTs)
                     .$();
 
@@ -215,6 +225,13 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         int rowGroupSize = 500 + rnd.nextInt(2000);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
 
+        // Randomize rewrite thresholds so that rewrite mode is exercised with
+        // high probability across multiple O3 rounds on small partitions.
+        double rewriteRatio = 0.1 + rnd.nextDouble() * 0.4;
+        long rewriteMaxBytes = 4096 + rnd.nextLong(60_000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(rewriteRatio));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, rewriteMaxBytes);
+
         int initialRowCount = 2000 + rnd.nextInt(5000);
         // O3 enabled, single partition, no IO failures.
         fuzzer.setFuzzCounts(
@@ -272,6 +289,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     .$("starting fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
                     .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", rewriteRatio=").$(rewriteRatio)
+                    .$(", rewriteMaxBytes=").$(rewriteMaxBytes)
                     .$(", partitionTs=").$(partitionTs)
                     .$();
 

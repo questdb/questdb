@@ -124,6 +124,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
                 assert rowGroupCount > 0;
+                // Row group indices are passed as i16 through JNI to Rust. The Parquet
+                // format itself supports i32 row group counts, but having more than 32K
+                // row groups per partition degrades read performance (large footer,
+                // excessive metadata overhead). If this limit is hit, the fix is to
+                // increase cairo.partition.encoder.parquet.row.group.size rather than
+                // widening the index type.
+                if (rowGroupCount > Short.MAX_VALUE) {
+                    throw CairoException.critical(0)
+                            .put("too many row groups in parquet partition for O3 merge [rowGroupCount=")
+                            .put(rowGroupCount)
+                            .put(", max=")
+                            .put((int) Short.MAX_VALUE)
+                            .put(']');
+                }
                 final int timestampIndex = tableWriterMetadata.getTimestampIndex();
                 final int timestampColumnType = tableWriterMetadata.getColumnType(timestampIndex);
                 assert ColumnType.isTimestamp(timestampColumnType);
@@ -158,38 +172,50 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // They must be distinct OS fds even when pointing to the same file,
                 // because the reader and writer maintain independent cursor positions.
                 // Rust closes both fds when the ParquetUpdater is dropped.
-                final int readerFd;
-                final int writerFd;
-                final long writeFileSize;
-                if (isRewrite) {
-                    // Rewrite mode: write to a new partition directory named by txn.
-                    // The old directory (srcNameTxn) is left intact and queued for removal on commit.
-                    readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
-                    Path newPath = Path.getThreadLocal2(pathToTable);
-                    setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
-                    ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
-                    newPath.concat(PARQUET_PARTITION_NAME).$();
-                    writerFd = Files.detach(TableUtils.openRW(ff, newPath.$(), LOG, opts));
-                    writeFileSize = 0;
-                } else {
-                    readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
-                    writerFd = Files.detach(TableUtils.openRW(ff, path.$(), LOG, opts));
-                    writeFileSize = parquetSize;
-                }
+                int readerFd = -1;
+                int writerFd = -1;
+                try {
+                    final long writeFileSize;
+                    if (isRewrite) {
+                        // Rewrite mode: write to a new partition directory named by txn.
+                        // The old directory (srcNameTxn) is left intact and queued for removal on commit.
+                        Path newPath = Path.getThreadLocal2(pathToTable);
+                        setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
+                        ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
+                        newPath.concat(PARQUET_PARTITION_NAME).$();
+                        readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
+                        writerFd = Files.detach(TableUtils.openRW(ff, newPath.$(), LOG, opts));
+                        writeFileSize = 0;
+                    } else {
+                        readerFd = Files.detach(TableUtils.openRONoCache(ff, path.$(), LOG));
+                        writerFd = Files.detach(TableUtils.openRW(ff, path.$(), LOG, opts));
+                        writeFileSize = parquetSize;
+                    }
 
-                partitionUpdater.of(
-                        path.$(),
-                        readerFd,
-                        parquetSize,
-                        writerFd,
-                        writeFileSize,
-                        timestampIndex,
-                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                        statisticsEnabled,
-                        rawArrayEncoding,
-                        rowGroupSize,
-                        dataPageSize
-                );
+                    // partitionUpdater.of() transfers fd ownership to Rust.
+                    // After this call succeeds, Rust closes both fds on destroy.
+                    partitionUpdater.of(
+                            path.$(),
+                            readerFd,
+                            parquetSize,
+                            writerFd,
+                            writeFileSize,
+                            timestampIndex,
+                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                            statisticsEnabled,
+                            rawArrayEncoding,
+                            rowGroupSize,
+                            dataPageSize
+                    );
+                } catch (Throwable e) {
+                    if (readerFd != -1) {
+                        ff.close(readerFd);
+                    }
+                    if (writerFd != -1) {
+                        ff.close(writerFd);
+                    }
+                    throw e;
+                }
 
                 // Build row group bounds for merge strategy computation
                 final LongList rowGroupBounds = new LongList(rowGroupCount * O3ParquetMergeStrategy.ROW_GROUP_ENTRY_SIZE);
@@ -236,6 +262,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int metadataPosition = 0;
                 try {
                     for (int i = 0, n = mergeActions.size(); i < n; i++) {
+                        if (metadataPosition > Short.MAX_VALUE) {
+                            throw CairoException.critical(0)
+                                    .put("too many output row groups in parquet O3 merge [count=")
+                                    .put(metadataPosition)
+                                    .put(", max=")
+                                    .put((int) Short.MAX_VALUE)
+                                    .put(']');
+                        }
                         final O3ParquetMergeStrategy.MergeAction action = mergeActions.getQuick(i);
                         switch (action.type) {
                             case MERGE: {
@@ -276,51 +310,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                             case COPY_ROW_GROUP_SLICE: {
                                 final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
-                                final boolean isFullRange = action.rgLo == 0 && action.rgHi == rgSize - 1;
+                                // The merge strategy always produces full-range COPY_ROW_GROUP_SLICE
+                                // actions (the entire row group). Partial slicing is not supported.
+                                assert action.rgLo == 0 && action.rgHi == rgSize - 1
+                                        : "partial row group slice not supported, rg=" + action.rowGroupIndex
+                                        + " range=[" + action.rgLo + "," + action.rgHi + "] size=" + rgSize;
                                 if (isRewrite) {
                                     // Rewrite mode: every row group must be written to the new file.
-                                    if (isFullRange) {
-                                        LOG.info()
-                                                .$("parquet copy row group [table=").$(tableWriter.getTableToken())
-                                                .$(", partition=").$ts(partitionTimestamp)
-                                                .$(", rg=").$(action.rowGroupIndex)
-                                                .$(", rows=").$(rgSize)
-                                                .I$();
-                                        partitionUpdater.copyRowGroup((short) action.rowGroupIndex);
-                                        tableWriter.addPhysicallyWrittenRows(rgSize);
-                                    } else {
-                                        LOG.info()
-                                                .$("parquet slice row group [table=").$(tableWriter.getTableToken())
-                                                .$(", partition=").$ts(partitionTimestamp)
-                                                .$(", rg=").$(action.rowGroupIndex)
-                                                .$(", rows=").$(action.rgHi - action.rgLo + 1)
-                                                .I$();
-                                        partitionUpdater.sliceRowGroup(
-                                                (short) action.rowGroupIndex,
-                                                (int) action.rgLo,
-                                                (int) action.rgHi,
-                                                parquetAddr,
-                                                parquetSize
-                                        );
-                                        tableWriter.addPhysicallyWrittenRows(action.rgHi - action.rgLo + 1);
-                                    }
-                                } else if (!isFullRange) {
                                     LOG.info()
-                                            .$("parquet slice row group [table=").$(tableWriter.getTableToken())
+                                            .$("parquet copy row group [table=").$(tableWriter.getTableToken())
                                             .$(", partition=").$ts(partitionTimestamp)
                                             .$(", rg=").$(action.rowGroupIndex)
-                                            .$(", rows=").$(action.rgHi - action.rgLo + 1)
+                                            .$(", rows=").$(rgSize)
                                             .I$();
-                                    // Update mode: only act on partial ranges; full row groups stay in place.
-                                    partitionUpdater.sliceRowGroup(
-                                            (short) action.rowGroupIndex,
-                                            (int) action.rgLo,
-                                            (int) action.rgHi,
-                                            parquetAddr,
-                                            parquetSize
-                                    );
-                                    tableWriter.addPhysicallyWrittenRows(action.rgHi - action.rgLo + 1);
+                                    partitionUpdater.copyRowGroup((short) action.rowGroupIndex);
+                                    tableWriter.addPhysicallyWrittenRows(rgSize);
                                 }
+                                // Update mode: full row groups stay in place, nothing to do.
                                 metadataPosition++;
                                 break;
                             }

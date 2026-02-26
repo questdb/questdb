@@ -98,6 +98,39 @@ impl ParquetUpdater {
 
         let file_metadata = metadata.clone();
 
+        // Validate that the file was written by QuestDB and has consistent metadata.
+        // O3 merge relies on QuestDB-specific metadata (column types, symbol tables,
+        // unused_bytes tracking) that external Parquet writers don't produce.
+        let num_parquet_cols = metadata.schema_descr.columns().len();
+        let qdb_meta = metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| {
+                kvs.iter()
+                    .find(|kv| kv.key == QDB_META_KEY)
+                    .and_then(|kv| kv.value.as_ref())
+            });
+        match qdb_meta {
+            None => {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "parquet file lacks '{}' metadata key; O3 merge requires files written by QuestDB",
+                    QDB_META_KEY
+                ));
+            }
+            Some(raw) => {
+                let meta = QdbMeta::deserialize(raw)?;
+                if meta.schema.len() != num_parquet_cols {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "QuestDB metadata schema has {} columns but parquet schema has {}",
+                        meta.schema.len(),
+                        num_parquet_cols
+                    ));
+                }
+            }
+        }
+
         let version = from(metadata.version);
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
@@ -114,7 +147,9 @@ impl ParquetUpdater {
             );
             (pf, 0u64)
         } else {
-            // Update mode: append to existing file
+            // Update mode: append to existing file.
+            // The upfront guard already validated QDB metadata exists and parses,
+            // so unwrap_or(0) only covers the default for missing unused_bytes field.
             let accumulated_unused_bytes = metadata
                 .key_value_metadata
                 .as_ref()
@@ -122,8 +157,9 @@ impl ParquetUpdater {
                     kvs.iter()
                         .find(|kv| kv.key == QDB_META_KEY)
                         .and_then(|kv| kv.value.as_ref())
-                        .and_then(|v| QdbMeta::deserialize(v).ok())
                 })
+                .map(|raw| QdbMeta::deserialize(raw))
+                .transpose()?
                 .map(|m| m.unused_bytes)
                 .unwrap_or(0);
 
@@ -317,6 +353,9 @@ impl ParquetUpdater {
                 if let Some(ref mut dict_offset) = meta.dictionary_page_offset {
                     *dict_offset += offset_delta;
                 }
+                if let Some(ref mut idx_offset) = meta.index_page_offset {
+                    *idx_offset += offset_delta;
+                }
             }
             // Column/offset indexes are not copied with the row group data,
             // so clear their references to avoid dangling pointers into the old file.
@@ -403,88 +442,6 @@ impl ParquetUpdater {
         self.result_unused_bytes
     }
 
-    /// Slice a row group by decoding a sub-range and re-encoding it.
-    ///
-    /// `file_ptr` and `file_size` must point to a valid memory-mapped region
-    /// of the source parquet file that remains valid for the duration of
-    /// this call. The caller (Java side) owns the mmap and keeps it alive.
-    pub fn slice_row_group(
-        &mut self,
-        rg_index: i16,
-        row_lo: usize,
-        row_hi: usize, // inclusive
-        file_ptr: *const u8,
-        file_size: u64,
-    ) -> ParquetResult<()> {
-        use crate::parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers};
-        use std::io::Cursor;
-
-        let rg_idx = rg_index as usize;
-        if rg_idx >= self.file_metadata.row_groups.len() {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "row group index {} out of range [0,{})",
-                rg_idx,
-                self.file_metadata.row_groups.len()
-            ));
-        }
-
-        // SAFETY: file_ptr is an mmap'd region owned by the Java caller.
-        // It remains valid for the duration of this call (the caller holds
-        // parquetAddr until after all slice/merge operations complete).
-        let file_bytes: &[u8] = unsafe { std::slice::from_raw_parts(file_ptr, file_size as usize) };
-
-        // Create decoder from the mmap'd file (Cursor over the slice is zero-copy)
-        let decoder = ParquetDecoder::read(
-            self.allocator.clone(),
-            &mut Cursor::new(file_bytes),
-            file_size,
-        )?;
-
-        // Build column list from decoder metadata
-        let num_cols = decoder.col_count as usize;
-        let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = (0..num_cols)
-            .map(|i| {
-                decoder.columns[i]
-                    .column_type
-                    .map(|ct| (i as i32, ct))
-                    .ok_or_else(|| fmt_err!(InvalidType, "unsupported column type at index {}", i))
-            })
-            .collect::<ParquetResult<_>>()?;
-
-        // Decode the row range [row_lo, row_hi+1) from the row group
-        let mut ctx = DecodeContext::new(file_ptr, file_size);
-        let mut row_group_bufs = RowGroupBuffers::new(self.allocator.clone());
-        decoder.decode_row_group(
-            &mut ctx,
-            &mut row_group_bufs,
-            &columns,
-            rg_idx as u32,
-            row_lo as u32,
-            (row_hi + 1) as u32,
-        )?;
-
-        // Extract symbol tables from dictionary pages
-        let symbol_tables = extract_symbol_tables(&self.file_metadata, file_bytes, rg_idx)?;
-
-        // Extract schema metadata into local storage so that the partition
-        // borrows from locals rather than from self.file_metadata.
-        let schema_cols = extract_schema_column_meta(&self.file_metadata);
-
-        // Build partition from decoded buffers
-        let row_count = row_hi + 1 - row_lo;
-        let partition = build_partition_from_decoded(
-            &schema_cols,
-            &decoder,
-            &row_group_bufs,
-            &symbol_tables,
-            row_count,
-        )?;
-
-        // Re-encode and write the row group.
-        self.replace_row_group(&partition, rg_index)
-    }
-
     fn row_group_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.parquet_file.options().write_statistics,
@@ -495,223 +452,6 @@ impl ParquetUpdater {
             raw_array_encoding: self.raw_array_encoding,
         }
     }
-}
-
-type SymbolTables = Vec<Option<(Vec<u8>, Vec<u64>)>>;
-
-/// Extract QDB-format symbol tables from parquet dictionary pages.
-/// Returns one entry per column: `Some((chars, offsets))` for symbol columns,
-/// `None` for non-symbol columns.
-fn extract_symbol_tables(
-    file_metadata: &FileMetaData,
-    file_bytes: &[u8],
-    rg_idx: usize,
-) -> ParquetResult<SymbolTables> {
-    use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
-    use parquet2::page::CompressedPage;
-    use parquet2::read::{decompress, PageMetaData, PageReader};
-    use qdb_core::col_type::ColumnTypeTag;
-    use std::io::Cursor;
-    use std::sync::Arc;
-
-    let rg_meta = &file_metadata.row_groups[rg_idx];
-    let num_cols = rg_meta.columns().len();
-
-    let qdb_meta = file_metadata.key_value_metadata.as_ref().and_then(|kvs| {
-        kvs.iter()
-            .find(|kv| kv.key == QDB_META_KEY)
-            .and_then(|kv| kv.value.as_ref())
-            .and_then(|v| QdbMeta::deserialize(v).ok())
-    });
-
-    let mut result = Vec::with_capacity(num_cols);
-
-    for col_idx in 0..num_cols {
-        let is_symbol = qdb_meta
-            .as_ref()
-            .and_then(|m| m.schema.get(col_idx))
-            .map(|c| c.column_type.tag() == ColumnTypeTag::Symbol)
-            .unwrap_or(false);
-
-        if !is_symbol {
-            result.push(None);
-            continue;
-        }
-
-        // Read the dictionary page for this symbol column
-        let col_meta = &rg_meta.columns()[col_idx];
-        let (col_start, col_len) = col_meta.byte_range();
-        let col_end = (col_start + col_len) as usize;
-
-        if col_end > file_bytes.len() {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "column chunk byte range [{}, {}) exceeds file size {}",
-                col_start,
-                col_end,
-                file_bytes.len()
-            ));
-        }
-
-        let col_start = col_start as usize;
-        let page_meta = PageMetaData::from(col_meta);
-        let page_reader = PageReader::new_with_page_meta(
-            Cursor::new(&file_bytes[col_start..col_end]),
-            page_meta,
-            Arc::new(|_, _| true),
-            vec![],
-            col_end - col_start,
-        );
-
-        let mut found_dict = false;
-        for page_result in page_reader {
-            let page = page_result?;
-            if let CompressedPage::Dict(_) = &page {
-                let mut decompress_buf = vec![];
-                let decompressed = decompress(page, &mut decompress_buf)?;
-                if let parquet2::page::Page::Dict(ref dict) = decompressed {
-                    result.push(Some(dict_page_to_qdb_symbol_table(dict)?));
-                    found_dict = true;
-                }
-                break;
-            }
-        }
-
-        if !found_dict {
-            // Symbol column with no dict page (e.g. all-null column)
-            result.push(Some((vec![], vec![])));
-        }
-    }
-
-    Ok(result)
-}
-
-/// Convert a parquet dictionary page (BYTE_ARRAY entries in UTF-8) to
-/// QuestDB's symbol table format (UTF-16 LE chars blob + byte offsets).
-fn dict_page_to_qdb_symbol_table(
-    dict: &parquet2::page::DictPage,
-) -> ParquetResult<(Vec<u8>, Vec<u64>)> {
-    let mut chars_buf = Vec::new();
-    let mut offsets = Vec::new();
-    let buf = &dict.buffer;
-    let mut pos = 0;
-
-    for _ in 0..dict.num_values {
-        offsets.push(chars_buf.len() as u64);
-
-        if pos + 4 > buf.len() {
-            return Err(fmt_err!(InvalidLayout, "truncated dictionary page"));
-        }
-        let byte_len = u32::from_le_bytes(buf[pos..pos + 4].try_into().unwrap()) as usize;
-        pos += 4;
-
-        if pos + byte_len > buf.len() {
-            return Err(fmt_err!(InvalidLayout, "truncated dictionary page entry"));
-        }
-        let utf8_bytes = &buf[pos..pos + byte_len];
-        pos += byte_len;
-
-        // Convert UTF-8 to UTF-16 LE (QuestDB's symbol format)
-        let utf8_str = std::str::from_utf8(utf8_bytes)
-            .map_err(|_| fmt_err!(InvalidLayout, "invalid UTF-8 in dictionary page"))?;
-        let utf16_chars: Vec<u16> = utf8_str.encode_utf16().collect();
-        let char_count = utf16_chars.len() as u32;
-        chars_buf.extend_from_slice(&char_count.to_le_bytes());
-        for c in &utf16_chars {
-            chars_buf.extend_from_slice(&c.to_le_bytes());
-        }
-    }
-
-    Ok((chars_buf, offsets))
-}
-
-/// Column metadata extracted from the parquet schema, owned so it doesn't
-/// borrow `FileMetaData`.
-struct SchemaColumnMeta {
-    name: String,
-    id: i32,
-    required: bool,
-}
-
-/// Extract per-column metadata from the parquet schema descriptor.
-fn extract_schema_column_meta(file_metadata: &FileMetaData) -> Vec<SchemaColumnMeta> {
-    use parquet2::schema::Repetition;
-
-    file_metadata
-        .schema_descr
-        .columns()
-        .iter()
-        .map(|schema_col| {
-            let field_info = &schema_col.descriptor.primitive_type.field_info;
-            SchemaColumnMeta {
-                name: field_info.name.clone(),
-                id: field_info.id.unwrap_or(0),
-                required: field_info.repetition == Repetition::Required,
-            }
-        })
-        .collect()
-}
-
-/// Build a `Partition` from decoded row group buffers.
-/// For symbol columns, uses the provided symbol tables.
-fn build_partition_from_decoded<'a>(
-    schema_cols: &'a [SchemaColumnMeta],
-    decoder: &crate::parquet_read::ParquetDecoder,
-    row_group_bufs: &'a crate::parquet_read::RowGroupBuffers,
-    symbol_tables: &'a [Option<(Vec<u8>, Vec<u64>)>],
-    row_count: usize,
-) -> ParquetResult<Partition<'a>> {
-    use crate::parquet_write::schema::Column;
-    use qdb_core::col_type::ColumnTypeTag;
-
-    let num_cols = decoder.col_count as usize;
-    let col_bufs = row_group_bufs.column_buffers();
-    let mut columns = Vec::with_capacity(num_cols);
-
-    for col_idx in 0..num_cols {
-        let column_type = decoder.columns[col_idx]
-            .column_type
-            .ok_or_else(|| fmt_err!(InvalidType, "unsupported column type at index {}", col_idx))?;
-
-        let col_buf = &col_bufs[col_idx];
-        let meta = &schema_cols[col_idx];
-
-        // SAFETY: col_buf.data_ptr points into row_group_bufs which is borrowed for 'a.
-        let primary_data =
-            unsafe { std::slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size) };
-
-        let (secondary_data, sym_offsets): (&[u8], &[u64]) =
-            if column_type.tag() == ColumnTypeTag::Symbol {
-                if let Some(Some((chars, off))) = symbol_tables.get(col_idx) {
-                    (chars.as_slice(), off.as_slice())
-                } else {
-                    (&[], &[])
-                }
-            } else {
-                let aux = unsafe {
-                    std::slice::from_raw_parts(col_buf.aux_ptr as *const u8, col_buf.aux_size)
-                };
-                (aux, &[])
-            };
-
-        let column = Column {
-            id: meta.id,
-            name: &meta.name,
-            data_type: column_type,
-            row_count,
-            column_top: 0,
-            primary_data,
-            secondary_data,
-            symbol_offsets: sym_offsets,
-            designated_timestamp: false,
-            required: meta.required,
-            designated_timestamp_ascending: true,
-        };
-
-        columns.push(column);
-    }
-
-    Ok(Partition { table: "slice".to_string(), columns })
 }
 
 #[cfg(test)]

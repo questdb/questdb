@@ -55,6 +55,10 @@ impl<'a, W: Write> SharedWriter<'a, W> {
     fn bytes_written(&self) -> u64 {
         self.0.borrow().1
     }
+
+    fn flush(&self) -> std::io::Result<()> {
+        self.0.borrow_mut().0.flush()
+    }
 }
 
 impl<W: Write> std::io::Write for &SharedWriter<'_, W> {
@@ -194,6 +198,9 @@ fn end_file_incremental<W: Write>(
     // Write footer through the raw writer (protocol is dropped, RefCell is
     // no longer borrowed).
     shared.write_raw(&footer_buffer)?;
+    // No-op for unbuffered writers (e.g. File), but needed for consistency
+    // with end_file() if the writer is ever wrapped in a BufWriter.
+    shared.flush()?;
 
     Ok(bytes_written + FOOTER_SIZE)
 }

@@ -156,7 +156,7 @@ public class O3ParquetMergeStrategy {
         if (rowGroupCount == 0) {
             // No existing row groups - all O3 data becomes new row groups
             if (srcOooLo <= srcOooHi) {
-                actionCount = addCopyO3Actions(actions, actionCount, srcOooLo, srcOooHi, maxRowGroupSize);
+                actionCount = addCopyO3Actions(actions, actionCount, srcOooLo, srcOooHi, maxRowGroupSize, smallRowGroupThreshold);
             }
             setActionsSize(actions, actionCount);
             return;
@@ -269,7 +269,7 @@ public class O3ParquetMergeStrategy {
         for (int rg = 0; rg < rowGroupCount; rg++) {
             // First, emit any COPY_O3 for gap before this row group
             if (getRangeLo(gapO3Ranges, rg) >= 0) {
-                actionCount = addCopyO3Actions(actions, actionCount, getRangeLo(gapO3Ranges, rg), getRangeHi(gapO3Ranges, rg), maxRowGroupSize);
+                actionCount = addCopyO3Actions(actions, actionCount, getRangeLo(gapO3Ranges, rg), getRangeHi(gapO3Ranges, rg), maxRowGroupSize, smallRowGroupThreshold);
             }
 
             // Then, emit action for this row group
@@ -283,34 +283,40 @@ public class O3ParquetMergeStrategy {
 
         // Finally, emit any COPY_O3 for gap after last row group
         if (getRangeLo(gapO3Ranges, rowGroupCount) >= 0) {
-            actionCount = addCopyO3Actions(actions, actionCount, getRangeLo(gapO3Ranges, rowGroupCount), getRangeHi(gapO3Ranges, rowGroupCount), maxRowGroupSize);
+            actionCount = addCopyO3Actions(actions, actionCount, getRangeLo(gapO3Ranges, rowGroupCount), getRangeHi(gapO3Ranges, rowGroupCount), maxRowGroupSize, smallRowGroupThreshold);
         }
 
         setActionsSize(actions, actionCount);
     }
 
     /**
-     * Emits one or more COPY_O3 actions, splitting the range into evenly-sized chunks.
-     * Each chunk gets between 0.75x and 1.5x maxRowGroupSize rows.
+     * Emits one or more COPY_O3 actions, splitting the range into chunks of
+     * maxRowGroupSize rows. If the last chunk would be smaller than
+     * smallRowGroupThreshold, it absorbs the remainder into the previous chunk
+     * (up to 1.5x maxRowGroupSize).
      *
      * @return the updated actionCount
      */
-    private static int addCopyO3Actions(ObjList<MergeAction> actions, int actionCount, long o3Lo, long o3Hi, int maxRowGroupSize) {
+    private static int addCopyO3Actions(ObjList<MergeAction> actions, int actionCount, long o3Lo, long o3Hi, int maxRowGroupSize, int smallRowGroupThreshold) {
         assert maxRowGroupSize > 0 : "maxRowGroupSize must be > 0";
-        long totalRows = o3Hi - o3Lo + 1;
-        int numChunks;
-        if (2L * totalRows > 3L * maxRowGroupSize) {
-            numChunks = (int) ((2L * totalRows + 3L * maxRowGroupSize - 1) / (3L * maxRowGroupSize));
-        } else {
-            numChunks = 1;
-        }
-        long baseChunkSize = totalRows / numChunks;
-        long extraRows = totalRows % numChunks;
         long cursor = o3Lo;
-        for (int i = 0; i < numChunks; i++) {
-            long chunkSize = baseChunkSize + (i < extraRows ? 1 : 0);
-            nextAction(actions, actionCount++).setCopyO3(cursor, cursor + chunkSize - 1);
-            cursor += chunkSize;
+        while (cursor <= o3Hi) {
+            long remaining = o3Hi - cursor + 1;
+            if (remaining <= maxRowGroupSize) {
+                // Last (or only) chunk: emit whatever remains
+                nextAction(actions, actionCount++).setCopyO3(cursor, o3Hi);
+                break;
+            }
+            long afterChunk = remaining - maxRowGroupSize;
+            if (afterChunk < smallRowGroupThreshold && afterChunk + maxRowGroupSize <= maxRowGroupSize * 3L / 2) {
+                // Remainder after this chunk would be below the small row group
+                // threshold. Absorb it to avoid producing an undersized row group.
+                nextAction(actions, actionCount++).setCopyO3(cursor, o3Hi);
+                break;
+            }
+            long chunkEnd = cursor + maxRowGroupSize - 1;
+            nextAction(actions, actionCount++).setCopyO3(cursor, chunkEnd);
+            cursor = chunkEnd + 1;
         }
         return actionCount;
     }

@@ -117,16 +117,6 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
-    public void sliceRowGroup(short rowGroupIndex, int rowLo, int rowHi, long filePtr, long fileSize) {
-        assert ptr != 0;
-        assert rowGroupIndex >= 0 : "rowGroupIndex must be >= 0, got " + rowGroupIndex;
-        assert rowLo >= 0 : "rowLo must be >= 0, got " + rowLo;
-        assert rowHi >= rowLo : "rowHi must be >= rowLo, got rowLo=" + rowLo + " rowHi=" + rowHi;
-        assert filePtr != 0 : "filePtr must not be 0";
-        assert fileSize > 0 : "fileSize must be > 0, got " + fileSize;
-        sliceRowGroup(ptr, rowGroupIndex, rowLo, rowHi, filePtr, fileSize);
-    }
-
     public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
@@ -188,15 +178,6 @@ public class PartitionUpdater implements QuietCloseable {
             long columnDataSize,
             int timestampIndex,
             long rowCount
-    ) throws CairoException;
-
-    private static native void sliceRowGroup(
-            long impl,
-            short rowGroupIndex,
-            int rowLo,
-            int rowHi,
-            long filePtr,
-            long fileSize
     ) throws CairoException;
 
     // throws CairoException on error, returns file size

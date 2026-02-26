@@ -86,6 +86,273 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxRowGroupSizeSplitting() throws Exception {
+        assertMemoryLeak(() -> {
+            ObjList<MergeAction> actions = new ObjList<>();
+            LongList rowGroupBounds = new LongList();
+            LongList rgO3Ranges = new LongList();
+            LongList gapO3Ranges = new LongList();
+
+            // --- Case 1: totalRows <= maxRowGroupSize -> single COPY_O3, no split ---
+            // 10 O3 rows with maxRowGroupSize=10 -> fits in 1 chunk
+            long addr = allocateSortedTimestamps(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+            try {
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 9,
+                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                );
+                Assert.assertEquals(1, actions.size());
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(0).type);
+                Assert.assertEquals(0, actions.get(0).o3Lo);
+                Assert.assertEquals(9, actions.get(0).o3Hi);
+            } finally {
+                freeSortedTimestamps(addr, 10);
+            }
+
+            // --- Case 2: totalRows = maxRowGroupSize + 1 -> 2 chunks: full + remainder of 1 ---
+            long[] ts11 = new long[11];
+            for (int i = 0; i < 11; i++) {
+                ts11[i] = i + 1;
+            }
+            addr = allocateSortedTimestamps(ts11);
+            try {
+                actions.clear();
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 10,
+                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                );
+                Assert.assertEquals(2, actions.size());
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(0).type);
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(1).type);
+                Assert.assertEquals(10, actions.get(0).o3Hi - actions.get(0).o3Lo + 1);
+                Assert.assertEquals(1, actions.get(1).o3Hi - actions.get(1).o3Lo + 1);
+                // Contiguous
+                Assert.assertEquals(0, actions.get(0).o3Lo);
+                Assert.assertEquals(actions.get(0).o3Hi + 1, actions.get(1).o3Lo);
+                Assert.assertEquals(10, actions.get(1).o3Hi);
+            } finally {
+                freeSortedTimestamps(addr, 11);
+            }
+
+            // --- Case 3: totalRows = 3x -> 3 chunks of exactly maxRowGroupSize ---
+            long[] ts30 = new long[30];
+            for (int i = 0; i < 30; i++) {
+                ts30[i] = i + 1;
+            }
+            addr = allocateSortedTimestamps(ts30);
+            try {
+                actions.clear();
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 29,
+                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                );
+                Assert.assertEquals(3, actions.size());
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(ActionType.COPY_O3, actions.get(i).type);
+                    Assert.assertEquals(10, actions.get(i).o3Hi - actions.get(i).o3Lo + 1);
+                }
+            } finally {
+                freeSortedTimestamps(addr, 30);
+            }
+
+            // --- Case 4: totalRows = 3x + 7 -> 3 full chunks + remainder of 7 ---
+            // e.g. 1.07M rows with 100K max -> 10 full + 70K remainder
+            long[] ts37 = new long[37];
+            for (int i = 0; i < 37; i++) {
+                ts37[i] = i + 1;
+            }
+            addr = allocateSortedTimestamps(ts37);
+            try {
+                actions.clear();
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 36,
+                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                );
+                Assert.assertEquals(4, actions.size());
+                // First 3 chunks are exactly maxRowGroupSize
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(ActionType.COPY_O3, actions.get(i).type);
+                    Assert.assertEquals(10, actions.get(i).o3Hi - actions.get(i).o3Lo + 1);
+                }
+                // Last chunk is the remainder
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(3).type);
+                Assert.assertEquals(7, actions.get(3).o3Hi - actions.get(3).o3Lo + 1);
+            } finally {
+                freeSortedTimestamps(addr, 37);
+            }
+
+            // --- Case 5: single row -> 1 chunk of 1 row ---
+            addr = allocateSortedTimestamps(42);
+            try {
+                actions.clear();
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 0,
+                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                );
+                Assert.assertEquals(1, actions.size());
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(0).type);
+                Assert.assertEquals(0, actions.get(0).o3Lo);
+                Assert.assertEquals(0, actions.get(0).o3Hi);
+            } finally {
+                freeSortedTimestamps(addr, 1);
+            }
+
+            // --- Case 6: splitting in gap between existing row groups ---
+            rowGroupBounds.clear();
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 1, 10, 10_000);
+            O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 110, 10_000);
+            // 25 O3 rows in the gap [50..74], maxRowGroupSize=10 -> 2 full + remainder of 5
+            long[] tsGap = new long[25];
+            for (int i = 0; i < 25; i++) {
+                tsGap[i] = 50 + i;
+            }
+            addr = allocateSortedTimestamps(tsGap);
+            try {
+                actions.clear();
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, 24,
+                        0, 10, actions, rgO3Ranges, gapO3Ranges
+                );
+                // Expected: COPY_ROW_GROUP_SLICE(rg0), COPY_O3(10), COPY_O3(10), COPY_O3(5), COPY_ROW_GROUP_SLICE(rg1)
+                Assert.assertEquals(5, actions.size());
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(0).type);
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(1).type);
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(2).type);
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(3).type);
+                Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actions.get(4).type);
+                Assert.assertEquals(10, actions.get(1).o3Hi - actions.get(1).o3Lo + 1);
+                Assert.assertEquals(10, actions.get(2).o3Hi - actions.get(2).o3Lo + 1);
+                Assert.assertEquals(5, actions.get(3).o3Hi - actions.get(3).o3Lo + 1);
+            } finally {
+                freeSortedTimestamps(addr, 25);
+            }
+
+            // --- Case 7: 1_010_000 rows, maxRgSize=100K, threshold=25K ---
+            // Remainder of 10K < 25K threshold -> absorbed into last chunk: 9x100K + 110K
+            int totalRows = 1_010_000;
+            int maxRgSize = 100_000;
+            int smallRgThreshold = maxRgSize / 4; // 25_000
+            rowGroupBounds.clear();
+            long[] tsLarge = new long[totalRows];
+            for (int i = 0; i < totalRows; i++) {
+                tsLarge[i] = i + 1;
+            }
+            addr = allocateSortedTimestamps(tsLarge);
+            try {
+                actions.clear();
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, totalRows - 1,
+                        smallRgThreshold, maxRgSize, actions, rgO3Ranges, gapO3Ranges
+                );
+                Assert.assertEquals(10, actions.size());
+                for (int i = 0; i < 9; i++) {
+                    Assert.assertEquals(ActionType.COPY_O3, actions.get(i).type);
+                    Assert.assertEquals(maxRgSize, actions.get(i).o3Hi - actions.get(i).o3Lo + 1);
+                }
+                // Last chunk absorbed the 10K remainder: 100K + 10K = 110K
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(9).type);
+                Assert.assertEquals(110_000, actions.get(9).o3Hi - actions.get(9).o3Lo + 1);
+            } finally {
+                freeSortedTimestamps(addr, totalRows);
+            }
+
+            // --- Case 8: 1_070_000 rows, remainder >= threshold -> no absorption ---
+            // Remainder of 70K >= 25K threshold -> kept separate: 10x100K + 70K
+            totalRows = 1_070_000;
+            long[] tsLarge2 = new long[totalRows];
+            for (int i = 0; i < totalRows; i++) {
+                tsLarge2[i] = i + 1;
+            }
+            addr = allocateSortedTimestamps(tsLarge2);
+            try {
+                actions.clear();
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, totalRows - 1,
+                        smallRgThreshold, maxRgSize, actions, rgO3Ranges, gapO3Ranges
+                );
+                Assert.assertEquals(11, actions.size());
+                for (int i = 0; i < 10; i++) {
+                    Assert.assertEquals(ActionType.COPY_O3, actions.get(i).type);
+                    Assert.assertEquals(maxRgSize, actions.get(i).o3Hi - actions.get(i).o3Lo + 1);
+                }
+                // Last chunk is 70K, above threshold, not absorbed
+                Assert.assertEquals(ActionType.COPY_O3, actions.get(10).type);
+                Assert.assertEquals(70_000, actions.get(10).o3Hi - actions.get(10).o3Lo + 1);
+            } finally {
+                freeSortedTimestamps(addr, totalRows);
+            }
+        });
+    }
+
+    @Test
+    public void testMaxRowGroupSizeSplittingFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            ObjList<MergeAction> actions = new ObjList<>();
+            LongList rowGroupBounds = new LongList();
+            LongList rgO3Ranges = new LongList();
+            LongList gapO3Ranges = new LongList();
+
+            int maxRgSize = 100_000;
+            int smallRgThreshold = maxRgSize / 4;
+            java.util.Random rnd = new java.util.Random(42);
+
+            int totalRows = 1 + rnd.nextInt(2_000_000);
+            rowGroupBounds.clear();
+            long[] ts = new long[totalRows];
+            for (int i = 0; i < totalRows; i++) {
+                ts[i] = i + 1;
+            }
+            long addr = allocateSortedTimestamps(ts);
+            try {
+                actions.clear();
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds, addr, 0, totalRows - 1,
+                        smallRgThreshold, maxRgSize, actions, rgO3Ranges, gapO3Ranges
+                );
+
+                // Verify total row count matches
+                long totalEmitted = 0;
+                int nonExactCount = 0;
+                for (int i = 0; i < actions.size(); i++) {
+                    MergeAction a = actions.get(i);
+                    Assert.assertEquals(ActionType.COPY_O3, a.type);
+                    long chunkSize = a.o3Hi - a.o3Lo + 1;
+                    totalEmitted += chunkSize;
+
+                    if (chunkSize != maxRgSize) {
+                        nonExactCount++;
+                    }
+
+                    if (actions.size() > 1) {
+                        // Multiple chunks: each must be > threshold/4 and <= 1.5x
+                        Assert.assertTrue(
+                                "chunk " + i + " size " + chunkSize + " < " + smallRgThreshold
+                                        + " (totalRows=" + totalRows + ")",
+                                chunkSize >= smallRgThreshold
+                        );
+                        Assert.assertTrue(
+                                "chunk " + i + " size " + chunkSize + " > 1.5x " + maxRgSize
+                                        + " (totalRows=" + totalRows + ")",
+                                chunkSize <= maxRgSize * 3L / 2
+                        );
+                    }
+                }
+
+                Assert.assertEquals("total rows mismatch", totalRows, totalEmitted);
+
+                // At most 1 row group can differ from maxRowGroupSize
+                Assert.assertTrue(
+                        "more than 1 non-exact chunk: " + nonExactCount
+                                + " (totalRows=" + totalRows + ")",
+                        nonExactCount <= 1
+                );
+            } finally {
+                freeSortedTimestamps(addr, totalRows);
+            }
+        });
+    }
+
+    @Test
     public void testMergeActionHelpers() {
         MergeAction action = new MergeAction();
 
