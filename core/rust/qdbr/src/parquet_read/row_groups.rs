@@ -6,10 +6,12 @@ use crate::parquet_read::decode::{
     decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
     page_row_count, sliced_page_row_count,
 };
+use crate::parquet_read::page::DataPage;
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, DecodeContext, RowGroupStatBuffers};
 use nonmax::NonMaxU32;
+use parquet2::encoding::Encoding;
 use parquet2::metadata::FileMetaData;
-use parquet2::read::{SlicePageReader, SlicedPage};
+use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedPage};
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::{cmp, ptr, slice};
 
@@ -64,6 +66,31 @@ impl RowGroupBuffers {
 
     pub fn column_buffers(&self) -> &AcVec<ColumnChunkBuffers> {
         &self.column_bufs
+    }
+}
+
+/// Decompress a varchar_slice data page, choosing the buffer strategy based on encoding.
+///
+/// For dictionary and DeltaByteArray encodings, aux entries don't reference
+/// the data page buffer (they point to the dict buffer or `data_vec`), so
+/// the buffer can be reused. For other encodings (Plain, DeltaLengthByteArray),
+/// aux entries point directly into the page buffer, so it must persist.
+fn decompress_varchar_slice_data<'a>(
+    page: &'a SlicedDataPage<'a>,
+    reusable_buf: &'a mut Vec<u8>,
+    persistent_bufs: &'a mut Vec<Vec<u8>>,
+    buf_pool: &mut Vec<Vec<u8>>,
+) -> ParquetResult<DataPage<'a>> {
+    match page.encoding() {
+        Encoding::RleDictionary | Encoding::PlainDictionary | Encoding::DeltaByteArray => {
+            decompress_sliced_data(page, reusable_buf)
+        }
+        _ => {
+            let mut buf = buf_pool.pop().unwrap_or_default();
+            buf.clear();
+            persistent_bufs.push(buf);
+            decompress_sliced_data(page, persistent_bufs.last_mut().unwrap())
+        }
     }
 }
 
@@ -333,14 +360,20 @@ impl ParquetDecoder {
         let mut filter_idx = 0usize;
         let filter_count = rows_filter.len();
 
+        let is_varchar_slice = col_info.column_type.tag() == ColumnTypeTag::VarcharSlice;
+
+        let DecodeContext {
+            decompress_buffer,
+            dict_decompress_buffer,
+            varchar_slice_buf_pool,
+            varchar_slice_dict_buf,
+            ..
+        } = ctx;
+
+        varchar_slice_buf_pool.extend(column_chunk_bufs.page_buffers.drain(..));
         column_chunk_bufs.reset();
 
-        let is_varchar_slice = col_info.column_type.tag() == ColumnTypeTag::VarcharSlice;
         let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
-        let mut varchar_slice_dict_buf: Vec<u8> = Vec::new();
-
-        let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
-        let decompress_buffer = &mut ctx.decompress_buffer;
 
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
@@ -348,7 +381,7 @@ impl ParquetDecoder {
             match sliced_page {
                 SlicedPage::Dict(dict_page) => {
                     let page = if is_varchar_slice {
-                        decompress_sliced_dict(dict_page, &mut varchar_slice_dict_buf)?
+                        decompress_sliced_dict(dict_page, varchar_slice_dict_buf)?
                     } else {
                         decompress_sliced_dict(dict_page, dict_decompress_buffer)?
                     };
@@ -383,10 +416,11 @@ impl ParquetDecoder {
                             let row_lo = row_group_lo.saturating_sub(page_row_start);
                             let row_hi = (row_group_hi - page_row_start).min(page_row_count);
                             let page = if is_varchar_slice {
-                                varchar_slice_page_bufs.push(Vec::new());
-                                decompress_sliced_data(
+                                decompress_varchar_slice_data(
                                     &page,
-                                    varchar_slice_page_bufs.last_mut().unwrap(),
+                                    decompress_buffer,
+                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_buf_pool,
                                 )?
                             } else {
                                 decompress_sliced_data(&page, decompress_buffer)?
@@ -416,10 +450,11 @@ impl ParquetDecoder {
                             })?;
                         } else if page_filter_start < filter_idx {
                             let page = if is_varchar_slice {
-                                varchar_slice_page_bufs.push(Vec::new());
-                                decompress_sliced_data(
+                                decompress_varchar_slice_data(
                                     &page,
-                                    varchar_slice_page_bufs.last_mut().unwrap(),
+                                    decompress_buffer,
+                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_buf_pool,
                                 )?
                             } else {
                                 decompress_sliced_data(&page, decompress_buffer)?
@@ -455,10 +490,11 @@ impl ParquetDecoder {
                         }
 
                         let page = if is_varchar_slice {
-                            varchar_slice_page_bufs.push(Vec::new());
-                            decompress_sliced_data(
+                            decompress_varchar_slice_data(
                                 &page,
-                                varchar_slice_page_bufs.last_mut().unwrap(),
+                                decompress_buffer,
+                                &mut varchar_slice_page_bufs,
+                                varchar_slice_buf_pool,
                             )?
                         } else {
                             decompress_sliced_data(&page, decompress_buffer)?
@@ -542,16 +578,15 @@ impl ParquetDecoder {
         }
 
         if is_varchar_slice {
-            // DeltaByteArray spill entries store offsets into data_vec.
-            // Convert to absolute pointers now that all pages are decoded
-            // and data_vec won't reallocate again.
             if !column_chunk_bufs.data_vec.is_empty() {
                 fixup_varchar_slice_spill_pointers(column_chunk_bufs);
             }
-
             column_chunk_bufs.page_buffers = varchar_slice_page_bufs;
             if !varchar_slice_dict_buf.is_empty() {
-                column_chunk_bufs.page_buffers.push(varchar_slice_dict_buf);
+                let replacement = varchar_slice_buf_pool.pop().unwrap_or_default();
+                column_chunk_bufs
+                    .page_buffers
+                    .push(std::mem::replace(varchar_slice_dict_buf, replacement));
             }
         }
 
@@ -595,14 +630,20 @@ impl ParquetDecoder {
         let mut dict = None;
         let mut row_count = 0usize;
 
+        let is_varchar_slice = col_info.column_type.tag() == ColumnTypeTag::VarcharSlice;
+
+        let DecodeContext {
+            decompress_buffer,
+            dict_decompress_buffer,
+            varchar_slice_buf_pool,
+            varchar_slice_dict_buf,
+            ..
+        } = ctx;
+
+        varchar_slice_buf_pool.extend(column_chunk_bufs.page_buffers.drain(..));
         column_chunk_bufs.reset();
 
-        let is_varchar_slice = col_info.column_type.tag() == ColumnTypeTag::VarcharSlice;
         let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
-        let mut varchar_slice_dict_buf: Vec<u8> = Vec::new();
-
-        let dict_decompress_buffer = &mut ctx.dict_decompress_buffer;
-        let decompress_buffer = &mut ctx.decompress_buffer;
 
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
@@ -610,7 +651,7 @@ impl ParquetDecoder {
             match sliced_page {
                 SlicedPage::Dict(dict_page) => {
                     let page = if is_varchar_slice {
-                        decompress_sliced_dict(dict_page, &mut varchar_slice_dict_buf)?
+                        decompress_sliced_dict(dict_page, varchar_slice_dict_buf)?
                     } else {
                         decompress_sliced_dict(dict_page, dict_decompress_buffer)?
                     };
@@ -622,10 +663,11 @@ impl ParquetDecoder {
                     if let Some(page_row_count) = page_row_count_opt {
                         if row_group_lo < row_count + page_row_count && row_group_hi > row_count {
                             let page = if is_varchar_slice {
-                                varchar_slice_page_bufs.push(Vec::new());
-                                decompress_sliced_data(
+                                decompress_varchar_slice_data(
                                     &page,
-                                    varchar_slice_page_bufs.last_mut().unwrap(),
+                                    decompress_buffer,
+                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_buf_pool,
                                 )?
                             } else {
                                 decompress_sliced_data(&page, decompress_buffer)?
@@ -653,10 +695,11 @@ impl ParquetDecoder {
                         row_count += page_row_count;
                     } else {
                         let page = if is_varchar_slice {
-                            varchar_slice_page_bufs.push(Vec::new());
-                            decompress_sliced_data(
+                            decompress_varchar_slice_data(
                                 &page,
-                                varchar_slice_page_bufs.last_mut().unwrap(),
+                                decompress_buffer,
+                                &mut varchar_slice_page_bufs,
+                                varchar_slice_buf_pool,
                             )?
                         } else {
                             decompress_sliced_data(&page, decompress_buffer)?
@@ -691,16 +734,15 @@ impl ParquetDecoder {
         }
 
         if is_varchar_slice {
-            // DeltaByteArray spill entries store offsets into data_vec.
-            // Convert to absolute pointers now that all pages are decoded
-            // and data_vec won't reallocate again.
             if !column_chunk_bufs.data_vec.is_empty() {
                 fixup_varchar_slice_spill_pointers(column_chunk_bufs);
             }
-
             column_chunk_bufs.page_buffers = varchar_slice_page_bufs;
             if !varchar_slice_dict_buf.is_empty() {
-                column_chunk_bufs.page_buffers.push(varchar_slice_dict_buf);
+                let replacement = varchar_slice_buf_pool.pop().unwrap_or_default();
+                column_chunk_bufs
+                    .page_buffers
+                    .push(std::mem::replace(varchar_slice_dict_buf, replacement));
             }
         }
 
