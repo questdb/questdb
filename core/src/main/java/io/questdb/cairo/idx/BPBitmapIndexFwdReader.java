@@ -399,19 +399,44 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
             int genDataSize = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_SIZE);
             int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
-            if (requestedKey >= genKeyCount) {
-                this.encodedBlockCount = 0;
-                this.currentBlock = 0;
-                this.blockBufferPos = 0;
-                this.blockBufferEnd = 0;
-                return;
-            }
-
             valueMem.extend(genFileOffset + genDataSize);
             long genAddr = valueMem.addressOf(genFileOffset);
-            int headerSize = BPBitmapIndexUtils.genHeaderSize(genKeyCount);
 
-            this.totalValueCount = Unsafe.getUnsafe().getInt(genAddr + (long) requestedKey * Integer.BYTES);
+            int headerSize;
+            if (genKeyCount < 0) {
+                // Sparse format
+                int activeKeyCount = -genKeyCount;
+                int idx = BPBitmapIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, requestedKey);
+                if (idx < 0) {
+                    this.encodedBlockCount = 0;
+                    this.currentBlock = 0;
+                    this.blockBufferPos = 0;
+                    this.blockBufferEnd = 0;
+                    return;
+                }
+
+                headerSize = BPBitmapIndexUtils.genHeaderSizeSparse(activeKeyCount);
+                long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+                long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+                this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
+                int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
+                this.encodedAddr = genAddr + headerSize + dataOffset;
+            } else {
+                // Dense format
+                if (requestedKey >= genKeyCount) {
+                    this.encodedBlockCount = 0;
+                    this.currentBlock = 0;
+                    this.blockBufferPos = 0;
+                    this.blockBufferEnd = 0;
+                    return;
+                }
+
+                headerSize = BPBitmapIndexUtils.genHeaderSize(genKeyCount);
+                this.totalValueCount = Unsafe.getUnsafe().getInt(genAddr + (long) requestedKey * Integer.BYTES);
+                int dataOffset = Unsafe.getUnsafe().getInt(genAddr + (long) genKeyCount * Integer.BYTES + (long) requestedKey * Integer.BYTES);
+                this.encodedAddr = genAddr + headerSize + dataOffset;
+            }
+
             if (totalValueCount == 0) {
                 this.encodedBlockCount = 0;
                 this.currentBlock = 0;
@@ -419,9 +444,6 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
                 this.blockBufferEnd = 0;
                 return;
             }
-
-            int dataOffset = Unsafe.getUnsafe().getInt(genAddr + (long) genKeyCount * Integer.BYTES + (long) requestedKey * Integer.BYTES);
-            this.encodedAddr = genAddr + headerSize + dataOffset;
 
             // Read block metadata from encoded data (reuse pre-allocated arrays)
             long pos = encodedAddr;

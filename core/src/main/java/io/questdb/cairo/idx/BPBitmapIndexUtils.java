@@ -60,12 +60,21 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * </pre>
  * <p>
  * Generation Format (one per commit, covers all keys):
+ * <p>
+ * Dense format (genKeyCount >= 0 in directory, used by seal):
  * <pre>
  * [Per-key counts: keyCount × 4B]
  * [Per-key offsets: keyCount × 4B — byte offset into encoded data]
  * [Key 0 BP-encoded data]
  * [Key 1 BP-encoded data]
  * ...
+ * </pre>
+ * Sparse format (genKeyCount < 0 in directory, |genKeyCount| = active keys, used by commit):
+ * <pre>
+ * [keyIds:  activeKeyCount × 4B — sorted ascending, for binary search]
+ * [counts:  activeKeyCount × 4B — indexed by position in keyIds]
+ * [offsets: activeKeyCount × 4B — indexed by position in keyIds]
+ * [Key data...]
  * </pre>
  */
 public final class BPBitmapIndexUtils {
@@ -332,10 +341,38 @@ public final class BPBitmapIndexUtils {
     }
 
     /**
-     * Size of the per-generation header: counts + offsets for all keys.
+     * Size of the per-generation dense header: counts + offsets for all keys.
      */
     public static int genHeaderSize(int keyCount) {
         return keyCount * Integer.BYTES * 2;
+    }
+
+    /**
+     * Size of the per-generation sparse header: keyIds + counts + offsets for active keys only.
+     */
+    public static int genHeaderSizeSparse(int activeKeyCount) {
+        return activeKeyCount * Integer.BYTES * 3;
+    }
+
+    /**
+     * Binary search for a key ID in a sorted keyIds array stored at native memory.
+     *
+     * @return index of the key in the array, or -1 if not found
+     */
+    public static int binarySearchKeyId(long keyIdsAddr, int activeKeyCount, int key) {
+        int lo = 0, hi = activeKeyCount - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int midKey = Unsafe.getUnsafe().getInt(keyIdsAddr + (long) mid * Integer.BYTES);
+            if (midKey < key) {
+                lo = mid + 1;
+            } else if (midKey > key) {
+                hi = mid - 1;
+            } else {
+                return mid;
+            }
+        }
+        return -1;
     }
 
     public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {

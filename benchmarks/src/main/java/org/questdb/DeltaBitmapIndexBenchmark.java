@@ -95,6 +95,14 @@ public class DeltaBitmapIndexBenchmark {
     private static final int MD_TOTAL_ROWS = MD_KEY_COUNT * MD_VALUES_PER_KEY; // 3,670,016
     private static final int MD_LEGACY_BLOCK_CAPACITY = 256;
 
+    // === Scenario 3: Streaming (sparse, many small commits) ===
+    private static final int ST_KEY_COUNT = 50_000;
+    private static final int ST_COMMITS = 500;
+    private static final double ST_KEY_ACTIVITY_RATIO = 0.02; // 2% of keys active per commit
+    private static final int ST_VALUES_PER_ACTIVE_KEY = 10;
+    private static final int ST_ACTIVE_KEYS_PER_COMMIT = (int) (ST_KEY_COUNT * ST_KEY_ACTIVITY_RATIO); // 1000
+    private static final int ST_LEGACY_BLOCK_CAPACITY = 64;
+
     // LZ4 page sizes to test (powers of 2)
     private static final int[] PAGE_SIZES = {4096, 8192, 16384, 32768, 65536};
 
@@ -102,15 +110,23 @@ public class DeltaBitmapIndexBenchmark {
         String tmpDir = System.getProperty("java.io.tmpdir");
         CairoConfiguration config = new DefaultCairoConfiguration(tmpDir);
 
-        System.out.println("=== Scenario 1: High-Cardinality ===");
-        System.out.printf("    %,d keys, %d values/key, %,d total rows%n%n", HC_KEY_COUNT, HC_VALUES_PER_KEY, HC_TOTAL_ROWS);
-        runHighCardinality(config, tmpDir);
+        if (args.length == 0 || "all".equals(args[0])) {
+            System.out.println("=== Scenario 1: High-Cardinality ===");
+            System.out.printf("    %,d keys, %d values/key, %,d total rows%n%n", HC_KEY_COUNT, HC_VALUES_PER_KEY, HC_TOTAL_ROWS);
+            runHighCardinality(config, tmpDir);
+
+            System.out.println();
+            System.out.println("=== Scenario 2: Market Data (1 hour, 2 rows/sec/key) ===");
+            System.out.printf("    %,d keys, %,d values/key, %,d total rows, %d commits of %d values/key%n%n",
+                    MD_KEY_COUNT, MD_VALUES_PER_KEY, MD_TOTAL_ROWS, MD_COMMITS, MD_BLOCK_VALUES);
+            runMarketData(config, tmpDir);
+        }
 
         System.out.println();
-        System.out.println("=== Scenario 2: Market Data (1 hour, 2 rows/sec/key) ===");
-        System.out.printf("    %,d keys, %,d values/key, %,d total rows, %d commits of %d values/key%n%n",
-                MD_KEY_COUNT, MD_VALUES_PER_KEY, MD_TOTAL_ROWS, MD_COMMITS, MD_BLOCK_VALUES);
-        runMarketData(config, tmpDir);
+        System.out.println("=== Scenario 3: Streaming (sparse commits, " + (int)(ST_KEY_ACTIVITY_RATIO * 100) + "% key activity) ===");
+        System.out.printf("    %,d keys, %d commits, %d active keys/commit, %d values/active key%n%n",
+                ST_KEY_COUNT, ST_COMMITS, ST_ACTIVE_KEYS_PER_COMMIT, ST_VALUES_PER_ACTIVE_KEY);
+        runStreaming(config, tmpDir);
     }
 
     // ========================= Scenario 1: High-Cardinality =========================
@@ -649,6 +665,188 @@ public class DeltaBitmapIndexBenchmark {
         } finally {
             deleteDir(legacyDir);
             deleteDir(lz4Dir);
+        }
+    }
+
+    // ========================= Scenario 3: Streaming =========================
+
+    private static void runStreaming(CairoConfiguration config, String tmpDir) {
+        // Build streaming assignment: for each commit, pick ST_ACTIVE_KEYS_PER_COMMIT random keys
+        // and assign ST_VALUES_PER_ACTIVE_KEY sequential row IDs to each.
+        Rnd rnd = new Rnd(12345, 67890);
+        int totalRows = 0;
+        // Pre-compute which keys are active per commit
+        int[][] activeKeys = new int[ST_COMMITS][];
+        for (int c = 0; c < ST_COMMITS; c++) {
+            // Shuffle first ST_ACTIVE_KEYS_PER_COMMIT from [0..ST_KEY_COUNT)
+            int[] keys = new int[ST_KEY_COUNT];
+            for (int i = 0; i < ST_KEY_COUNT; i++) keys[i] = i;
+            for (int i = 0; i < ST_ACTIVE_KEYS_PER_COMMIT; i++) {
+                int j = i + rnd.nextPositiveInt() % (ST_KEY_COUNT - i);
+                int tmp = keys[i];
+                keys[i] = keys[j];
+                keys[j] = tmp;
+            }
+            activeKeys[c] = java.util.Arrays.copyOf(keys, ST_ACTIVE_KEYS_PER_COMMIT);
+            java.util.Arrays.sort(activeKeys[c]); // sort so row IDs are added in order per key
+            totalRows += ST_ACTIVE_KEYS_PER_COMMIT * ST_VALUES_PER_ACTIVE_KEY;
+        }
+        final int finalTotalRows = totalRows;
+
+        int[] readKeys = new int[200]; // sample of keys to read
+        for (int i = 0; i < readKeys.length; i++) {
+            readKeys[i] = rnd.nextPositiveInt() % ST_KEY_COUNT;
+        }
+
+        String legacyDir = tmpDir + File.separator + "st_legacy_" + System.nanoTime();
+        String bpDir = tmpDir + File.separator + "st_bp_" + System.nanoTime();
+
+        new File(legacyDir).mkdirs();
+        new File(bpDir).mkdirs();
+
+        try {
+            // Legacy: incremental streaming commits
+            System.out.println("Storage & write time:");
+            long legacySize = buildAndMeasure("Legacy (streaming, " + ST_COMMITS + " commits)", config, legacyDir, () -> {
+                try (Path path = new Path().of(legacyDir)) {
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(config)) {
+                        writer.of(path, "test", COLUMN_NAME_TXN, ST_LEGACY_BLOCK_CAPACITY);
+                        int rowId = 0;
+                        for (int c = 0; c < ST_COMMITS; c++) {
+                            for (int key : activeKeys[c]) {
+                                for (int v = 0; v < ST_VALUES_PER_ACTIVE_KEY; v++) {
+                                    writer.add(key, rowId++);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // BP: incremental streaming commits — DON'T close (which seals), measure before and after seal
+            long bpSize;
+            long bpSealedSize;
+            {
+                createBPIndex(config, bpDir, BPBitmapIndexUtils.BLOCK_CAPACITY);
+                try (Path path = new Path().of(bpDir)) {
+                    BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config);
+                    writer.of(path, "test", COLUMN_NAME_TXN, false);
+
+                    long t0 = System.nanoTime();
+                    int rowId = 0;
+                    for (int c = 0; c < ST_COMMITS; c++) {
+                        for (int key : activeKeys[c]) {
+                            for (int v = 0; v < ST_VALUES_PER_ACTIVE_KEY; v++) {
+                                writer.add(key, rowId++);
+                            }
+                        }
+                        writer.commit();
+                    }
+                    long elapsed = System.nanoTime() - t0;
+
+                    // Measure BEFORE seal — all 500 gens intact
+                    bpSize = getDirectorySize(bpDir);
+                    System.out.printf("  %-40s %8.1f MB in %5.2f s%n",
+                            "BP (" + ST_COMMITS + " gens, before seal)", bpSize / (1024.0 * 1024.0), elapsed / 1e9);
+
+                    // Read latency with all gens
+                    System.out.println();
+                    System.out.printf("Read latency before seal (%d random keys):%n", readKeys.length);
+
+                    measureReadLatency("Legacy", () -> {
+                        try (Path p = new Path().of(legacyDir)) {
+                            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                                return readBatch(reader, readKeys);
+                            }
+                        }
+                    });
+
+                    measureReadLatency("BP (" + ST_COMMITS + " gens)", () -> {
+                        try (Path p = new Path().of(bpDir)) {
+                            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                                return readBatch(reader, readKeys);
+                            }
+                        }
+                    });
+
+                    // Full scan before seal
+                    System.out.println();
+                    System.out.printf("Full scan before seal (%,d keys):%n", ST_KEY_COUNT);
+
+                    measureReadLatency("Legacy scan", () -> {
+                        try (Path p = new Path().of(legacyDir)) {
+                            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                                return scanAll(reader, ST_KEY_COUNT);
+                            }
+                        }
+                    });
+
+                    measureReadLatency("BP (" + ST_COMMITS + " gens) scan", () -> {
+                        try (Path p = new Path().of(bpDir)) {
+                            try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                                return scanAll(reader, ST_KEY_COUNT);
+                            }
+                        }
+                    });
+
+                    // Now seal
+                    long sealT0 = System.nanoTime();
+                    writer.seal();
+                    long sealTime = System.nanoTime() - sealT0;
+                    writer.close();
+
+                    bpSealedSize = getDirectorySize(bpDir);
+                    System.out.println();
+                    System.out.printf("  BP sealed: %5.1f MB (seal took %.1f ms)%n",
+                            bpSealedSize / (1024.0 * 1024.0), sealTime / 1e6);
+                }
+            }
+
+            System.out.println();
+            System.out.printf("  %-25s %10s %10s%n", "Format", "Size (MB)", "vs Legacy");
+            System.out.println("  " + "-".repeat(47));
+            printRow("Legacy", legacySize, legacySize);
+            printRow("BP (" + ST_COMMITS + " gens)", bpSize, legacySize);
+            printRow("BP (sealed)", bpSealedSize, legacySize);
+
+            // Header overhead analysis
+            long headerOverhead = (long) ST_KEY_COUNT * Integer.BYTES * 2 * ST_COMMITS;
+            long genDirOverhead = (long) ST_COMMITS * BPBitmapIndexUtils.GEN_DIR_ENTRY_SIZE;
+            System.out.println();
+            System.out.printf("  BP overhead analysis:%n");
+            System.out.printf("    Gen headers (counts+offsets): %,d bytes (%.1f MB)%n",
+                    headerOverhead, headerOverhead / (1024.0 * 1024.0));
+            System.out.printf("    Gen directory entries:        %,d bytes%n", genDirOverhead);
+            System.out.printf("    Total rows:                   %,d%n", finalTotalRows);
+            System.out.printf("    Avg active keys/commit:       %d / %d (%.0f%%)%n",
+                    ST_ACTIVE_KEYS_PER_COMMIT, ST_KEY_COUNT, ST_KEY_ACTIVITY_RATIO * 100);
+
+            // Read latency after seal
+            System.out.println();
+            System.out.printf("Read latency after seal (%d random keys):%n", readKeys.length);
+
+            measureReadLatency("BP (sealed, 1 gen)", () -> {
+                try (Path p = new Path().of(bpDir)) {
+                    try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                        return readBatch(reader, readKeys);
+                    }
+                }
+            });
+
+            // Full scan after seal
+            System.out.println();
+            System.out.printf("Full scan after seal (%,d keys):%n", ST_KEY_COUNT);
+
+            measureReadLatency("BP (sealed) scan", () -> {
+                try (Path p = new Path().of(bpDir)) {
+                    try (BPBitmapIndexFwdReader reader = new BPBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
+                        return scanAll(reader, ST_KEY_COUNT);
+                    }
+                }
+            });
+        } finally {
+            deleteDir(legacyDir);
+            deleteDir(bpDir);
         }
     }
 
