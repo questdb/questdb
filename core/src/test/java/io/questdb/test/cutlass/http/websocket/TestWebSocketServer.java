@@ -198,14 +198,29 @@ public class TestWebSocketServer implements QuietCloseable {
      * Interface for handling WebSocket server events.
      */
     public interface WebSocketServerHandler {
-        default void onConnect(ClientHandler client) {}
-        default void onDisconnect(ClientHandler client) {}
-        default void onBinaryMessage(ClientHandler client, byte[] data) {}
-        default void onTextMessage(ClientHandler client, String text) {}
-        default void onPing(ClientHandler client, byte[] data) {}
-        default void onPong(ClientHandler client, byte[] data) {}
-        default void onClose(ClientHandler client, int code, String reason) {}
-        default void onError(ClientHandler client, Exception e) {}
+        default void onConnect(ClientHandler client) {
+        }
+
+        default void onDisconnect(ClientHandler client) {
+        }
+
+        default void onBinaryMessage(ClientHandler client, byte[] data) {
+        }
+
+        default void onTextMessage(ClientHandler client, String text) {
+        }
+
+        default void onPing(ClientHandler client, byte[] data) {
+        }
+
+        default void onPong(ClientHandler client, byte[] data) {
+        }
+
+        default void onClose(ClientHandler client, int code, String reason) {
+        }
+
+        default void onError(ClientHandler client, Exception e) {
+        }
     }
 
     /**

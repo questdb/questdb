@@ -446,13 +446,16 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
             }
 
             @Override
-            public void onTextMessage(long payload, int length) {}
+            public void onTextMessage(long payload, int length) {
+            }
 
             @Override
-            public void onPing(long payload, int length) {}
+            public void onPing(long payload, int length) {
+            }
 
             @Override
-            public void onPong(long payload, int length) {}
+            public void onPong(long payload, int length) {
+            }
 
             @Override
             public void onClose(int code, long reason, int reasonLength) {
@@ -460,7 +463,8 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
             }
 
             @Override
-            public void onError(int errorCode, CharSequence message) {}
+            public void onError(int errorCode, CharSequence message) {
+            }
         });
 
         try (TestWebSocketServer server = new TestWebSocketServer(TEST_PORT + 9, new TestWebSocketServer.WebSocketServerHandler() {

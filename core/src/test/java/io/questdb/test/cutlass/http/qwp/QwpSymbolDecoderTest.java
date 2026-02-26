@@ -27,7 +27,9 @@ package io.questdb.test.cutlass.http.qwp;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolDecoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
+
 import static io.questdb.cutlass.qwp.protocol.QwpSymbolDecoder.NULL_SYMBOL_INDEX;
+
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;

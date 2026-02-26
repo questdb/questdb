@@ -362,9 +362,11 @@ public class QwpWebSocketTlsIntegrationTest extends AbstractWebSocketTest {
                         return new X509Certificate[0];
                     }
 
-                    public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) {
+                    }
 
-                    public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                    }
                 }
         };
 

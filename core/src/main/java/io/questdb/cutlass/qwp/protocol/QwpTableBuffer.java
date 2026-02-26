@@ -611,7 +611,8 @@ public class QwpTableBuffer {
                     case TYPE_SHORT, TYPE_CHAR -> shortValues[valueCount++] = 0;
                     case TYPE_INT -> intValues[valueCount++] = 0;
                     case TYPE_GEOHASH -> longValues[valueCount++] = -1L;
-                    case TYPE_LONG, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE -> longValues[valueCount++] = Long.MIN_VALUE;
+                    case TYPE_LONG, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE ->
+                            longValues[valueCount++] = Long.MIN_VALUE;
                     case TYPE_FLOAT -> floatValues[valueCount++] = Float.NaN;
                     case TYPE_DOUBLE -> doubleValues[valueCount++] = Double.NaN;
                     case TYPE_STRING, TYPE_VARCHAR -> stringValues[valueCount++] = null;
@@ -648,7 +649,8 @@ public class QwpTableBuffer {
                         arrayShapes[arrayShapeOffset++] = 0;
                         valueCount++;
                     }
-                    default -> { }
+                    default -> {
+                    }
                 }
                 size++;
             }
@@ -1064,7 +1066,8 @@ public class QwpTableBuffer {
                 case TYPE_BYTE -> byteValues = new byte[cap];
                 case TYPE_SHORT, TYPE_CHAR -> shortValues = new short[cap];
                 case TYPE_INT -> intValues = new int[cap];
-                case TYPE_GEOHASH, TYPE_LONG, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE -> longValues = new long[cap];
+                case TYPE_GEOHASH, TYPE_LONG, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE ->
+                        longValues = new long[cap];
                 case TYPE_FLOAT -> floatValues = new float[cap];
                 case TYPE_DOUBLE -> doubleValues = new double[cap];
                 case TYPE_STRING, TYPE_VARCHAR -> stringValues = new String[cap];
@@ -1093,7 +1096,8 @@ public class QwpTableBuffer {
                     decimal256Lh = new long[cap];
                     decimal256Ll = new long[cap];
                 }
-                default -> { }
+                default -> {
+                }
             }
         }
 
@@ -1180,7 +1184,8 @@ public class QwpTableBuffer {
                     decimal256Lh = Arrays.copyOf(decimal256Lh, newCap);
                     decimal256Ll = Arrays.copyOf(decimal256Ll, newCap);
                 }
-                default -> { }
+                default -> {
+                }
             }
         }
 

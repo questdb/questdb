@@ -197,9 +197,9 @@ public class QwpWebSocketAckIntegrationTest extends AbstractWebSocketTest {
                 LOG.info().$("Expected error caught: ").$(e.getMessage()).$();
                 Assert.assertTrue("Error should mention server error or failed batch",
                         e.getMessage().contains("Server error") ||
-                        e.getMessage().contains("failed") ||
-                        e.getMessage().contains("PARSE_ERROR") ||
-                        e.getMessage().contains("Batch"));
+                                e.getMessage().contains("failed") ||
+                                e.getMessage().contains("PARSE_ERROR") ||
+                                e.getMessage().contains("Batch"));
             }
 
             Assert.assertTrue("Should have caught an error", errorCaught);

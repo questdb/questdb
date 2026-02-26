@@ -50,7 +50,8 @@ public class WebSocketChannelIntegrationTest {
     public void testConnectAndClose() throws Exception {
         int port = BASE_PORT;
 
-        try (TestWebSocketServer server = new TestWebSocketServer(port, new TestWebSocketServer.WebSocketServerHandler() {})) {
+        try (TestWebSocketServer server = new TestWebSocketServer(port, new TestWebSocketServer.WebSocketServerHandler() {
+        })) {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
@@ -308,7 +309,8 @@ public class WebSocketChannelIntegrationTest {
         int port = BASE_PORT + 7;
         int connectionCount = 5;
 
-        try (TestWebSocketServer server = new TestWebSocketServer(port, new TestWebSocketServer.WebSocketServerHandler() {})) {
+        try (TestWebSocketServer server = new TestWebSocketServer(port, new TestWebSocketServer.WebSocketServerHandler() {
+        })) {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 
@@ -354,7 +356,8 @@ public class WebSocketChannelIntegrationTest {
     public void testReconnectAfterClose() throws Exception {
         int port = BASE_PORT + 8;
 
-        try (TestWebSocketServer server = new TestWebSocketServer(port, new TestWebSocketServer.WebSocketServerHandler() {})) {
+        try (TestWebSocketServer server = new TestWebSocketServer(port, new TestWebSocketServer.WebSocketServerHandler() {
+        })) {
             server.start();
             Assert.assertTrue(server.awaitStart(5, TimeUnit.SECONDS));
 

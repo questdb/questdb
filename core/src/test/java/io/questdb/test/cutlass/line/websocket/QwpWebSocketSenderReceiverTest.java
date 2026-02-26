@@ -2165,8 +2165,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     // Server returns WRITE_ERROR with "Processing failed" message
                     Assert.assertTrue("Error message should indicate server error: " + e.getMessage(),
                             e.getMessage().contains("WRITE_ERROR") ||
-                            e.getMessage().contains("Processing failed") ||
-                            e.getMessage().contains("Server error"));
+                                    e.getMessage().contains("Processing failed") ||
+                                    e.getMessage().contains("Server error"));
                 }
             }
         });
@@ -2863,7 +2863,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     String[] regions = {"us-east", "us-west", "eu-west", "eu-central", "asia-pacific"};
                     String[] hosts = {"host1", "host2", "host3", "host4", "host5",
-                                     "host6", "host7", "host8", "host9", "host10"};
+                            "host6", "host7", "host8", "host9", "host10"};
 
                     // Send 1000 rows with repeated symbol values
                     for (int i = 0; i < 1000; i++) {
