@@ -3489,24 +3489,69 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void enumerateUnnestColumns(QueryModel model) throws SqlException {
+        ObjList<ExpressionNode> unnestExprs = model.getUnnestExpressions();
+        ObjList<CharSequence> aliases = model.getUnnestColumnAliases();
+        int exprCount = unnestExprs.size();
+        int totalColumns = exprCount + (model.isUnnestOrdinality() ? 1 : 0);
+
+        for (int i = 0; i < exprCount; i++) {
+            CharSequence columnName;
+            if (i < aliases.size()) {
+                columnName = aliases.getQuick(i);
+            } else if (exprCount == 1) {
+                columnName = "value";
+            } else {
+                columnName = "value" + (i + 1);
+            }
+            columnName = createColumnAlias(columnName, model, false);
+            QueryColumn column = queryColumnPool.next().of(
+                    columnName,
+                    expressionNodePool.next().of(LITERAL, columnName, 0, 0),
+                    true
+            );
+            model.addField(column);
+        }
+
+        if (model.isUnnestOrdinality()) {
+            CharSequence ordColName;
+            if (aliases.size() == totalColumns) {
+                ordColName = aliases.getQuick(exprCount);
+            } else {
+                ordColName = "ordinality";
+            }
+            ordColName = createColumnAlias(ordColName, model, false);
+            QueryColumn column = queryColumnPool.next().of(
+                    ordColName,
+                    expressionNodePool.next().of(LITERAL, ordColName, 0, 0),
+                    true
+            );
+            model.addField(column);
+        }
+    }
+
     private void enumerateTableColumns(QueryModel model, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         final ObjList<QueryModel> jm = model.getJoinModels();
 
         // we have plain tables and possibly joins
         // a deal with _this_ model first, it will always be the first element in the join model list
-        final ExpressionNode tableNameExpr = model.getTableNameExpr();
-        if (tableNameExpr != null || model.getSelectModelType() == SELECT_MODEL_SHOW) {
-            if (model.getSelectModelType() == SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
-                parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
-            } else {
-                openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
-            }
+        if (model.getJoinType() == JOIN_UNNEST) {
+            enumerateUnnestColumns(model);
         } else {
-            final QueryModel nested = model.getNestedModel();
-            if (nested != null) {
-                enumerateTableColumns(nested, executionContext, sqlParserCallback);
-                if (model.isUpdate()) {
-                    model.copyUpdateTableMetadata(nested);
+            final ExpressionNode tableNameExpr = model.getTableNameExpr();
+            if (tableNameExpr != null || model.getSelectModelType() == SELECT_MODEL_SHOW) {
+                if (model.getSelectModelType() == SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
+                    parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
+                } else {
+                    openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
+                }
+            } else {
+                final QueryModel nested = model.getNestedModel();
+                if (nested != null) {
+                    enumerateTableColumns(nested, executionContext, sqlParserCallback);
+                    if (model.isUpdate()) {
+                        model.copyUpdateTableMetadata(nested);
+                    }
                 }
             }
         }
@@ -4042,6 +4087,7 @@ public class SqlOptimiser implements Mutable {
                 m.setJoinType(JOIN_CROSS_FULL);
             } else if (m.getJoinType() != JOIN_ASOF &&
                     m.getJoinType() != JOIN_SPLICE &&
+                    m.getJoinType() != JOIN_UNNEST &&
                     (c == null || c.parents.size() == 0)
             ) {
                 m.setJoinType(JOIN_CROSS);
@@ -5629,6 +5675,15 @@ public class SqlOptimiser implements Mutable {
             if (leftJoinWhere != null) {
                 emitLiteralsTopDown(leftJoinWhere, jm);
                 emitLiteralsTopDown(leftJoinWhere, model);
+            }
+
+            // UNNEST expressions reference columns from the base table (lateral binding).
+            // Propagate these references so the base table includes them in its projection.
+            if (jm.getJoinType() == JOIN_UNNEST) {
+                final ObjList<ExpressionNode> unnestExprs = jm.getUnnestExpressions();
+                for (int k = 0, z = unnestExprs.size(); k < z; k++) {
+                    emitLiteralsTopDown(unnestExprs.getQuick(k), model);
+                }
             }
         }
 
@@ -11056,6 +11111,7 @@ public class SqlOptimiser implements Mutable {
         joinBarriers.add(JOIN_LT);
         joinBarriers.add(JOIN_WINDOW);
         joinBarriers.add(JOIN_HORIZON);
+        joinBarriers.add(JOIN_UNNEST);
 
         joinFilterBarriers = new IntHashSet();
         joinFilterBarriers.add(JOIN_WINDOW);

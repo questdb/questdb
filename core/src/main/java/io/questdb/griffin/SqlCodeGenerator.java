@@ -253,6 +253,7 @@ import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.SymbolKeyMappingRecordCopier;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.UnnestRecordCursorFactory;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
@@ -4328,6 +4329,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         continue;
                     }
 
+                    // UNNEST join - no slave query to compile
+                    if (slaveModel.getJoinType() == JOIN_UNNEST) {
+                        master = generateUnnest(master, masterAlias, slaveModel, executionContext);
+                        closeSlaveOnFailure = false;
+                        masterAlias = null;
+                        // Apply post-UNNEST filter (e.g., WHERE u.val > 3.0)
+                        ExpressionNode unnestFilter = slaveModel.getPostJoinWhereClause();
+                        if (unnestFilter != null) {
+                            master = new FilteredRecordCursorFactory(
+                                    master,
+                                    compileJoinFilter(unnestFilter, master.getMetadata(), executionContext)
+                            );
+                        }
+                        continue;
+                    }
+
                     // compile
                     slave = generateQuery(slaveModel, executionContext, index > 0);
 
@@ -7794,6 +7811,101 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(castFunctionsA);
             Misc.freeObjList(castFunctionsB);
             throw e;
+        }
+    }
+
+    private RecordCursorFactory generateUnnest(
+            RecordCursorFactory masterFactory,
+            CharSequence masterAlias,
+            QueryModel unnestModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final ObjList<ExpressionNode> unnestExprs = unnestModel.getUnnestExpressions();
+        final ObjList<CharSequence> columnAliases = unnestModel.getUnnestColumnAliases();
+        final boolean hasOrdinality = unnestModel.isUnnestOrdinality();
+        final int exprCount = unnestExprs.size();
+        final RecordMetadata masterMetadata = masterFactory.getMetadata();
+        final int columnSplit = masterMetadata.getColumnCount();
+        final CharSequence unnestAlias = unnestModel.getName();
+        final int totalUnnestColumns = exprCount + (hasOrdinality ? 1 : 0);
+
+        // Build JoinRecordMetadata with master columns first, so the function parser
+        // can resolve table-qualified references like t.arr against the master alias.
+        JoinRecordMetadata metadata = new JoinRecordMetadata(
+                configuration,
+                columnSplit + totalUnnestColumns
+        );
+        try {
+            metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
+
+            ObjList<Function> arrayFunctions = new ObjList<>(exprCount);
+            try {
+                // Compile each UNNEST expression using the alias-aware metadata.
+                for (int i = 0; i < exprCount; i++) {
+                    Function f = functionParser.parseFunction(
+                            unnestExprs.getQuick(i),
+                            metadata,
+                            executionContext
+                    );
+                    int fType = f.getType();
+                    if (!ColumnType.isArray(fType)) {
+                        throw SqlException.$(unnestExprs.getQuick(i).position, "array type expected in UNNEST")
+                                .put(", got ").put(ColumnType.nameOf(fType));
+                    }
+                    arrayFunctions.add(f);
+                }
+
+                // Add unnested element columns to metadata.
+                for (int i = 0; i < exprCount; i++) {
+                    CharSequence colName;
+                    if (i < columnAliases.size()) {
+                        colName = columnAliases.getQuick(i);
+                    } else if (exprCount == 1) {
+                        colName = "value";
+                    } else {
+                        colName = "value" + (i + 1);
+                    }
+                    int arrayType = arrayFunctions.getQuick(i).getType();
+                    int elemType = ColumnType.decodeArrayElementType(arrayType);
+                    int dims = ColumnType.decodeArrayDimensionality(arrayType);
+                    int outputType;
+                    if (dims > 1) {
+                        outputType = ColumnType.encodeArrayType((short) elemType, dims - 1);
+                    } else {
+                        outputType = elemType;
+                    }
+                    metadata.add(unnestAlias, colName, outputType, false, 0, false, null);
+                }
+
+                // Add ordinality column.
+                if (hasOrdinality) {
+                    CharSequence ordColName;
+                    if (columnAliases.size() == totalUnnestColumns) {
+                        ordColName = columnAliases.getQuick(exprCount);
+                    } else {
+                        ordColName = "ordinality";
+                    }
+                    metadata.add(unnestAlias, ordColName, ColumnType.LONG, false, 0, false, null);
+                }
+
+                if (masterMetadata.getTimestampIndex() != -1) {
+                    metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
+                }
+
+                return new UnnestRecordCursorFactory(
+                        metadata,
+                        masterFactory,
+                        arrayFunctions,
+                        columnSplit,
+                        hasOrdinality
+                );
+            } catch (Throwable th) {
+                Misc.freeObjList(arrayFunctions);
+                throw th;
+            }
+        } catch (Throwable th) {
+            Misc.free(metadata);
+            throw th;
         }
     }
 
