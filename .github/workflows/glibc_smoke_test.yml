@@ -45,11 +45,20 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
           cache: 'maven'
+      - name: Cache Maven
+        id: maven-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/apache-maven-3.9.6
+          key: maven-3.9.6-${{ runner.arch }}
       - name: Install Apache Maven
+        if: steps.maven-cache.outputs.cache-hit != 'true'
         # Amazon Linux 2 has too old version of Maven, so we need to install a newer one
         run: |
           wget https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.6/apache-maven-3.9.6-bin.tar.gz
           tar xf apache-maven-3.9.6-bin.tar.gz -C /opt
+      - name: Setup Maven
+        run: |
           ln -sf /opt/apache-maven-3.9.6 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
           echo "PATH=/opt/maven/bin:$PATH" >> $GITHUB_ENV
@@ -84,12 +93,22 @@ jobs:
         run: dnf install -y curl zip unzip git bash wget
       - name: Print GLIBC version
         run: ldd --version
-      - name: Install Maven - the version in AlmaLinux 8 is too old
+      - name: Cache Maven
+        id: maven-cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/apache-maven-3.9.9
+          key: maven-3.9.9-${{ runner.arch }}
+      - name: Install Maven
+        if: steps.maven-cache.outputs.cache-hit != 'true'
+        # AlmaLinux 8 has too old version of Maven, so we need to install a newer one
         run: |
           cd /opt
           wget https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip
           unzip apache-maven-3.9.9-bin.zip
-          ln -s /opt/apache-maven-3.9.9 /opt/maven
+      - name: Setup Maven
+        run: |
+          ln -sf /opt/apache-maven-3.9.9 /opt/maven
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
           echo "/opt/maven/bin" >> $GITHUB_PATH
       - uses: actions/checkout@v4
