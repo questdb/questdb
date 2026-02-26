@@ -2,11 +2,18 @@ name: GLIBC Smoke Test
 # Testing GLIBC compatibility
 
 on:
+  # Seed the GitHub Actions cache on master so PRs get cache hits on first run
+  # Reasoning: cache are not shared across branches, but feature branches can read from the default branch cache
+  # So we need to run the build on master to populate the cache.
+  push:
+    branches: [ master ]
+    paths:
+      - '**/pom.xml'
   pull_request:
     types: [ synchronize, opened, reopened, edited ]
-#    paths:
-#      - 'core/src/main/resources/io/questdb/bin/**'
-#      - './core/src/main/bin/**'
+    paths:
+      - 'core/src/main/resources/io/questdb/bin/**'
+      - './core/src/main/bin/**'
   workflow_dispatch:
 
 jobs:
