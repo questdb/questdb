@@ -351,6 +351,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     reenterPartitionFrame = false;
                 }
 
+                remainingRowsInInterval = partitionHi - adjustedHi;
+
                 frame.partitionDecoder = reenterParquetDecoder;
                 frame.partitionLo = partitionLo;
                 frame.partitionHi = adjustedHi;

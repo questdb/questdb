@@ -778,15 +778,20 @@ impl ParquetDecoder {
         let columns_meta = self.metadata.row_groups[row_group_index].columns();
         let column_count = columns_meta.len();
         for packed_filter in filters {
+            let count = packed_filter.count();
+            if count > 0 && packed_filter.ptr == 0 {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "invalid filter payload: null pointer with non-zero count, column index: {}",
+                    packed_filter.column_index()
+                ));
+            }
             let column_idx = packed_filter.column_index() as usize;
             if column_idx >= column_count {
                 continue;
             }
 
-            let filter_desc = ColumnFilterValues {
-                count: packed_filter.count(),
-                ptr: packed_filter.ptr,
-            };
+            let filter_desc = ColumnFilterValues { count, ptr: packed_filter.ptr };
 
             let column_metadata = &columns_meta[column_idx];
             let physical_type = column_metadata.physical_type();
@@ -889,11 +894,15 @@ impl ParquetDecoder {
                         if has_nulls {
                             return false;
                         }
-                    } else if parquet2::bloom_filter::is_in_set(
-                        bitset,
-                        parquet2::bloom_filter::hash_native(v),
-                    ) {
-                        return false;
+                    } else {
+                        // Canonicalize -0.0 to +0.0
+                        let normalized = if v == 0.0 { 0.0f32 } else { v };
+                        if parquet2::bloom_filter::is_in_set(
+                            bitset,
+                            parquet2::bloom_filter::hash_native(normalized),
+                        ) {
+                            return false;
+                        }
                     }
                 }
                 true
@@ -905,11 +914,15 @@ impl ParquetDecoder {
                         if has_nulls {
                             return false;
                         }
-                    } else if parquet2::bloom_filter::is_in_set(
-                        bitset,
-                        parquet2::bloom_filter::hash_native(v),
-                    ) {
-                        return false;
+                    } else {
+                        // Canonicalize -0.0 to +0.0
+                        let normalized = if v == 0.0 { 0.0f64 } else { v };
+                        if parquet2::bloom_filter::is_in_set(
+                            bitset,
+                            parquet2::bloom_filter::hash_native(normalized),
+                        ) {
+                            return false;
+                        }
                     }
                 }
                 true
@@ -1309,6 +1322,9 @@ fn compare_signed_be_varlen(a: &[u8], b: &[u8]) -> cmp::Ordering {
 
     // Sign-extend shorter operand and compare as equal-length signed BE.
     let max_len = a.len().max(b.len());
+    if max_len == 0 {
+        return cmp::Ordering::Equal;
+    }
     let a_ext = sign_extend_be(a, max_len);
     let b_ext = sign_extend_be(b, max_len);
     compare_signed_be(&a_ext, &b_ext)

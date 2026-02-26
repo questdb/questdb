@@ -49,6 +49,14 @@ pub fn read<R: Read + Seek>(
     bitset.try_reserve(length)?;
     reader.by_ref().take(length as u64).read_to_end(bitset)?;
 
+    if bitset.len() != length {
+        return Err(Error::oos(format!(
+            "bloom filter truncated: expected {} bytes, got {}",
+            length,
+            bitset.len()
+        )));
+    }
+
     Ok(())
 }
 
@@ -83,7 +91,12 @@ pub fn read_from_slice<'a>(
     if length < 32 || length % 32 != 0 {
         return Ok(&[]);
     }
-    let start = offset + header_size;
-    data.get(start..start + length)
+    let start = offset
+        .checked_add(header_size)
+        .ok_or_else(|| Error::oos("bloom filter start offset overflow"))?;
+    let end = start
+        .checked_add(length)
+        .ok_or_else(|| Error::oos("bloom filter end offset overflow"))?;
+    data.get(start..end)
         .ok_or_else(|| Error::oos("bloom filter bitset exceeds data length"))
 }

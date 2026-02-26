@@ -3524,12 +3524,11 @@ mod tests {
     }
 
     #[test]
-    fn test_f64_bloom_filter_rle_to_bitpacked_fallback() {
-        // Test bloom filter completeness when RLE fast-path starts optimistically
-        // but later encounters NaN and falls back to bitpacked encoding.
-        // The probe checks first 8 values; we put NaN after that to trigger fallback.
+    fn test_f64_bloom_filter_rle_to_bitpacked_fallback_during_probe() {
+        // Test fallback when NaN is detected during probe phase (within first PROBE_SIZE_64=128 elements).
+        // This tests early exit before verify phase starts.
         let mut data: Vec<f64> = (0..100).map(|i| i as f64).collect();
-        data.push(f64::NAN); // Triggers fallback after RLE fast-path started
+        data.push(f64::NAN);
         data.extend((101..150).map(|i| i as f64));
 
         let mut buffer = Vec::new();
@@ -3549,6 +3548,44 @@ mod tests {
             );
         }
         for i in 101..150 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_rle_to_bitpacked_fallback_mid_scan() {
+        let mut data: Vec<f64> = (0..150).map(|i| i as f64).collect();
+        data.push(f64::NAN); // NaN at index 150, after probe window (128)
+        data.extend((151..200).map(|i| i as f64));
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 199);
+
+        for i in 0..128 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} from probe phase",
+                i
+            );
+        }
+        for i in 128..150 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} from verify phase before fallback",
+                i
+            );
+        }
+        for i in 151..200 {
             assert!(
                 bloom_hashes.contains(&hash_f64(i as f64)),
                 "missing value {} after fallback",

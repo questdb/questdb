@@ -377,6 +377,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 this.reenterPartitionFrame = false;
             }
 
+            remainingRowsInInterval = adjustedLo - partitionLo;
+
             frame.partitionLo = adjustedLo;
             frame.partitionHi = partitionHi;
             frame.format = PartitionFormat.PARQUET;
