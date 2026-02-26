@@ -32,6 +32,12 @@ public class ImmutableDoneOperationFuture extends DoneOperationFuture {
     private ImmutableDoneOperationFuture() {
     }
 
+    @Override
+    public long getAffectedRowsCount() {
+        return -1L;
+    }
+
+    @Override
     public OperationFuture of(long affectedRowsCount) {
         throw new UnsupportedOperationException("this class is immutable");
     }

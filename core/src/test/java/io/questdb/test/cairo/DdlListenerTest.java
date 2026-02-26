@@ -911,6 +911,38 @@ public class DdlListenerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDropAllContinuesWhenListenerThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            final Set<String> droppedNames = new HashSet<>();
+
+            engine.setDdlListener(new DefaultDdlListener() {
+                @Override
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                    droppedNames.add(tableName);
+                    throw new RuntimeException("listener error on " + tableName);
+                }
+            });
+
+            execute("CREATE TABLE tab1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE tab3 (ts TIMESTAMP, z INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            try {
+                execute("DROP ALL");
+                Assert.fail("expected CairoException for listener failures");
+            } catch (Exception e) {
+                // DROP ALL collects listener failures and reports them
+            }
+
+            // All 3 tables must have been dropped despite the listener throwing on each one
+            Assert.assertEquals(Set.of("tab1", "tab2", "tab3"), droppedNames);
+            Assert.assertNull(engine.getTableTokenIfExists("tab1"));
+            Assert.assertNull(engine.getTableTokenIfExists("tab2"));
+            Assert.assertNull(engine.getTableTokenIfExists("tab3"));
+        });
+    }
+
     private static void assertListenerException(String expectedMessage, ThrowingRunnable action) {
         try {
             action.run();

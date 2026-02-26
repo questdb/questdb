@@ -4269,14 +4269,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     securityContext.authorizeTableDrop(tableToken);
                 }
+                final String tableName = tableToken.getTableName();
                 try {
-                    final String tableName = tableToken.getTableName();
                     engine.dropTableOrViewOrMatView(path, tableToken);
-                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
                     hasDroppedAny = true;
-                } catch (CairoException report) {
-                    // it will fail when there are readers/writers and lock cannot be acquired
-                    dropAllTablesFailedTableNames.put(tableToken.getTableName(), report.getMessage());
+                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
+                } catch (Exception e) {
+                    LOG.error().$("Error while dropping table [table=").$(tableName).$(", error=").$(e).I$();
+                    dropAllTablesFailedTableNames.put(tableName, e.getMessage());
                 }
             }
         }
