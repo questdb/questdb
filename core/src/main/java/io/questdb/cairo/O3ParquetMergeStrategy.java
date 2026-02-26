@@ -63,6 +63,8 @@ public class O3ParquetMergeStrategy {
 
     /**
      * Computes the merge strategy with default small row group threshold and no row group size limit.
+     * Allocates temporary buffers internally. For zero-GC usage, prefer the overload that
+     * accepts pre-allocated {@code rgO3Ranges} and {@code gapO3Ranges} lists.
      */
     public static void computeMergeActions(
             LongList rowGroupBounds,
@@ -78,12 +80,16 @@ public class O3ParquetMergeStrategy {
                 srcOooHi,
                 DEFAULT_SMALL_ROW_GROUP_THRESHOLD,
                 Integer.MAX_VALUE,
-                actions
+                actions,
+                new LongList(),
+                new LongList()
         );
     }
 
     /**
      * Computes the merge strategy with custom small row group threshold and no row group size limit.
+     * Allocates temporary buffers internally. For zero-GC usage, prefer the overload that
+     * accepts pre-allocated {@code rgO3Ranges} and {@code gapO3Ranges} lists.
      */
     public static void computeMergeActions(
             LongList rowGroupBounds,
@@ -100,7 +106,9 @@ public class O3ParquetMergeStrategy {
                 srcOooHi,
                 smallRowGroupThreshold,
                 Integer.MAX_VALUE,
-                actions
+                actions,
+                new LongList(),
+                new LongList()
         );
     }
 
@@ -127,7 +135,9 @@ public class O3ParquetMergeStrategy {
      * @param maxRowGroupSize        Maximum number of rows per COPY_O3 action. Larger ranges are split
      *                               into multiple actions of at most this size. Use Integer.MAX_VALUE
      *                               to disable splitting.
-     * @param actions                Output list to receive computed merge actions. Will be cleared first.
+     * @param actions                Output list to receive computed merge actions (reused across calls).
+     * @param rgO3Ranges             Pre-allocated scratch list for per-row-group O3 ranges (reused across calls).
+     * @param gapO3Ranges            Pre-allocated scratch list for per-gap O3 ranges (reused across calls).
      */
     public static void computeMergeActions(
             LongList rowGroupBounds,
@@ -136,36 +146,35 @@ public class O3ParquetMergeStrategy {
             long srcOooHi,
             int smallRowGroupThreshold,
             int maxRowGroupSize,
-            ObjList<MergeAction> actions
+            ObjList<MergeAction> actions,
+            LongList rgO3Ranges,
+            LongList gapO3Ranges
     ) {
-        actions.clear();
+        int actionCount = 0;
 
         final int rowGroupCount = getRowGroupCount(rowGroupBounds);
         if (rowGroupCount == 0) {
             // No existing row groups - all O3 data becomes new row groups
             if (srcOooLo <= srcOooHi) {
-                addCopyO3Actions(actions, srcOooLo, srcOooHi, maxRowGroupSize);
+                actionCount = addCopyO3Actions(actions, actionCount, srcOooLo, srcOooHi, maxRowGroupSize);
             }
+            setActionsSize(actions, actionCount);
             return;
         }
 
-        // Track O3 data assigned to each row group: [o3Lo, o3Hi] or [-1, -1] if none
-        // Also track "gap" O3 data that falls between row groups
-        long[] rgO3Lo = new long[rowGroupCount];
-        long[] rgO3Hi = new long[rowGroupCount];
-        for (int i = 0; i < rowGroupCount; i++) {
-            rgO3Lo[i] = -1;
-            rgO3Hi[i] = -1;
-        }
+        // Track O3 data assigned to each row group as interleaved (lo, hi) pairs,
+        // initialized to -1 meaning "no O3 data".
+        final int rgPairCount = rowGroupCount * 2;
+        rgO3Ranges.clear();
+        rgO3Ranges.setPos(rgPairCount);
+        rgO3Ranges.fill(0, rgPairCount, -1);
 
-        // Collect gap regions: O3 data that doesn't overlap with any row group
-        // gapO3[i] = O3 data in gap before row group i (gap 0 = before rg0, gap N = after rgN-1)
-        long[] gapO3Lo = new long[rowGroupCount + 1];
-        long[] gapO3Hi = new long[rowGroupCount + 1];
-        for (int i = 0; i <= rowGroupCount; i++) {
-            gapO3Lo[i] = -1;
-            gapO3Hi[i] = -1;
-        }
+        // Collect gap regions: O3 data that doesn't overlap with any row group.
+        // Gap i = data before row group i; gap rowGroupCount = data after the last row group.
+        final int gapPairCount = (rowGroupCount + 1) * 2;
+        gapO3Ranges.clear();
+        gapO3Ranges.setPos(gapPairCount);
+        gapO3Ranges.fill(0, gapPairCount, -1);
 
         // Assign each O3 data point to either a row group or a gap
         long o3Cursor = srcOooLo;
@@ -187,8 +196,8 @@ public class O3ParquetMergeStrategy {
                         Vect.BIN_SEARCH_SCAN_DOWN
                 );
                 if (gapHi >= o3Cursor) {
-                    gapO3Lo[currentRg] = o3Cursor;
-                    gapO3Hi[currentRg] = gapHi;
+                    setRangeLo(gapO3Ranges, currentRg, o3Cursor);
+                    setRangeHi(gapO3Ranges, currentRg, gapHi);
                     o3Cursor = gapHi + 1;
                 }
             } else if (o3Ts <= rgMax) {
@@ -202,8 +211,8 @@ public class O3ParquetMergeStrategy {
                         Vect.BIN_SEARCH_SCAN_DOWN
                 );
                 if (overlapHi >= o3Cursor) {
-                    rgO3Lo[currentRg] = o3Cursor;
-                    rgO3Hi[currentRg] = overlapHi;
+                    setRangeLo(rgO3Ranges, currentRg, o3Cursor);
+                    setRangeHi(rgO3Ranges, currentRg, overlapHi);
                     o3Cursor = overlapHi + 1;
                 }
                 currentRg++;
@@ -215,13 +224,13 @@ public class O3ParquetMergeStrategy {
 
         // Any remaining O3 data goes to the gap after the last row group
         if (o3Cursor <= srcOooHi) {
-            gapO3Lo[rowGroupCount] = o3Cursor;
-            gapO3Hi[rowGroupCount] = srcOooHi;
+            setRangeLo(gapO3Ranges, rowGroupCount, o3Cursor);
+            setRangeHi(gapO3Ranges, rowGroupCount, srcOooHi);
         }
 
         // Now merge gap O3 data into adjacent small row groups
         for (int gap = 0; gap <= rowGroupCount; gap++) {
-            if (gapO3Lo[gap] < 0) {
+            if (getRangeLo(gapO3Ranges, gap) < 0) {
                 continue; // No O3 data in this gap
             }
 
@@ -232,26 +241,26 @@ public class O3ParquetMergeStrategy {
 
             if (prevIsSmall) {
                 // Merge gap data into previous row group
-                if (rgO3Lo[prevRg] < 0) {
-                    rgO3Lo[prevRg] = gapO3Lo[gap];
-                    rgO3Hi[prevRg] = gapO3Hi[gap];
+                if (getRangeLo(rgO3Ranges, prevRg) < 0) {
+                    setRangeLo(rgO3Ranges, prevRg, getRangeLo(gapO3Ranges, gap));
+                    setRangeHi(rgO3Ranges, prevRg, getRangeHi(gapO3Ranges, gap));
                 } else {
                     // Extend existing O3 range (gap data comes after)
-                    rgO3Hi[prevRg] = gapO3Hi[gap];
+                    setRangeHi(rgO3Ranges, prevRg, getRangeHi(gapO3Ranges, gap));
                 }
-                gapO3Lo[gap] = -1;
-                gapO3Hi[gap] = -1;
+                setRangeLo(gapO3Ranges, gap, -1);
+                setRangeHi(gapO3Ranges, gap, -1);
             } else if (nextIsSmall) {
                 // Merge gap data into next row group
-                if (rgO3Lo[gap] < 0) {
-                    rgO3Lo[gap] = gapO3Lo[gap];
-                    rgO3Hi[gap] = gapO3Hi[gap];
+                if (getRangeLo(rgO3Ranges, gap) < 0) {
+                    setRangeLo(rgO3Ranges, gap, getRangeLo(gapO3Ranges, gap));
+                    setRangeHi(rgO3Ranges, gap, getRangeHi(gapO3Ranges, gap));
                 } else {
                     // Gap data comes before existing O3 range
-                    rgO3Lo[gap] = gapO3Lo[gap];
+                    setRangeLo(rgO3Ranges, gap, getRangeLo(gapO3Ranges, gap));
                 }
-                gapO3Lo[gap] = -1;
-                gapO3Hi[gap] = -1;
+                setRangeLo(gapO3Ranges, gap, -1);
+                setRangeHi(gapO3Ranges, gap, -1);
             }
             // Otherwise, gap data remains as COPY_O3
         }
@@ -259,42 +268,90 @@ public class O3ParquetMergeStrategy {
         // Generate actions in timestamp order
         for (int rg = 0; rg < rowGroupCount; rg++) {
             // First, emit any COPY_O3 for gap before this row group
-            if (gapO3Lo[rg] >= 0) {
-                addCopyO3Actions(actions, gapO3Lo[rg], gapO3Hi[rg], maxRowGroupSize);
+            if (getRangeLo(gapO3Ranges, rg) >= 0) {
+                actionCount = addCopyO3Actions(actions, actionCount, getRangeLo(gapO3Ranges, rg), getRangeHi(gapO3Ranges, rg), maxRowGroupSize);
             }
 
             // Then, emit action for this row group
             long rgRowCount = getRowGroupRowCount(rowGroupBounds, rg);
-            if (rgO3Lo[rg] >= 0) {
-                MergeAction action = new MergeAction();
-                action.setMerge(rg, 0, rgRowCount - 1, rgO3Lo[rg], rgO3Hi[rg]);
-                actions.add(action);
+            if (getRangeLo(rgO3Ranges, rg) >= 0) {
+                nextAction(actions, actionCount++).setMerge(rg, 0, rgRowCount - 1, getRangeLo(rgO3Ranges, rg), getRangeHi(rgO3Ranges, rg));
             } else {
-                MergeAction action = new MergeAction();
-                action.setCopyRowGroupSlice(rg, 0, rgRowCount - 1);
-                actions.add(action);
+                nextAction(actions, actionCount++).setCopyRowGroupSlice(rg, 0, rgRowCount - 1);
             }
         }
 
         // Finally, emit any COPY_O3 for gap after last row group
-        if (gapO3Lo[rowGroupCount] >= 0) {
-            addCopyO3Actions(actions, gapO3Lo[rowGroupCount], gapO3Hi[rowGroupCount], maxRowGroupSize);
+        if (getRangeLo(gapO3Ranges, rowGroupCount) >= 0) {
+            actionCount = addCopyO3Actions(actions, actionCount, getRangeLo(gapO3Ranges, rowGroupCount), getRangeHi(gapO3Ranges, rowGroupCount), maxRowGroupSize);
         }
+
+        setActionsSize(actions, actionCount);
     }
 
     /**
-     * Emits one or more COPY_O3 actions, splitting the range into chunks of at most maxRowGroupSize.
+     * Emits one or more COPY_O3 actions, splitting the range into evenly-sized chunks.
+     * Each chunk gets between 0.75x and 1.5x maxRowGroupSize rows.
+     *
+     * @return the updated actionCount
      */
-    private static void addCopyO3Actions(ObjList<MergeAction> actions, long o3Lo, long o3Hi, int maxRowGroupSize) {
+    private static int addCopyO3Actions(ObjList<MergeAction> actions, int actionCount, long o3Lo, long o3Hi, int maxRowGroupSize) {
         assert maxRowGroupSize > 0 : "maxRowGroupSize must be > 0";
-        long cursor = o3Lo;
-        while (cursor <= o3Hi) {
-            long chunkHi = Math.min(cursor + maxRowGroupSize - 1, o3Hi);
-            MergeAction action = new MergeAction();
-            action.setCopyO3(cursor, chunkHi);
-            actions.add(action);
-            cursor = chunkHi + 1;
+        long totalRows = o3Hi - o3Lo + 1;
+        int numChunks;
+        if (2L * totalRows > 3L * maxRowGroupSize) {
+            numChunks = (int) ((2L * totalRows + 3L * maxRowGroupSize - 1) / (3L * maxRowGroupSize));
+        } else {
+            numChunks = 1;
         }
+        long baseChunkSize = totalRows / numChunks;
+        long extraRows = totalRows % numChunks;
+        long cursor = o3Lo;
+        for (int i = 0; i < numChunks; i++) {
+            long chunkSize = baseChunkSize + (i < extraRows ? 1 : 0);
+            nextAction(actions, actionCount++).setCopyO3(cursor, cursor + chunkSize - 1);
+            cursor += chunkSize;
+        }
+        return actionCount;
+    }
+
+    private static long getRangeHi(LongList ranges, int index) {
+        return ranges.getQuick(index * 2 + 1);
+    }
+
+    private static long getRangeLo(LongList ranges, int index) {
+        return ranges.getQuick(index * 2);
+    }
+
+    /**
+     * Returns an existing or newly created MergeAction at the given index.
+     * Reuses objects from a previous call to avoid GC pressure.
+     */
+    private static MergeAction nextAction(ObjList<MergeAction> actions, int index) {
+        if (index < actions.size()) {
+            MergeAction existing = actions.getQuick(index);
+            existing.clear();
+            return existing;
+        }
+        MergeAction action = new MergeAction();
+        actions.add(action);
+        return action;
+    }
+
+    /**
+     * Truncates the actions list to the given size without nulling out
+     * the excess elements, so they can be reused on the next call.
+     */
+    private static void setActionsSize(ObjList<MergeAction> actions, int size) {
+        actions.setPos(size);
+    }
+
+    private static void setRangeHi(LongList ranges, int index, long value) {
+        ranges.setQuick(index * 2 + 1, value);
+    }
+
+    private static void setRangeLo(LongList ranges, int index, long value) {
+        ranges.setQuick(index * 2, value);
     }
 
     /**

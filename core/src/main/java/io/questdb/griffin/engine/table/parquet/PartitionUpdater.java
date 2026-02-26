@@ -117,12 +117,14 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
-    public void sliceRowGroup(short rowGroupIndex, int rowLo, int rowHi) {
+    public void sliceRowGroup(short rowGroupIndex, int rowLo, int rowHi, long filePtr, long fileSize) {
         assert ptr != 0;
         assert rowGroupIndex >= 0 : "rowGroupIndex must be >= 0, got " + rowGroupIndex;
         assert rowLo >= 0 : "rowLo must be >= 0, got " + rowLo;
         assert rowHi >= rowLo : "rowHi must be >= rowLo, got rowLo=" + rowLo + " rowHi=" + rowHi;
-        sliceRowGroup(ptr, rowGroupIndex, rowLo, rowHi);
+        assert filePtr != 0 : "filePtr must not be 0";
+        assert fileSize > 0 : "fileSize must be > 0, got " + fileSize;
+        sliceRowGroup(ptr, rowGroupIndex, rowLo, rowHi, filePtr, fileSize);
     }
 
     public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
@@ -192,7 +194,9 @@ public class PartitionUpdater implements QuietCloseable {
             long impl,
             short rowGroupIndex,
             int rowLo,
-            int rowHi
+            int rowHi,
+            long filePtr,
+            long fileSize
     ) throws CairoException;
 
     // throws CairoException on error, returns file size

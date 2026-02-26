@@ -5445,7 +5445,7 @@ mod tests {
         name: &'static str,
         primary_data: &[u8],
         col_type: ColumnType,
-    ) -> Column {
+    ) -> Column<'static> {
         Column::from_raw_data(
             id,
             name,
@@ -5471,7 +5471,7 @@ mod tests {
         primary_data: &[u8],
         aux_data: &[u8],
         col_type: ColumnType,
-    ) -> Column {
+    ) -> Column<'static> {
         Column::from_raw_data(
             id,
             name,
@@ -5498,7 +5498,7 @@ mod tests {
         chars_data: &[u8],
         offsets: &[u64],
         col_type: ColumnType,
-    ) -> Column {
+    ) -> Column<'static> {
         Column::from_raw_data(
             id,
             name,

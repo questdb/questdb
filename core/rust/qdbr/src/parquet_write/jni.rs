@@ -206,10 +206,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     let parquet_updater = unsafe { &mut *parquet_updater };
 
     let mut update = || -> ParquetResult<()> {
-        let table_name = "update";
         let partition = create_partition_descriptor(
-            table_name.as_ptr(),
-            table_name.len() as i32,
+            table_name_ptr,
+            table_name_len as i32,
             col_count,
             col_names_ptr,
             col_names_len,
@@ -249,6 +248,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     rg_index: jshort,
     row_lo: jint,
     row_hi: jint,
+    file_ptr: jlong,
+    file_size: jlong,
 ) {
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
@@ -257,7 +258,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     }
 
     let parquet_updater = unsafe { &mut *updater };
-    match parquet_updater.slice_row_group(rg_index, row_lo as usize, row_hi as usize) {
+    match parquet_updater.slice_row_group(
+        rg_index,
+        row_lo as usize,
+        row_hi as usize,
+        file_ptr as *const u8,
+        file_size as u64,
+    ) {
         Ok(_) => (),
         Err(mut err) => {
             err.add_context(format!(
@@ -294,10 +301,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     let parquet_updater = unsafe { &mut *parquet_updater };
 
     let mut insert = || -> ParquetResult<()> {
-        let table_name = "insert";
         let partition = create_partition_descriptor(
-            table_name.as_ptr(),
-            table_name.len() as i32,
+            table_name_ptr,
+            table_name_len as i32,
             col_count,
             col_names_ptr,
             col_names_len,
@@ -441,7 +447,7 @@ fn create_partition_descriptor(
     col_data_len: jlong,
     row_count: jlong,
     timestamp_index: jint,
-) -> ParquetResult<Partition> {
+) -> ParquetResult<Partition<'static>> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
     let col_data_len = col_data_len as usize;
@@ -590,7 +596,7 @@ impl Write for BufferWriter {
 }
 
 pub struct StreamingParquetWriter {
-    partition: Partition,
+    partition: Partition<'static>,
     // We need Box<Vec<u8>> here to ensure the Vec itself has a stable heap address
     #[allow(clippy::box_collection)]
     current_buffer: Box<Vec<u8, QdbAllocator>>,
@@ -599,7 +605,7 @@ pub struct StreamingParquetWriter {
 
     // Fields for accumulating partitions across multiple writeChunk calls
     row_group_size: usize,
-    pending_partitions: Vec<Partition>,
+    pending_partitions: Vec<Partition<'static>>,
     first_partition_start: usize,
     accumulated_rows: usize,
     // Cumulative count of rows that have been fully written to row groups.
@@ -921,7 +927,7 @@ fn create_partition_template(
     col_meta_data_ptr: *const i64,
     timestamp_index: jint,
     timestamp_descending: jboolean,
-) -> ParquetResult<Partition> {
+) -> ParquetResult<Partition<'static>> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
 
@@ -964,7 +970,7 @@ fn create_partition_template(
 }
 
 fn update_partition_data(
-    partition: &mut Partition,
+    partition: &mut Partition<'static>,
     col_data_ptr: *const i64,
     row_count: usize,
 ) -> ParquetResult<()> {
@@ -1089,11 +1095,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 }
 
 fn convert_row_group_buffers_to_partition(
-    partition_template: &Partition,
+    partition_template: &Partition<'static>,
     row_group_bufs: &crate::parquet_read::RowGroupBuffers,
     row_count: usize,
     symbol_data_ptr: jlong,
-) -> ParquetResult<Partition> {
+) -> ParquetResult<Partition<'static>> {
     use qdb_core::col_type::ColumnTypeTag;
 
     let mut new_partition = Partition {

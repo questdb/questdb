@@ -177,7 +177,7 @@ impl<W: Write> ParquetWriter<W> {
     }
 
     /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
-    pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
+    pub fn finish(self, partition: Partition<'_>) -> ParquetResult<u64> {
         let (schema, additional_meta) = to_parquet_schema(&partition, self.raw_array_encoding)?;
         let encodings = to_encodings(&partition);
         let mut chunked = self.chunked(schema, encodings)?;
@@ -196,7 +196,7 @@ pub struct ChunkedWriter<W: Write> {
 
 impl<W: Write> ChunkedWriter<W> {
     /// Write a chunk to the parquet writer.
-    pub fn write_chunk(&mut self, partition: &Partition) -> ParquetResult<()> {
+    pub fn write_chunk(&mut self, partition: &Partition<'_>) -> ParquetResult<()> {
         let row_group_size = self
             .options
             .row_group_size
@@ -230,7 +230,7 @@ impl<W: Write> ChunkedWriter<W> {
 
     pub fn write_row_group_from_partitions(
         &mut self,
-        partitions: &[&Partition],
+        partitions: &[&Partition<'_>],
         first_partition_start: usize,
         last_partition_end: usize,
     ) -> ParquetResult<()> {
@@ -280,15 +280,15 @@ impl FallibleStreamingIterator for CompressedPages {
     }
 }
 
-pub fn create_row_group(
-    partition: &Partition,
+pub fn create_row_group<'a>(
+    partition: &Partition<'a>,
     offset: usize,
     length: usize,
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
     parallel: bool,
-) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
+) -> ParquetResult<RowGroupIter<'a, ParquetError>> {
     let columns = if parallel {
         let col_to_iter = move |((column, column_type), encoding): (
             (&Column, &ParquetType),
@@ -330,12 +330,12 @@ pub fn create_row_group(
                 .collect::<Vec<_>>()
         })
     } else {
-        let col_to_iter = move |((column, column_type), encoding): (
-            (&Column, &ParquetType),
+        let col_to_iter = |((column, column_type), encoding): (
+            (&Column<'a>, &ParquetType),
             &Encoding,
         )|
-              -> ParquetResult<
-            DynStreamingIterator<CompressedPage, ParquetError>,
+                           -> ParquetResult<
+                               DynStreamingIterator<'a, CompressedPage, ParquetError>,
         > {
             let encoded_column = column_chunk_to_pages(
                 *column,
@@ -376,15 +376,15 @@ pub fn create_row_group(
 /// * `encoding` - Encoding for each column
 /// * `options` - Write options
 /// * `parallel` - Whether to process columns in parallel
-pub fn create_row_group_from_partitions(
-    partitions: &[&Partition],
+pub fn create_row_group_from_partitions<'a>(
+    partitions: &[&Partition<'a>],
     first_partition_start: usize,
     last_partition_end: usize,
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
     parallel: bool,
-) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
+) -> ParquetResult<RowGroupIter<'a, ParquetError>> {
     assert!(!partitions.is_empty(), "partitions cannot be empty");
     let num_columns = partitions[0].columns.len();
     let num_partitions = partitions.len();
@@ -571,19 +571,19 @@ fn partition_slice_range(
     }
 }
 
-struct MultiPartitionColumnIterator {
-    partitions: Vec<(Column, usize, usize)>, // (column, offset, length)
+struct MultiPartitionColumnIterator<'a> {
+    partitions: Vec<(Column<'a>, usize, usize)>, // (column, offset, length)
     current_partition_idx: usize,
-    current_inner_iter: Option<DynIter<'static, ParquetResult<Page>>>,
+    current_inner_iter: Option<DynIter<'a, ParquetResult<Page>>>,
     column_type: ParquetType,
     options: WriteOptions,
     encoding: Encoding,
     pending_error: Option<ParquetError>,
 }
 
-impl MultiPartitionColumnIterator {
+impl<'a> MultiPartitionColumnIterator<'a> {
     fn new(
-        partitions: Vec<(Column, usize, usize)>,
+        partitions: Vec<(Column<'a>, usize, usize)>,
         column_type: ParquetType,
         options: WriteOptions,
         encoding: Encoding,
@@ -629,7 +629,7 @@ impl MultiPartitionColumnIterator {
     }
 }
 
-impl Iterator for MultiPartitionColumnIterator {
+impl Iterator for MultiPartitionColumnIterator<'_> {
     type Item = ParquetResult<Page>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -655,7 +655,7 @@ impl Iterator for MultiPartitionColumnIterator {
 }
 
 fn symbol_column_to_pages_multi_partition(
-    partition_ranges: &[(Column, usize, usize)], // (column, offset, length)
+    partition_ranges: &[(Column<'_>, usize, usize)], // (column, offset, length)
     primitive_type: &PrimitiveType,
     options: WriteOptions,
 ) -> ParquetResult<Vec<Page>> {
@@ -730,14 +730,14 @@ fn compute_symbol_slice(
     (&keys[lower_bound..upper_bound], adjusted_column_top)
 }
 
-pub(crate) fn column_chunk_to_pages(
-    column: Column,
+pub(crate) fn column_chunk_to_pages<'a>(
+    column: Column<'a>,
     parquet_type: ParquetType,
     chunk_offset: usize,
     chunk_length: usize,
     options: WriteOptions,
     encoding: Encoding,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+) -> ParquetResult<DynIter<'a, ParquetResult<Page>>> {
     match parquet_type {
         ParquetType::PrimitiveType(primitive_type) => column_chunk_to_primitive_pages(
             column,
@@ -758,14 +758,14 @@ pub(crate) fn column_chunk_to_pages(
     }
 }
 
-fn column_chunk_to_group_pages(
-    column: Column,
+fn column_chunk_to_group_pages<'a>(
+    column: Column<'a>,
     parquet_type: ParquetType,
     chunk_offset: usize,
     chunk_length: usize,
     options: WriteOptions,
     encoding: Encoding,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+) -> ParquetResult<DynIter<'a, ParquetResult<Page>>> {
     let number_of_rows = chunk_length;
     let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
     let bytes_per_row = bytes_per_group_type(column.data_type)?;
@@ -797,7 +797,7 @@ fn column_chunk_to_group_pages(
 }
 
 fn chunk_to_group_page(
-    column: Column,
+    column: Column<'_>,
     parquet_type: ParquetType,
     offset: usize,
     length: usize,
@@ -878,14 +878,14 @@ fn array_primitive_type(parquet_type: ParquetType) -> Option<PrimitiveType> {
     primitive_type.cloned()
 }
 
-fn column_chunk_to_primitive_pages(
-    column: Column,
+fn column_chunk_to_primitive_pages<'a>(
+    column: Column<'a>,
     primitive_type: PrimitiveType,
     chunk_offset: usize,
     chunk_length: usize,
     options: WriteOptions,
     encoding: Encoding,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+) -> ParquetResult<DynIter<'a, ParquetResult<Page>>> {
     if column.data_type.tag() == ColumnTypeTag::Symbol {
         let keys: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
 
@@ -950,7 +950,7 @@ fn column_chunk_to_primitive_pages(
 }
 
 fn chunk_to_primitive_page(
-    column: Column,
+    column: Column<'_>,
     offset: usize,
     length: usize,
     primitive_type: PrimitiveType,

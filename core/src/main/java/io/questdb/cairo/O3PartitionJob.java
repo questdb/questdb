@@ -65,6 +65,8 @@ import static io.questdb.cairo.TableWriter.*;
 
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
+    // Must match DEFAULT_ROW_GROUP_SIZE in core/rust/qdbr/src/parquet_write/file.rs.
+    private static final int DEFAULT_ROW_GROUP_SIZE = 100_000;
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
 
     public O3PartitionJob(MessageBus messageBus) {
@@ -129,7 +131,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // for API completeness, we'll use the same configuration as the initial partition encoder.
                 final int compressionCodec = cairoConfiguration.getPartitionEncoderParquetCompressionCodec();
                 final int compressionLevel = cairoConfiguration.getPartitionEncoderParquetCompressionLevel();
-                final int rowGroupSize = cairoConfiguration.getPartitionEncoderParquetRowGroupSize();
+                final int configuredRowGroupSize = cairoConfiguration.getPartitionEncoderParquetRowGroupSize();
+                final int rowGroupSize = configuredRowGroupSize > 0 ? configuredRowGroupSize : DEFAULT_ROW_GROUP_SIZE;
                 final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
                 final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
@@ -137,8 +140,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Decide whether to rewrite the file or update in-place.
                 final long unusedBytes = partitionDecoder.metadata().getUnusedBytes();
                 isRewrite =
-                        rowGroupCount == 1
-                                || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
+                        (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
                                 || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
 
                 if (isRewrite) {
@@ -203,16 +205,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rgMin, rgMax, rgRowCount);
                 }
 
-                // Compute merge actions
+                // Compute merge actions (scratch lists are reused across calls within the same partition)
                 final ObjList<O3ParquetMergeStrategy.MergeAction> mergeActions = new ObjList<>();
+                final LongList rgO3Ranges = new LongList();
+                final LongList gapO3Ranges = new LongList();
                 O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         srcOooLo,
                         srcOooHi,
-                        O3ParquetMergeStrategy.DEFAULT_SMALL_ROW_GROUP_THRESHOLD,
+                        rowGroupSize / 4,
                         rowGroupSize,
-                        mergeActions
+                        mergeActions,
+                        rgO3Ranges,
+                        gapO3Ranges
                 );
 
                 // Execute merge actions.
@@ -292,7 +298,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         partitionUpdater.sliceRowGroup(
                                                 (short) action.rowGroupIndex,
                                                 (int) action.rgLo,
-                                                (int) action.rgHi
+                                                (int) action.rgHi,
+                                                parquetAddr,
+                                                parquetSize
                                         );
                                         tableWriter.addPhysicallyWrittenRows(action.rgHi - action.rgLo + 1);
                                     }
@@ -307,7 +315,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     partitionUpdater.sliceRowGroup(
                                             (short) action.rowGroupIndex,
                                             (int) action.rgLo,
-                                            (int) action.rgHi
+                                            (int) action.rgHi,
+                                            parquetAddr,
+                                            parquetSize
                                     );
                                     tableWriter.addPhysicallyWrittenRows(action.rgHi - action.rgLo + 1);
                                 }
@@ -1409,20 +1419,29 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 long dstDataSize = ctd.getDataVectorSize(srcOooAuxAddr, o3Lo, o3Hi);
 
                 final long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
-                final long dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
+                long dstDataAddr = 0;
+                try {
+                    dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
 
-                O3CopyJob.mergeCopy(
-                        columnType,
-                        mergeIndexAddr,
-                        rowCount,
-                        0, // srcDataAuxAddr - not accessed (bit 63 = 0)
-                        0, // srcDataVarAddr - not accessed
-                        srcOooAuxAddr,
-                        srcOooDataAddr,
-                        dstAuxAddr,
-                        dstDataAddr,
-                        0
-                );
+                    O3CopyJob.mergeCopy(
+                            columnType,
+                            mergeIndexAddr,
+                            rowCount,
+                            0, // srcDataAuxAddr - not accessed (bit 63 = 0)
+                            0, // srcDataVarAddr - not accessed
+                            srcOooAuxAddr,
+                            srcOooDataAddr,
+                            dstAuxAddr,
+                            dstDataAddr,
+                            0
+                    );
+                } catch (Throwable th) {
+                    Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
+                    if (dstDataAddr != 0) {
+                        Unsafe.free(dstDataAddr, dstDataSize, MemoryTag.NATIVE_O3);
+                    }
+                    throw th;
+                }
 
                 partitionDescriptor.addColumn(
                         columnName,
@@ -1441,18 +1460,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 long dstFixSize = rowCount * ColumnType.sizeOf(columnType);
                 final long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
 
-                O3CopyJob.mergeCopy(
-                        notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                        mergeIndexAddr,
-                        rowCount,
-                        0, // srcDataFixAddr - not accessed (bit 63 = 0)
-                        0,
-                        srcOooFixAddr,
-                        0,
-                        dstFixAddr,
-                        0,
-                        0
-                );
+                try {
+                    O3CopyJob.mergeCopy(
+                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                            mergeIndexAddr,
+                            rowCount,
+                            0, // srcDataFixAddr - not accessed (bit 63 = 0)
+                            0,
+                            srcOooFixAddr,
+                            0,
+                            dstFixAddr,
+                            0,
+                            0
+                    );
+                } catch (Throwable th) {
+                    Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
+                    throw th;
+                }
 
                 if (ColumnType.isSymbol(columnType)) {
                     final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
@@ -1928,20 +1952,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         assert timestampMergeIndexAddr != 0;
 
-        // Avoid tiny last row groups: if the remainder is <= half of maxRowGroupSize,
-        // absorb it into the previous chunk (which may grow up to 1.5x maxRowGroupSize).
-        int numChunks = (int) (mergeRowCount / maxRowGroupSize);
-        long remainder = mergeRowCount - (long) numChunks * maxRowGroupSize;
-        if (remainder > maxRowGroupSize / 2) {
-            numChunks++;
-        } else if (numChunks == 0) {
+        // Even-split: when totalRows > 1.5x maxRowGroupSize, split into ceil(totalRows / (1.5 * maxRowGroupSize))
+        // chunks. Each chunk gets between 0.75x and 1.5x maxRowGroupSize rows.
+        int numChunks;
+        if (2L * mergeRowCount > 3L * maxRowGroupSize) {
+            numChunks = (int) ((2L * mergeRowCount + 3L * maxRowGroupSize - 1) / (3L * maxRowGroupSize));
+        } else {
             numChunks = 1;
         }
-        // The last chunk may absorb the remainder, so compute the actual max chunk size
-        // for buffer pre-allocation. This is at most maxRowGroupSize + maxRowGroupSize/2.
-        final long maxChunkSize = numChunks == 1
-                ? mergeRowCount
-                : Math.max(maxRowGroupSize, mergeRowCount - (long) (numChunks - 1) * maxRowGroupSize);
+        final long maxChunkSize = (mergeRowCount + numChunks - 1) / numChunks;
         final int colCount = (int) parquetColumns.size() / 2;
 
         // Column-top null source buffers (per-merge, not reusable across merges
@@ -2035,12 +2054,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             // Phase 2: Process chunks, reusing destination buffers from mergeDstBufs.
+            // Even distribution: first (mergeRowCount % numChunks) chunks get one extra row.
             final String tableName = tableWriter.getTableToken().getTableName();
+            long baseChunkSize = mergeRowCount / numChunks;
+            long extraRows = mergeRowCount % numChunks;
+            long chunkLo = 0;
             for (int chunk = 0; chunk < numChunks; chunk++) {
-                long chunkLo = (long) chunk * maxRowGroupSize;
-                // Last chunk absorbs the remainder to avoid tiny row groups.
-                long chunkHi = (chunk == numChunks - 1) ? mergeRowCount - 1 : chunkLo + maxRowGroupSize - 1;
-                long chunkRowCount = chunkHi - chunkLo + 1;
+                long chunkRowCount = baseChunkSize + (chunk < extraRows ? 1 : 0);
                 long chunkMergeIndexAddr = timestampMergeIndexAddr + chunkLo * TIMESTAMP_MERGE_ENTRY_BYTES;
 
                 chunkDescriptor.of(tableName, chunkRowCount, timestampIndex);
@@ -2168,6 +2188,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     partitionUpdater.addRowGroup((short) (metadataPosition + chunk), chunkDescriptor);
                 }
+                chunkLo += chunkRowCount;
             }
         } finally {
             // Free only per-merge null source buffers. Destination buffers in

@@ -165,7 +165,7 @@ impl ParquetUpdater {
 
     pub fn replace_row_group(
         &mut self,
-        partition: &Partition,
+        partition: &Partition<'_>,
         row_group_id: i16,
     ) -> ParquetResult<()> {
         let options = self.row_group_options();
@@ -205,7 +205,11 @@ impl ParquetUpdater {
         }
     }
 
-    pub fn insert_row_group(&mut self, partition: &Partition, position: i16) -> ParquetResult<()> {
+    pub fn insert_row_group(
+        &mut self,
+        partition: &Partition<'_>,
+        position: i16,
+    ) -> ParquetResult<()> {
         let options = self.row_group_options();
         let row_group = create_row_group(
             partition,
@@ -228,7 +232,7 @@ impl ParquetUpdater {
         }
     }
 
-    pub fn append_row_group(&mut self, partition: &Partition) -> ParquetResult<()> {
+    pub fn append_row_group(&mut self, partition: &Partition<'_>) -> ParquetResult<()> {
         let options = self.row_group_options();
         let row_group = create_row_group(
             partition,
@@ -399,14 +403,21 @@ impl ParquetUpdater {
         self.result_unused_bytes
     }
 
+    /// Slice a row group by decoding a sub-range and re-encoding it.
+    ///
+    /// `file_ptr` and `file_size` must point to a valid memory-mapped region
+    /// of the source parquet file that remains valid for the duration of
+    /// this call. The caller (Java side) owns the mmap and keeps it alive.
     pub fn slice_row_group(
         &mut self,
         rg_index: i16,
         row_lo: usize,
         row_hi: usize, // inclusive
+        file_ptr: *const u8,
+        file_size: u64,
     ) -> ParquetResult<()> {
         use crate::parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers};
-        use std::io::{Cursor, Read, Seek, SeekFrom};
+        use std::io::Cursor;
 
         let rg_idx = rg_index as usize;
         if rg_idx >= self.file_metadata.row_groups.len() {
@@ -418,16 +429,15 @@ impl ParquetUpdater {
             ));
         }
 
-        // Read file into memory from the reader for decoding
-        let file_size = self.read_file_size;
-        self.reader.seek(SeekFrom::Start(0))?;
-        let mut file_bytes = vec![0u8; file_size as usize];
-        self.reader.read_exact(&mut file_bytes)?;
+        // SAFETY: file_ptr is an mmap'd region owned by the Java caller.
+        // It remains valid for the duration of this call (the caller holds
+        // parquetAddr until after all slice/merge operations complete).
+        let file_bytes: &[u8] = unsafe { std::slice::from_raw_parts(file_ptr, file_size as usize) };
 
-        // Create decoder from the in-memory file
+        // Create decoder from the mmap'd file (Cursor over the slice is zero-copy)
         let decoder = ParquetDecoder::read(
             self.allocator.clone(),
-            &mut Cursor::new(file_bytes.as_slice()),
+            &mut Cursor::new(file_bytes),
             file_size,
         )?;
 
@@ -443,7 +453,7 @@ impl ParquetUpdater {
             .collect::<ParquetResult<_>>()?;
 
         // Decode the row range [row_lo, row_hi+1) from the row group
-        let mut ctx = DecodeContext::new(file_bytes.as_ptr(), file_size);
+        let mut ctx = DecodeContext::new(file_ptr, file_size);
         let mut row_group_bufs = RowGroupBuffers::new(self.allocator.clone());
         decoder.decode_row_group(
             &mut ctx,
@@ -455,12 +465,16 @@ impl ParquetUpdater {
         )?;
 
         // Extract symbol tables from dictionary pages
-        let symbol_tables = extract_symbol_tables(&self.file_metadata, &file_bytes, rg_idx)?;
+        let symbol_tables = extract_symbol_tables(&self.file_metadata, file_bytes, rg_idx)?;
+
+        // Extract schema metadata into local storage so that the partition
+        // borrows from locals rather than from self.file_metadata.
+        let schema_cols = extract_schema_column_meta(&self.file_metadata);
 
         // Build partition from decoded buffers
         let row_count = row_hi + 1 - row_lo;
         let partition = build_partition_from_decoded(
-            &self.file_metadata,
+            &schema_cols,
             &decoder,
             &row_group_bufs,
             &symbol_tables,
@@ -468,8 +482,6 @@ impl ParquetUpdater {
         )?;
 
         // Re-encode and write the row group.
-        // SAFETY: partition references data in row_group_bufs and symbol_tables
-        // which remain alive until after the write returns.
         self.replace_row_group(&partition, rg_index)
     }
 
@@ -613,17 +625,43 @@ fn dict_page_to_qdb_symbol_table(
     Ok((chars_buf, offsets))
 }
 
+/// Column metadata extracted from the parquet schema, owned so it doesn't
+/// borrow `FileMetaData`.
+struct SchemaColumnMeta {
+    name: String,
+    id: i32,
+    required: bool,
+}
+
+/// Extract per-column metadata from the parquet schema descriptor.
+fn extract_schema_column_meta(file_metadata: &FileMetaData) -> Vec<SchemaColumnMeta> {
+    use parquet2::schema::Repetition;
+
+    file_metadata
+        .schema_descr
+        .columns()
+        .iter()
+        .map(|schema_col| {
+            let field_info = &schema_col.descriptor.primitive_type.field_info;
+            SchemaColumnMeta {
+                name: field_info.name.clone(),
+                id: field_info.id.unwrap_or(0),
+                required: field_info.repetition == Repetition::Required,
+            }
+        })
+        .collect()
+}
+
 /// Build a `Partition` from decoded row group buffers.
 /// For symbol columns, uses the provided symbol tables.
-fn build_partition_from_decoded(
-    file_metadata: &FileMetaData,
+fn build_partition_from_decoded<'a>(
+    schema_cols: &'a [SchemaColumnMeta],
     decoder: &crate::parquet_read::ParquetDecoder,
-    row_group_bufs: &crate::parquet_read::RowGroupBuffers,
-    symbol_tables: &[Option<(Vec<u8>, Vec<u64>)>],
+    row_group_bufs: &'a crate::parquet_read::RowGroupBuffers,
+    symbol_tables: &'a [Option<(Vec<u8>, Vec<u64>)>],
     row_count: usize,
-) -> ParquetResult<Partition> {
+) -> ParquetResult<Partition<'a>> {
     use crate::parquet_write::schema::Column;
-    use parquet2::schema::Repetition;
     use qdb_core::col_type::ColumnTypeTag;
 
     let num_cols = decoder.col_count as usize;
@@ -636,14 +674,9 @@ fn build_partition_from_decoded(
             .ok_or_else(|| fmt_err!(InvalidType, "unsupported column type at index {}", col_idx))?;
 
         let col_buf = &col_bufs[col_idx];
-        let schema_col = &file_metadata.schema_descr.columns()[col_idx];
-        let field_info = &schema_col.descriptor.primitive_type.field_info;
-        let col_id = field_info.id.unwrap_or(0);
+        let meta = &schema_cols[col_idx];
 
-        let is_required = field_info.repetition == Repetition::Required;
-
-        // SAFETY: these slices reference data in row_group_bufs / symbol_tables
-        // which outlive the partition usage in replace_row_group.
+        // SAFETY: col_buf.data_ptr points into row_group_bufs which is borrowed for 'a.
         let primary_data =
             unsafe { std::slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size) };
 
@@ -662,17 +695,16 @@ fn build_partition_from_decoded(
             };
 
         let column = Column {
-            id: col_id,
-            // SAFETY: name is from file_metadata which outlives the partition usage
-            name: unsafe { std::mem::transmute::<&str, &'static str>(field_info.name.as_str()) },
+            id: meta.id,
+            name: &meta.name,
             data_type: column_type,
             row_count,
             column_top: 0,
-            primary_data: unsafe { std::mem::transmute::<&[u8], &[u8]>(primary_data) },
-            secondary_data: unsafe { std::mem::transmute::<&[u8], &[u8]>(secondary_data) },
-            symbol_offsets: unsafe { std::mem::transmute::<&[u64], &[u64]>(sym_offsets) },
+            primary_data,
+            secondary_data,
+            symbol_offsets: sym_offsets,
             designated_timestamp: false,
-            required: is_required,
+            required: meta.required,
             designated_timestamp_ascending: true,
         };
 
@@ -713,7 +745,7 @@ mod tests {
         };
     }
 
-    fn make_column<T>(name: &'static str, col_type: ColumnType, values: &[T]) -> Column {
+    fn make_column<T>(name: &'static str, col_type: ColumnType, values: &[T]) -> Column<'static> {
         Column::from_raw_data(
             0,
             name,

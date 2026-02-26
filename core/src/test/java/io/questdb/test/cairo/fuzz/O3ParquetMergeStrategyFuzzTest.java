@@ -52,6 +52,141 @@ import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
 public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
     @Test
+    public void testMultiRoundO3OnAllParquetPartitions() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+
+        // Data-only fuzz: no schema changes, drops, or truncations.
+        setFuzzProbabilities(
+                0,      // cancelRow
+                0,      // notSet
+                0,      // null
+                0,      // rollback
+                0,      // colAdd
+                0,      // colRemove
+                0,      // colRename
+                0,      // colTypeChange
+                1.0,    // dataAdd
+                0.5,    // equalTs
+                0,      // partitionDrop
+                0,      // truncate
+                0,      // tableDrop
+                0,      // setTtl
+                0,      // replace
+                0       // symbolAccess
+        );
+
+        int rowGroupSize = 500 + rnd.nextInt(2000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+
+        int initialRowCount = 2000 + rnd.nextInt(5000);
+        fuzzer.setFuzzCounts(
+                true,           // isO3
+                5000,           // fuzzRowCount
+                30,             // transactionCount
+                20,             // strLen
+                10,             // symbolStrLenMax
+                20,             // symbolCountMax
+                initialRowCount,
+                1,              // partitionCount
+                -1,             // parallelWalCount (unused)
+                0               // ioFailureCount
+        );
+
+        assertMemoryLeak(() -> {
+            String walTable = getTestName();
+            fuzzer.createInitialTableWal(walTable, initialRowCount);
+            drainWalQueue();
+
+            String oracleTable = walTable + "_oracle";
+            fuzzer.createInitialTableNonWal(oracleTable, null);
+
+            // Convert the last (and only) partition to Parquet — all partitions are now parquet.
+            final long partitionTs;
+            StringSink partName = new StringSink();
+            try (TableReader reader = engine.getReader(walTable)) {
+                Assert.assertEquals("expected exactly 1 partition", 1, reader.getPartitionCount());
+                partitionTs = reader.getPartitionTimestampByIndex(0);
+                PartitionBy.setSinkForPartition(
+                        partName,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        partitionTs
+                );
+            }
+            execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
+            drainWalQueue();
+
+            long dayEnd = partitionTs + DAY_MICROS;
+
+            int rounds = 3 + rnd.nextInt(8);
+            LOG.info()
+                    .$("starting all-parquet fuzz: initialRowCount=").$(initialRowCount)
+                    .$(", rounds=").$(rounds)
+                    .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", partitionTs=").$(partitionTs)
+                    .$();
+
+            for (int round = 0; round < rounds; round++) {
+                long start, end;
+                int pattern = rnd.nextInt(5);
+
+                switch (pattern) {
+                    case 0 -> {
+                        long center = partitionTs + rnd.nextLong(DAY_MICROS);
+                        long halfSpan = 1 + rnd.nextLong(Math.max(1, DAY_MICROS / 20));
+                        start = Math.max(partitionTs, center - halfSpan);
+                        end = Math.min(dayEnd, center + halfSpan);
+                    }
+                    case 1 -> {
+                        start = partitionTs;
+                        end = dayEnd;
+                    }
+                    case 2 -> {
+                        start = partitionTs;
+                        end = partitionTs + DAY_MICROS / 2;
+                    }
+                    case 3 -> {
+                        start = partitionTs + DAY_MICROS / 2;
+                        end = dayEnd;
+                    }
+                    default -> {
+                        long a = partitionTs + rnd.nextLong(DAY_MICROS);
+                        long b = partitionTs + rnd.nextLong(DAY_MICROS);
+                        start = Math.min(a, b);
+                        end = Math.max(a, b) + 1;
+                    }
+                }
+
+                if (start >= end) {
+                    end = start + 1;
+                }
+
+                LOG.info()
+                        .$("round ").$(round)
+                        .$(": pattern=").$(pattern)
+                        .$(", start=").$(start)
+                        .$(", end=").$(end)
+                        .$();
+
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(walTable, rnd, start, end);
+                try {
+                    fuzzer.applyNonWal(transactions, oracleTable, rnd);
+                    fuzzer.applyWal(transactions, walTable, 1, rnd);
+                } finally {
+                    Misc.freeObjListAndClear(transactions);
+                }
+                drainWalQueue();
+            }
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+            }
+
+            assertRowGroupSizes(walTable, rowGroupSize);
+        });
+    }
+
+    @Test
     public void testMultiRoundO3OnParquetPartition() throws Exception {
         Rnd rnd = generateRandom(LOG);
 
@@ -207,33 +342,14 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
             }
 
-            // Verify that no row group in the Parquet partition exceeds 1.5x the configured size.
-            try (TableReader reader = engine.getReader(walTable)) {
-                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-                    if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
-                        continue;
-                    }
-                    reader.openPartition(i);
-                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
-                    PartitionDecoder.Metadata meta = decoder.metadata();
-                    int rgCount = meta.getRowGroupCount();
-                    for (int rg = 0; rg < rgCount; rg++) {
-                        int rgSize = meta.getRowGroupSize(rg);
-                        Assert.assertTrue(
-                                "row group " + rg + " has " + rgSize + " rows, exceeds 1.5x configured size " + rowGroupSize,
-                                rgSize <= rowGroupSize + rowGroupSize / 2
-                        );
-                    }
-                }
-            }
+            assertRowGroupSizes(walTable, rowGroupSize);
         });
     }
 
     @Test
-    public void testMultiRoundO3OnAllParquetPartitions() throws Exception {
+    public void testSmallInOrderAppendsProduceAtMostOneSmallRowGroup() throws Exception {
         Rnd rnd = generateRandom(LOG);
 
-        // Data-only fuzz: no schema changes, drops, or truncations.
         setFuzzProbabilities(
                 0,      // cancelRow
                 0,      // notSet
@@ -244,7 +360,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 0,      // colRename
                 0,      // colTypeChange
                 1.0,    // dataAdd
-                0.5,    // equalTs
+                0,      // equalTs
                 0,      // partitionDrop
                 0,      // truncate
                 0,      // tableDrop
@@ -257,10 +373,12 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
 
         int initialRowCount = 2000 + rnd.nextInt(5000);
+        // Small in-order transactions: low row count per round, no O3 within each batch.
+        // A single transaction per round avoids intra-round timestamp overlap.
         fuzzer.setFuzzCounts(
-                true,           // isO3
-                5000,           // fuzzRowCount
-                30,             // transactionCount
+                false,          // isO3
+                rowGroupSize / 8, // fuzzRowCount — small relative to RG size
+                1,              // transactionCount
                 20,             // strLen
                 10,             // symbolStrLenMax
                 20,             // symbolCountMax
@@ -278,11 +396,16 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             String oracleTable = walTable + "_oracle";
             fuzzer.createInitialTableNonWal(oracleTable, null);
 
-            // Convert the last (and only) partition to Parquet — all partitions are now parquet.
+            // Insert rows into the next day so that 2022-02-24 is no longer
+            // the active (last) partition and can be converted to Parquet.
+            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            drainWalQueue();
+
             final long partitionTs;
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
-                Assert.assertEquals("expected exactly 1 partition", 1, reader.getPartitionCount());
+                Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
                 partitionTs = reader.getPartitionTimestampByIndex(0);
                 PartitionBy.setSinkForPartition(
                         partName,
@@ -294,54 +417,27 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
             drainWalQueue();
 
+            // Generate in-order transactions with timestamps after existing data.
+            // Initial data covers roughly [00:00, 00:00 + initialRowCount seconds].
+            // Each round uses a non-overlapping window advancing through the second
+            // half of the day, so every batch appends after the previous one.
             long dayEnd = partitionTs + DAY_MICROS;
+            int rounds = 5 + rnd.nextInt(6);
+            long windowSize = (dayEnd - partitionTs - DAY_MICROS / 2) / rounds;
 
-            int rounds = 3 + rnd.nextInt(8);
             LOG.info()
-                    .$("starting all-parquet fuzz: initialRowCount=").$(initialRowCount)
+                    .$("starting in-order fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
                     .$(", rowGroupSize=").$(rowGroupSize)
                     .$(", partitionTs=").$(partitionTs)
                     .$();
 
             for (int round = 0; round < rounds; round++) {
-                long start, end;
-                int pattern = rnd.nextInt(5);
-
-                switch (pattern) {
-                    case 0 -> {
-                        long center = partitionTs + rnd.nextLong(DAY_MICROS);
-                        long halfSpan = 1 + rnd.nextLong(Math.max(1, DAY_MICROS / 20));
-                        start = Math.max(partitionTs, center - halfSpan);
-                        end = Math.min(dayEnd, center + halfSpan);
-                    }
-                    case 1 -> {
-                        start = partitionTs;
-                        end = dayEnd;
-                    }
-                    case 2 -> {
-                        start = partitionTs;
-                        end = partitionTs + DAY_MICROS / 2;
-                    }
-                    case 3 -> {
-                        start = partitionTs + DAY_MICROS / 2;
-                        end = dayEnd;
-                    }
-                    default -> {
-                        long a = partitionTs + rnd.nextLong(DAY_MICROS);
-                        long b = partitionTs + rnd.nextLong(DAY_MICROS);
-                        start = Math.min(a, b);
-                        end = Math.max(a, b) + 1;
-                    }
-                }
-
-                if (start >= end) {
-                    end = start + 1;
-                }
+                long start = partitionTs + DAY_MICROS / 2 + round * windowSize;
+                long end = start + windowSize;
 
                 LOG.info()
                         .$("round ").$(round)
-                        .$(": pattern=").$(pattern)
                         .$(", start=").$(start)
                         .$(", end=").$(end)
                         .$();
@@ -360,24 +456,44 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
             }
 
-            try (TableReader reader = engine.getReader(walTable)) {
-                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-                    if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
-                        continue;
-                    }
-                    reader.openPartition(i);
-                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
-                    PartitionDecoder.Metadata meta = decoder.metadata();
-                    int rgCount = meta.getRowGroupCount();
-                    for (int rg = 0; rg < rgCount; rg++) {
-                        int rgSize = meta.getRowGroupSize(rg);
-                        Assert.assertTrue(
-                                "row group " + rg + " has " + rgSize + " rows, exceeds 1.5x configured size " + rowGroupSize,
-                                rgSize <= rowGroupSize + rowGroupSize / 2
-                        );
+            assertRowGroupSizes(walTable, rowGroupSize, true);
+        });
+    }
+
+    private void assertRowGroupSizes(String tableName, int rowGroupSize) {
+        assertRowGroupSizes(tableName, rowGroupSize, false);
+    }
+
+    private void assertRowGroupSizes(String tableName, int rowGroupSize, boolean assertAtMostOneSmallRg) {
+        int smallRgThreshold = rowGroupSize / 4;
+        try (TableReader reader = engine.getReader(tableName)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                reader.openPartition(i);
+                PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
+                PartitionDecoder.Metadata meta = decoder.metadata();
+                int rgCount = meta.getRowGroupCount();
+                int smallRgCount = 0;
+                for (int rg = 0; rg < rgCount; rg++) {
+                    int rgSize = meta.getRowGroupSize(rg);
+                    Assert.assertTrue(
+                            "row group " + rg + " has " + rgSize + " rows, exceeds 1.5x configured size " + rowGroupSize,
+                            rgSize <= rowGroupSize + rowGroupSize / 2
+                    );
+                    if (rgSize < smallRgThreshold) {
+                        smallRgCount++;
                     }
                 }
+                if (assertAtMostOneSmallRg) {
+                    Assert.assertTrue(
+                            "partition " + i + " has " + smallRgCount +
+                                    " small row groups (< " + smallRgThreshold + " rows), expected at most 1",
+                            smallRgCount <= 1
+                    );
+                }
             }
-        });
+        }
     }
 }
