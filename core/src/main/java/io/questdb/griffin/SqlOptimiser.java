@@ -2564,7 +2564,19 @@ public class SqlOptimiser implements Mutable {
             );
         } else {
             ObjList<QueryModel> models = baseModel.getJoinModels();
+            // For standalone UNNEST, skip the synthetic base model
+            // (long_sequence) so SELECT * only returns unnest columns.
+            boolean skipBase = false;
+            for (int j = 1, z = models.size(); j < z; j++) {
+                if (models.getQuick(j).isStandaloneUnnest()) {
+                    skipBase = true;
+                    break;
+                }
+            }
             for (int j = 0, z = models.size(); j < z; j++) {
+                if (j == 0 && skipBase) {
+                    continue;
+                }
                 createSelectColumnsForWildcard0(
                         models.getQuick(j),
                         hasJoins,
@@ -3514,6 +3526,40 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void enumerateTableColumns(QueryModel model, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        final ObjList<QueryModel> jm = model.getJoinModels();
+
+        // we have plain tables and possibly joins
+        // a deal with _this_ model first, it will always be the first element in the join model list
+        if (model.getJoinType() == JOIN_UNNEST) {
+            enumerateUnnestColumns(model);
+        } else {
+            final ExpressionNode tableNameExpr = model.getTableNameExpr();
+            if (tableNameExpr != null || model.getSelectModelType() == SELECT_MODEL_SHOW) {
+                if (model.getSelectModelType() == SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
+                    parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
+                } else {
+                    openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
+                }
+            } else {
+                final QueryModel nested = model.getNestedModel();
+                if (nested != null) {
+                    enumerateTableColumns(nested, executionContext, sqlParserCallback);
+                    if (model.isUpdate()) {
+                        model.copyUpdateTableMetadata(nested);
+                    }
+                }
+            }
+        }
+        for (int i = 1, n = jm.size(); i < n; i++) {
+            enumerateTableColumns(jm.getQuick(i), executionContext, sqlParserCallback);
+        }
+
+        if (model.getUnionModel() != null) {
+            enumerateTableColumns(model.getUnionModel(), executionContext, sqlParserCallback);
+        }
+    }
+
     private void enumerateUnnestColumns(QueryModel model) throws SqlException {
         ObjList<ExpressionNode> unnestExprs = model.getUnnestExpressions();
         ObjList<CharSequence> aliases = model.getUnnestColumnAliases();
@@ -3552,40 +3598,6 @@ public class SqlOptimiser implements Mutable {
                     true
             );
             model.addField(column);
-        }
-    }
-
-    private void enumerateTableColumns(QueryModel model, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
-        final ObjList<QueryModel> jm = model.getJoinModels();
-
-        // we have plain tables and possibly joins
-        // a deal with _this_ model first, it will always be the first element in the join model list
-        if (model.getJoinType() == JOIN_UNNEST) {
-            enumerateUnnestColumns(model);
-        } else {
-            final ExpressionNode tableNameExpr = model.getTableNameExpr();
-            if (tableNameExpr != null || model.getSelectModelType() == SELECT_MODEL_SHOW) {
-                if (model.getSelectModelType() == SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
-                    parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
-                } else {
-                    openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
-                }
-            } else {
-                final QueryModel nested = model.getNestedModel();
-                if (nested != null) {
-                    enumerateTableColumns(nested, executionContext, sqlParserCallback);
-                    if (model.isUpdate()) {
-                        model.copyUpdateTableMetadata(nested);
-                    }
-                }
-            }
-        }
-        for (int i = 1, n = jm.size(); i < n; i++) {
-            enumerateTableColumns(jm.getQuick(i), executionContext, sqlParserCallback);
-        }
-
-        if (model.getUnionModel() != null) {
-            enumerateTableColumns(model.getUnionModel(), executionContext, sqlParserCallback);
         }
     }
 

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -38,22 +37,39 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class UnnestRecord implements Record {
-    private final int arrayColumnCount;
-    private final DerivedArrayView[] derivedViews;
+    private final int[] colToSourceCol;
+    private final int[] colToSourceIndex;
     private final boolean hasOrdinality;
+    private final UnnestSource[] sources;
     private final int split;
+    private final int unnestColumnCount;
     private int arrayIndex;
-    private int[] arrayLengths;
-    private ArrayView[] arrayViews;
     private Record baseRecord;
 
-    public UnnestRecord(int split, int arrayColumnCount, boolean hasOrdinality) {
+    public UnnestRecord(
+            int split,
+            UnnestSource[] sources,
+            boolean hasOrdinality
+    ) {
         this.split = split;
-        this.arrayColumnCount = arrayColumnCount;
+        this.sources = sources;
         this.hasOrdinality = hasOrdinality;
-        this.derivedViews = new DerivedArrayView[arrayColumnCount];
-        for (int i = 0; i < arrayColumnCount; i++) {
-            derivedViews[i] = new DerivedArrayView();
+        // Compute total unnest column count and build column mappings.
+        int totalCols = 0;
+        for (int i = 0; i < sources.length; i++) {
+            totalCols += sources[i].getColumnCount();
+        }
+        this.unnestColumnCount = totalCols;
+        this.colToSourceIndex = new int[totalCols];
+        this.colToSourceCol = new int[totalCols];
+        int idx = 0;
+        for (int i = 0; i < sources.length; i++) {
+            int count = sources[i].getColumnCount();
+            for (int j = 0; j < count; j++) {
+                colToSourceIndex[idx] = i;
+                colToSourceCol[idx] = j;
+                idx++;
+            }
         }
     }
 
@@ -63,18 +79,15 @@ public class UnnestRecord implements Record {
             return baseRecord.getArray(col, columnType);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == arrayColumnCount) {
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
             return null;
         }
-        if (unnestCol < arrayColumnCount) {
-            ArrayView view = arrayViews[unnestCol];
-            if (view == null || arrayIndex >= arrayLengths[unnestCol]) {
-                return null;
-            }
-            DerivedArrayView derived = derivedViews[unnestCol];
-            derived.of(view);
-            derived.subArray(0, arrayIndex);
-            return derived;
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getArray(
+                    srcCol, arrayIndex, columnType
+            );
         }
         return null;
     }
@@ -100,6 +113,15 @@ public class UnnestRecord implements Record {
         if (col < split) {
             return baseRecord.getBool(col);
         }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return false;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getBool(srcCol, arrayIndex);
+        }
         return false;
     }
 
@@ -108,6 +130,15 @@ public class UnnestRecord implements Record {
         if (col < split) {
             return baseRecord.getByte(col);
         }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return 0;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getByte(srcCol, arrayIndex);
+        }
         return 0;
     }
 
@@ -115,6 +146,15 @@ public class UnnestRecord implements Record {
     public char getChar(int col) {
         if (col < split) {
             return baseRecord.getChar(col);
+        }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return 0;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getChar(srcCol, arrayIndex);
         }
         return 0;
     }
@@ -179,15 +219,13 @@ public class UnnestRecord implements Record {
             return baseRecord.getDouble(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == arrayColumnCount) {
-            return Numbers.LONG_NULL;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return (double) (arrayIndex + 1);
         }
-        if (unnestCol < arrayColumnCount) {
-            ArrayView view = arrayViews[unnestCol];
-            if (view == null || arrayIndex >= arrayLengths[unnestCol]) {
-                return Double.NaN;
-            }
-            return view.getDouble(view.getFlatViewOffset() + arrayIndex);
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getDouble(srcCol, arrayIndex);
         }
         return Double.NaN;
     }
@@ -196,6 +234,15 @@ public class UnnestRecord implements Record {
     public float getFloat(int col) {
         if (col < split) {
             return baseRecord.getFloat(col);
+        }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return Float.NaN;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getFloat(srcCol, arrayIndex);
         }
         return Float.NaN;
     }
@@ -245,6 +292,15 @@ public class UnnestRecord implements Record {
         if (col < split) {
             return baseRecord.getInt(col);
         }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return Numbers.INT_NULL;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getInt(srcCol, arrayIndex);
+        }
         return Numbers.INT_NULL;
     }
 
@@ -262,15 +318,13 @@ public class UnnestRecord implements Record {
             return baseRecord.getLong(col);
         }
         int unnestCol = col - split;
-        if (hasOrdinality && unnestCol == arrayColumnCount) {
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
             return arrayIndex + 1; // 1-based ordinality
         }
-        if (unnestCol < arrayColumnCount) {
-            ArrayView view = arrayViews[unnestCol];
-            if (view == null || arrayIndex >= arrayLengths[unnestCol]) {
-                return Numbers.LONG_NULL;
-            }
-            return view.getLong(view.getFlatViewOffset() + arrayIndex);
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getLong(srcCol, arrayIndex);
         }
         return Numbers.LONG_NULL;
     }
@@ -324,6 +378,15 @@ public class UnnestRecord implements Record {
         if (col < split) {
             return baseRecord.getShort(col);
         }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return 0;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getShort(srcCol, arrayIndex);
+        }
         return 0;
     }
 
@@ -331,6 +394,15 @@ public class UnnestRecord implements Record {
     public CharSequence getStrA(int col) {
         if (col < split) {
             return baseRecord.getStrA(col);
+        }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return null;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getStrA(srcCol, arrayIndex);
         }
         return null;
     }
@@ -340,6 +412,15 @@ public class UnnestRecord implements Record {
         if (col < split) {
             return baseRecord.getStrB(col);
         }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return null;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getStrB(srcCol, arrayIndex);
+        }
         return null;
     }
 
@@ -347,6 +428,15 @@ public class UnnestRecord implements Record {
     public int getStrLen(int col) {
         if (col < split) {
             return baseRecord.getStrLen(col);
+        }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return -1;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getStrLen(srcCol, arrayIndex);
         }
         return -1;
     }
@@ -399,10 +489,8 @@ public class UnnestRecord implements Record {
         return -1;
     }
 
-    void of(Record baseRecord, ArrayView[] arrayViews, int[] arrayLengths) {
+    void of(Record baseRecord) {
         this.baseRecord = baseRecord;
-        this.arrayViews = arrayViews;
-        this.arrayLengths = arrayLengths;
     }
 
     void setArrayIndex(int arrayIndex) {

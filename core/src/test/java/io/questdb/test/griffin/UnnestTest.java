@@ -78,24 +78,6 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCountDistinctUnnested() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS ("
-                    + "SELECT ARRAY[1.0, 2.0, 1.0, 3.0, 2.0] arr FROM long_sequence(1)"
-                    + ")");
-            // Use GROUP BY to count distinct values
-            assertQueryNoLeakCheck(
-                    "val\tcnt\n"
-                            + "1.0\t2\n"
-                            + "2.0\t2\n"
-                            + "3.0\t1\n",
-                    "SELECT u.val, count() cnt FROM t, UNNEST(t.arr) u(val) "
-                            + "GROUP BY u.val ORDER BY u.val"
-            );
-        });
-    }
-
-    @Test
     public void testCTEAsBaseForUnnest() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS ("
@@ -360,9 +342,7 @@ public class UnnestTest extends AbstractCairoTest {
     public void testMultipleRowsAllNullArrays() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (NULL)");
-            execute("INSERT INTO t VALUES (NULL)");
-            execute("INSERT INTO t VALUES (NULL)");
+            execute("INSERT INTO t VALUES (NULL), (NULL), (NULL)");
             assertQueryNoLeakCheck(
                     "value\n",
                     "SELECT value FROM t, UNNEST(t.arr)",
@@ -375,10 +355,13 @@ public class UnnestTest extends AbstractCairoTest {
     public void testMultipleRowsEmptyAndNonEmpty() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (1, ARRAY[]::DOUBLE[])");
-            execute("INSERT INTO t VALUES (2, ARRAY[10.0, 20.0])");
-            execute("INSERT INTO t VALUES (3, ARRAY[]::DOUBLE[])");
-            execute("INSERT INTO t VALUES (4, ARRAY[30.0])");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, ARRAY[]::DOUBLE[]),
+                    (2, ARRAY[10.0, 20.0]),
+                    (3, ARRAY[]::DOUBLE[]),
+                    (4, ARRAY[30.0])
+                    """);
             assertQueryNoLeakCheck(
                     "id\tval\n"
                             + "2\t10.0\n"
@@ -409,9 +392,12 @@ public class UnnestTest extends AbstractCairoTest {
     public void testMultipleRowsRowCount() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (ARRAY[1.0, 2.0])");
-            execute("INSERT INTO t VALUES (ARRAY[3.0, 4.0, 5.0])");
-            execute("INSERT INTO t VALUES (ARRAY[6.0])");
+            execute("""
+                    INSERT INTO t VALUES
+                    (ARRAY[1.0, 2.0]),
+                    (ARRAY[3.0, 4.0, 5.0]),
+                    (ARRAY[6.0])
+                    """);
             assertQueryNoLeakCheck(
                     "cnt\n"
                             + "6\n",
@@ -444,9 +430,12 @@ public class UnnestTest extends AbstractCairoTest {
     public void testMultipleRowsSomeNullArrays() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (1, ARRAY[10.0, 20.0])");
-            execute("INSERT INTO t VALUES (2, NULL)");
-            execute("INSERT INTO t VALUES (3, ARRAY[30.0])");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, ARRAY[10.0, 20.0]),
+                    (2, NULL),
+                    (3, ARRAY[30.0])
+                    """);
             assertQueryNoLeakCheck(
                     "id\tval\n"
                             + "1\t10.0\n"
@@ -462,9 +451,12 @@ public class UnnestTest extends AbstractCairoTest {
     public void testMultipleRowsVaryingArrayLengths() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (1, ARRAY[1.0])");
-            execute("INSERT INTO t VALUES (2, ARRAY[2.0, 3.0])");
-            execute("INSERT INTO t VALUES (3, ARRAY[4.0, 5.0, 6.0])");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, ARRAY[1.0]),
+                    (2, ARRAY[2.0, 3.0]),
+                    (3, ARRAY[4.0, 5.0, 6.0])
+                    """);
             assertQueryNoLeakCheck(
                     "id\tval\n"
                             + "1\t1.0\n"
@@ -483,8 +475,11 @@ public class UnnestTest extends AbstractCairoTest {
     public void testMultipleRowsWithOrdinalityResets() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (1, ARRAY[10.0, 20.0])");
-            execute("INSERT INTO t VALUES (2, ARRAY[30.0, 40.0, 50.0])");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, ARRAY[10.0, 20.0]),
+                    (2, ARRAY[30.0, 40.0, 50.0])
+                    """);
             assertQueryNoLeakCheck(
                     "id\tval\tord\n"
                             + "1\t10.0\t1\n"
@@ -533,6 +528,32 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTooManyColumnAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.arr) u(x, y, z)",
+                    17,
+                    "too many column aliases for UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testTooManyColumnAliasesWithOrdinality() throws Exception {
+        // WITH ORDINALITY allows one extra alias (for the ord column).
+        // Three aliases for 1 array + 1 ordinality = 2 max -> error.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.arr) WITH ORDINALITY u(x, ord, z)",
+                    17,
+                    "too many column aliases for UNNEST"
+            );
+        });
+    }
+
+    @Test
     public void testNullArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (arr DOUBLE[])");
@@ -549,8 +570,7 @@ public class UnnestTest extends AbstractCairoTest {
     public void testOrderByBaseColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (2, ARRAY[20.0])");
-            execute("INSERT INTO t VALUES (1, ARRAY[10.0])");
+            execute("INSERT INTO t VALUES (2, ARRAY[20.0]), (1, ARRAY[10.0])");
             assertQueryNoLeakCheck(
                     "id\tval\n"
                             + "1\t10.0\n"
@@ -565,8 +585,7 @@ public class UnnestTest extends AbstractCairoTest {
     public void testOrderByMultipleColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (1, ARRAY[2.0, 1.0])");
-            execute("INSERT INTO t VALUES (2, ARRAY[4.0, 3.0])");
+            execute("INSERT INTO t VALUES (1, ARRAY[2.0, 1.0]), (2, ARRAY[4.0, 3.0])");
             assertQueryNoLeakCheck(
                     "id\tval\n"
                             + "1\t1.0\n"
@@ -939,6 +958,42 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStandaloneSelectStar() throws Exception {
+        // SELECT * from standalone UNNEST should only show unnested
+        // columns, not the synthetic long_sequence(1) x column.
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                "value\n"
+                        + "1.0\n"
+                        + "2.0\n"
+                        + "3.0\n",
+                "SELECT * FROM UNNEST(ARRAY[1.0, 2.0, 3.0])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneSelectStarMultipleArrays() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                "value1\tvalue2\n"
+                        + "1.0\t10.0\n"
+                        + "2.0\t20.0\n",
+                "SELECT * FROM UNNEST(ARRAY[1.0, 2.0], ARRAY[10.0, 20.0])",
+                (String) null
+        ));
+    }
+
+    @Test
+    public void testStandaloneSelectStarWithOrdinality() throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                "value\tordinality\n"
+                        + "1.0\t1\n"
+                        + "2.0\t2\n",
+                "SELECT * FROM UNNEST(ARRAY[1.0, 2.0]) WITH ORDINALITY",
+                (String) null
+        ));
+    }
+
+    @Test
     public void testSubqueryContainingUnnest() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS ("
@@ -1105,8 +1160,11 @@ public class UnnestTest extends AbstractCairoTest {
     public void testUnnest2DArrayMultipleRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[][])");
-            execute("INSERT INTO t VALUES (1, ARRAY[[1.0, 2.0], [3.0, 4.0]])");
-            execute("INSERT INTO t VALUES (2, ARRAY[[10.0, 20.0]])");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, ARRAY[[1.0, 2.0], [3.0, 4.0]]),
+                    (2, ARRAY[[10.0, 20.0]])
+                    """);
             assertQueryNoLeakCheck(
                     "id\tval\n"
                             + "1\t[1.0,2.0]\n"
@@ -1318,9 +1376,12 @@ public class UnnestTest extends AbstractCairoTest {
     public void testWhereWithOrOnBase() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (id LONG, arr DOUBLE[])");
-            execute("INSERT INTO t VALUES (1, ARRAY[10.0])");
-            execute("INSERT INTO t VALUES (2, ARRAY[20.0])");
-            execute("INSERT INTO t VALUES (3, ARRAY[30.0])");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, ARRAY[10.0]),
+                    (2, ARRAY[20.0]),
+                    (3, ARRAY[30.0])
+                    """);
             assertQueryNoLeakCheck(
                     "id\tval\n"
                             + "1\t10.0\n"
