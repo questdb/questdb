@@ -857,6 +857,14 @@ fn f64_is_nan(val: f64) -> bool {
     (bits & F64_SIGN_MASK) > F64_INFINITY_BITS
 }
 
+/// Hash f64 for bloom filter, canonicalizing -0.0 to +0.0.
+/// This ensures +0.0 == -0.0 semantics are preserved in bloom filter lookups.
+#[inline]
+fn hash_f64(val: f64) -> u64 {
+    let normalized = if val == 0.0 { 0.0f64 } else { val };
+    hash_native(normalized)
+}
+
 /// Fast path: probe-based check for uniform null patterns.
 fn try_encode_f64_rle<W: Write>(
     writer: &mut W,
@@ -954,13 +962,13 @@ fn scan_f64_verify_all_not_null<W: Write>(
                 min_vec = min_vec.simd_min(values);
                 max_vec = max_vec.simd_max(values);
                 for &val in chunk {
-                    h.insert(hash_native(val));
+                    h.insert(hash_f64(val));
                 }
             }
             for &val in probe_remainder {
                 min_vec = Simd::splat(min_vec.reduce_min().min(val));
                 max_vec = Simd::splat(max_vec.reduce_max().max(val));
-                h.insert(hash_native(val));
+                h.insert(hash_f64(val));
             }
         } else {
             for chunk in probe_chunks {
@@ -975,7 +983,7 @@ fn scan_f64_verify_all_not_null<W: Write>(
         }
     } else if let Some(ref mut h) = bloom_hashes {
         for &val in probe_slice {
-            h.insert(hash_native(val));
+            h.insert(hash_f64(val));
         }
     }
 
@@ -994,7 +1002,7 @@ fn scan_f64_verify_all_not_null<W: Write>(
                 min_vec = min_vec.simd_min(values);
                 max_vec = max_vec.simd_max(values);
                 for &val in chunk {
-                    h.insert(hash_native(val));
+                    h.insert(hash_f64(val));
                 }
             }
         } else {
@@ -1022,7 +1030,7 @@ fn scan_f64_verify_all_not_null<W: Write>(
                 return Ok(None);
             }
             for &val in chunk {
-                h.insert(hash_native(val));
+                h.insert(hash_f64(val));
             }
         }
     } else {
@@ -1053,7 +1061,7 @@ fn scan_f64_verify_all_not_null<W: Write>(
             for &val in remainder {
                 min_f = min_f.min(val);
                 max_f = max_f.max(val);
-                h.insert(hash_native(val));
+                h.insert(hash_f64(val));
             }
         } else {
             for &val in remainder {
@@ -1065,7 +1073,7 @@ fn scan_f64_verify_all_not_null<W: Write>(
     } else {
         if let Some(ref mut h) = bloom_hashes {
             for &val in remainder {
-                h.insert(hash_native(val));
+                h.insert(hash_f64(val));
             }
         }
         (None, None)
@@ -1168,7 +1176,7 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
                         min_val = Some(min_val.map_or(val, |m| m.min(val)));
                     }
                     if let Some(ref mut h) = bloom_hashes {
-                        h.insert(hash_native(val));
+                        h.insert(hash_f64(val));
                     }
                 }
             }
@@ -1188,7 +1196,7 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
                     min_val = Some(min_val.map_or(val, |m| m.min(val)));
                 }
                 if let Some(ref mut h) = bloom_hashes {
-                    h.insert(hash_native(val));
+                    h.insert(hash_f64(val));
                 }
             } else {
                 data_null_count += 1;
@@ -1231,6 +1239,14 @@ pub fn encode_f32_def_levels<W: Write>(
 fn f32_is_nan(val: f32) -> bool {
     let bits = val.to_bits() as i32;
     (bits & F32_SIGN_MASK) > F32_INFINITY_BITS
+}
+
+/// Hash f32 for bloom filter, canonicalizing -0.0 to +0.0.
+/// This ensures +0.0 == -0.0 semantics are preserved in bloom filter lookups.
+#[inline]
+fn hash_f32(val: f32) -> u64 {
+    let normalized = if val == 0.0 { 0.0f32 } else { val };
+    hash_native(normalized)
 }
 
 /// Fast path: probe-based check for uniform null patterns.
@@ -1330,13 +1346,13 @@ fn scan_f32_verify_all_not_null<W: Write>(
                 min_vec = min_vec.simd_min(values);
                 max_vec = max_vec.simd_max(values);
                 for &val in chunk {
-                    h.insert(hash_native(val));
+                    h.insert(hash_f32(val));
                 }
             }
             for &val in probe_remainder {
                 min_vec = Simd::splat(min_vec.reduce_min().min(val));
                 max_vec = Simd::splat(max_vec.reduce_max().max(val));
-                h.insert(hash_native(val));
+                h.insert(hash_f32(val));
             }
         } else {
             for chunk in probe_chunks {
@@ -1351,7 +1367,7 @@ fn scan_f32_verify_all_not_null<W: Write>(
         }
     } else if let Some(ref mut h) = bloom_hashes {
         for &val in probe_slice {
-            h.insert(hash_native(val));
+            h.insert(hash_f32(val));
         }
     }
 
@@ -1370,7 +1386,7 @@ fn scan_f32_verify_all_not_null<W: Write>(
                 min_vec = min_vec.simd_min(values);
                 max_vec = max_vec.simd_max(values);
                 for &val in chunk {
-                    h.insert(hash_native(val));
+                    h.insert(hash_f32(val));
                 }
             }
         } else {
@@ -1398,7 +1414,7 @@ fn scan_f32_verify_all_not_null<W: Write>(
                 return Ok(None);
             }
             for &val in chunk {
-                h.insert(hash_native(val));
+                h.insert(hash_f32(val));
             }
         }
     } else {
@@ -1429,7 +1445,7 @@ fn scan_f32_verify_all_not_null<W: Write>(
             for &val in remainder {
                 min_f = min_f.min(val);
                 max_f = max_f.max(val);
-                h.insert(hash_native(val));
+                h.insert(hash_f32(val));
             }
         } else {
             for &val in remainder {
@@ -1441,7 +1457,7 @@ fn scan_f32_verify_all_not_null<W: Write>(
     } else {
         if let Some(ref mut h) = bloom_hashes {
             for &val in remainder {
-                h.insert(hash_native(val));
+                h.insert(hash_f32(val));
             }
         }
         (None, None)
@@ -1544,7 +1560,7 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
                         min_val = Some(min_val.map_or(val, |m| m.min(val)));
                     }
                     if let Some(ref mut h) = bloom_hashes {
-                        h.insert(hash_native(val));
+                        h.insert(hash_f32(val));
                     }
                 }
             }
@@ -1566,7 +1582,7 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
                         min_val = Some(min_val.map_or(val, |m| m.min(val)));
                     }
                     if let Some(ref mut h) = bloom_hashes {
-                        h.insert(hash_native(val));
+                        h.insert(hash_f32(val));
                     }
                 } else {
                     data_null_count += 1;
@@ -3459,5 +3475,178 @@ mod tests {
 
         assert!(bloom_hashes.contains(&hash_native(f32::NEG_INFINITY)));
         assert!(bloom_hashes.contains(&hash_native(f32::INFINITY)));
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_signed_zero_canonicalization() {
+        let neg_zero: f64 = -0.0;
+        let pos_zero: f64 = 0.0;
+
+        assert_ne!(neg_zero.to_bits(), pos_zero.to_bits());
+        assert_eq!(neg_zero, pos_zero);
+
+        let data = vec![-1.0f64, neg_zero, 1.0f64];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 3);
+
+        assert!(bloom_hashes.contains(&hash_f64(pos_zero)));
+        assert!(bloom_hashes.contains(&hash_f64(neg_zero)));
+        assert_eq!(hash_f64(neg_zero), hash_f64(pos_zero));
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_signed_zero_canonicalization() {
+        let neg_zero: f32 = -0.0;
+        let pos_zero: f32 = 0.0;
+
+        assert_ne!(neg_zero.to_bits(), pos_zero.to_bits());
+        assert_eq!(neg_zero, pos_zero);
+
+        let data = vec![-1.0f32, neg_zero, 1.0f32];
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 0);
+        assert_eq!(bloom_hashes.len(), 3);
+
+        assert!(bloom_hashes.contains(&hash_f32(pos_zero)));
+        assert!(bloom_hashes.contains(&hash_f32(neg_zero)));
+        assert_eq!(hash_f32(neg_zero), hash_f32(pos_zero));
+    }
+
+    #[test]
+    fn test_f64_bloom_filter_rle_to_bitpacked_fallback() {
+        // Test bloom filter completeness when RLE fast-path starts optimistically
+        // but later encounters NaN and falls back to bitpacked encoding.
+        // The probe checks first 8 values; we put NaN after that to trigger fallback.
+        let mut data: Vec<f64> = (0..100).map(|i| i as f64).collect();
+        data.push(f64::NAN); // Triggers fallback after RLE fast-path started
+        data.extend((101..150).map(|i| i as f64));
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 149);
+
+        for i in 0..100 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} before fallback",
+                i
+            );
+        }
+        for i in 101..150 {
+            assert!(
+                bloom_hashes.contains(&hash_f64(i as f64)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_f32_bloom_filter_rle_to_bitpacked_fallback() {
+        let mut data: Vec<f32> = (0..100).map(|i| i as f32).collect();
+        data.push(f32::NAN);
+        data.extend((101..150).map(|i| i as f32));
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_f32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 149);
+
+        for i in 0..100 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} before fallback",
+                i
+            );
+        }
+        for i in 101..150 {
+            assert!(
+                bloom_hashes.contains(&hash_f32(i as f32)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i64_bloom_filter_rle_to_bitpacked_fallback() {
+        let mut data: Vec<i64> = (0..100).collect();
+        data.push(i64::MIN); // null marker
+        data.extend(101..150);
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i64_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 149);
+
+        for i in 0i64..100 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} before fallback",
+                i
+            );
+        }
+        for i in 101i64..150 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} after fallback",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_i32_bloom_filter_rle_to_bitpacked_fallback() {
+        let mut data: Vec<i32> = (0..100).collect();
+        data.push(i32::MIN); // null marker
+        data.extend(101..150);
+
+        let mut buffer = Vec::new();
+        let mut bloom_hashes = HashSet::new();
+
+        let result =
+            encode_i32_def_levels(&mut buffer, &data, 0, true, Some(&mut bloom_hashes)).unwrap();
+
+        assert_eq!(result.null_count, 1);
+        assert_eq!(bloom_hashes.len(), 149);
+
+        for i in 0i32..100 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} before fallback",
+                i
+            );
+        }
+        for i in 101i32..150 {
+            assert!(
+                bloom_hashes.contains(&hash_native(i)),
+                "missing value {} after fallback",
+                i
+            );
+        }
     }
 }

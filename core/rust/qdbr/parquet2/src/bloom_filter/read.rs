@@ -59,8 +59,7 @@ pub fn read_from_slice<'a>(
     let Some(offset) = column_metadata.metadata().bloom_filter_offset else {
         return Ok(&[]);
     };
-    let offset = offset as usize;
-
+    let offset: usize = offset.try_into()?;
     let remaining = data
         .get(offset..)
         .ok_or_else(|| Error::oos("bloom filter offset exceeds data length"))?;

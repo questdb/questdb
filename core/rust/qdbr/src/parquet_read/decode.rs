@@ -800,13 +800,13 @@ impl ParquetDecoder {
             let bitset =
                 parquet2::bloom_filter::read_from_slice(column_metadata, file_data).unwrap_or(&[]);
 
+            let primitive_type = &column_metadata.descriptor().descriptor.primitive_type;
             let is_decimal = matches!(
-                column_metadata
-                    .descriptor()
-                    .descriptor
-                    .primitive_type
-                    .logical_type,
+                primitive_type.logical_type,
                 Some(PrimitiveLogicalType::Decimal(_, _))
+            ) || matches!(
+                primitive_type.converted_type,
+                Some(PrimitiveConvertedType::Decimal(_, _))
             );
 
             if !bitset.is_empty() {

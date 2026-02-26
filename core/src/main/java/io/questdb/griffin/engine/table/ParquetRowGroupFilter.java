@@ -329,13 +329,17 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
-                final long valuesPtr = filterValues.getAddress() + valuesOffset;
                 filterList.add(encodeColumnAndCount(columnIndex, valueCount));
-                filterList.add(valuesPtr);
+                filterList.add(valuesOffset);
             }
             final int filterCount = (int) (filterList.size() / LONGS_PER_FILTER);
             if (filterCount == 0) {
                 return false;
+            }
+
+            final long baseAddress = filterValues.getAddress();
+            for (int i = 1, n = (int) filterList.size(); i < n; i += LONGS_PER_FILTER) {
+                filterList.set(i, baseAddress + filterList.get(i));
             }
             boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList);
             if (skip) {

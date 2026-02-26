@@ -91,6 +91,6 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     protected void _close() {
         cursor = Misc.free(cursor);
         path = Misc.free(path);
-        Misc.freeObjList(pushdownFilterConditions);
+        Misc.freeObjListAndClear(pushdownFilterConditions);
     }
 }

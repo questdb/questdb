@@ -3174,22 +3174,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ObjList<PushdownFilterExtractor.PushdownFilterCondition> tempConditions = pushdownFilterExtractor.extract(sqlNodeStack, filterExpr, factory.getMetadata());
                 for (int i = 0, n = tempConditions.size(); i < n; i++) {
                     PushdownFilterExtractor.PushdownFilterCondition condition = tempConditions.getQuick(i);
-                    ObjList<ExpressionNode> values = condition.getValues();
-                    boolean allConstant = true;
-                    for (int j = 0, m = values.size(); j < m; j++) {
-                        Function f = functionParser.parseFunction(values.getQuick(j), factory.getMetadata(), executionContext);
-                        condition.addValueFunction(f);
-                        if (!f.isConstantOrRuntimeConstant()) {
-                            allConstant = false;
+                    try {
+                        ObjList<ExpressionNode> values = condition.getValues();
+                        boolean allConstant = true;
+                        for (int j = 0, m = values.size(); j < m; j++) {
+                            Function f = functionParser.parseFunction(values.getQuick(j), factory.getMetadata(), executionContext);
+                            condition.addValueFunction(f);
+                            if (!f.isConstantOrRuntimeConstant()) {
+                                allConstant = false;
+                            }
                         }
-                    }
-                    if (allConstant) {
-                        if (pushdownFilterConditions == null) {
-                            pushdownFilterConditions = new ObjList<>();
+                        if (allConstant) {
+                            if (pushdownFilterConditions == null) {
+                                pushdownFilterConditions = new ObjList<>();
+                            }
+                            pushdownFilterConditions.add(condition);
+                        } else {
+                            Misc.free(condition);
                         }
-                        pushdownFilterConditions.add(condition);
-                    } else {
+                    } catch (Throwable e) {
                         Misc.free(condition);
+                        throw e;
                     }
                 }
                 if (pushdownFilterConditions != null) {

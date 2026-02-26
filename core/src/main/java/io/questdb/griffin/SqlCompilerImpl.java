@@ -4691,6 +4691,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             tok = expectToken(lexer, "bloom_filter_columns or fpp");
 
             if (isBloomFilterColumnsKeyword(tok)) {
+                if (bloomFilterColumns != null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate bloom_filter_columns option");
+                }
                 tok = expectToken(lexer, "'='");
                 if (!Chars.equals(tok, '=')) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
@@ -4700,6 +4703,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 bloomFilterColumns = unquote(tok);
                 validateBloomFilterColumns(bloomFilterColumns, tableMetadata, bloomFilterColumnsPosition);
             } else if (isFppKeyword(tok)) {
+                if (!Double.isNaN(fpp)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate fpp option");
+                }
                 tok = expectToken(lexer, "'='");
                 if (!Chars.equals(tok, '=')) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
@@ -4846,8 +4852,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 while (hi > lo && Character.isWhitespace(bloomFilterColumns.charAt(hi - 1))) {
                     hi--;
                 }
-                if (hi > lo && metadata.getColumnIndexQuiet(bloomFilterColumns, lo, hi) < 0) {
-                    throw SqlException.$(position, "bloom filter column not found [column=").put(bloomFilterColumns, lo, hi).put(']');
+                if (hi <= lo) {
+                    throw SqlException.$(position + start, "empty column name in bloom_filter_columns");
+                }
+                if (metadata.getColumnIndexQuiet(bloomFilterColumns, lo, hi) < 0) {
+                    throw SqlException.$(position + lo, "bloom filter column not found [column=").put(bloomFilterColumns, lo, hi).put(']');
                 }
                 start = i + 1;
             }
