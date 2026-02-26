@@ -158,6 +158,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
     private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
+    private final ObjList<CharSequence> unnestColumnAliases = new ObjList<>();
+    private final ObjList<ExpressionNode> unnestExpressions = new ObjList<>();
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
@@ -242,9 +244,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int timestampOffsetValue;           // The offset value (inverse, e.g., +1 for dateadd -1)
     private CharSequence timestampSourceColumn; // The original column name before dateadd transformation
     private int timestampColumnIndex = -1;      // Index of the timestamp column in virtual models (-1 means not set)
+    private boolean standaloneUnnest;
     private QueryModel unionModel;
-    private final ObjList<CharSequence> unnestColumnAliases = new ObjList<>();
-    private final ObjList<ExpressionNode> unnestExpressions = new ObjList<>();
     private boolean unnestOrdinality;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
@@ -537,6 +538,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
+        standaloneUnnest = false;
         unnestColumnAliases.clear();
         unnestExpressions.clear();
         unnestOrdinality = false;
@@ -1174,6 +1176,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return skipped;
     }
 
+    public boolean isStandaloneUnnest() {
+        return standaloneUnnest;
+    }
+
     @SuppressWarnings("unused")
     public boolean isTemporalJoin() {
         return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
@@ -1577,6 +1583,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setSkipped(boolean skipped) {
         this.skipped = skipped;
+    }
+
+    public void setStandaloneUnnest(boolean standaloneUnnest) {
+        this.standaloneUnnest = standaloneUnnest;
     }
 
     public void setTableId(int id) {

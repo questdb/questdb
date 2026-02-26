@@ -2612,6 +2612,7 @@ public class SqlParser {
             model.setTableNameExpr(longSeq);
 
             QueryModel unnestModel = parseUnnest(lexer, model, model.getDecls(), sqlParserCallback);
+            unnestModel.setStandaloneUnnest(true);
             model.addJoinModel(unnestModel);
 
             tok = optTok(lexer);
@@ -3234,92 +3235,6 @@ public class SqlParser {
         }
 
         throw err(lexer, tok, "'select' or 'values' expected");
-    }
-
-    private QueryModel parseUnnest(
-            GenericLexer lexer,
-            QueryModel parent,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
-        // Temporarily disable subQueryMode so that optTok() does not swallow
-        // the ')' tokens that belong to UNNEST's own parentheses.
-        boolean savedSubQueryMode = subQueryMode;
-        subQueryMode = false;
-        try {
-            return parseUnnest0(lexer, parent, decls, sqlParserCallback);
-        } finally {
-            subQueryMode = savedSubQueryMode;
-        }
-    }
-
-    private QueryModel parseUnnest0(
-            GenericLexer lexer,
-            QueryModel parent,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
-        QueryModel unnestModel = queryModelPool.next();
-        unnestModel.copyDeclsFrom(decls, false);
-        unnestModel.setJoinType(QueryModel.JOIN_UNNEST);
-        unnestModel.setJoinKeywordPosition(lexer.lastTokenPosition());
-
-        expectTok(lexer, '(');
-        // parse comma-separated expressions
-        do {
-            ExpressionNode expression = expr(lexer, parent, sqlParserCallback, decls);
-            if (expression == null) {
-                throw SqlException.$(lexer.lastTokenPosition(), "expression expected");
-            }
-            unnestModel.getUnnestExpressions().add(expression);
-            CharSequence tok = tok(lexer, "',' or ')'");
-            if (Chars.equals(tok, ')')) {
-                break;
-            }
-            if (!Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
-            }
-        } while (true);
-
-        // optional WITH ORDINALITY
-        CharSequence tok = optTok(lexer);
-        if (tok != null && isWithKeyword(tok)) {
-            tok = tok(lexer, "'ordinality'");
-            if (!isOrdinalityKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "'ordinality' expected");
-            }
-            unnestModel.setUnnestOrdinality(true);
-            tok = optTok(lexer);
-        }
-
-        // optional AS alias
-        if (tok != null && isAsKeyword(tok)) {
-            tok = tok(lexer, "alias");
-            unnestModel.setAlias(literal(lexer, tok));
-            tok = optTok(lexer);
-        } else if (tok != null && tableAliasStop.excludes(tok) && !Chars.equals(tok, '(')) {
-            unnestModel.setAlias(literal(lexer, tok));
-            tok = optTok(lexer);
-        }
-
-        // optional column aliases: (col1, col2, ...)
-        if (tok != null && Chars.equals(tok, '(')) {
-            do {
-                tok = tok(lexer, "column alias");
-                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(tok));
-                tok = tok(lexer, "',' or ')'");
-                if (Chars.equals(tok, ')')) {
-                    break;
-                }
-                if (!Chars.equals(tok, ',')) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
-                }
-            } while (true);
-        } else if (tok != null) {
-            lexer.unparseLast();
-        }
-
-        return unnestModel;
     }
 
     private QueryModel parseJoin(
@@ -4277,6 +4192,104 @@ public class SqlParser {
             return result;
         }
         return null;
+    }
+
+    private QueryModel parseUnnest(
+            GenericLexer lexer,
+            QueryModel parent,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        // Temporarily disable subQueryMode so that optTok() does not swallow
+        // the ')' tokens that belong to UNNEST's own parentheses.
+        boolean savedSubQueryMode = subQueryMode;
+        subQueryMode = false;
+        try {
+            return parseUnnest0(lexer, parent, decls, sqlParserCallback);
+        } finally {
+            subQueryMode = savedSubQueryMode;
+        }
+    }
+
+    private QueryModel parseUnnest0(
+            GenericLexer lexer,
+            QueryModel parent,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        QueryModel unnestModel = queryModelPool.next();
+        unnestModel.copyDeclsFrom(decls, false);
+        unnestModel.setJoinType(QueryModel.JOIN_UNNEST);
+        unnestModel.setJoinKeywordPosition(lexer.lastTokenPosition());
+
+        expectTok(lexer, '(');
+        // parse comma-separated expressions
+        do {
+            ExpressionNode expression = expr(lexer, parent, sqlParserCallback, decls);
+            if (expression == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expression expected");
+            }
+            unnestModel.getUnnestExpressions().add(expression);
+            CharSequence tok = tok(lexer, "',' or ')'");
+            if (Chars.equals(tok, ')')) {
+                break;
+            }
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+            }
+        } while (true);
+
+        // optional WITH ORDINALITY
+        CharSequence tok = optTok(lexer);
+        if (tok != null && isWithKeyword(tok)) {
+            tok = tok(lexer, "'ordinality'");
+            if (!isOrdinalityKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'ordinality' expected");
+            }
+            unnestModel.setUnnestOrdinality(true);
+            tok = optTok(lexer);
+        }
+
+        // optional AS alias
+        if (tok != null && isAsKeyword(tok)) {
+            tok = tok(lexer, "alias");
+            unnestModel.setAlias(literal(lexer, tok));
+            tok = optTok(lexer);
+        } else if (tok != null && tableAliasStop.excludes(tok) && !Chars.equals(tok, '(')) {
+            unnestModel.setAlias(literal(lexer, tok));
+            tok = optTok(lexer);
+        }
+
+        // optional column aliases: (col1, col2, ...)
+        if (tok != null && Chars.equals(tok, '(')) {
+            do {
+                tok = tok(lexer, "column alias");
+                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(tok));
+                tok = tok(lexer, "',' or ')'");
+                if (Chars.equals(tok, ')')) {
+                    break;
+                }
+                if (!Chars.equals(tok, ',')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+                }
+            } while (true);
+        } else if (tok != null) {
+            lexer.unparseLast();
+        }
+
+        // Validate alias count does not exceed expression count
+        // (+ 1 for ordinality if present).
+        int maxAliases = unnestModel.getUnnestExpressions().size()
+                + (unnestModel.isUnnestOrdinality() ? 1 : 0);
+        int aliasCount = unnestModel.getUnnestColumnAliases().size();
+        if (aliasCount > maxAliases) {
+            throw SqlException.$(
+                    unnestModel.getJoinKeywordPosition(),
+                    "too many column aliases for UNNEST"
+            );
+        }
+
+        return unnestModel;
     }
 
     private ExecutionModel parseUpdate(

@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,10 +40,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final int arrayColumnCount;
     private final ObjList<Function> arrayFunctions;
     private final RecordCursorFactory baseFactory;
-    private final int columnSplit;
+    private final ObjList<CharSequence> columnNames;
     private final UnnestRecordCursor cursor;
     private final boolean hasOrdinality;
 
@@ -53,15 +51,24 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordCursorFactory baseFactory,
             ObjList<Function> arrayFunctions,
             int columnSplit,
-            boolean hasOrdinality
+            boolean hasOrdinality,
+            ObjList<CharSequence> columnNames
     ) {
         super(metadata);
         this.baseFactory = baseFactory;
         this.arrayFunctions = arrayFunctions;
-        this.columnSplit = columnSplit;
-        this.arrayColumnCount = arrayFunctions.size();
         this.hasOrdinality = hasOrdinality;
-        this.cursor = new UnnestRecordCursor(columnSplit, arrayColumnCount, hasOrdinality);
+        this.columnNames = columnNames;
+
+        int sourceCount = arrayFunctions.size();
+        UnnestSource[] sources = new UnnestSource[sourceCount];
+        for (int i = 0; i < sourceCount; i++) {
+            sources[i] = new ArrayUnnestSource(arrayFunctions.getQuick(i));
+        }
+
+        this.cursor = new UnnestRecordCursor(
+                columnSplit, sources, hasOrdinality
+        );
     }
 
     @Override
@@ -70,11 +77,18 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursor getCursor(
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         RecordCursor baseCursor = baseFactory.getCursor(executionContext);
         try {
-            Function.init(arrayFunctions, baseCursor, executionContext, null);
-            cursor.of(baseCursor, arrayFunctions, executionContext.getCircuitBreaker());
+            Function.init(
+                    arrayFunctions, baseCursor, executionContext, null
+            );
+            cursor.of(
+                    baseCursor,
+                    executionContext.getCircuitBreaker()
+            );
             return cursor;
         } catch (Throwable ex) {
             Misc.free(baseCursor);
@@ -100,6 +114,10 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Unnest");
+        sink.attr("columns").val(columnNames);
+        if (hasOrdinality) {
+            sink.attr("ordinality").val(true);
+        }
         sink.child(baseFactory);
     }
 
@@ -111,27 +129,30 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class UnnestRecordCursor implements RecordCursor {
-        private final int arrayColumnCount;
-        private final int[] arrayLengths;
-        private final ArrayView[] arrayViews;
         private final UnnestRecord record;
+        private final UnnestSource[] sources;
         private int arrayIndex;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private ObjList<Function> functions;
         private boolean isMasterPending;
         private int maxArrayLen;
 
-        public UnnestRecordCursor(int columnSplit, int arrayColumnCount, boolean hasOrdinality) {
-            this.record = new UnnestRecord(columnSplit, arrayColumnCount, hasOrdinality);
-            this.arrayColumnCount = arrayColumnCount;
-            this.arrayViews = new ArrayView[arrayColumnCount];
-            this.arrayLengths = new int[arrayColumnCount];
+        public UnnestRecordCursor(
+                int columnSplit,
+                UnnestSource[] sources,
+                boolean hasOrdinality
+        ) {
+            this.sources = sources;
+            this.record = new UnnestRecord(
+                    columnSplit, sources, hasOrdinality
+            );
         }
 
         @Override
-        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            // cannot pre-calculate size efficiently
+        public void calculateSize(
+                SqlExecutionCircuitBreaker circuitBreaker,
+                Counter counter
+        ) {
             while (hasNext()) {
                 counter.inc();
             }
@@ -164,7 +185,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
                     if (!baseCursor.hasNext()) {
                         return false;
                     }
-                    loadArrays();
+                    initSources();
                     isMasterPending = false;
                     arrayIndex = 0;
                     if (maxArrayLen == 0) {
@@ -173,7 +194,8 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 }
                 if (arrayIndex < maxArrayLen) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker
+                            .statefulThrowExceptionIfTripped();
                     record.setArrayIndex(arrayIndex);
                     arrayIndex++;
                     return true;
@@ -210,32 +232,26 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
             maxArrayLen = 0;
         }
 
-        void of(RecordCursor baseCursor, ObjList<Function> functions, SqlExecutionCircuitBreaker circuitBreaker) {
+        void of(
+                RecordCursor baseCursor,
+                SqlExecutionCircuitBreaker circuitBreaker
+        ) {
             this.baseCursor = baseCursor;
-            this.functions = functions;
             this.circuitBreaker = circuitBreaker;
             this.isMasterPending = true;
             this.arrayIndex = 0;
             this.maxArrayLen = 0;
             Record baseRecord = baseCursor.getRecord();
-            record.of(baseRecord, arrayViews, arrayLengths);
+            record.of(baseRecord);
         }
 
-        private void loadArrays() {
+        private void initSources() {
             Record baseRecord = baseCursor.getRecord();
             maxArrayLen = 0;
-            for (int i = 0; i < arrayColumnCount; i++) {
-                ArrayView view = functions.getQuick(i).getArray(baseRecord);
-                if (view == null || view.isNull()) {
-                    arrayViews[i] = null;
-                    arrayLengths[i] = 0;
-                } else {
-                    arrayViews[i] = view;
-                    int len = view.isEmpty() ? 0 : view.getDimLen(0);
-                    arrayLengths[i] = len;
-                    if (len > maxArrayLen) {
-                        maxArrayLen = len;
-                    }
+            for (int i = 0, n = sources.length; i < n; i++) {
+                int len = sources[i].init(baseRecord);
+                if (len > maxArrayLen) {
+                    maxArrayLen = len;
                 }
             }
         }
