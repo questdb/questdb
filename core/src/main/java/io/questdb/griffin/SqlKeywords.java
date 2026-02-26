@@ -1631,6 +1631,20 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'r';
     }
 
+    public static boolean isOrdinalityKeyword(CharSequence tok) {
+        return tok.length() == 10
+                && (tok.charAt(0) | 32) == 'o'
+                && (tok.charAt(1) | 32) == 'r'
+                && (tok.charAt(2) | 32) == 'd'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'n'
+                && (tok.charAt(5) | 32) == 'a'
+                && (tok.charAt(6) | 32) == 'l'
+                && (tok.charAt(7) | 32) == 'i'
+                && (tok.charAt(8) | 32) == 't'
+                && (tok.charAt(9) | 32) == 'y';
+    }
+
     public static boolean isOthersKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'o'
@@ -2369,6 +2383,16 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'n';
     }
 
+    public static boolean isUnnestKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'u'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 'n'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 't';
+    }
+
     public static boolean isUpdateKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'u'
@@ -2627,6 +2651,7 @@ public class SqlKeywords {
         KEYWORDS.add("to");
         KEYWORDS.add("true");
         KEYWORDS.add("union");
+        KEYWORDS.add("unnest");
         KEYWORDS.add("update");
         KEYWORDS.add("upsert");
         KEYWORDS.add("values");

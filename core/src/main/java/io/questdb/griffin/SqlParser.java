@@ -2638,16 +2638,29 @@ public class SqlParser {
         // copy decls down
         model.copyDeclsFrom(masterModel, false);
 
-        QueryModel proposedNested = null;
-        ExpressionNode variableExpr;
+        // standalone UNNEST: FROM UNNEST(...)
+        if (isUnnestKeyword(tok)) {
+            // synthesize long_sequence(1) as the base model
+            ExpressionNode longSeq = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, 0);
+            longSeq.paramCount = 1;
+            longSeq.rhs = ONE;
+            model.setTableNameExpr(longSeq);
 
-        // check for variable as subquery
-        if (tok.charAt(0) == '@' && (variableExpr = model.getDecls().get(tok)) != null && variableExpr.rhs != null && variableExpr.rhs.queryModel != null) {
-            proposedNested = variableExpr.rhs.queryModel;
-        }
+            QueryModel unnestModel = parseUnnest(lexer, model, model.getDecls(), sqlParserCallback);
+            model.addJoinModel(unnestModel);
 
-        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
-        if (tt != null && tt.isView()) {
+            tok = optTok(lexer);
+        } else {
+            QueryModel proposedNested = null;
+            ExpressionNode variableExpr;
+
+            // check for variable as subquery
+            if (tok.charAt(0) == '@' && (variableExpr = model.getDecls().get(tok)) != null && variableExpr.rhs != null && variableExpr.rhs.queryModel != null) {
+                proposedNested = variableExpr.rhs.queryModel;
+            }
+
+            final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
+            if (tt != null && tt.isView()) {
             compileViewQuery(model, tt, lexer.lastTokenPosition());
             tok = setModelAliasAndTimestamp(lexer, model);
             // expect "(" in case of sub-query
@@ -2707,6 +2720,7 @@ public class SqlParser {
             if (tok != null && isLatestKeyword(tok)) {
                 parseLatestBy(lexer, model);
                 tok = optTok(lexer);
+            }
             }
         }
 
@@ -3257,6 +3271,92 @@ public class SqlParser {
         throw err(lexer, tok, "'select' or 'values' expected");
     }
 
+    private QueryModel parseUnnest(
+            GenericLexer lexer,
+            QueryModel parent,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        // Temporarily disable subQueryMode so that optTok() does not swallow
+        // the ')' tokens that belong to UNNEST's own parentheses.
+        boolean savedSubQueryMode = subQueryMode;
+        subQueryMode = false;
+        try {
+            return parseUnnest0(lexer, parent, decls, sqlParserCallback);
+        } finally {
+            subQueryMode = savedSubQueryMode;
+        }
+    }
+
+    private QueryModel parseUnnest0(
+            GenericLexer lexer,
+            QueryModel parent,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        QueryModel unnestModel = queryModelPool.next();
+        unnestModel.copyDeclsFrom(decls, false);
+        unnestModel.setJoinType(QueryModel.JOIN_UNNEST);
+        unnestModel.setJoinKeywordPosition(lexer.lastTokenPosition());
+
+        expectTok(lexer, '(');
+        // parse comma-separated expressions
+        do {
+            ExpressionNode expression = expr(lexer, parent, sqlParserCallback, decls);
+            if (expression == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expression expected");
+            }
+            unnestModel.getUnnestExpressions().add(expression);
+            CharSequence tok = tok(lexer, "',' or ')'");
+            if (Chars.equals(tok, ')')) {
+                break;
+            }
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+            }
+        } while (true);
+
+        // optional WITH ORDINALITY
+        CharSequence tok = optTok(lexer);
+        if (tok != null && isWithKeyword(tok)) {
+            tok = tok(lexer, "'ordinality'");
+            if (!isOrdinalityKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'ordinality' expected");
+            }
+            unnestModel.setUnnestOrdinality(true);
+            tok = optTok(lexer);
+        }
+
+        // optional AS alias
+        if (tok != null && isAsKeyword(tok)) {
+            tok = tok(lexer, "alias");
+            unnestModel.setAlias(literal(lexer, tok));
+            tok = optTok(lexer);
+        } else if (tok != null && tableAliasStop.excludes(tok) && !Chars.equals(tok, '(')) {
+            unnestModel.setAlias(literal(lexer, tok));
+            tok = optTok(lexer);
+        }
+
+        // optional column aliases: (col1, col2, ...)
+        if (tok != null && Chars.equals(tok, '(')) {
+            do {
+                tok = tok(lexer, "column alias");
+                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(tok));
+                tok = tok(lexer, "',' or ')'");
+                if (Chars.equals(tok, ')')) {
+                    break;
+                }
+                if (!Chars.equals(tok, ',')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+                }
+            } while (true);
+        } else if (tok != null) {
+            lexer.unparseLast();
+        }
+
+        return unnestModel;
+    }
+
     private QueryModel parseJoin(
             GenericLexer lexer,
             QueryModel model,
@@ -3311,6 +3411,11 @@ public class SqlParser {
         joinModel.setJoinKeywordPosition(errorPos);
 
         tok = expectTableNameOrSubQuery(lexer);
+
+        // UNNEST in comma position: FROM t, UNNEST(...)
+        if (isUnnestKeyword(tok) && joinType == QueryModel.JOIN_CROSS) {
+            return parseUnnest(lexer, model, decls, sqlParserCallback);
+        }
 
         final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
         if (tt != null && tt.isView()) {
@@ -5195,6 +5300,7 @@ public class SqlParser {
         tableAliasStop.add("on");
         tableAliasStop.add("timestamp");
         tableAliasStop.add("limit");
+        tableAliasStop.add(",");
         tableAliasStop.add(")");
         tableAliasStop.add(";");
         tableAliasStop.add("union");
@@ -5209,6 +5315,7 @@ public class SqlParser {
         tableAliasStop.add("range");
         tableAliasStop.add("window");
         tableAliasStop.add("horizon");
+        tableAliasStop.add("unnest");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");

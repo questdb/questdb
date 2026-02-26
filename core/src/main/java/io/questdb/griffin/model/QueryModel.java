@@ -69,7 +69,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_INNER = 1;
     public static final int JOIN_LEFT_OUTER = 2;
     public static final int JOIN_LT = 6;
-    public static final int JOIN_MAX = JOIN_HORIZON;
+    public static final int JOIN_UNNEST = 14;
+    public static final int JOIN_MAX = JOIN_UNNEST;
     public static final int JOIN_NONE = 0;
     public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
@@ -242,6 +243,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private CharSequence timestampSourceColumn; // The original column name before dateadd transformation
     private int timestampColumnIndex = -1;      // Index of the timestamp column in virtual models (-1 means not set)
     private QueryModel unionModel;
+    private final ObjList<CharSequence> unnestColumnAliases = new ObjList<>();
+    private final ObjList<ExpressionNode> unnestExpressions = new ObjList<>();
+    private boolean unnestOrdinality;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode viewNameExpr;
@@ -533,6 +537,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
+        unnestColumnAliases.clear();
+        unnestExpressions.clear();
+        unnestOrdinality = false;
         updateTableColumnNames.clear();
         updateTableModel = null;
         updateTableToken = null;
@@ -1052,6 +1059,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return unionModel;
     }
 
+    public ObjList<CharSequence> getUnnestColumnAliases() {
+        return unnestColumnAliases;
+    }
+
+    public ObjList<ExpressionNode> getUnnestExpressions() {
+        return unnestExpressions;
+    }
+
     public ObjList<ExpressionNode> getUpdateExpressions() {
         return updateSetColumns;
     }
@@ -1166,6 +1181,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isTopDownNameMissing(CharSequence columnName) {
         return topDownNameSet.excludes(columnName);
+    }
+
+    public boolean isUnnestOrdinality() {
+        return unnestOrdinality;
     }
 
     public boolean isUpdate() {
@@ -1603,6 +1622,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    public void setUnnestOrdinality(boolean unnestOrdinality) {
+        this.unnestOrdinality = unnestOrdinality;
+    }
+
     public void setUpdateTableToken(TableToken tableName) {
         this.updateTableToken = tableName;
     }
@@ -1960,6 +1983,32 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             case JOIN_HORIZON:
                                 sink.putAscii(" horizon join ");
                                 break;
+                            case JOIN_UNNEST:
+                                sink.putAscii(", unnest(");
+                                for (int k = 0, z = model.getUnnestExpressions().size(); k < z; k++) {
+                                    if (k > 0) {
+                                        sink.putAscii(", ");
+                                    }
+                                    model.getUnnestExpressions().getQuick(k).toSink(sink);
+                                }
+                                sink.putAscii(')');
+                                if (model.isUnnestOrdinality()) {
+                                    sink.putAscii(" with ordinality");
+                                }
+                                if (model.getAlias() != null) {
+                                    aliasToSink(model.getAlias().token, sink);
+                                }
+                                if (model.getUnnestColumnAliases().size() > 0) {
+                                    sink.putAscii('(');
+                                    for (int k = 0, z = model.getUnnestColumnAliases().size(); k < z; k++) {
+                                        if (k > 0) {
+                                            sink.putAscii(", ");
+                                        }
+                                        sink.put(model.getUnnestColumnAliases().getQuick(k));
+                                    }
+                                    sink.putAscii(')');
+                                }
+                                continue;
                             default:
                                 sink.putAscii(" join ");
                                 break;
