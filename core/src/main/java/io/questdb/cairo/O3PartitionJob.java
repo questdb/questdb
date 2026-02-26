@@ -152,10 +152,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
 
                 // Decide whether to rewrite the file or update in-place.
+                // A single-row-group file always triggers a rewrite: any O3 merge
+                // replaces its only row group, leaving 100% of the original payload
+                // as dead bytes.
                 final long unusedBytes = partitionDecoder.metadata().getUnusedBytes();
-                isRewrite =
-                        (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
-                                || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+                isRewrite = rowGroupCount == 1
+                        || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
+                        || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
 
                 if (isRewrite) {
                     LOG.info().$("parquet o3 partition rewrite [table=").$(tableWriter.getTableToken())
