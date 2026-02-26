@@ -74,6 +74,14 @@ public final class Misc {
         return null;
     }
 
+    public static <T extends Mutable> void clear(T[] list) {
+        if (list != null) {
+            for (T t : list) {
+                Misc.clear(t);
+            }
+        }
+    }
+
     public static void clearObjList(ObjList<? extends Mutable> args) {
         if (args != null) {
             for (int i = 0, n = args.size(); i < n; i++) {
@@ -143,6 +151,15 @@ public final class Misc {
     public static <T> void freeObjListIfCloseable(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
+        }
+    }
+
+    // same as freeObjListIfCloseable() but for arrays
+    public static <T> void freeIfCloseable(T[] array) {
+        if (array != null) {
+            for (int i = 0, n = array.length; i < n; i++) {
+                array[i] = freeIfCloseable(array[i]);
+            }
         }
     }
 

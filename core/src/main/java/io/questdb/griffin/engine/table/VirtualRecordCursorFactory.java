@@ -127,6 +127,14 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    public ObjList<Function> getFunctions() {
+        return functions;
+    }
+
+    public PriorityMetadata getPriorityMetadata() {
+        return priorityMetadata;
+    }
+
     @Override
     public int getScanDirection() {
         return base.getScanDirection();

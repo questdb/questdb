@@ -468,7 +468,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
             final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
             if (filteredRows.size() != 0) {
-                currentRowGroupBuffer.decodeRemainingColumns(parquetDecoder, filterColumnIndexes.size(), parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi, filteredRows, fillWithNulls);
+                currentRowGroupBuffer.decodeRemainingColumns(
+                        parquetDecoder,
+                        filterColumnIndexes.size(),
+                        parquetColumns,
+                        rowGroupIndex,
+                        rowGroupLo,
+                        rowGroupHi,
+                        filteredRows,
+                        fillWithNulls
+                );
                 return true;
             }
             return false;

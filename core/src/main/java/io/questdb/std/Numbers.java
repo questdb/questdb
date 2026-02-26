@@ -654,7 +654,7 @@ public final class Numbers {
     }
 
     public static int decodeLowInt(long val) {
-        return (int) (val & 0xffffffffL);
+        return (int) val;
     }
 
     public static short decodeLowShort(int val) {
@@ -713,14 +713,7 @@ public final class Numbers {
             return 0;
         }
 
-        target.ofZero();
-        for (int i = 0; i < olength; i++) {
-            int d = (int) (output / pow10[olength - 1 - i] % 10);
-            if (d != 0) {
-                target.addPowerOfTenMultiple(decExp - 1 - i + naturalScale, d);
-            }
-        }
-        target.setScale(naturalScale);
+        target.ofDigitsAndPower(output, e10[0]);
         if (negative) {
             target.negate();
         }
@@ -799,13 +792,7 @@ public final class Numbers {
         }
 
         // Build the decimal
-        target.ofZero();
-        for (int i = 0; i < olength; i++) {
-            int d = (int) (output / pow10[olength - 1 - i] % 10);
-            if (d != 0) {
-                target.addPowerOfTenMultiple(decExp - 1 - i + scale, d);
-            }
-        }
+        target.ofDigitsAndPower(output, e10[0] + scale);
         target.setScale(scale);
         if (negative) {
             target.negate();

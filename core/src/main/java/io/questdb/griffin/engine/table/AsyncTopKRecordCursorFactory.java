@@ -196,26 +196,26 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final AsyncFilterContext fCtx = atom.getFilterContext();
-        final PageFrameMemoryPool frameMemoryPool = fCtx.getMemoryPool(slotId);
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
         final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-        final boolean useLateMaterialization = fCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
         final PageFrameMemory frameMemory;
         if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, fCtx.getFilterUsedColumnIndexes());
+            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
         } else {
             frameMemory = frameMemoryPool.navigateTo(frameIndex);
         }
 
         record.init(frameMemory);
-        final DirectLongList rows = fCtx.getFilteredRows(slotId);
+        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
         final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
         final RecordComparator comparator = atom.getComparator(slotId);
-        final CompiledFilter compiledFilter = fCtx.getCompiledFilter();
-        final Function filter = fCtx.getFilter(slotId);
+        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+        final Function filter = filterCtx.getFilter(slotId);
         try {
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
@@ -223,21 +223,21 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             } else {
                 AsyncFilterUtils.applyCompiledFilter(
                         compiledFilter,
-                        fCtx.getBindVarMemory(),
-                        fCtx.getBindVarFunctions(),
+                        filterCtx.getBindVarMemory(),
+                        filterCtx.getBindVarFunctions(),
                         frameMemory,
                         addressCache,
-                        fCtx.getDataAddresses(slotId),
-                        fCtx.getAuxAddresses(slotId),
+                        filterCtx.getDataAddresses(slotId),
+                        filterCtx.getAuxAddresses(slotId),
                         rows,
                         frameRowCount
                 );
             }
             if (isParquetFrame) {
-                fCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
 
-            if (useLateMaterialization && frameMemory.populateRemainingColumns(fCtx.getFilterUsedColumnIndexes(), rows, true)) {
+            if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, true)) {
                 record.init(frameMemory);
             }
 
@@ -272,8 +272,8 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final AsyncFilterContext fCtx = atom.getFilterContext();
-        final PageFrameMemoryPool frameMemoryPool = fCtx.getMemoryPool(slotId);
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
         final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
         final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
         record.init(frameMemory);
