@@ -60,6 +60,7 @@ public class BPBitmapIndexWriter implements IndexWriter {
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
     private final MemoryMARW valueMem = Vm.getCMARWInstance();
 
+    private final BPBitmapIndexUtils.EncodeContext encodeCtx = new BPBitmapIndexUtils.EncodeContext();
     private int blockCapacity;
     private FilesFacade ff;
     private int genCount;
@@ -191,9 +192,10 @@ public class BPBitmapIndexWriter implements IndexWriter {
             for (int gen = 0; gen < genCount; gen++) {
                 long dirOffset = BPBitmapIndexUtils.getGenDirOffset(gen);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 long genAddr = valueMem.addressOf(genFileOffset);
 
-                for (int key = 0; key < keyCount; key++) {
+                for (int key = 0; key < genKeyCount; key++) {
                     int count = Unsafe.getUnsafe().getInt(genAddr + (long) key * Integer.BYTES);
                     int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
                     Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
@@ -221,16 +223,16 @@ public class BPBitmapIndexWriter implements IndexWriter {
                 for (int gen = 0; gen < genCount; gen++) {
                     long dirOffset = BPBitmapIndexUtils.getGenDirOffset(gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                    int genDataSize = keyMem.getInt(dirOffset + GEN_DIR_OFFSET_SIZE);
+                    int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long genAddr = valueMem.addressOf(genFileOffset);
-                    int headerSize = BPBitmapIndexUtils.genHeaderSize(keyCount);
+                    int headerSize = BPBitmapIndexUtils.genHeaderSize(genKeyCount);
 
-                    for (int key = 0; key < keyCount; key++) {
+                    for (int key = 0; key < genKeyCount; key++) {
                         int count = Unsafe.getUnsafe().getInt(genAddr + (long) key * Integer.BYTES);
                         if (count == 0) continue;
 
                         int dataOffset = Unsafe.getUnsafe().getInt(
-                                genAddr + (long) keyCount * Integer.BYTES + (long) key * Integer.BYTES);
+                                genAddr + (long) genKeyCount * Integer.BYTES + (long) key * Integer.BYTES);
                         long encodedAddr = genAddr + headerSize + dataOffset;
 
                         long keyWriteOff = Unsafe.getUnsafe().getLong(
@@ -290,7 +292,8 @@ public class BPBitmapIndexWriter implements IndexWriter {
                                         allValuesAddr + (readOffset + i) * Long.BYTES);
                             }
 
-                            int bytesWritten = BPBitmapIndexUtils.encodeKey(keyValues, count, tmpBuf);
+                            encodeCtx.ensureCapacity(count);
+                            int bytesWritten = BPBitmapIndexUtils.encodeKey(keyValues, count, tmpBuf, encodeCtx);
 
                             int written = 0;
                             while (written + Long.BYTES <= bytesWritten) {
@@ -317,13 +320,13 @@ public class BPBitmapIndexWriter implements IndexWriter {
                     long dirOffset = BPBitmapIndexUtils.getGenDirOffset(0);
                     keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, 0);
                     keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, totalGenSize);
+                    keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
                 } finally {
                     Unsafe.free(headerBuf, headerBufSize, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(tmpBuf, perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
                 }
 
-                keyMem.putInt(KEY_RESERVED_OFFSET_GEN_COUNT, genCount);
-                updateHeaderAtomically();
+                updateHeaderAtomically(genCount, keyMem.getLong(KEY_RESERVED_OFFSET_MAX_VALUE));
 
             } finally {
                 Unsafe.free(allValuesAddr, totalValueCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -346,15 +349,17 @@ public class BPBitmapIndexWriter implements IndexWriter {
         for (int gen = 0; gen < genCount; gen++) {
             long dirOffset = BPBitmapIndexUtils.getGenDirOffset(gen);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            int genDataSize = keyMem.getInt(dirOffset + GEN_DIR_OFFSET_SIZE);
+            int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+
+            if (key >= genKeyCount) continue;
 
             long genAddr = valueMem.addressOf(genFileOffset);
-            int headerSize = BPBitmapIndexUtils.genHeaderSize(keyCount);
+            int headerSize = BPBitmapIndexUtils.genHeaderSize(genKeyCount);
 
             int count = Unsafe.getUnsafe().getInt(genAddr + (long) key * Integer.BYTES);
             if (count == 0) continue;
 
-            int dataOffset = Unsafe.getUnsafe().getInt(genAddr + (long) keyCount * Integer.BYTES + (long) key * Integer.BYTES);
+            int dataOffset = Unsafe.getUnsafe().getInt(genAddr + (long) genKeyCount * Integer.BYTES + (long) key * Integer.BYTES);
             long encodedAddr = genAddr + headerSize + dataOffset;
 
             long[] decoded = new long[count];
@@ -583,7 +588,8 @@ public class BPBitmapIndexWriter implements IndexWriter {
                         keyValues[i] = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
                     }
 
-                    int bytesWritten = BPBitmapIndexUtils.encodeKey(keyValues, count, tmpBuf);
+                    encodeCtx.ensureCapacity(count);
+                    int bytesWritten = BPBitmapIndexUtils.encodeKey(keyValues, count, tmpBuf, encodeCtx);
 
                     int written = 0;
                     while (written + Long.BYTES <= bytesWritten) {
@@ -613,15 +619,14 @@ public class BPBitmapIndexWriter implements IndexWriter {
             long dirOffset = BPBitmapIndexUtils.getGenDirOffset(genCount);
             keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, genOffset);
             keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, totalGenSize);
+            keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
             genCount++;
         } finally {
             Unsafe.free(headerBuf, headerBufSize, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(tmpBuf, perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
         }
 
-        keyMem.putInt(KEY_RESERVED_OFFSET_GEN_COUNT, genCount);
-        keyMem.putLong(KEY_RESERVED_OFFSET_MAX_VALUE, maxValue);
-        updateHeaderAtomically();
+        updateHeaderAtomically(genCount, maxValue);
 
         Unsafe.getUnsafe().setMemory(pendingCountsAddr, (long) keyCapacity * Integer.BYTES, (byte) 0);
         hasPendingData = false;
@@ -655,12 +660,14 @@ public class BPBitmapIndexWriter implements IndexWriter {
         keyCapacity = newCapacity;
     }
 
-    private void updateHeaderAtomically() {
+    private void updateHeaderAtomically(int genCount, long maxValue) {
         long seq = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE) + 1;
         keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE, seq);
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
         keyMem.putInt(KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
+        keyMem.putInt(KEY_RESERVED_OFFSET_GEN_COUNT, genCount);
+        keyMem.putLong(KEY_RESERVED_OFFSET_MAX_VALUE, maxValue);
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }

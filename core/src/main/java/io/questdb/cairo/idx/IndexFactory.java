@@ -156,12 +156,9 @@ public final class IndexFactory {
             case IndexType.LZ4 -> direction == BitmapIndexReader.DIR_FORWARD
                     ? new LZ4BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new LZ4BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
-            case IndexType.BP -> {
-                if (direction != BitmapIndexReader.DIR_FORWARD) {
-                    throw CairoException.critical(0).put("BP index backward reader not yet implemented");
-                }
-                yield new BPBitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
-            }
+            case IndexType.BP -> direction == BitmapIndexReader.DIR_FORWARD
+                    ? new BPBitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
+                    : new BPBitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.FSST -> {
                 if (direction != BitmapIndexReader.DIR_FORWARD) {
                     throw CairoException.critical(0).put("FSST index backward reader not yet implemented");

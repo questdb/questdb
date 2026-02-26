@@ -212,12 +212,14 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
 
     public void updateKeyCount() {
         int keyCount;
+        int genCount;
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
             long seq = keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             Unsafe.getUnsafe().loadFence();
             if (keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
                 keyCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                genCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
                 Unsafe.getUnsafe().loadFence();
                 if (seq == keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
                     break;
@@ -234,7 +236,7 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
         if (keyCount > this.keyCount) {
             this.keyCount = keyCount;
             this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
-            this.genCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
+            this.genCount = genCount;
             long keyFileSize = BPBitmapIndexUtils.getGenDirOffset(genCount);
             keyMem.extend(keyFileSize);
         }
@@ -287,7 +289,6 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
         private long minValue;
         private int requestedKey;
         private int totalValueCount;
-        private int valuesEmitted;
         // Block metadata arrays (pre-allocated, grown as needed)
         private int metadataCapacity;
         private int[] valueCounts = new int[4];
@@ -306,7 +307,7 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
                         return false;
                     }
                     blockBufferPos++;
-                    valuesEmitted++;
+
                     if (value >= minValue) {
                         this.next = value;
                         return true;
@@ -348,7 +349,6 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
             this.minValue = minValue;
             this.maxValue = maxValue;
             this.currentGen = 0;
-            this.valuesEmitted = 0;
             loadGeneration();
         }
 
@@ -397,10 +397,19 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
             keyMem.extend(dirOffset + BPBitmapIndexUtils.GEN_DIR_ENTRY_SIZE);
             long genFileOffset = keyMem.getLong(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
             int genDataSize = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_SIZE);
+            int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+
+            if (requestedKey >= genKeyCount) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = 0;
+                this.blockBufferPos = 0;
+                this.blockBufferEnd = 0;
+                return;
+            }
 
             valueMem.extend(genFileOffset + genDataSize);
             long genAddr = valueMem.addressOf(genFileOffset);
-            int headerSize = BPBitmapIndexUtils.genHeaderSize(keyCount);
+            int headerSize = BPBitmapIndexUtils.genHeaderSize(genKeyCount);
 
             this.totalValueCount = Unsafe.getUnsafe().getInt(genAddr + (long) requestedKey * Integer.BYTES);
             if (totalValueCount == 0) {
@@ -411,7 +420,7 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
                 return;
             }
 
-            int dataOffset = Unsafe.getUnsafe().getInt(genAddr + (long) keyCount * Integer.BYTES + (long) requestedKey * Integer.BYTES);
+            int dataOffset = Unsafe.getUnsafe().getInt(genAddr + (long) genKeyCount * Integer.BYTES + (long) requestedKey * Integer.BYTES);
             this.encodedAddr = genAddr + headerSize + dataOffset;
 
             // Read block metadata from encoded data (reuse pre-allocated arrays)
@@ -445,7 +454,6 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
             this.currentBlock = 0;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
-            this.valuesEmitted = 0;
         }
     }
 }

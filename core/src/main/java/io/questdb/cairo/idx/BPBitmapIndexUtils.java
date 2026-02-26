@@ -49,7 +49,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * Key File Layout (.bk):
  * <pre>
  * [Header 64B: sig(0xfb), seq, valMemSize, blockCapacity, keyCount, seqCheck, maxVal, genCount]
- * [Generation directory: genCount × 12B (offset(8), size(4))]
+ * [Generation directory: genCount × 16B (offset(8), size(4), keyCount(4))]
  * </pre>
  * <p>
  * Value File Layout (.bv):
@@ -83,10 +83,11 @@ public final class BPBitmapIndexUtils {
     public static final int KEY_RESERVED_OFFSET_MAX_VALUE = 40;
     public static final int KEY_RESERVED_OFFSET_GEN_COUNT = 48;
 
-    // Generation directory entry (12 bytes per generation)
-    public static final int GEN_DIR_ENTRY_SIZE = 12;
+    // Generation directory entry (16 bytes per generation)
+    public static final int GEN_DIR_ENTRY_SIZE = 16;
     public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
     public static final int GEN_DIR_OFFSET_SIZE = 8;
+    public static final int GEN_DIR_OFFSET_KEY_COUNT = 12;
 
     public static final byte SIGNATURE = (byte) 0xfb;
 
@@ -174,20 +175,38 @@ public final class BPBitmapIndexUtils {
 
     /**
      * Encodes sorted values for a single key using delta + FoR64 bitpacking.
+     * Allocates temporary arrays internally — use the overload with EncodeContext
+     * on hot paths to avoid allocations.
+     */
+    public static int encodeKey(long[] values, int count, long destAddr) {
+        EncodeContext ctx = new EncodeContext();
+        ctx.ensureCapacity(count);
+        return encodeKey(values, count, destAddr, ctx);
+    }
+
+    /**
+     * Encodes sorted values for a single key using delta + FoR64 bitpacking.
+     * Uses pre-allocated workspace arrays from the provided context.
      *
      * @param values   array of sorted values
      * @param count    number of values
      * @param destAddr destination memory address
+     * @param ctx      reusable encode context (call ensureCapacity first)
      * @return number of bytes written
      */
-    public static int encodeKey(long[] values, int count, long destAddr) {
+    public static int encodeKey(long[] values, int count, long destAddr, EncodeContext ctx) {
         if (count == 0) {
             Unsafe.getUnsafe().putShort(destAddr, (short) 0);
             return 2;
         }
 
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
-        long[] deltas = new long[count];
+        long[] deltas = ctx.deltas;
+        int[] valueCounts = ctx.blockValueCounts;
+        long[] firstValues = ctx.blockFirstValues;
+        long[] minDeltas = ctx.blockMinDeltas;
+        int[] bitWidths = ctx.blockBitWidths;
+        long[] residuals = ctx.residuals;
 
         // Compute deltas
         deltas[0] = values[0];
@@ -196,11 +215,6 @@ public final class BPBitmapIndexUtils {
         }
 
         // Per-block metadata
-        int[] valueCounts = new int[blockCount];
-        long[] firstValues = new long[blockCount];
-        long[] minDeltas = new long[blockCount];
-        int[] bitWidths = new int[blockCount];
-
         for (int b = 0; b < blockCount; b++) {
             int blockStart = b * BLOCK_CAPACITY;
             int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
@@ -262,7 +276,6 @@ public final class BPBitmapIndexUtils {
         pos += blockCount;
 
         // Packed blocks — only pack the numDeltas=blockSize-1 inter-value deltas
-        long[] residuals = new long[BLOCK_CAPACITY];
         for (int b = 0; b < blockCount; b++) {
             int blockStart = b * BLOCK_CAPACITY;
             int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
@@ -280,6 +293,35 @@ public final class BPBitmapIndexUtils {
         }
 
         return (int) (pos - destAddr);
+    }
+
+    /**
+     * Reusable workspace for encodeKey to avoid per-call allocations.
+     */
+    public static class EncodeContext {
+        long[] deltas;
+        int[] blockValueCounts;
+        long[] blockFirstValues;
+        long[] blockMinDeltas;
+        int[] blockBitWidths;
+        long[] residuals = new long[BLOCK_CAPACITY];
+        private int deltaCapacity;
+        private int blockCapacity;
+
+        public void ensureCapacity(int count) {
+            if (count > deltaCapacity) {
+                deltaCapacity = Math.max(count, deltaCapacity * 2);
+                deltas = new long[deltaCapacity];
+            }
+            int bc = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
+            if (bc > blockCapacity) {
+                blockCapacity = Math.max(bc, blockCapacity * 2);
+                blockValueCounts = new int[blockCapacity];
+                blockFirstValues = new long[blockCapacity];
+                blockMinDeltas = new long[blockCapacity];
+                blockBitWidths = new int[blockCapacity];
+            }
+        }
     }
 
     /**

@@ -43,14 +43,14 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 /**
- * Forward reader for FSST-compressed bitmap index.
+ * Backward reader for Delta + FoR64 BitPacking (BP) bitmap index.
  * <p>
- * Reads per-key offsets from each generation to decode only the requested
- * key's values — O(count) per key, no full-generation decompression needed.
+ * Iterates generations in reverse, blocks within each generation in reverse,
+ * and values within each block in reverse — producing values in descending order.
  */
-public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
+public class BPBitmapIndexBwdReader implements BitmapIndexReader {
     private static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
-    private static final Log LOG = LogFactory.getLog(FSSTBitmapIndexFwdReader.class);
+    private static final Log LOG = LogFactory.getLog(BPBitmapIndexBwdReader.class);
 
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
@@ -59,16 +59,14 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
     protected long columnTop;
     protected int keyCount;
     protected long spinLockTimeoutMs;
-    private int blockValues;
     private long columnTxn;
     private int genCount;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
     private long partitionTxn;
-    private FSST.SymbolTable symbolTable;
     private long valueMemSize = -1;
 
-    public FSSTBitmapIndexFwdReader(
+    public BPBitmapIndexBwdReader(
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
@@ -167,19 +165,19 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
 
         try {
             FilesFacade ff = configuration.getFilesFacade();
-            LPSZ name = FSSTBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            LPSZ name = BPBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             keyMem.of(
                     ff,
                     name,
                     ff.getMapPageSize(),
-                    FSSTBitmapIndexUtils.KEY_FILE_RESERVED,
+                    BPBitmapIndexUtils.KEY_FILE_RESERVED,
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
                     -1
             );
             this.clock = configuration.getMillisecondClock();
 
-            if (keyMem.getByte(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != FSSTBitmapIndexUtils.SIGNATURE) {
+            if (keyMem.getByte(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BPBitmapIndexUtils.SIGNATURE) {
                 LOG.error().$("unknown format [corrupt] ").$(path).$();
                 throw CairoException.critical(0).put("Unknown format: ").put(path);
             }
@@ -188,7 +186,7 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
 
             this.valueMem.of(
                     configuration.getFilesFacade(),
-                    FSSTBitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
+                    BPBitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
                     valueMemSize,
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER
@@ -203,10 +201,10 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
 
     @Override
     public void reloadConditionally() {
-        long seq = keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
+        long seq = keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
         if (seq != keyFileSequence) {
             readIndexMetadataAtomically();
-            long keyFileSize = FSSTBitmapIndexUtils.getGenDirOffset(genCount);
+            long keyFileSize = BPBitmapIndexUtils.getGenDirOffset(genCount);
             this.keyMem.extend(keyFileSize);
             this.valueMem.extend(valueMemSize);
         }
@@ -217,13 +215,13 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
         int genCount;
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
-            long seq = keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+            long seq = keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             Unsafe.getUnsafe().loadFence();
-            if (keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                keyCount = keyMem.getInt(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-                genCount = keyMem.getInt(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
+            if (keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
+                keyCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                genCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
                 Unsafe.getUnsafe().loadFence();
-                if (seq == keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
+                if (seq == keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
                     break;
                 }
             }
@@ -239,7 +237,7 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
             this.keyCount = keyCount;
             this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
             this.genCount = genCount;
-            long keyFileSize = FSSTBitmapIndexUtils.getGenDirOffset(genCount);
+            long keyFileSize = BPBitmapIndexUtils.getGenDirOffset(genCount);
             keyMem.extend(keyFileSize);
         }
     }
@@ -247,31 +245,22 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
     private void readIndexMetadataAtomically() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
-            long seq = keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+            long seq = keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             Unsafe.getUnsafe().loadFence();
-            if (keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                int keyCount = keyMem.getInt(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-                long valueMemSize = keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-                int blockValues = keyMem.getInt(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUES);
-                int genCount = keyMem.getInt(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
+            if (keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
+                int keyCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                long valueMemSize = keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+                int genCount = keyMem.getInt(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_GEN_COUNT);
 
                 Unsafe.getUnsafe().loadFence();
-                if (keyMem.getLong(FSSTBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
+                if (keyMem.getLong(BPBitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
                     this.keyFileSequence = seq;
                     this.valueMemSize = valueMemSize;
                     this.keyCount = keyCount;
-                    this.blockValues = blockValues;
                     this.genCount = genCount;
                     this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
 
-                    // Deserialize symbol table
-                    if (genCount > 0) {
-                        long keyFileSize = FSSTBitmapIndexUtils.getGenDirOffset(genCount);
-                        keyMem.extend(keyFileSize);
-                        this.symbolTable = FSST.deserialize(keyMem.addressOf(FSSTBitmapIndexUtils.SYMBOL_TABLE_OFFSET));
-                    }
-
-                    long keyFileSize = FSSTBitmapIndexUtils.getGenDirOffset(genCount);
+                    long keyFileSize = BPBitmapIndexUtils.getGenDirOffset(genCount);
                     keyMem.extend(keyFileSize);
                     break;
                 }
@@ -286,34 +275,50 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
     }
 
     private class Cursor implements RowCursor {
+        private final long[] blockBuffer = new long[BPBitmapIndexUtils.BLOCK_CAPACITY];
+        private final long[] blockDeltas = new long[BPBitmapIndexUtils.BLOCK_CAPACITY];
         protected long next;
+        private int blockBufferPos;
         private int currentGen;
-        private long encodedAddr;
-        private int encodedLen;
-        private int encodedOff;
+        private int encodedBlockCount;
+        private int currentBlock;
         private long maxValue;
         private long minValue;
         private int requestedKey;
-        private int roundIndex;
-        private int valueCount;
+        // Block metadata arrays (pre-allocated, grown as needed)
+        private int metadataCapacity;
+        private int[] valueCounts = new int[4];
+        private long[] firstValues = new long[4];
+        private long[] minDeltas = new long[4];
+        private int[] bitWidths = new int[4];
+        private long[] blockPackedAddrs = new long[4];
 
         @Override
         public boolean hasNext() {
             while (true) {
-                while (roundIndex < valueCount) {
-                    long value = decodeNextValue();
-                    roundIndex++;
-
-                    if (value > maxValue) {
+                // Serve from block buffer in reverse
+                while (blockBufferPos >= 0) {
+                    long value = blockBuffer[blockBufferPos];
+                    if (value < minValue) {
                         return false;
                     }
-                    if (value >= minValue) {
+                    blockBufferPos--;
+                    if (value <= maxValue) {
                         this.next = value;
                         return true;
                     }
                 }
-                currentGen++;
-                if (currentGen >= genCount) {
+
+                // Try to decode previous block in current generation
+                if (currentBlock >= 0) {
+                    decodeBlock(currentBlock);
+                    currentBlock--;
+                    continue;
+                }
+
+                // Move to previous generation
+                currentGen--;
+                if (currentGen < 0) {
                     return false;
                 }
                 loadGeneration();
@@ -327,77 +332,122 @@ public class FSSTBitmapIndexFwdReader implements BitmapIndexReader {
 
         void of(int key, long minValue, long maxValue) {
             if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
-                valueCount = 0;
-                currentGen = genCount;
+                currentGen = -1;
+                encodedBlockCount = 0;
+                currentBlock = -1;
+                blockBufferPos = -1;
                 return;
             }
 
             this.requestedKey = key;
             this.minValue = minValue;
             this.maxValue = maxValue;
-            this.currentGen = 0;
+            this.currentGen = genCount - 1;
             loadGeneration();
         }
 
-        private long decodeNextValue() {
-            long result = 0;
-            int bytePos = 0;
-            while (bytePos < 8 && encodedOff < encodedLen) {
-                int code = Unsafe.getUnsafe().getByte(encodedAddr + encodedOff) & 0xFF;
-                encodedOff++;
-                if (code == FSST.ESCAPE) {
-                    if (encodedOff < encodedLen) {
-                        int literal = Unsafe.getUnsafe().getByte(encodedAddr + encodedOff) & 0xFF;
-                        encodedOff++;
-                        result |= ((long) literal) << (bytePos * 8);
-                        bytePos++;
+        private void decodeBlock(int b) {
+            int count = valueCounts[b];
+            int bitWidth = bitWidths[b];
+            int numDeltas = count - 1;
+
+            if (numDeltas > 0) {
+                if (bitWidth == 0) {
+                    for (int i = 0; i < numDeltas; i++) {
+                        blockDeltas[i] = minDeltas[b];
                     }
                 } else {
-                    int len = symbolTable.lens[code];
-                    long sym = symbolTable.symbols[code];
-                    for (int b = 0; b < len && bytePos < 8; b++) {
-                        result |= ((sym >>> (b * 8)) & 0xFFL) << (bytePos * 8);
-                        bytePos++;
-                    }
+                    FORBitmapIndexUtils.unpackAllValues(blockPackedAddrs[b], numDeltas, bitWidth, minDeltas[b], blockDeltas);
                 }
             }
-            return result;
+
+            // Cumulative sum from firstValue
+            long cumulative = firstValues[b];
+            blockBuffer[0] = cumulative;
+            for (int i = 0; i < numDeltas; i++) {
+                cumulative += blockDeltas[i];
+                blockBuffer[i + 1] = cumulative;
+            }
+
+            blockBufferPos = count - 1; // start from last value
+        }
+
+        private void ensureMetadataCapacity(int needed) {
+            if (needed > metadataCapacity) {
+                metadataCapacity = Math.max(needed, metadataCapacity * 2);
+                valueCounts = new int[metadataCapacity];
+                firstValues = new long[metadataCapacity];
+                minDeltas = new long[metadataCapacity];
+                bitWidths = new int[metadataCapacity];
+                blockPackedAddrs = new long[metadataCapacity];
+            }
         }
 
         private void loadGeneration() {
-            long dirOffset = FSSTBitmapIndexUtils.getGenDirOffset(currentGen);
-            keyMem.extend(dirOffset + FSSTBitmapIndexUtils.GEN_DIR_ENTRY_SIZE);
-            long genFileOffset = keyMem.getLong(dirOffset + FSSTBitmapIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
-            int genDataSize = keyMem.getInt(dirOffset + FSSTBitmapIndexUtils.GEN_DIR_OFFSET_SIZE);
-            int genKeyCount = keyMem.getInt(dirOffset + FSSTBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            long dirOffset = BPBitmapIndexUtils.getGenDirOffset(currentGen);
+            keyMem.extend(dirOffset + BPBitmapIndexUtils.GEN_DIR_ENTRY_SIZE);
+            long genFileOffset = keyMem.getLong(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+            int genDataSize = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_SIZE);
+            int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
             if (requestedKey >= genKeyCount) {
-                this.valueCount = 0;
-                this.roundIndex = 0;
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
                 return;
             }
 
             valueMem.extend(genFileOffset + genDataSize);
             long genAddr = valueMem.addressOf(genFileOffset);
-            int headerSize = FSSTBitmapIndexUtils.genHeaderSize(genKeyCount);
+            int headerSize = BPBitmapIndexUtils.genHeaderSize(genKeyCount);
 
-            this.valueCount = Unsafe.getUnsafe().getInt(genAddr + (long) requestedKey * Integer.BYTES);
-            if (valueCount == 0) {
-                this.roundIndex = 0;
+            int totalValueCount = Unsafe.getUnsafe().getInt(genAddr + (long) requestedKey * Integer.BYTES);
+            if (totalValueCount == 0) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
                 return;
             }
 
             int dataOffset = Unsafe.getUnsafe().getInt(genAddr + (long) genKeyCount * Integer.BYTES + (long) requestedKey * Integer.BYTES);
-            int nextOffset;
-            if (requestedKey + 1 < genKeyCount) {
-                nextOffset = Unsafe.getUnsafe().getInt(genAddr + (long) genKeyCount * Integer.BYTES + (long) (requestedKey + 1) * Integer.BYTES);
-            } else {
-                nextOffset = genDataSize - headerSize;
+            long encodedAddr = genAddr + headerSize + dataOffset;
+
+            // Read block metadata from encoded data
+            long pos = encodedAddr;
+            this.encodedBlockCount = Unsafe.getUnsafe().getShort(pos) & 0xFFFF;
+            pos += 2;
+
+            ensureMetadataCapacity(encodedBlockCount);
+
+            for (int b = 0; b < encodedBlockCount; b++) {
+                valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
             }
-            this.encodedLen = nextOffset - dataOffset;
-            this.encodedAddr = genAddr + headerSize + dataOffset;
-            this.encodedOff = 0;
-            this.roundIndex = 0;
+            pos += encodedBlockCount;
+
+            for (int b = 0; b < encodedBlockCount; b++) {
+                firstValues[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+            }
+            pos += (long) encodedBlockCount * Long.BYTES;
+
+            for (int b = 0; b < encodedBlockCount; b++) {
+                minDeltas[b] = Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES);
+            }
+            pos += (long) encodedBlockCount * Long.BYTES;
+
+            for (int b = 0; b < encodedBlockCount; b++) {
+                bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
+            }
+            pos += encodedBlockCount;
+
+            // Pre-compute packed data addresses for each block (needed for reverse iteration)
+            for (int b = 0; b < encodedBlockCount; b++) {
+                blockPackedAddrs[b] = pos;
+                int numDeltas = valueCounts[b] - 1;
+                pos += FORBitmapIndexUtils.packedDataSize(numDeltas, bitWidths[b]);
+            }
+
+            this.currentBlock = encodedBlockCount - 1;
+            this.blockBufferPos = -1; // will be set by decodeBlock
         }
     }
 }

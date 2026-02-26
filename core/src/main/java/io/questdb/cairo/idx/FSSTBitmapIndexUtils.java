@@ -39,7 +39,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * <pre>
  * [Header 64B: sig(0xfc), seq, valMemSize, blockValues, keyCount, seqCheck, maxVal, genCount]
  * [Symbol table: FSST.SERIALIZED_MAX_SIZE bytes (padded)]
- * [Generation directory: genCount × 12B (offset(8), size(4))]
+ * [Generation directory: genCount × 16B (offset(8), size(4), keyCount(4))]
  * </pre>
  * <p>
  * Value File Layout (.lv):
@@ -71,10 +71,11 @@ public final class FSSTBitmapIndexUtils {
     public static final int KEY_RESERVED_OFFSET_MAX_VALUE = 40;
     public static final int KEY_RESERVED_OFFSET_GEN_COUNT = 48;
 
-    // Generation directory entry (12 bytes per generation)
-    public static final int GEN_DIR_ENTRY_SIZE = 12;
+    // Generation directory entry (16 bytes per generation)
+    public static final int GEN_DIR_ENTRY_SIZE = 16;
     public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
     public static final int GEN_DIR_OFFSET_SIZE = 8;
+    public static final int GEN_DIR_OFFSET_KEY_COUNT = 12;
 
     public static final int DEFAULT_BLOCK_VALUES = 128;
 
