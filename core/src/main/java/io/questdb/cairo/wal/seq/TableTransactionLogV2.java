@@ -360,6 +360,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         public void close() {
             if (headerFd > 0) {
                 ff.close(headerFd);
+                headerFd = -1;
             }
             if (txnCount > -1 && address > 0) {
                 ff.munmap(address, partMapSize, MemoryTag.MMAP_TX_LOG_CURSOR);
