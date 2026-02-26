@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
@@ -41,6 +42,7 @@ import org.junit.Test;
 import java.util.HashSet;
 import java.util.Set;
 
+import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
 public class DdlListenerTest extends AbstractCairoTest {
@@ -312,6 +314,131 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             // cleanup
             engine.execute("DROP TABLE tab");
+        });
+    }
+
+    @Test
+    public void testDdlListenerExceptionPropagation() throws Exception {
+        assertMemoryLeak(() -> {
+            final DefaultDdlListener throwingListener = new DefaultDdlListener() {
+                @Override
+                public void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName) {
+                    throw new RuntimeException("onColumnAdded");
+                }
+
+                @Override
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                    throw new RuntimeException("onColumnDropped");
+                }
+
+                @Override
+                public void onColumnRenamed(TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName) {
+                    throw new RuntimeException("onColumnRenamed");
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                    throw new RuntimeException("onTableOrViewOrMatViewCreated");
+                }
+
+                @Override
+                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                    throw new RuntimeException("onTableOrViewOrMatViewDropped");
+                }
+
+                @Override
+                public void onTableRenamed(TableToken oldTableToken, TableToken newTableToken) {
+                    throw new RuntimeException("onTableRenamed");
+                }
+            };
+
+            // set up table with no-op listener, then switch to the throwing one
+            engine.execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, y BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            engine.setDdlListener(throwingListener);
+
+            final TableToken tableToken = engine.verifyTableName("tab");
+
+            // ADD COLUMN
+            assertListenerException("onColumnAdded",
+                    () -> engine.execute("ALTER TABLE tab ADD COLUMN z VARCHAR"));
+            drainWalQueue();
+            // ADD COLUMN is not transactional, callback of the listener is fired after the column has been added.
+            // The column should exist even when the callback fails.
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertEquals(3, metadata.getColumnIndexQuiet("z"));
+            }
+
+            // RENAME COLUMN — TableWriter wraps in CairoException
+            assertListenerException("onColumnRenamed",
+                    () -> engine.execute("ALTER TABLE tab RENAME COLUMN z TO v"));
+            drainWalQueue();
+            // RENAME COLUMN is not transactional, callback of the listener is fired after the column has been renamed.
+            // The column should be renamed even when the callback fails.
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertEquals(3, metadata.getColumnIndexQuiet("v"));
+                Assert.assertEquals(-1, metadata.getColumnIndexQuiet("z"));
+            }
+
+            // DROP COLUMN — TableWriter wraps in CairoError
+            assertListenerException("onColumnDropped",
+                    () -> engine.execute("ALTER TABLE tab DROP COLUMN v"));
+            drainWalQueue();
+            // DROP COLUMN is not transactional, callback of the listener is fired after the column has been dropped.
+            // The column should be removed even when the callback fails.
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertEquals(-1, metadata.getColumnIndexQuiet("v"));
+            }
+
+            // CREATE MATERIALIZED VIEW
+            assertListenerException("onTableOrViewOrMatViewCreated",
+                    () -> engine.execute("CREATE MATERIALIZED VIEW mv3 AS (SELECT ts, avg(x) AS avg_x FROM tab SAMPLE BY 10m) PARTITION BY DAY"));
+            drainWalQueue();
+            // CREATE MATERIALIZED VIEW is transactional - the mat view is not created, if the DDL listener throws
+            Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("mv3"));
+            Assert.assertNull(engine.getTableTokenIfExists("mv3"));
+
+            // CREATE VIEW
+            assertListenerException("onTableOrViewOrMatViewCreated",
+                    () -> engine.execute("CREATE VIEW v3 AS (SELECT ts, avg(x) AS avg_x FROM tab SAMPLE BY 10m)"));
+            drainWalQueue();
+            // CREATE VIEW is transactional - the view is not created, if the DDL listener throws
+            Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("v3"));
+            Assert.assertNull(engine.getTableTokenIfExists("v3"));
+
+            // RENAME TABLE
+            assertListenerException("onTableRenamed",
+                    () -> engine.execute("RENAME TABLE tab TO tab2"));
+            drainWalQueue();
+            // RENAME TABLE is not transactional, callback of the listener is fired after the table has been renamed.
+            // The rename should succeed even when the callback fails.
+            Assert.assertNull(engine.getTableTokenIfExists("tab"));
+            Assert.assertNotNull(engine.getTableTokenIfExists("tab2"));
+
+            // DROP TABLE
+            assertListenerException("onTableOrViewOrMatViewDropped",
+                    () -> engine.execute("DROP TABLE tab2"));
+            drainWalQueue();
+            // DROP TABLE is not transactional, callback of the listener is fired after the table has been dropped.
+            // The drop should succeed even when the callback fails.
+            Assert.assertNull(engine.getTableTokenIfExists("tab2"));
+
+            // CREATE TABLE - non-WAL
+            assertListenerException("onTableOrViewOrMatViewCreated",
+                    () -> engine.execute("CREATE TABLE tab3(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL"));
+            // CREATE TABLE is transactional - the table is not created, if the DDL listener throws
+            Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("tab3"));
+            Assert.assertNull(engine.getTableTokenIfExists("tab3"));
+
+            // CREATE TABLE - WAL
+            assertListenerException("onTableOrViewOrMatViewCreated",
+                    () -> engine.execute("CREATE TABLE tab3(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"));
+            drainWalQueue();
+            // CREATE TABLE is transactional - the table is not created, if the DDL listener throws
+            Assert.assertEquals(TABLE_DOES_NOT_EXIST, engine.getTableStatus("tab3"));
+            Assert.assertNull(engine.getTableTokenIfExists("tab3"));
+
+            // cleanup
+            engine.setDdlListener(DefaultDdlListener.INSTANCE);
         });
     }
 
@@ -782,5 +909,24 @@ public class DdlListenerTest extends AbstractCairoTest {
             engine.execute("DROP TABLE tab");
             drainWalQueue();
         });
+    }
+
+    private static void assertListenerException(String expectedMessage, ThrowingRunnable action) {
+        try {
+            action.run();
+            Assert.fail("expected listener exception: " + expectedMessage);
+        } catch (Throwable t) {
+            for (Throwable cause = t; cause != null; cause = cause.getCause()) {
+                if (expectedMessage.equals(cause.getMessage())) {
+                    return;
+                }
+            }
+            Assert.fail("expected cause with message '" + expectedMessage + "' but got: " + t);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
     }
 }
