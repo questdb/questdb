@@ -810,12 +810,18 @@ public class DeltaBitmapIndexBenchmark {
             printRow("BP (sealed)", bpSealedSize, legacySize);
 
             // Header overhead analysis
-            long headerOverhead = (long) ST_KEY_COUNT * Integer.BYTES * 2 * ST_COMMITS;
+            long denseHeaderOverhead = (long) ST_KEY_COUNT * Integer.BYTES * 2 * ST_COMMITS;
+            long sparseHeaderOverhead = (long) ST_ACTIVE_KEYS_PER_COMMIT * Integer.BYTES * 3 * ST_COMMITS;
             long genDirOverhead = (long) ST_COMMITS * BPBitmapIndexUtils.GEN_DIR_ENTRY_SIZE;
             System.out.println();
             System.out.printf("  BP overhead analysis:%n");
-            System.out.printf("    Gen headers (counts+offsets): %,d bytes (%.1f MB)%n",
-                    headerOverhead, headerOverhead / (1024.0 * 1024.0));
+            System.out.printf("    Dense headers (old):          %,d bytes (%.1f MB)%n",
+                    denseHeaderOverhead, denseHeaderOverhead / (1024.0 * 1024.0));
+            System.out.printf("    Sparse headers (new):         %,d bytes (%.1f MB)%n",
+                    sparseHeaderOverhead, sparseHeaderOverhead / (1024.0 * 1024.0));
+            System.out.printf("    Header savings:               %.1f MB (%.0fx smaller)%n",
+                    (denseHeaderOverhead - sparseHeaderOverhead) / (1024.0 * 1024.0),
+                    (double) denseHeaderOverhead / sparseHeaderOverhead);
             System.out.printf("    Gen directory entries:        %,d bytes%n", genDirOverhead);
             System.out.printf("    Total rows:                   %,d%n", finalTotalRows);
             System.out.printf("    Avg active keys/commit:       %d / %d (%.0f%%)%n",

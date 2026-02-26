@@ -49,7 +49,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * Key File Layout (.bk):
  * <pre>
  * [Header 64B: sig(0xfb), seq, valMemSize, blockCapacity, keyCount, seqCheck, maxVal, genCount]
- * [Generation directory: genCount × 16B (offset(8), size(4), keyCount(4))]
+ * [Generation directory: genCount × 24B (offset(8), size(4), keyCount(4), minKey(4), maxKey(4))]
  * </pre>
  * <p>
  * Value File Layout (.bv):
@@ -92,11 +92,13 @@ public final class BPBitmapIndexUtils {
     public static final int KEY_RESERVED_OFFSET_MAX_VALUE = 40;
     public static final int KEY_RESERVED_OFFSET_GEN_COUNT = 48;
 
-    // Generation directory entry (16 bytes per generation)
-    public static final int GEN_DIR_ENTRY_SIZE = 16;
+    // Generation directory entry (24 bytes per generation)
+    public static final int GEN_DIR_ENTRY_SIZE = 24;
     public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
     public static final int GEN_DIR_OFFSET_SIZE = 8;
     public static final int GEN_DIR_OFFSET_KEY_COUNT = 12;
+    public static final int GEN_DIR_OFFSET_MIN_KEY = 16;
+    public static final int GEN_DIR_OFFSET_MAX_KEY = 20;
 
     public static final byte SIGNATURE = (byte) 0xfb;
 
@@ -357,7 +359,7 @@ public final class BPBitmapIndexUtils {
     /**
      * Binary search for a key ID in a sorted keyIds array stored at native memory.
      *
-     * @return index of the key in the array, or -1 if not found
+     * @return index if found (>= 0), or -(insertionPoint + 1) if not found
      */
     public static int binarySearchKeyId(long keyIdsAddr, int activeKeyCount, int key) {
         int lo = 0, hi = activeKeyCount - 1;
@@ -372,7 +374,22 @@ public final class BPBitmapIndexUtils {
                 return mid;
             }
         }
-        return -1;
+        return -(lo + 1);
+    }
+
+    /**
+     * Linear scan for a key ID starting from a hint position in a sorted keyIds array.
+     * For sequential ascending key access, the hint advances forward yielding O(1) amortized per key.
+     *
+     * @return index if found (>= 0), or -(insertionPoint + 1) if not found
+     */
+    public static int scanKeyIdFromHint(long keyIdsAddr, int activeKeyCount, int key, int startPos) {
+        for (int i = startPos; i < activeKeyCount; i++) {
+            int k = Unsafe.getUnsafe().getInt(keyIdsAddr + (long) i * Integer.BYTES);
+            if (k == key) return i;
+            if (k > key) return -(i + 1);
+        }
+        return -(activeKeyCount + 1);
     }
 
     public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {

@@ -296,6 +296,10 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
         private long[] minDeltas = new long[4];
         private int[] bitWidths = new int[4];
         private long packedDataAddr;
+        // Sequential scan hint for sparse generations (persists across of() calls)
+        private int[] sparseHints;
+        private int prevKey;
+        private int sparseHintsGenCount;
 
         @Override
         public boolean hasNext() {
@@ -335,6 +339,12 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
         }
 
         void of(int key, long minValue, long maxValue) {
+            this.prevKey = this.requestedKey;
+            if (sparseHints != null && genCount < sparseHintsGenCount) {
+                sparseHints = null;
+            }
+            sparseHintsGenCount = genCount;
+
             if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
                 totalValueCount = 0;
                 currentGen = genCount;
@@ -399,14 +409,37 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
             int genDataSize = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_SIZE);
             int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
+            // Min/max key bounds check — skip without touching value file
+            int minKey = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
+            int maxKey = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            if (requestedKey < minKey || requestedKey > maxKey) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = 0;
+                this.blockBufferPos = 0;
+                this.blockBufferEnd = 0;
+                return;
+            }
+
             valueMem.extend(genFileOffset + genDataSize);
             long genAddr = valueMem.addressOf(genFileOffset);
 
             int headerSize;
             if (genKeyCount < 0) {
-                // Sparse format
+                // Sparse format — use hint-based linear scan for ascending key access
                 int activeKeyCount = -genKeyCount;
-                int idx = BPBitmapIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, requestedKey);
+                int idx;
+                if (requestedKey > prevKey && sparseHints != null && currentGen < sparseHints.length) {
+                    idx = BPBitmapIndexUtils.scanKeyIdFromHint(genAddr, activeKeyCount, requestedKey, sparseHints[currentGen]);
+                } else {
+                    idx = BPBitmapIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, requestedKey);
+                }
+
+                // Update hint for next ascending lookup
+                if (sparseHints == null || sparseHints.length < genCount) {
+                    sparseHints = new int[genCount];
+                }
+                sparseHints[currentGen] = idx >= 0 ? idx : -(idx + 1);
+
                 if (idx < 0) {
                     this.encodedBlockCount = 0;
                     this.currentBlock = 0;

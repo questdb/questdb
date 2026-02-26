@@ -54,6 +54,7 @@ import static io.questdb.cairo.idx.BPBitmapIndexUtils.*;
  */
 public class BPBitmapIndexWriter implements IndexWriter {
     private static final int INITIAL_KEY_CAPACITY = 64;
+    private static final int MAX_GEN_COUNT = 64;
     private static final Log LOG = LogFactory.getLog(BPBitmapIndexWriter.class);
 
     private final CairoConfiguration configuration;
@@ -368,6 +369,8 @@ public class BPBitmapIndexWriter implements IndexWriter {
                     keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, 0);
                     keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, totalGenSize);
                     keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, keyCount);
+                    keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MIN_KEY, 0);
+                    keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MAX_KEY, keyCount - 1);
                 } finally {
                     Unsafe.free(headerBuf, headerBufSize, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(tmpBuf, perKeyBufSize, MemoryTag.NATIVE_DEFAULT);
@@ -397,6 +400,11 @@ public class BPBitmapIndexWriter implements IndexWriter {
             long dirOffset = BPBitmapIndexUtils.getGenDirOffset(gen);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+
+            int minKey = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
+            int maxKey = keyMem.getInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            if (key < minKey || key > maxKey) continue;
+
             long genAddr = valueMem.addressOf(genFileOffset);
 
             int count;
@@ -444,6 +452,11 @@ public class BPBitmapIndexWriter implements IndexWriter {
     @TestOnly
     public long getValueMemSize() {
         return valueMemSize;
+    }
+
+    @TestOnly
+    public int getGenCount() {
+        return genCount;
     }
 
     @Override
@@ -694,11 +707,17 @@ public class BPBitmapIndexWriter implements IndexWriter {
             long headerAddr = valueMem.addressOf(genOffset);
             Unsafe.getUnsafe().copyMemory(headerBuf, headerAddr, headerBufSize);
 
+            // Read min/max key from the sparse keyIds array
+            int minKey = Unsafe.getUnsafe().getInt(keyIdsBase);
+            int maxKey = Unsafe.getUnsafe().getInt(keyIdsBase + (long) (activeKeyCount - 1) * Integer.BYTES);
+
             long dirOffset = BPBitmapIndexUtils.getGenDirOffset(genCount);
             keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, genOffset);
             keyMem.putInt(dirOffset + GEN_DIR_OFFSET_SIZE, totalGenSize);
             // Negative genKeyCount signals sparse format
             keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, -activeKeyCount);
+            keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MIN_KEY, minKey);
+            keyMem.putInt(dirOffset + BPBitmapIndexUtils.GEN_DIR_OFFSET_MAX_KEY, maxKey);
             genCount++;
         } finally {
             Unsafe.free(headerBuf, headerBufSize, MemoryTag.NATIVE_DEFAULT);
@@ -709,6 +728,10 @@ public class BPBitmapIndexWriter implements IndexWriter {
 
         Unsafe.getUnsafe().setMemory(pendingCountsAddr, (long) keyCapacity * Integer.BYTES, (byte) 0);
         hasPendingData = false;
+
+        if (genCount > MAX_GEN_COUNT) {
+            seal();
+        }
     }
 
     private void freeNativeBuffers() {
