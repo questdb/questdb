@@ -35,6 +35,11 @@ jobs:
           tar -xf node-v20.9.0-linux-x64-glibc-217.tar.xz --strip-components 1 -C /node20217
           ldd /__e/node20/bin/node
       - uses: actions/checkout@v4
+      - name: Cache JDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/Java_Temurin-Hotspot_jdk
+          key: java-temurin-17-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -88,6 +93,11 @@ jobs:
           echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
           echo "/opt/maven/bin" >> $GITHUB_PATH
       - uses: actions/checkout@v4
+      - name: Cache JDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/Java_Temurin-Hotspot_jdk
+          key: java-temurin-17-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
