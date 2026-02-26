@@ -317,6 +317,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return command;
     }
 
+    @Override
     public boolean isForceWalBypass() {
         return command == FORCE_DROP_PARTITION;
     }

@@ -483,6 +483,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Dispatches the operation to a type-specific {@code execute*} method based on its operation code.
+     * Each delegate returns {@code true} when the DDL took effect, or {@code false} for no-ops
+     * (e.g. {@code IF EXISTS} on a missing entity, {@code IF NOT EXISTS} on an existing one).
+     * The caller ({@link GenericDropOperation}, {@link CreateTableOperation}, etc.) uses this
+     * return value to decide whether to fire {@link io.questdb.cairo.DdlListener} callbacks.
+     * <p>
+     * {@code DROP ALL} is a special case: it fires {@link io.questdb.cairo.DdlListener#onTableOrViewOrMatViewDropped}
+     * per successfully dropped entity inside {@code executeDropAllTables}, so its return value
+     * only indicates whether at least one entity was dropped rather than gating a single callback.
+     */
     @Override
     public boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException {
         return switch (op.getOperationCode()) {
@@ -4245,7 +4258,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         engine.getTableTokens(tableTokenBucket, false);
         final SecurityContext securityContext = executionContext.getSecurityContext();
         TableToken tableToken;
-        boolean dropped = false;
+        boolean hasDroppedAny = false;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             tableToken = tableTokenBucket.get(i);
             if (!tableToken.isSystem()) {
@@ -4260,7 +4273,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final String tableName = tableToken.getTableName();
                     engine.dropTableOrViewOrMatView(path, tableToken);
                     op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
-                    dropped = true;
+                    hasDroppedAny = true;
                 } catch (CairoException report) {
                     // it will fail when there are readers/writers and lock cannot be acquired
                     dropAllTablesFailedTableNames.put(tableToken.getTableName(), report.getMessage());
@@ -4282,7 +4295,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             throw ex.put(']');
         }
-        return dropped;
+        return hasDroppedAny;
     }
 
     private boolean executeDropMatView(

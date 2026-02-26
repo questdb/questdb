@@ -368,7 +368,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 Assert.assertEquals(3, metadata.getColumnIndexQuiet("z"));
             }
 
-            // RENAME COLUMN — TableWriter wraps in CairoException
+            // RENAME COLUMN
             assertListenerException("onColumnRenamed",
                     () -> execute("ALTER TABLE tab RENAME COLUMN z TO v"));
             drainWalQueue();
@@ -379,7 +379,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 Assert.assertEquals(-1, metadata.getColumnIndexQuiet("z"));
             }
 
-            // DROP COLUMN — TableWriter wraps in CairoError
+            // DROP COLUMN
             assertListenerException("onColumnDropped",
                     () -> execute("ALTER TABLE tab DROP COLUMN v"));
             drainWalQueue();
