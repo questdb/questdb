@@ -61,14 +61,19 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * <p>
  * Generation Format (one per commit, covers all keys):
  * <p>
- * Dense format (genKeyCount >= 0 in directory, used by seal):
+ * Dense format (genKeyCount >= 0 in directory, used by seal) — stride-indexed:
  * <pre>
- * [Per-key counts: keyCount × 4B]
- * [Per-key offsets: keyCount × 4B — byte offset into encoded data]
- * [Key 0 BP-encoded data]
- * [Key 1 BP-encoded data]
+ * [stride_index: (strideCount + 1) × 4B — byte offset of each stride block]
+ * [stride block 0:
+ *   [counts:  ks × 4B — value count per key]
+ *   [offsets: (ks + 1) × 4B — prefix-sum data offsets, sentinel at end]
+ *   [encoded data for keys 0..DENSE_STRIDE-1]
+ * ]
+ * [stride block 1: ...]
  * ...
+ * [stride block N-1: last stride may have fewer keys]
  * </pre>
+ * where strideCount = ceil(keyCount / DENSE_STRIDE), ks = keys in stride.
  * Sparse format (genKeyCount < 0 in directory, |genKeyCount| = active keys, used by commit):
  * <pre>
  * [keyIds:  activeKeyCount × 4B — sorted ascending, for binary search]
@@ -80,6 +85,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 public final class BPBitmapIndexUtils {
 
     public static final int BLOCK_CAPACITY = 64;
+    public static final int DENSE_STRIDE = 256;
 
     // Key file header offsets (64 bytes)
     public static final int KEY_FILE_RESERVED = 64;
@@ -343,7 +349,40 @@ public final class BPBitmapIndexUtils {
     }
 
     /**
+     * Number of stride blocks for the given key count.
+     */
+    public static int strideCount(int keyCount) {
+        return (keyCount + DENSE_STRIDE - 1) / DENSE_STRIDE;
+    }
+
+    /**
+     * Size of the stride index: (strideCount + 1) × 4B.
+     * The extra entry is a sentinel holding the total size of all stride blocks.
+     */
+    public static int strideIndexSize(int keyCount) {
+        return (strideCount(keyCount) + 1) * Integer.BYTES;
+    }
+
+    /**
+     * Number of keys in a given stride block.
+     */
+    public static int keysInStride(int keyCount, int stride) {
+        int sc = strideCount(keyCount);
+        if (stride < sc - 1) return DENSE_STRIDE;
+        int rem = keyCount % DENSE_STRIDE;
+        return rem == 0 ? DENSE_STRIDE : rem;
+    }
+
+    /**
+     * Size of a stride block's local header: counts + prefix-sum offsets (with sentinel).
+     */
+    public static int strideLocalHeaderSize(int keysInStride) {
+        return keysInStride * Integer.BYTES + (keysInStride + 1) * Integer.BYTES;
+    }
+
+    /**
      * Size of the per-generation dense header: counts + offsets for all keys.
+     * Only used by legacy flat dense format — stride-indexed format uses stride blocks instead.
      */
     public static int genHeaderSize(int keyCount) {
         return keyCount * Integer.BYTES * 2;

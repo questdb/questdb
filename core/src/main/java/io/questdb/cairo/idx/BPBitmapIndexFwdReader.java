@@ -423,7 +423,6 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
             valueMem.extend(genFileOffset + genDataSize);
             long genAddr = valueMem.addressOf(genFileOffset);
 
-            int headerSize;
             if (genKeyCount < 0) {
                 // Sparse format — use hint-based linear scan for ascending key access
                 int activeKeyCount = -genKeyCount;
@@ -448,14 +447,14 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
                     return;
                 }
 
-                headerSize = BPBitmapIndexUtils.genHeaderSizeSparse(activeKeyCount);
+                int headerSize = BPBitmapIndexUtils.genHeaderSizeSparse(activeKeyCount);
                 long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
                 long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
                 this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
                 int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
                 this.encodedAddr = genAddr + headerSize + dataOffset;
             } else {
-                // Dense format
+                // Dense format — stride-indexed
                 if (requestedKey >= genKeyCount) {
                     this.encodedBlockCount = 0;
                     this.currentBlock = 0;
@@ -464,10 +463,18 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
                     return;
                 }
 
-                headerSize = BPBitmapIndexUtils.genHeaderSize(genKeyCount);
-                this.totalValueCount = Unsafe.getUnsafe().getInt(genAddr + (long) requestedKey * Integer.BYTES);
-                int dataOffset = Unsafe.getUnsafe().getInt(genAddr + (long) genKeyCount * Integer.BYTES + (long) requestedKey * Integer.BYTES);
-                this.encodedAddr = genAddr + headerSize + dataOffset;
+                int stride = requestedKey / BPBitmapIndexUtils.DENSE_STRIDE;
+                int localKey = requestedKey % BPBitmapIndexUtils.DENSE_STRIDE;
+                int siSize = BPBitmapIndexUtils.strideIndexSize(genKeyCount);
+                int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);
+                long strideAddr = genAddr + siSize + strideOff;
+                int ks = BPBitmapIndexUtils.keysInStride(genKeyCount, stride);
+
+                this.totalValueCount = Unsafe.getUnsafe().getInt(strideAddr + (long) localKey * Integer.BYTES);
+                long offsetsBase = strideAddr + (long) ks * Integer.BYTES;
+                int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
+                int localHeaderSize = BPBitmapIndexUtils.strideLocalHeaderSize(ks);
+                this.encodedAddr = strideAddr + localHeaderSize + dataOffset;
             }
 
             if (totalValueCount == 0) {
