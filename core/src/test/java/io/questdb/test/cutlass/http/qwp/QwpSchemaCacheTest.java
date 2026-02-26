@@ -34,56 +34,6 @@ import org.junit.Test;
 public class QwpSchemaCacheTest {
 
     @Test
-    public void testCacheEmpty() {
-        QwpSchemaCache cache = new QwpSchemaCache();
-        Assert.assertEquals(0, cache.size());
-        Assert.assertNull(cache.get("nonexistent", 12345L));
-    }
-
-    @Test
-    public void testCachePutAndGet() {
-        QwpSchemaCache cache = new QwpSchemaCache();
-        QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
-
-        cache.put("test_table", schema);
-
-        Assert.assertEquals(1, cache.size());
-        QwpSchema retrieved = cache.get("test_table", schema.getSchemaHash());
-        Assert.assertNotNull(retrieved);
-        Assert.assertEquals(schema.getSchemaHash(), retrieved.getSchemaHash());
-    }
-
-    @Test
-    public void testCacheHit() {
-        QwpSchemaCache cache = new QwpSchemaCache();
-        QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
-
-        cache.put("test_table", schema);
-
-        Assert.assertEquals(0, cache.getHits());
-        Assert.assertEquals(0, cache.getMisses());
-
-        cache.get("test_table", schema.getSchemaHash());
-
-        Assert.assertEquals(1, cache.getHits());
-        Assert.assertEquals(0, cache.getMisses());
-    }
-
-    @Test
-    public void testCacheMiss() {
-        QwpSchemaCache cache = new QwpSchemaCache();
-        QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
-
-        cache.put("test_table", schema);
-
-        cache.get("test_table", 99999L); // Miss (wrong hash)
-        cache.get("other_table", schema.getSchemaHash()); // Miss (wrong table)
-
-        Assert.assertEquals(0, cache.getHits());
-        Assert.assertEquals(2, cache.getMisses());
-    }
-
-    @Test
     public void testCacheByTableAndHash() {
         QwpSchemaCache cache = new QwpSchemaCache();
 
@@ -117,6 +67,46 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
+    public void testCacheDuplicatePut() {
+        QwpSchemaCache cache = new QwpSchemaCache();
+        QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
+
+        cache.put("test_table", schema);
+        cache.put("test_table", schema);
+
+        Assert.assertEquals(1, cache.size());
+    }
+
+    @Test
+    public void testCacheEmpty() {
+        QwpSchemaCache cache = new QwpSchemaCache();
+        Assert.assertEquals(0, cache.size());
+        Assert.assertNull(cache.get("nonexistent", 12345L));
+    }
+
+    @Test
+    public void testCacheHit() {
+        QwpSchemaCache cache = new QwpSchemaCache();
+        QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
+
+        cache.put("test_table", schema);
+
+        Assert.assertEquals(0, cache.getHits());
+        Assert.assertEquals(0, cache.getMisses());
+
+        cache.get("test_table", schema.getSchemaHash());
+
+        Assert.assertEquals(1, cache.getHits());
+        Assert.assertEquals(0, cache.getMisses());
+    }
+
+    @Test
+    public void testCacheHitRateZeroLookups() {
+        QwpSchemaCache cache = new QwpSchemaCache();
+        Assert.assertEquals(0.0, cache.getHitRate(), 0.001);
+    }
+
+    @Test
     public void testCacheMetrics() {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
@@ -138,20 +128,30 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
-    public void testCacheHitRateZeroLookups() {
-        QwpSchemaCache cache = new QwpSchemaCache();
-        Assert.assertEquals(0.0, cache.getHitRate(), 0.001);
-    }
-
-    @Test
-    public void testCacheDuplicatePut() {
+    public void testCacheMiss() {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
 
         cache.put("test_table", schema);
+
+        cache.get("test_table", 99999L); // Miss (wrong hash)
+        cache.get("other_table", schema.getSchemaHash()); // Miss (wrong table)
+
+        Assert.assertEquals(0, cache.getHits());
+        Assert.assertEquals(2, cache.getMisses());
+    }
+
+    @Test
+    public void testCachePutAndGet() {
+        QwpSchemaCache cache = new QwpSchemaCache();
+        QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
+
         cache.put("test_table", schema);
 
         Assert.assertEquals(1, cache.size());
+        QwpSchema retrieved = cache.get("test_table", schema.getSchemaHash());
+        Assert.assertNotNull(retrieved);
+        Assert.assertEquals(schema.getSchemaHash(), retrieved.getSchemaHash());
     }
 
     private QwpSchema createTestSchema(String columnName, byte typeCode) {

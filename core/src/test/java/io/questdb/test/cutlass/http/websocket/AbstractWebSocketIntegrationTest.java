@@ -76,15 +76,15 @@ public abstract class AbstractWebSocketIntegrationTest extends AbstractBootstrap
 
         WebSocket.Listener listener = new WebSocket.Listener() {
             @Override
-            public void onOpen(WebSocket webSocket) {
-                connectLatch.countDown();
-                webSocket.request(1);
-            }
-
-            @Override
             public void onError(WebSocket webSocket, Throwable error) {
                 errorRef.set(error);
                 connectLatch.countDown();
+            }
+
+            @Override
+            public void onOpen(WebSocket webSocket) {
+                connectLatch.countDown();
+                webSocket.request(1);
             }
         };
 
@@ -121,25 +121,8 @@ public abstract class AbstractWebSocketIntegrationTest extends AbstractBootstrap
                 .build();
 
         WebSocket.Listener listener = new WebSocket.Listener() {
-            private StringBuilder textBuffer = new StringBuilder();
             private ByteBuffer binaryBuffer;
-
-            @Override
-            public void onOpen(WebSocket webSocket) {
-                handler.onOpen();
-                webSocket.request(1);
-            }
-
-            @Override
-            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-                textBuffer.append(data);
-                if (last) {
-                    handler.onMessage(textBuffer.toString());
-                    textBuffer = new StringBuilder();
-                }
-                webSocket.request(1);
-                return null;
-            }
+            private StringBuilder textBuffer = new StringBuilder();
 
             @Override
             public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
@@ -174,6 +157,23 @@ public abstract class AbstractWebSocketIntegrationTest extends AbstractBootstrap
             public void onError(WebSocket webSocket, Throwable error) {
                 handler.onError(error);
             }
+
+            @Override
+            public void onOpen(WebSocket webSocket) {
+                handler.onOpen();
+                webSocket.request(1);
+            }
+
+            @Override
+            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                textBuffer.append(data);
+                if (last) {
+                    handler.onMessage(textBuffer.toString());
+                    textBuffer = new StringBuilder();
+                }
+                webSocket.request(1);
+                return null;
+            }
         };
 
         return client.newWebSocketBuilder().buildAsync(uri, listener);
@@ -183,35 +183,45 @@ public abstract class AbstractWebSocketIntegrationTest extends AbstractBootstrap
      * Interface for handling WebSocket messages in tests.
      */
     public interface WebSocketMessageHandler {
-        void onOpen();
-
-        void onMessage(String message);
-
         void onBinaryMessage(ByteBuffer bytes);
 
         void onClose(int code, String reason);
 
         void onError(Throwable error);
+
+        void onMessage(String message);
+
+        void onOpen();
     }
 
     /**
      * Simple adapter for WebSocketMessageHandler with latches for synchronization.
      */
     public static class TestWebSocketHandler implements WebSocketMessageHandler {
-        private final CountDownLatch openLatch = new CountDownLatch(1);
         private final CountDownLatch closeLatch = new CountDownLatch(1);
         private final AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        private final CountDownLatch openLatch = new CountDownLatch(1);
         private volatile int closeCode;
         private volatile String closeReason;
 
-        @Override
-        public void onOpen() {
-            openLatch.countDown();
+        public boolean awaitClose(long timeout, TimeUnit unit) throws InterruptedException {
+            return closeLatch.await(timeout, unit);
         }
 
-        @Override
-        public void onMessage(String message) {
-            // Override in subclass if needed
+        public boolean awaitOpen(long timeout, TimeUnit unit) throws InterruptedException {
+            return openLatch.await(timeout, unit);
+        }
+
+        public int getCloseCode() {
+            return closeCode;
+        }
+
+        public String getCloseReason() {
+            return closeReason;
+        }
+
+        public Throwable getError() {
+            return errorRef.get();
         }
 
         @Override
@@ -233,24 +243,14 @@ public abstract class AbstractWebSocketIntegrationTest extends AbstractBootstrap
             closeLatch.countDown();
         }
 
-        public boolean awaitOpen(long timeout, TimeUnit unit) throws InterruptedException {
-            return openLatch.await(timeout, unit);
+        @Override
+        public void onMessage(String message) {
+            // Override in subclass if needed
         }
 
-        public boolean awaitClose(long timeout, TimeUnit unit) throws InterruptedException {
-            return closeLatch.await(timeout, unit);
-        }
-
-        public Throwable getError() {
-            return errorRef.get();
-        }
-
-        public int getCloseCode() {
-            return closeCode;
-        }
-
-        public String getCloseReason() {
-            return closeReason;
+        @Override
+        public void onOpen() {
+            openLatch.countDown();
         }
     }
 }

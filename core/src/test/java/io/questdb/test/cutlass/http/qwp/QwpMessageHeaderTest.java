@@ -36,82 +36,47 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 public class QwpMessageHeaderTest {
 
     @Test
-    public void testValidHeader() throws QwpParseException {
-        byte[] header = createValidHeader(1, 0, 5, 1000);
+    public void testCustomPayloadLimit() throws QwpParseException {
+        byte[] header = createValidHeader(1, 0, 1, 1000);
         QwpMessageHeader h = new QwpMessageHeader();
-        h.parse(header, 0, header.length);
+        h.setMaxPayloadLength(500);
 
-        Assert.assertEquals(MAGIC_MESSAGE, h.getMagic());
-        Assert.assertEquals(1, h.getVersion());
-        Assert.assertEquals(0, h.getFlags());
-        Assert.assertEquals(5, h.getTableCount());
+        try {
+            h.parse(header, 0, header.length);
+            Assert.fail("Expected exception for oversized payload with custom limit");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.PAYLOAD_TOO_LARGE, e.getErrorCode());
+        }
+
+        // Now increase limit
+        h.setMaxPayloadLength(2000);
+        h.parse(header, 0, header.length);
         Assert.assertEquals(1000, h.getPayloadLength());
-        Assert.assertEquals(12 + 1000, h.getTotalLength());
     }
 
     @Test
-    public void testMagicBytes() throws QwpParseException {
-        // Valid magic
-        byte[] header = createValidHeader(1, 0, 1, 100);
+    public void testFlagCombinations() throws QwpParseException {
+        // LZ4 + Gorilla
+        byte[] header = createValidHeader(1, (byte) (FLAG_LZ4 | FLAG_GORILLA), 1, 100);
         QwpMessageHeader h = new QwpMessageHeader();
         h.parse(header, 0, header.length);
-        Assert.assertEquals(MAGIC_MESSAGE, h.getMagic());
-        Assert.assertTrue(QwpMessageHeader.isMessageMagic(h.getMagic()));
+
+        Assert.assertTrue(h.isLZ4Compressed());
+        Assert.assertFalse(h.isZstdCompressed());
+        Assert.assertTrue(h.isCompressed());
+        Assert.assertTrue(h.isGorillaEnabled());
     }
 
     @Test
-    public void testInvalidMagicVariations() {
-        QwpMessageHeader h = new QwpMessageHeader();
-
-        // Wrong first byte
-        byte[] header1 = createValidHeader(1, 0, 1, 100);
-        header1[0] = 'X';
-        assertInvalidMagic(h, header1);
-
-        // Wrong last byte
-        byte[] header2 = createValidHeader(1, 0, 1, 100);
-        header2[3] = '5';
-        assertInvalidMagic(h, header2);
-
-        // All zeros
-        byte[] header3 = new byte[12];
-        assertInvalidMagic(h, header3);
-
-        // Capability request magic (different protocol message)
-        byte[] header4 = createValidHeader(1, 0, 1, 100);
-        header4[3] = '?';
-        assertInvalidMagic(h, header4);
-    }
-
-    @Test
-    public void testVersion1() throws QwpParseException {
-        byte[] header = createValidHeader(1, 0, 1, 100);
+    public void testFlagGorilla() throws QwpParseException {
+        byte[] header = createValidHeader(1, FLAG_GORILLA, 1, 100);
         QwpMessageHeader h = new QwpMessageHeader();
         h.parse(header, 0, header.length);
-        Assert.assertEquals(1, h.getVersion());
-    }
 
-    @Test
-    public void testUnsupportedVersion() {
-        QwpMessageHeader h = new QwpMessageHeader();
-
-        // Version 0
-        byte[] header0 = createValidHeader(0, 0, 1, 100);
-        try {
-            h.parse(header0, 0, header0.length);
-            Assert.fail("Expected exception for version 0");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.UNSUPPORTED_VERSION, e.getErrorCode());
-        }
-
-        // Version 2 (future)
-        byte[] header2 = createValidHeader(2, 0, 1, 100);
-        try {
-            h.parse(header2, 0, header2.length);
-            Assert.fail("Expected exception for version 2");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.UNSUPPORTED_VERSION, e.getErrorCode());
-        }
+        Assert.assertFalse(h.isLZ4Compressed());
+        Assert.assertFalse(h.isZstdCompressed());
+        Assert.assertFalse(h.isCompressed());
+        Assert.assertTrue(h.isGorillaEnabled());
     }
 
     @Test
@@ -139,106 +104,18 @@ public class QwpMessageHeaderTest {
     }
 
     @Test
-    public void testFlagGorilla() throws QwpParseException {
-        byte[] header = createValidHeader(1, FLAG_GORILLA, 1, 100);
+    public void testHeaderToString() throws QwpParseException {
+        byte[] header = createValidHeader(1, (byte) (FLAG_LZ4 | FLAG_GORILLA), 5, 1234);
         QwpMessageHeader h = new QwpMessageHeader();
         h.parse(header, 0, header.length);
 
-        Assert.assertFalse(h.isLZ4Compressed());
-        Assert.assertFalse(h.isZstdCompressed());
-        Assert.assertFalse(h.isCompressed());
-        Assert.assertTrue(h.isGorillaEnabled());
-    }
-
-    @Test
-    public void testFlagCombinations() throws QwpParseException {
-        // LZ4 + Gorilla
-        byte[] header = createValidHeader(1, (byte) (FLAG_LZ4 | FLAG_GORILLA), 1, 100);
-        QwpMessageHeader h = new QwpMessageHeader();
-        h.parse(header, 0, header.length);
-
-        Assert.assertTrue(h.isLZ4Compressed());
-        Assert.assertFalse(h.isZstdCompressed());
-        Assert.assertTrue(h.isCompressed());
-        Assert.assertTrue(h.isGorillaEnabled());
-    }
-
-    @Test
-    public void testInvalidFlagsBothCompression() {
-        // Both LZ4 and Zstd set is invalid
-        byte[] header = createValidHeader(1, (byte) (FLAG_LZ4 | FLAG_ZSTD), 1, 100);
-        QwpMessageHeader h = new QwpMessageHeader();
-        try {
-            h.parse(header, 0, header.length);
-            Assert.fail("Expected exception for both compression flags");
-        } catch (QwpParseException e) {
-            // Expected
-        }
-    }
-
-    @Test
-    public void testTableCountZero() throws QwpParseException {
-        byte[] header = createValidHeader(1, 0, 0, 0);
-        QwpMessageHeader h = new QwpMessageHeader();
-        h.parse(header, 0, header.length);
-        Assert.assertEquals(0, h.getTableCount());
-    }
-
-    @Test
-    public void testTableCountMax() throws QwpParseException {
-        byte[] header = createValidHeader(1, 0, 65535, 100);
-        QwpMessageHeader h = new QwpMessageHeader();
-        h.parse(header, 0, header.length);
-        Assert.assertEquals(65535, h.getTableCount());
-    }
-
-    @Test
-    public void testPayloadLengthZero() throws QwpParseException {
-        byte[] header = createValidHeader(1, 0, 1, 0);
-        QwpMessageHeader h = new QwpMessageHeader();
-        h.parse(header, 0, header.length);
-        Assert.assertEquals(0, h.getPayloadLength());
-        Assert.assertEquals(12, h.getTotalLength());
-    }
-
-    @Test
-    public void testPayloadLengthMax() throws QwpParseException {
-        // Default max is 16MB
-        byte[] header = createValidHeader(1, 0, 1, DEFAULT_MAX_BATCH_SIZE);
-        QwpMessageHeader h = new QwpMessageHeader();
-        h.parse(header, 0, header.length);
-        Assert.assertEquals(DEFAULT_MAX_BATCH_SIZE, h.getPayloadLength());
-    }
-
-    @Test
-    public void testPayloadLengthExceedsLimit() {
-        byte[] header = createValidHeader(1, 0, 1, DEFAULT_MAX_BATCH_SIZE + 1);
-        QwpMessageHeader h = new QwpMessageHeader();
-        try {
-            h.parse(header, 0, header.length);
-            Assert.fail("Expected exception for oversized payload");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.PAYLOAD_TOO_LARGE, e.getErrorCode());
-        }
-    }
-
-    @Test
-    public void testCustomPayloadLimit() throws QwpParseException {
-        byte[] header = createValidHeader(1, 0, 1, 1000);
-        QwpMessageHeader h = new QwpMessageHeader();
-        h.setMaxPayloadLength(500);
-
-        try {
-            h.parse(header, 0, header.length);
-            Assert.fail("Expected exception for oversized payload with custom limit");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.PAYLOAD_TOO_LARGE, e.getErrorCode());
-        }
-
-        // Now increase limit
-        h.setMaxPayloadLength(2000);
-        h.parse(header, 0, header.length);
-        Assert.assertEquals(1000, h.getPayloadLength());
+        String str = h.toString();
+        Assert.assertTrue(str.contains("ILP4"));
+        Assert.assertTrue(str.contains("version=1"));
+        Assert.assertTrue(str.contains("[LZ4]"));
+        Assert.assertTrue(str.contains("[Gorilla]"));
+        Assert.assertTrue(str.contains("tableCount=5"));
+        Assert.assertTrue(str.contains("payloadLength=1234"));
     }
 
     @Test
@@ -255,6 +132,77 @@ public class QwpMessageHeaderTest {
                 Assert.assertEquals(QwpParseException.ErrorCode.HEADER_TOO_SHORT, e.getErrorCode());
             }
         }
+    }
+
+    @Test
+    public void testInvalidFlagsBothCompression() {
+        // Both LZ4 and Zstd set is invalid
+        byte[] header = createValidHeader(1, (byte) (FLAG_LZ4 | FLAG_ZSTD), 1, 100);
+        QwpMessageHeader h = new QwpMessageHeader();
+        try {
+            h.parse(header, 0, header.length);
+            Assert.fail("Expected exception for both compression flags");
+        } catch (QwpParseException e) {
+            // Expected
+        }
+    }
+
+    @Test
+    public void testInvalidMagicVariations() {
+        QwpMessageHeader h = new QwpMessageHeader();
+
+        // Wrong first byte
+        byte[] header1 = createValidHeader(1, 0, 1, 100);
+        header1[0] = 'X';
+        assertInvalidMagic(h, header1);
+
+        // Wrong last byte
+        byte[] header2 = createValidHeader(1, 0, 1, 100);
+        header2[3] = '5';
+        assertInvalidMagic(h, header2);
+
+        // All zeros
+        byte[] header3 = new byte[12];
+        assertInvalidMagic(h, header3);
+
+        // Capability request magic (different protocol message)
+        byte[] header4 = createValidHeader(1, 0, 1, 100);
+        header4[3] = '?';
+        assertInvalidMagic(h, header4);
+    }
+
+    @Test
+    public void testLargePayloadLength() throws QwpParseException {
+        // Test max uint32 value (but within our limit)
+        QwpMessageHeader h = new QwpMessageHeader();
+        h.setMaxPayloadLength(0xFFFFFFFFL);
+
+        byte[] header = new byte[12];
+        header[0] = 'I';
+        header[1] = 'L';
+        header[2] = 'P';
+        header[3] = '4';
+        header[4] = 1; // version
+        header[5] = 0; // flags
+        header[6] = 1; // table count lo
+        header[7] = 0; // table count hi
+        header[8] = (byte) 0xFF; // payload length (all 1s)
+        header[9] = (byte) 0xFF;
+        header[10] = (byte) 0xFF;
+        header[11] = (byte) 0x7F; // 0x7FFFFFFF = 2GB (just under max int)
+
+        h.parse(header, 0, header.length);
+        Assert.assertEquals(0x7FFFFFFFL, h.getPayloadLength());
+    }
+
+    @Test
+    public void testMagicBytes() throws QwpParseException {
+        // Valid magic
+        byte[] header = createValidHeader(1, 0, 1, 100);
+        QwpMessageHeader h = new QwpMessageHeader();
+        h.parse(header, 0, header.length);
+        Assert.assertEquals(MAGIC_MESSAGE, h.getMagic());
+        Assert.assertTrue(QwpMessageHeader.isMessageMagic(h.getMagic()));
     }
 
     @Test
@@ -303,18 +251,62 @@ public class QwpMessageHeaderTest {
     }
 
     @Test
-    public void testHeaderToString() throws QwpParseException {
-        byte[] header = createValidHeader(1, (byte) (FLAG_LZ4 | FLAG_GORILLA), 5, 1234);
+    public void testPayloadLengthExceedsLimit() {
+        byte[] header = createValidHeader(1, 0, 1, DEFAULT_MAX_BATCH_SIZE + 1);
+        QwpMessageHeader h = new QwpMessageHeader();
+        try {
+            h.parse(header, 0, header.length);
+            Assert.fail("Expected exception for oversized payload");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.PAYLOAD_TOO_LARGE, e.getErrorCode());
+        }
+    }
+
+    @Test
+    public void testPayloadLengthMax() throws QwpParseException {
+        // Default max is 16MB
+        byte[] header = createValidHeader(1, 0, 1, DEFAULT_MAX_BATCH_SIZE);
         QwpMessageHeader h = new QwpMessageHeader();
         h.parse(header, 0, header.length);
+        Assert.assertEquals(DEFAULT_MAX_BATCH_SIZE, h.getPayloadLength());
+    }
 
-        String str = h.toString();
-        Assert.assertTrue(str.contains("ILP4"));
-        Assert.assertTrue(str.contains("version=1"));
-        Assert.assertTrue(str.contains("[LZ4]"));
-        Assert.assertTrue(str.contains("[Gorilla]"));
-        Assert.assertTrue(str.contains("tableCount=5"));
-        Assert.assertTrue(str.contains("payloadLength=1234"));
+    @Test
+    public void testPayloadLengthZero() throws QwpParseException {
+        byte[] header = createValidHeader(1, 0, 1, 0);
+        QwpMessageHeader h = new QwpMessageHeader();
+        h.parse(header, 0, header.length);
+        Assert.assertEquals(0, h.getPayloadLength());
+        Assert.assertEquals(12, h.getTotalLength());
+    }
+
+    @Test
+    public void testReadMagicFromDirectMemory() {
+        long addr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(addr, (byte) 'I');
+            Unsafe.getUnsafe().putByte(addr + 1, (byte) 'L');
+            Unsafe.getUnsafe().putByte(addr + 2, (byte) 'P');
+            Unsafe.getUnsafe().putByte(addr + 3, (byte) '4');
+
+            int magic = QwpMessageHeader.readMagic(addr);
+            Assert.assertEquals(MAGIC_MESSAGE, magic);
+        } finally {
+            Unsafe.free(addr, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testReadMagicStatic() {
+        byte[] buf = new byte[]{'I', 'L', 'P', '4', 0, 0, 0, 0};
+        int magic = QwpMessageHeader.readMagic(buf, 0);
+        Assert.assertEquals(MAGIC_MESSAGE, magic);
+        Assert.assertTrue(QwpMessageHeader.isMessageMagic(magic));
+
+        buf[3] = '?';
+        magic = QwpMessageHeader.readMagic(buf, 0);
+        Assert.assertEquals(MAGIC_CAPABILITY_REQUEST, magic);
+        Assert.assertTrue(QwpMessageHeader.isCapabilityRequestMagic(magic));
     }
 
     @Test
@@ -336,59 +328,76 @@ public class QwpMessageHeaderTest {
     }
 
     @Test
-    public void testReadMagicStatic() {
-        byte[] buf = new byte[]{'I', 'L', 'P', '4', 0, 0, 0, 0};
-        int magic = QwpMessageHeader.readMagic(buf, 0);
-        Assert.assertEquals(MAGIC_MESSAGE, magic);
-        Assert.assertTrue(QwpMessageHeader.isMessageMagic(magic));
-
-        buf[3] = '?';
-        magic = QwpMessageHeader.readMagic(buf, 0);
-        Assert.assertEquals(MAGIC_CAPABILITY_REQUEST, magic);
-        Assert.assertTrue(QwpMessageHeader.isCapabilityRequestMagic(magic));
+    public void testTableCountMax() throws QwpParseException {
+        byte[] header = createValidHeader(1, 0, 65535, 100);
+        QwpMessageHeader h = new QwpMessageHeader();
+        h.parse(header, 0, header.length);
+        Assert.assertEquals(65535, h.getTableCount());
     }
 
     @Test
-    public void testReadMagicFromDirectMemory() {
-        long addr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
-        try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 'I');
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 'L');
-            Unsafe.getUnsafe().putByte(addr + 2, (byte) 'P');
-            Unsafe.getUnsafe().putByte(addr + 3, (byte) '4');
+    public void testTableCountZero() throws QwpParseException {
+        byte[] header = createValidHeader(1, 0, 0, 0);
+        QwpMessageHeader h = new QwpMessageHeader();
+        h.parse(header, 0, header.length);
+        Assert.assertEquals(0, h.getTableCount());
+    }
 
-            int magic = QwpMessageHeader.readMagic(addr);
-            Assert.assertEquals(MAGIC_MESSAGE, magic);
-        } finally {
-            Unsafe.free(addr, 8, MemoryTag.NATIVE_DEFAULT);
+    @Test
+    public void testUnsupportedVersion() {
+        QwpMessageHeader h = new QwpMessageHeader();
+
+        // Version 0
+        byte[] header0 = createValidHeader(0, 0, 1, 100);
+        try {
+            h.parse(header0, 0, header0.length);
+            Assert.fail("Expected exception for version 0");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.UNSUPPORTED_VERSION, e.getErrorCode());
+        }
+
+        // Version 2 (future)
+        byte[] header2 = createValidHeader(2, 0, 1, 100);
+        try {
+            h.parse(header2, 0, header2.length);
+            Assert.fail("Expected exception for version 2");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.UNSUPPORTED_VERSION, e.getErrorCode());
         }
     }
 
     @Test
-    public void testLargePayloadLength() throws QwpParseException {
-        // Test max uint32 value (but within our limit)
+    public void testValidHeader() throws QwpParseException {
+        byte[] header = createValidHeader(1, 0, 5, 1000);
         QwpMessageHeader h = new QwpMessageHeader();
-        h.setMaxPayloadLength(0xFFFFFFFFL);
-
-        byte[] header = new byte[12];
-        header[0] = 'I';
-        header[1] = 'L';
-        header[2] = 'P';
-        header[3] = '4';
-        header[4] = 1; // version
-        header[5] = 0; // flags
-        header[6] = 1; // table count lo
-        header[7] = 0; // table count hi
-        header[8] = (byte) 0xFF; // payload length (all 1s)
-        header[9] = (byte) 0xFF;
-        header[10] = (byte) 0xFF;
-        header[11] = (byte) 0x7F; // 0x7FFFFFFF = 2GB (just under max int)
-
         h.parse(header, 0, header.length);
-        Assert.assertEquals(0x7FFFFFFFL, h.getPayloadLength());
+
+        Assert.assertEquals(MAGIC_MESSAGE, h.getMagic());
+        Assert.assertEquals(1, h.getVersion());
+        Assert.assertEquals(0, h.getFlags());
+        Assert.assertEquals(5, h.getTableCount());
+        Assert.assertEquals(1000, h.getPayloadLength());
+        Assert.assertEquals(12 + 1000, h.getTotalLength());
+    }
+
+    @Test
+    public void testVersion1() throws QwpParseException {
+        byte[] header = createValidHeader(1, 0, 1, 100);
+        QwpMessageHeader h = new QwpMessageHeader();
+        h.parse(header, 0, header.length);
+        Assert.assertEquals(1, h.getVersion());
     }
 
     // ==================== Helper Methods ====================
+
+    private void assertInvalidMagic(QwpMessageHeader h, byte[] header) {
+        try {
+            h.parse(header, 0, header.length);
+            Assert.fail("Expected exception for invalid magic");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_MAGIC, e.getErrorCode());
+        }
+    }
 
     private byte[] createValidHeader(int version, int flags, int tableCount, long payloadLength) {
         byte[] header = new byte[12];
@@ -410,14 +419,5 @@ public class QwpMessageHeaderTest {
         header[10] = (byte) ((payloadLength >> 16) & 0xFF);
         header[11] = (byte) ((payloadLength >> 24) & 0xFF);
         return header;
-    }
-
-    private void assertInvalidMagic(QwpMessageHeader h, byte[] header) {
-        try {
-            h.parse(header, 0, header.length);
-            Assert.fail("Expected exception for invalid magic");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_MAGIC, e.getErrorCode());
-        }
     }
 }

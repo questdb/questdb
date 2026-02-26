@@ -38,48 +38,6 @@ public abstract class AbstractWebSocketTest extends AbstractTest {
         return Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
     }
 
-    protected void freeBuffer(long address, int size) {
-        Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-    }
-
-    protected void writeBytes(long address, byte... bytes) {
-        for (int i = 0; i < bytes.length; i++) {
-            Unsafe.getUnsafe().putByte(address + i, bytes[i]);
-        }
-    }
-
-    protected byte[] readBytes(long address, int length) {
-        byte[] result = new byte[length];
-        for (int i = 0; i < length; i++) {
-            result[i] = Unsafe.getUnsafe().getByte(address + i);
-        }
-        return result;
-    }
-
-    protected void writeByte(long address, int offset, int value) {
-        Unsafe.getUnsafe().putByte(address + offset, (byte) value);
-    }
-
-    protected byte readByte(long address, int offset) {
-        return Unsafe.getUnsafe().getByte(address + offset);
-    }
-
-    protected void writeShort(long address, int offset, short value) {
-        Unsafe.getUnsafe().putShort(address + offset, value);
-    }
-
-    protected short readShort(long address, int offset) {
-        return Unsafe.getUnsafe().getShort(address + offset);
-    }
-
-    protected void writeLong(long address, int offset, long value) {
-        Unsafe.getUnsafe().putLong(address + offset, value);
-    }
-
-    protected long readLong(long address, int offset) {
-        return Unsafe.getUnsafe().getLong(address + offset);
-    }
-
     /**
      * Helper method to create a masked WebSocket frame.
      *
@@ -145,5 +103,47 @@ public abstract class AbstractWebSocketTest extends AbstractTest {
      */
     protected byte[] createMaskedFrame(int opcode, byte[] payload) {
         return createMaskedFrame(opcode, payload, true);
+    }
+
+    protected void freeBuffer(long address, int size) {
+        Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    protected byte readByte(long address, int offset) {
+        return Unsafe.getUnsafe().getByte(address + offset);
+    }
+
+    protected byte[] readBytes(long address, int length) {
+        byte[] result = new byte[length];
+        for (int i = 0; i < length; i++) {
+            result[i] = Unsafe.getUnsafe().getByte(address + i);
+        }
+        return result;
+    }
+
+    protected long readLong(long address, int offset) {
+        return Unsafe.getUnsafe().getLong(address + offset);
+    }
+
+    protected short readShort(long address, int offset) {
+        return Unsafe.getUnsafe().getShort(address + offset);
+    }
+
+    protected void writeByte(long address, int offset, int value) {
+        Unsafe.getUnsafe().putByte(address + offset, (byte) value);
+    }
+
+    protected void writeBytes(long address, byte... bytes) {
+        for (int i = 0; i < bytes.length; i++) {
+            Unsafe.getUnsafe().putByte(address + i, bytes[i]);
+        }
+    }
+
+    protected void writeLong(long address, int offset, long value) {
+        Unsafe.getUnsafe().putLong(address + offset, value);
+    }
+
+    protected void writeShort(long address, int offset, short value) {
+        Unsafe.getUnsafe().putShort(address + offset, value);
     }
 }

@@ -58,69 +58,194 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testSingleRowWithLongColumn() throws Exception {
+    public void testAsyncModeAutoFlushOnClose() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
-                    sender.table("test_long")
-                            .longColumn("value", 12345L)
-                            .at(1000000000000L, ChronoUnit.MICROS);
+                // Don't call flush() - close() should flush automatically
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                    for (int i = 0; i < 25; i++) {
+                        sender.table("async_auto_flush")
+                                .longColumn("id", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    // No explicit flush() - close() handles it
                 }
 
-                serverMain.awaitTable("test_long");
-                serverMain.assertSql("select count() from test_long", "count\n1\n");
-                serverMain.assertSql("select value from test_long", "value\n12345\n");
+                serverMain.awaitTable("async_auto_flush");
+                serverMain.assertSql("select count() from async_auto_flush", "count\n25\n");
             }
         });
     }
 
     @Test
-    public void testSingleRowWithDoubleColumn() throws Exception {
+    public void testAsyncModeLargeNumberOfRows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
-                    sender.table("test_double")
-                            .doubleColumn("temperature", 23.5)
-                            .at(1000000000000L, ChronoUnit.MICROS);
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                    for (int i = 0; i < 100_000_000; i++) {
+                        sender.table("async_large")
+                                .longColumn("id", i)
+                                .doubleColumn("value", i * 1.1)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
                 }
 
-                serverMain.awaitTable("test_double");
-                serverMain.assertSql("select count() from test_double", "count\n1\n");
+                serverMain.awaitTable("async_large");
+                serverMain.assertSql("select count() from async_large", "count\n100000000\n");
             }
         });
     }
 
     @Test
-    public void testSingleRowWithStringColumn() throws Exception {
+    public void testAsyncModeMultipleRows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
-                    sender.table("test_string")
-                            .stringColumn("message", "hello world")
-                            .at(1000000000000L, ChronoUnit.MICROS);
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                    for (int i = 0; i < 200000; i++) {
+                        sender.table("async_multi")
+                                .longColumn("id", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
                 }
 
-                serverMain.awaitTable("test_string");
-                serverMain.assertSql("select count() from test_string", "count\n1\n");
-                serverMain.assertSql("select message from test_string", "message\nhello world\n");
+                serverMain.awaitTable("async_multi");
+                serverMain.assertSql("select count() from async_multi", "count\n200000\n");
             }
         });
     }
 
     @Test
-    public void testSingleRowWithBooleanColumn() throws Exception {
+    public void testAsyncModeSingleRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                    sender.table("async_single")
+                            .longColumn("value", 42L)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("async_single");
+                serverMain.assertSql("select count() from async_single", "count\n1\n");
+                serverMain.assertSql("select value from async_single", "value\n42\n");
+            }
+        });
+    }
+
+    /**
+     * Stress test for server ACK mechanism.
+     * Creates many small batches (autoFlushRows=2) to force frequent buffer recycling.
+     * With 200 rows and autoFlushRows=2, this creates 100 batches.
+     * Since we only have 2 buffers, this requires ACKs to work correctly for buffer recycling.
+     */
+    @Test
+    public void testAsyncModeStressAcks() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Configure to flush every 2 rows - creates many small batches
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                        "localhost", httpPort, false,
+                        2, // autoFlushRows - very small to force many batches
+                        1024 * 1024, // autoFlushBytes
+                        100_000_000L // autoFlushIntervalNanos
+                )) {
+                    // 200 rows / 2 per batch = 100 batches
+                    for (int i = 0; i < 200; i++) {
+                        sender.table("ack_stress")
+                                .longColumn("id", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ack_stress");
+                serverMain.assertSql("select count() from ack_stress", "count\n200\n");
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncModeWithMultipleTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
+                    for (int i = 0; i < 50; i++) {
+                        // Interleave writes to two tables
+                        sender.table("async_table_a")
+                                .longColumn("id", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                        sender.table("async_table_b")
+                                .doubleColumn("value", i * 2.5)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("async_table_a");
+                serverMain.awaitTable("async_table_b");
+                serverMain.assertSql("select count() from async_table_a", "count\n50\n");
+                serverMain.assertSql("select count() from async_table_b", "count\n50\n");
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncModeWithRowBasedFlush() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Configure to flush every 10 rows
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                        "localhost", httpPort, false,
+                        10, // autoFlushRows
+                        1024 * 1024, // autoFlushBytes
+                        100_000_000L // autoFlushIntervalNanos
+                )) {
+                    for (int i = 0; i < 50; i++) {
+                        sender.table("async_row_flush")
+                                .longColumn("id", i)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("async_row_flush");
+                serverMain.assertSql("select count() from async_row_flush", "count\n50\n");
+            }
+        });
+    }
+
+    @Test
+    public void testAtNowServerAssignedTimestamp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
@@ -128,17 +253,61 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
-                    sender.table("test_bool")
-                            .boolColumn("active", true)
-                            .at(1000000000000L, ChronoUnit.MICROS);
+                    sender.table("test_at_now")
+                            .longColumn("value", 100L)
+                            .atNow();
                 }
 
-                serverMain.awaitTable("test_bool");
-                serverMain.assertSql("select count() from test_bool", "count\n1\n");
-                serverMain.assertSql("select active from test_bool", "active\ntrue\n");
+                serverMain.awaitTable("test_at_now");
+                serverMain.assertSql("select count() from test_at_now", "count\n1\n");
             }
         });
     }
+
+    @Test
+    public void testDoubleArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("test_array")
+                            .doubleArray("values", new double[]{1.0, 2.0, 3.0})
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_array");
+                serverMain.assertSql("select count() from test_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLargeNumberOfRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    for (int i = 0; i < 1000; i++) {
+                        sender.table("large_test")
+                                .longColumn("id", i)
+                                .doubleColumn("value", i * 1.1)
+                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                }
+
+                serverMain.awaitTable("large_test");
+                serverMain.assertSql("select count() from large_test", "count\n1000\n");
+            }
+        });
+    }
+
+    // ==================== ASYNC MODE TESTS ====================
 
     @Test
     public void testMultipleColumns() throws Exception {
@@ -185,7 +354,7 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testAtNowServerAssignedTimestamp() throws Exception {
+    public void testSingleRowWithBooleanColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
@@ -193,19 +362,20 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
-                    sender.table("test_at_now")
-                            .longColumn("value", 100L)
-                            .atNow();
+                    sender.table("test_bool")
+                            .boolColumn("active", true)
+                            .at(1000000000000L, ChronoUnit.MICROS);
                 }
 
-                serverMain.awaitTable("test_at_now");
-                serverMain.assertSql("select count() from test_at_now", "count\n1\n");
+                serverMain.awaitTable("test_bool");
+                serverMain.assertSql("select count() from test_bool", "count\n1\n");
+                serverMain.assertSql("select active from test_bool", "active\ntrue\n");
             }
         });
     }
 
     @Test
-    public void testDoubleArray() throws Exception {
+    public void testSingleRowWithDoubleColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
@@ -213,13 +383,55 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
-                    sender.table("test_array")
-                            .doubleArray("values", new double[]{1.0, 2.0, 3.0})
+                    sender.table("test_double")
+                            .doubleColumn("temperature", 23.5)
                             .at(1000000000000L, ChronoUnit.MICROS);
                 }
 
-                serverMain.awaitTable("test_array");
-                serverMain.assertSql("select count() from test_array", "count\n1\n");
+                serverMain.awaitTable("test_double");
+                serverMain.assertSql("select count() from test_double", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSingleRowWithLongColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("test_long")
+                            .longColumn("value", 12345L)
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_long");
+                serverMain.assertSql("select count() from test_long", "count\n1\n");
+                serverMain.assertSql("select value from test_long", "value\n12345\n");
+            }
+        });
+    }
+
+    @Test
+    public void testSingleRowWithStringColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("test_string")
+                            .stringColumn("message", "hello world")
+                            .at(1000000000000L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_string");
+                serverMain.assertSql("select count() from test_string", "count\n1\n");
+                serverMain.assertSql("select message from test_string", "message\nhello world\n");
             }
         });
     }
@@ -240,218 +452,6 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("test_ts_col");
                 serverMain.assertSql("select count() from test_ts_col", "count\n1\n");
-            }
-        });
-    }
-
-    @Test
-    public void testLargeNumberOfRows() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
-                    for (int i = 0; i < 1000; i++) {
-                        sender.table("large_test")
-                                .longColumn("id", i)
-                                .doubleColumn("value", i * 1.1)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
-                    }
-                }
-
-                serverMain.awaitTable("large_test");
-                serverMain.assertSql("select count() from large_test", "count\n1000\n");
-            }
-        });
-    }
-
-    // ==================== ASYNC MODE TESTS ====================
-
-    @Test
-    public void testAsyncModeSingleRow() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
-                    sender.table("async_single")
-                            .longColumn("value", 42L)
-                            .at(1000000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("async_single");
-                serverMain.assertSql("select count() from async_single", "count\n1\n");
-                serverMain.assertSql("select value from async_single", "value\n42\n");
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncModeMultipleRows() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
-                    for (int i = 0; i < 200000; i++) {
-                        sender.table("async_multi")
-                                .longColumn("id", i)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("async_multi");
-                serverMain.assertSql("select count() from async_multi", "count\n200000\n");
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncModeWithRowBasedFlush() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                // Configure to flush every 10 rows
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
-                        "localhost", httpPort, false,
-                        10, // autoFlushRows
-                        1024 * 1024, // autoFlushBytes
-                        100_000_000L // autoFlushIntervalNanos
-                )) {
-                    for (int i = 0; i < 50; i++) {
-                        sender.table("async_row_flush")
-                                .longColumn("id", i)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("async_row_flush");
-                serverMain.assertSql("select count() from async_row_flush", "count\n50\n");
-            }
-        });
-    }
-
-    /**
-     * Stress test for server ACK mechanism.
-     * Creates many small batches (autoFlushRows=2) to force frequent buffer recycling.
-     * With 200 rows and autoFlushRows=2, this creates 100 batches.
-     * Since we only have 2 buffers, this requires ACKs to work correctly for buffer recycling.
-     */
-    @Test
-    public void testAsyncModeStressAcks() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                // Configure to flush every 2 rows - creates many small batches
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
-                        "localhost", httpPort, false,
-                        2, // autoFlushRows - very small to force many batches
-                        1024 * 1024, // autoFlushBytes
-                        100_000_000L // autoFlushIntervalNanos
-                )) {
-                    // 200 rows / 2 per batch = 100 batches
-                    for (int i = 0; i < 200; i++) {
-                        sender.table("ack_stress")
-                                .longColumn("id", i)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("ack_stress");
-                serverMain.assertSql("select count() from ack_stress", "count\n200\n");
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncModeLargeNumberOfRows() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
-                    for (int i = 0; i < 100_000_000; i++) {
-                        sender.table("async_large")
-                                .longColumn("id", i)
-                                .doubleColumn("value", i * 1.1)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("async_large");
-                serverMain.assertSql("select count() from async_large", "count\n100000000\n");
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncModeAutoFlushOnClose() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                // Don't call flush() - close() should flush automatically
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
-                    for (int i = 0; i < 25; i++) {
-                        sender.table("async_auto_flush")
-                                .longColumn("id", i)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
-                    }
-                    // No explicit flush() - close() handles it
-                }
-
-                serverMain.awaitTable("async_auto_flush");
-                serverMain.assertSql("select count() from async_auto_flush", "count\n25\n");
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncModeWithMultipleTables() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
-                    for (int i = 0; i < 50; i++) {
-                        // Interleave writes to two tables
-                        sender.table("async_table_a")
-                                .longColumn("id", i)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
-                        sender.table("async_table_b")
-                                .doubleColumn("value", i * 2.5)
-                                .at(1000000000000L + i * 1000L, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-
-                serverMain.awaitTable("async_table_a");
-                serverMain.awaitTable("async_table_b");
-                serverMain.assertSql("select count() from async_table_a", "count\n50\n");
-                serverMain.assertSql("select count() from async_table_b", "count\n50\n");
             }
         });
     }

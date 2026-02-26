@@ -36,12 +36,97 @@ import java.util.Random;
 public class QwpVarintTest {
 
     @Test
-    public void testEncodeDecodeZero() throws QwpParseException {
+    public void testDecodeFromDirectMemory() throws QwpParseException {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // Encode using byte array, decode from direct memory
+            byte[] buf = new byte[10];
+            int len = QwpVarint.encode(buf, 0, 300);
+
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putByte(addr + i, buf[i]);
+            }
+
+            long decoded = QwpVarint.decode(addr, addr + len);
+            Assert.assertEquals(300, decoded);
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDecodeIncompleteVarint() {
+        // Byte with continuation bit set but no following byte
+        byte[] buf = new byte[]{(byte) 0x80};
+        try {
+            QwpVarint.decode(buf, 0, 1);
+            Assert.fail("Should have thrown exception");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INCOMPLETE_VARINT, e.getErrorCode());
+        }
+    }
+
+    @Test
+    public void testDecodeOverflow() {
+        // Create a buffer with too many continuation bytes (>10)
+        byte[] buf = new byte[12];
+        for (int i = 0; i < 11; i++) {
+            buf[i] = (byte) 0x80;
+        }
+        buf[11] = 0x01;
+
+        try {
+            QwpVarint.decode(buf, 0, 12);
+            Assert.fail("Should have thrown exception");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.VARINT_OVERFLOW, e.getErrorCode());
+        }
+    }
+
+    @Test
+    public void testDecodeResult() throws QwpParseException {
         byte[] buf = new byte[10];
-        int len = QwpVarint.encode(buf, 0, 0);
-        Assert.assertEquals(1, len);
-        Assert.assertEquals(0x00, buf[0] & 0xFF);
-        Assert.assertEquals(0, QwpVarint.decode(buf, 0, len));
+        int len = QwpVarint.encode(buf, 0, 300);
+
+        QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
+        QwpVarint.decode(buf, 0, len, result);
+
+        Assert.assertEquals(300, result.value);
+        Assert.assertEquals(len, result.bytesRead);
+    }
+
+    @Test
+    public void testDecodeResultFromDirectMemory() throws QwpParseException {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long endAddr = QwpVarint.encode(addr, 999999);
+            int expectedLen = (int) (endAddr - addr);
+
+            QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
+            QwpVarint.decode(addr, endAddr, result);
+
+            Assert.assertEquals(999999, result.value);
+            Assert.assertEquals(expectedLen, result.bytesRead);
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDecodeResultReuse() throws QwpParseException {
+        byte[] buf = new byte[10];
+        QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
+
+        // First decode
+        int len1 = QwpVarint.encode(buf, 0, 100);
+        QwpVarint.decode(buf, 0, len1, result);
+        Assert.assertEquals(100, result.value);
+
+        // Reuse for second decode
+        result.reset();
+        int len2 = QwpVarint.encode(buf, 0, 50000);
+        QwpVarint.decode(buf, 0, len2, result);
+        Assert.assertEquals(50000, result.value);
     }
 
     @Test
@@ -86,6 +171,15 @@ public class QwpVarintTest {
     }
 
     @Test
+    public void testEncodeDecodeZero() throws QwpParseException {
+        byte[] buf = new byte[10];
+        int len = QwpVarint.encode(buf, 0, 0);
+        Assert.assertEquals(1, len);
+        Assert.assertEquals(0x00, buf[0] & 0xFF);
+        Assert.assertEquals(0, QwpVarint.decode(buf, 0, len));
+    }
+
+    @Test
     public void testEncodeLargeValues() throws QwpParseException {
         byte[] buf = new byte[10];
 
@@ -107,35 +201,19 @@ public class QwpVarintTest {
     }
 
     @Test
-    public void testRoundTripRandomValues() throws QwpParseException {
+    public void testEncodeSpecificValues() throws QwpParseException {
+        // Test values from the spec
         byte[] buf = new byte[10];
-        Random random = new Random(42); // Fixed seed for reproducibility
 
-        for (int i = 0; i < 1000; i++) {
-            long value = random.nextLong() & Long.MAX_VALUE; // Only positive values
-            int len = QwpVarint.encode(buf, 0, value);
-            long decoded = QwpVarint.decode(buf, 0, len);
-            Assert.assertEquals("Failed for value: " + value, value, decoded);
-        }
-    }
+        // 300 = 0b100101100
+        // Should encode as: 0xAC (0b10101100 = 44 + 128), 0x02 (0b00000010)
+        int len = QwpVarint.encode(buf, 0, 300);
+        Assert.assertEquals(2, len);
+        Assert.assertEquals(0xAC, buf[0] & 0xFF);
+        Assert.assertEquals(0x02, buf[1] & 0xFF);
 
-    @Test
-    public void testDecodeFromDirectMemory() throws QwpParseException {
-        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
-        try {
-            // Encode using byte array, decode from direct memory
-            byte[] buf = new byte[10];
-            int len = QwpVarint.encode(buf, 0, 300);
-
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putByte(addr + i, buf[i]);
-            }
-
-            long decoded = QwpVarint.decode(addr, addr + len);
-            Assert.assertEquals(300, decoded);
-        } finally {
-            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
-        }
+        // Verify decode
+        Assert.assertEquals(300, QwpVarint.decode(buf, 0, len));
     }
 
     @Test
@@ -151,35 +229,6 @@ public class QwpVarintTest {
             Assert.assertEquals(12345, decoded);
         } finally {
             Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testDecodeIncompleteVarint() {
-        // Byte with continuation bit set but no following byte
-        byte[] buf = new byte[]{(byte) 0x80};
-        try {
-            QwpVarint.decode(buf, 0, 1);
-            Assert.fail("Should have thrown exception");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.INCOMPLETE_VARINT, e.getErrorCode());
-        }
-    }
-
-    @Test
-    public void testDecodeOverflow() {
-        // Create a buffer with too many continuation bytes (>10)
-        byte[] buf = new byte[12];
-        for (int i = 0; i < 11; i++) {
-            buf[i] = (byte) 0x80;
-        }
-        buf[11] = 0x01;
-
-        try {
-            QwpVarint.decode(buf, 0, 12);
-            Assert.fail("Should have thrown exception");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.VARINT_OVERFLOW, e.getErrorCode());
         }
     }
 
@@ -200,64 +249,15 @@ public class QwpVarintTest {
     }
 
     @Test
-    public void testDecodeResult() throws QwpParseException {
+    public void testRoundTripRandomValues() throws QwpParseException {
         byte[] buf = new byte[10];
-        int len = QwpVarint.encode(buf, 0, 300);
+        Random random = new Random(42); // Fixed seed for reproducibility
 
-        QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
-        QwpVarint.decode(buf, 0, len, result);
-
-        Assert.assertEquals(300, result.value);
-        Assert.assertEquals(len, result.bytesRead);
-    }
-
-    @Test
-    public void testDecodeResultFromDirectMemory() throws QwpParseException {
-        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long endAddr = QwpVarint.encode(addr, 999999);
-            int expectedLen = (int) (endAddr - addr);
-
-            QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
-            QwpVarint.decode(addr, endAddr, result);
-
-            Assert.assertEquals(999999, result.value);
-            Assert.assertEquals(expectedLen, result.bytesRead);
-        } finally {
-            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < 1000; i++) {
+            long value = random.nextLong() & Long.MAX_VALUE; // Only positive values
+            int len = QwpVarint.encode(buf, 0, value);
+            long decoded = QwpVarint.decode(buf, 0, len);
+            Assert.assertEquals("Failed for value: " + value, value, decoded);
         }
-    }
-
-    @Test
-    public void testEncodeSpecificValues() throws QwpParseException {
-        // Test values from the spec
-        byte[] buf = new byte[10];
-
-        // 300 = 0b100101100
-        // Should encode as: 0xAC (0b10101100 = 44 + 128), 0x02 (0b00000010)
-        int len = QwpVarint.encode(buf, 0, 300);
-        Assert.assertEquals(2, len);
-        Assert.assertEquals(0xAC, buf[0] & 0xFF);
-        Assert.assertEquals(0x02, buf[1] & 0xFF);
-
-        // Verify decode
-        Assert.assertEquals(300, QwpVarint.decode(buf, 0, len));
-    }
-
-    @Test
-    public void testDecodeResultReuse() throws QwpParseException {
-        byte[] buf = new byte[10];
-        QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
-
-        // First decode
-        int len1 = QwpVarint.encode(buf, 0, 100);
-        QwpVarint.decode(buf, 0, len1, result);
-        Assert.assertEquals(100, result.value);
-
-        // Reuse for second decode
-        result.reset();
-        int len2 = QwpVarint.encode(buf, 0, 50000);
-        QwpVarint.decode(buf, 0, len2, result);
-        Assert.assertEquals(50000, result.value);
     }
 }

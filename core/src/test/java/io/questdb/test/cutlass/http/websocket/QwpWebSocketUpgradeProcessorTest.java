@@ -46,6 +46,47 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
     // ==================== HANDSHAKE RESPONSE TESTS ====================
 
     @Test
+    public void testHandshakeResponseSize() {
+        Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
+        int expectedSize = QwpWebSocketUpgradeProcessor.handshakeResponseSize(key);
+
+        Assert.assertTrue("Expected size should be positive", expectedSize > 0);
+
+        // Verify actual size matches expected
+        long bufferSize = 256;
+        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            int actualSize = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
+            Assert.assertEquals("Actual size should match expected size", expectedSize, actualSize);
+        } finally {
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testWriteBadRequestResponse() {
+        long bufferSize = 512;
+        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            String reason = "Invalid WebSocket handshake";
+            int written = QwpWebSocketUpgradeProcessor.writeBadRequestResponse(buffer, (int) bufferSize, reason);
+
+            Assert.assertTrue("Response should be written", written > 0);
+
+            byte[] responseBytes = new byte[written];
+            for (int i = 0; i < written; i++) {
+                responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
+            }
+            String response = new String(responseBytes, StandardCharsets.US_ASCII);
+
+            Assert.assertTrue("Response should be 400 Bad Request", response.startsWith("HTTP/1.1 400"));
+            Assert.assertTrue("Response should contain reason", response.contains(reason));
+        } finally {
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testWriteHandshakeResponse() {
         // Given a valid WebSocket key
         Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
@@ -78,52 +119,6 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testWriteHandshakeResponseWithRfc6455TestVector() {
-        // RFC 6455 test vector
-        Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
-        String expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-
-        long bufferSize = 256;
-        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
-
-            byte[] responseBytes = new byte[written];
-            for (int i = 0; i < written; i++) {
-                responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
-            }
-            String response = new String(responseBytes, StandardCharsets.US_ASCII);
-
-            Assert.assertTrue("Response should contain RFC 6455 expected accept key",
-                    response.contains("Sec-WebSocket-Accept: " + expectedAccept));
-        } finally {
-            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testWriteHandshakeResponseSize() {
-        Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
-
-        long bufferSize = 256;
-        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
-
-            // Response should be within expected size range
-            // HTTP/1.1 101 Switching Protocols\r\n
-            // Upgrade: websocket\r\n
-            // Connection: Upgrade\r\n
-            // Sec-WebSocket-Accept: <28 chars>\r\n
-            // \r\n
-            // Total: approximately 100-150 bytes
-            Assert.assertTrue("Response size should be reasonable", written > 80 && written < 200);
-        } finally {
-            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
     public void testWriteHandshakeResponseBufferTooSmall() {
         Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
 
@@ -141,74 +136,6 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
     }
 
     // ==================== ERROR RESPONSE TESTS ====================
-
-    @Test
-    public void testWriteBadRequestResponse() {
-        long bufferSize = 512;
-        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            String reason = "Invalid WebSocket handshake";
-            int written = QwpWebSocketUpgradeProcessor.writeBadRequestResponse(buffer, (int) bufferSize, reason);
-
-            Assert.assertTrue("Response should be written", written > 0);
-
-            byte[] responseBytes = new byte[written];
-            for (int i = 0; i < written; i++) {
-                responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
-            }
-            String response = new String(responseBytes, StandardCharsets.US_ASCII);
-
-            Assert.assertTrue("Response should be 400 Bad Request", response.startsWith("HTTP/1.1 400"));
-            Assert.assertTrue("Response should contain reason", response.contains(reason));
-        } finally {
-            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testWriteUpgradeRequiredResponse() {
-        long bufferSize = 256;
-        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            int written = QwpWebSocketUpgradeProcessor.writeUpgradeRequiredResponse(buffer, (int) bufferSize);
-
-            Assert.assertTrue("Response should be written", written > 0);
-
-            byte[] responseBytes = new byte[written];
-            for (int i = 0; i < written; i++) {
-                responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
-            }
-            String response = new String(responseBytes, StandardCharsets.US_ASCII);
-
-            Assert.assertTrue("Response should be 426 Upgrade Required", response.startsWith("HTTP/1.1 426"));
-            Assert.assertTrue("Response should contain Upgrade header", response.contains("Upgrade: websocket"));
-            Assert.assertTrue("Response should contain WebSocket version", response.contains("Sec-WebSocket-Version: 13"));
-        } finally {
-            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    // ==================== RESPONSE SIZE CALCULATION TESTS ====================
-
-    @Test
-    public void testHandshakeResponseSize() {
-        Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
-        int expectedSize = QwpWebSocketUpgradeProcessor.handshakeResponseSize(key);
-
-        Assert.assertTrue("Expected size should be positive", expectedSize > 0);
-
-        // Verify actual size matches expected
-        long bufferSize = 256;
-        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try {
-            int actualSize = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
-            Assert.assertEquals("Actual size should match expected size", expectedSize, actualSize);
-        } finally {
-            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    // ==================== MULTIPLE KEYS TESTS ====================
 
     @Test
     public void testWriteHandshakeResponseMultipleKeys() {
@@ -241,6 +168,79 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
             } finally {
                 Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
             }
+        }
+    }
+
+    @Test
+    public void testWriteHandshakeResponseSize() {
+        Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
+
+        long bufferSize = 256;
+        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
+
+            // Response should be within expected size range
+            // HTTP/1.1 101 Switching Protocols\r\n
+            // Upgrade: websocket\r\n
+            // Connection: Upgrade\r\n
+            // Sec-WebSocket-Accept: <28 chars>\r\n
+            // \r\n
+            // Total: approximately 100-150 bytes
+            Assert.assertTrue("Response size should be reasonable", written > 80 && written < 200);
+        } finally {
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    // ==================== RESPONSE SIZE CALCULATION TESTS ====================
+
+    @Test
+    public void testWriteHandshakeResponseWithRfc6455TestVector() {
+        // RFC 6455 test vector
+        Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
+        String expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+
+        long bufferSize = 256;
+        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            int written = QwpWebSocketUpgradeProcessor.writeHandshakeResponse(buffer, (int) bufferSize, key);
+
+            byte[] responseBytes = new byte[written];
+            for (int i = 0; i < written; i++) {
+                responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
+            }
+            String response = new String(responseBytes, StandardCharsets.US_ASCII);
+
+            Assert.assertTrue("Response should contain RFC 6455 expected accept key",
+                    response.contains("Sec-WebSocket-Accept: " + expectedAccept));
+        } finally {
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    // ==================== MULTIPLE KEYS TESTS ====================
+
+    @Test
+    public void testWriteUpgradeRequiredResponse() {
+        long bufferSize = 256;
+        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            int written = QwpWebSocketUpgradeProcessor.writeUpgradeRequiredResponse(buffer, (int) bufferSize);
+
+            Assert.assertTrue("Response should be written", written > 0);
+
+            byte[] responseBytes = new byte[written];
+            for (int i = 0; i < written; i++) {
+                responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
+            }
+            String response = new String(responseBytes, StandardCharsets.US_ASCII);
+
+            Assert.assertTrue("Response should be 426 Upgrade Required", response.startsWith("HTTP/1.1 426"));
+            Assert.assertTrue("Response should contain Upgrade header", response.contains("Upgrade: websocket"));
+            Assert.assertTrue("Response should contain WebSocket version", response.contains("Sec-WebSocket-Version: 13"));
+        } finally {
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }

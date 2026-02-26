@@ -38,27 +38,6 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
     // ==================== CREATION TESTS ====================
 
     @Test
-    public void testStateCreation() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            Assert.assertNotNull(state);
-            Assert.assertTrue(state.isOk());
-        }
-    }
-
-    @Test
-    public void testStateCreationWithDifferentBufferSizes() {
-        int[] sizes = {256, 1024, 4096, 65536};
-        for (int size : sizes) {
-            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(size)) {
-                Assert.assertNotNull(state);
-                Assert.assertEquals(size, state.getBufferCapacity());
-            }
-        }
-    }
-
-    // ==================== BUFFER MANAGEMENT TESTS ====================
-
-    @Test
     public void testAddDataToBuffer() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
             byte[] data = new byte[]{1, 2, 3, 4, 5};
@@ -71,6 +50,25 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
             }
         }
     }
+
+    @Test
+    public void testAddDataWhenInError() {
+        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+            state.setError("Error occurred");
+
+            byte[] data = new byte[]{1, 2, 3};
+            long ptr = allocateAndWrite(data);
+            try {
+                // When in error state, data should be ignored
+                state.addData(ptr, ptr + data.length);
+                Assert.assertEquals(0, state.getBufferPosition());
+            } finally {
+                freeBuffer(ptr, data.length);
+            }
+        }
+    }
+
+    // ==================== BUFFER MANAGEMENT TESTS ====================
 
     @Test
     public void testAddMultipleDataChunks() {
@@ -121,15 +119,104 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testEmptyDataChunk() {
+    public void testBytesProcessedAccumulates() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            // Add empty chunk (lo == hi)
-            state.addData(0, 0);
-            Assert.assertEquals(0, state.getBufferPosition());
+            byte[] data1 = new byte[50];
+            byte[] data2 = new byte[75];
+
+            long ptr1 = allocateAndWrite(data1);
+            long ptr2 = allocateAndWrite(data2);
+
+            try {
+                state.addData(ptr1, ptr1 + data1.length);
+                state.processMessage();
+                Assert.assertEquals(50, state.getBytesProcessed());
+
+                state.addData(ptr2, ptr2 + data2.length);
+                state.processMessage();
+                Assert.assertEquals(125, state.getBytesProcessed());
+            } finally {
+                freeBuffer(ptr1, data1.length);
+                freeBuffer(ptr2, data2.length);
+            }
+        }
+    }
+
+    @Test
+    public void testBytesProcessedAfterProcessing() {
+        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+            byte[] data = new byte[100];
+            long ptr = allocateAndWrite(data);
+            try {
+                state.addData(ptr, ptr + data.length);
+                state.processMessage();
+
+                Assert.assertEquals(100, state.getBytesProcessed());
+            } finally {
+                freeBuffer(ptr, data.length);
+            }
         }
     }
 
     // ==================== STATE LIFECYCLE TESTS ====================
+
+    @Test
+    public void testBytesProcessedInitiallyZero() {
+        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+            Assert.assertEquals(0, state.getBytesProcessed());
+        }
+    }
+
+    @Test
+    public void testClearAfterClose() {
+        QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024);
+        state.close();
+        state.clear(); // Should not throw
+    }
+
+    @Test
+    public void testClearDoesNotResetBytesProcessed() {
+        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+            byte[] data = new byte[100];
+            long ptr = allocateAndWrite(data);
+            try {
+                state.addData(ptr, ptr + data.length);
+                state.processMessage();
+                Assert.assertEquals(100, state.getBytesProcessed());
+
+                state.clear();
+                // Bytes processed should persist across clear
+                Assert.assertEquals(100, state.getBytesProcessed());
+            } finally {
+                freeBuffer(ptr, data.length);
+            }
+        }
+    }
+
+    @Test
+    public void testClearResetsError() {
+        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+            state.setError("Test error");
+            Assert.assertFalse(state.isOk());
+
+            state.clear();
+            Assert.assertTrue(state.isOk());
+            Assert.assertNull(state.getErrorMessage());
+        }
+    }
+
+    // ==================== STATUS TESTS ====================
+
+    @Test
+    public void testClearResetsResponse() {
+        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+            state.setSuccessResponse();
+            Assert.assertTrue(state.hasResponse());
+
+            state.clear();
+            Assert.assertFalse(state.hasResponse());
+        }
+    }
 
     @Test
     public void testClearState() {
@@ -166,6 +253,19 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testConsumeResponse() {
+        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+            state.setSuccessResponse();
+            Assert.assertTrue(state.hasResponse());
+
+            state.consumeResponse();
+            Assert.assertFalse(state.hasResponse());
+        }
+    }
+
+    // ==================== BUFFER CONTENT TESTS ====================
+
+    @Test
     public void testDoubleClose() {
         QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024);
         state.close();
@@ -173,61 +273,15 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testClearAfterClose() {
-        QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024);
-        state.close();
-        state.clear(); // Should not throw
-    }
-
-    // ==================== STATUS TESTS ====================
-
-    @Test
-    public void testInitialStatusIsOk() {
+    public void testEmptyDataChunk() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            Assert.assertTrue(state.isOk());
-            Assert.assertNull(state.getErrorMessage());
+            // Add empty chunk (lo == hi)
+            state.addData(0, 0);
+            Assert.assertEquals(0, state.getBufferPosition());
         }
     }
 
-    @Test
-    public void testSetError() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            state.setError("Test error message");
-            Assert.assertFalse(state.isOk());
-            Assert.assertEquals("Test error message", state.getErrorMessage());
-        }
-    }
-
-    @Test
-    public void testClearResetsError() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            state.setError("Test error");
-            Assert.assertFalse(state.isOk());
-
-            state.clear();
-            Assert.assertTrue(state.isOk());
-            Assert.assertNull(state.getErrorMessage());
-        }
-    }
-
-    @Test
-    public void testAddDataWhenInError() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            state.setError("Error occurred");
-
-            byte[] data = new byte[]{1, 2, 3};
-            long ptr = allocateAndWrite(data);
-            try {
-                // When in error state, data should be ignored
-                state.addData(ptr, ptr + data.length);
-                Assert.assertEquals(0, state.getBufferPosition());
-            } finally {
-                freeBuffer(ptr, data.length);
-            }
-        }
-    }
-
-    // ==================== BUFFER CONTENT TESTS ====================
+    // ==================== LARGE DATA TESTS ====================
 
     @Test
     public void testGetBufferData() {
@@ -250,37 +304,21 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testMultipleChunksPreserveOrder() {
+    public void testHasResponseInitiallyFalse() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            byte[] chunk1 = new byte[]{1, 2, 3};
-            byte[] chunk2 = new byte[]{4, 5};
-            byte[] chunk3 = new byte[]{6, 7, 8, 9};
-
-            long ptr1 = allocateAndWrite(chunk1);
-            long ptr2 = allocateAndWrite(chunk2);
-            long ptr3 = allocateAndWrite(chunk3);
-
-            try {
-                state.addData(ptr1, ptr1 + chunk1.length);
-                state.addData(ptr2, ptr2 + chunk2.length);
-                state.addData(ptr3, ptr3 + chunk3.length);
-
-                // Verify all data in order
-                byte[] expected = new byte[]{1, 2, 3, 4, 5, 6, 7, 8, 9};
-                long bufAddr = state.getBufferAddress();
-                for (int i = 0; i < expected.length; i++) {
-                    byte actual = Unsafe.getUnsafe().getByte(bufAddr + i);
-                    Assert.assertEquals("Mismatch at index " + i, expected[i], actual);
-                }
-            } finally {
-                freeBuffer(ptr1, chunk1.length);
-                freeBuffer(ptr2, chunk2.length);
-                freeBuffer(ptr3, chunk3.length);
-            }
+            Assert.assertFalse(state.hasResponse());
         }
     }
 
-    // ==================== LARGE DATA TESTS ====================
+    // ==================== MESSAGE PROCESSING TESTS ====================
+
+    @Test
+    public void testInitialStatusIsOk() {
+        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+            Assert.assertTrue(state.isOk());
+            Assert.assertNull(state.getErrorMessage());
+        }
+    }
 
     @Test
     public void testLargeDataChunk() {
@@ -335,14 +373,36 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== MESSAGE PROCESSING TESTS ====================
+    // ==================== RESPONSE TESTS ====================
 
     @Test
-    public void testProcessMessageWhenEmpty() {
+    public void testMultipleChunksPreserveOrder() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            // Processing empty buffer should succeed (no-op)
-            state.processMessage();
-            Assert.assertTrue(state.isOk());
+            byte[] chunk1 = new byte[]{1, 2, 3};
+            byte[] chunk2 = new byte[]{4, 5};
+            byte[] chunk3 = new byte[]{6, 7, 8, 9};
+
+            long ptr1 = allocateAndWrite(chunk1);
+            long ptr2 = allocateAndWrite(chunk2);
+            long ptr3 = allocateAndWrite(chunk3);
+
+            try {
+                state.addData(ptr1, ptr1 + chunk1.length);
+                state.addData(ptr2, ptr2 + chunk2.length);
+                state.addData(ptr3, ptr3 + chunk3.length);
+
+                // Verify all data in order
+                byte[] expected = new byte[]{1, 2, 3, 4, 5, 6, 7, 8, 9};
+                long bufAddr = state.getBufferAddress();
+                for (int i = 0; i < expected.length; i++) {
+                    byte actual = Unsafe.getUnsafe().getByte(bufAddr + i);
+                    Assert.assertEquals("Mismatch at index " + i, expected[i], actual);
+                }
+            } finally {
+                freeBuffer(ptr1, chunk1.length);
+                freeBuffer(ptr2, chunk2.length);
+                freeBuffer(ptr3, chunk3.length);
+            }
         }
     }
 
@@ -366,6 +426,15 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testProcessMessageWhenEmpty() {
+        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+            // Processing empty buffer should succeed (no-op)
+            state.processMessage();
+            Assert.assertTrue(state.isOk());
+        }
+    }
+
+    @Test
     public void testProcessMessageWhenInError() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
             state.setError("Previous error");
@@ -376,23 +445,16 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== RESPONSE TESTS ====================
-
     @Test
-    public void testHasResponseInitiallyFalse() {
+    public void testSetError() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            Assert.assertFalse(state.hasResponse());
+            state.setError("Test error message");
+            Assert.assertFalse(state.isOk());
+            Assert.assertEquals("Test error message", state.getErrorMessage());
         }
     }
 
-    @Test
-    public void testSetSuccessResponse() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            state.setSuccessResponse();
-            Assert.assertTrue(state.hasResponse());
-            Assert.assertTrue(state.isResponseSuccess());
-        }
-    }
+    // ==================== BYTES PROCESSED TRACKING TESTS ====================
 
     @Test
     public void testSetErrorResponse() {
@@ -406,91 +468,29 @@ public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testClearResetsResponse() {
+    public void testSetSuccessResponse() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
             state.setSuccessResponse();
             Assert.assertTrue(state.hasResponse());
-
-            state.clear();
-            Assert.assertFalse(state.hasResponse());
+            Assert.assertTrue(state.isResponseSuccess());
         }
     }
 
     @Test
-    public void testConsumeResponse() {
+    public void testStateCreation() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            state.setSuccessResponse();
-            Assert.assertTrue(state.hasResponse());
-
-            state.consumeResponse();
-            Assert.assertFalse(state.hasResponse());
-        }
-    }
-
-    // ==================== BYTES PROCESSED TRACKING TESTS ====================
-
-    @Test
-    public void testBytesProcessedInitiallyZero() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            Assert.assertEquals(0, state.getBytesProcessed());
+            Assert.assertNotNull(state);
+            Assert.assertTrue(state.isOk());
         }
     }
 
     @Test
-    public void testBytesProcessedAfterProcessing() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            byte[] data = new byte[100];
-            long ptr = allocateAndWrite(data);
-            try {
-                state.addData(ptr, ptr + data.length);
-                state.processMessage();
-
-                Assert.assertEquals(100, state.getBytesProcessed());
-            } finally {
-                freeBuffer(ptr, data.length);
-            }
-        }
-    }
-
-    @Test
-    public void testBytesProcessedAccumulates() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            byte[] data1 = new byte[50];
-            byte[] data2 = new byte[75];
-
-            long ptr1 = allocateAndWrite(data1);
-            long ptr2 = allocateAndWrite(data2);
-
-            try {
-                state.addData(ptr1, ptr1 + data1.length);
-                state.processMessage();
-                Assert.assertEquals(50, state.getBytesProcessed());
-
-                state.addData(ptr2, ptr2 + data2.length);
-                state.processMessage();
-                Assert.assertEquals(125, state.getBytesProcessed());
-            } finally {
-                freeBuffer(ptr1, data1.length);
-                freeBuffer(ptr2, data2.length);
-            }
-        }
-    }
-
-    @Test
-    public void testClearDoesNotResetBytesProcessed() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            byte[] data = new byte[100];
-            long ptr = allocateAndWrite(data);
-            try {
-                state.addData(ptr, ptr + data.length);
-                state.processMessage();
-                Assert.assertEquals(100, state.getBytesProcessed());
-
-                state.clear();
-                // Bytes processed should persist across clear
-                Assert.assertEquals(100, state.getBytesProcessed());
-            } finally {
-                freeBuffer(ptr, data.length);
+    public void testStateCreationWithDifferentBufferSizes() {
+        int[] sizes = {256, 1024, 4096, 65536};
+        for (int size : sizes) {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(size)) {
+                Assert.assertNotNull(state);
+                Assert.assertEquals(size, state.getBufferCapacity());
             }
         }
     }

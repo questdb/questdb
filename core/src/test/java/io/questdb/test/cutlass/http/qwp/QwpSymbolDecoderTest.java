@@ -27,9 +27,6 @@ package io.questdb.test.cutlass.http.qwp;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSymbolDecoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
-
-import static io.questdb.cutlass.qwp.protocol.QwpSymbolDecoder.NULL_SYMBOL_INDEX;
-
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
@@ -37,9 +34,9 @@ import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
-public class QwpSymbolDecoderTest {
+import static io.questdb.cutlass.qwp.protocol.QwpSymbolDecoder.NULL_SYMBOL_INDEX;
 
-    // ==================== Empty Column Tests ====================
+public class QwpSymbolDecoderTest {
 
     @Test
     public void testDecodeEmptySymbolColumn() throws QwpParseException {
@@ -47,32 +44,6 @@ public class QwpSymbolDecoderTest {
         int consumed = QwpSymbolDecoder.INSTANCE.decode(0, 0, 0, false, sink);
         Assert.assertEquals(0, consumed);
     }
-
-    // ==================== Single Symbol Tests ====================
-
-    @Test
-    public void testDecodeSingleSymbol() throws QwpParseException {
-        String[] values = {"symbol_a"};
-
-        int size = QwpSymbolDecoder.maxEncodedSize(values, null);
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long end = QwpSymbolDecoder.encode(address, values, null);
-            int actualSize = (int) (end - address);
-
-            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(1);
-            int consumed = QwpSymbolDecoder.INSTANCE.decode(address, actualSize, 1, false, sink);
-
-            Assert.assertEquals(actualSize, consumed);
-            Assert.assertEquals("symbol_a", sink.getValue(0));
-            Assert.assertEquals(0, sink.getIndex(0));
-            Assert.assertFalse(sink.isNull(0));
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    // ==================== Multiple Symbols Tests ====================
 
     @Test
     public void testDecodeMultipleSymbols() throws QwpParseException {
@@ -99,13 +70,9 @@ public class QwpSymbolDecoderTest {
         }
     }
 
-    // ==================== Dictionary Tests ====================
-
     @Test
-    public void testDictionaryParsing() throws QwpParseException {
-        // Values with duplicates should share dictionary entries
-        String[] values = {"a", "b", "a", "b", "c", "a"};
-        int rowCount = values.length;
+    public void testDecodeSingleSymbol() throws QwpParseException {
+        String[] values = {"symbol_a"};
 
         int size = QwpSymbolDecoder.maxEncodedSize(values, null);
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
@@ -113,25 +80,13 @@ public class QwpSymbolDecoderTest {
             long end = QwpSymbolDecoder.encode(address, values, null);
             int actualSize = (int) (end - address);
 
-            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(rowCount);
-            int consumed = QwpSymbolDecoder.INSTANCE.decode(address, actualSize, rowCount, false, sink);
+            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(1);
+            int consumed = QwpSymbolDecoder.INSTANCE.decode(address, actualSize, 1, false, sink);
 
             Assert.assertEquals(actualSize, consumed);
-            // Verify values
-            Assert.assertEquals("a", sink.getValue(0));
-            Assert.assertEquals("b", sink.getValue(1));
-            Assert.assertEquals("a", sink.getValue(2));
-            Assert.assertEquals("b", sink.getValue(3));
-            Assert.assertEquals("c", sink.getValue(4));
-            Assert.assertEquals("a", sink.getValue(5));
-
-            // Verify indices - duplicates should have same index
-            Assert.assertEquals(0, sink.getIndex(0)); // "a"
-            Assert.assertEquals(1, sink.getIndex(1)); // "b"
-            Assert.assertEquals(0, sink.getIndex(2)); // "a"
-            Assert.assertEquals(1, sink.getIndex(3)); // "b"
-            Assert.assertEquals(2, sink.getIndex(4)); // "c"
-            Assert.assertEquals(0, sink.getIndex(5)); // "a"
+            Assert.assertEquals("symbol_a", sink.getValue(0));
+            Assert.assertEquals(0, sink.getIndex(0));
+            Assert.assertFalse(sink.isNull(0));
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
@@ -202,7 +157,126 @@ public class QwpSymbolDecoderTest {
         }
     }
 
-    // ==================== Symbol Index Mapping Tests ====================
+    @Test
+    public void testDictionaryParsing() throws QwpParseException {
+        // Values with duplicates should share dictionary entries
+        String[] values = {"a", "b", "a", "b", "c", "a"};
+        int rowCount = values.length;
+
+        int size = QwpSymbolDecoder.maxEncodedSize(values, null);
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long end = QwpSymbolDecoder.encode(address, values, null);
+            int actualSize = (int) (end - address);
+
+            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(rowCount);
+            int consumed = QwpSymbolDecoder.INSTANCE.decode(address, actualSize, rowCount, false, sink);
+
+            Assert.assertEquals(actualSize, consumed);
+            // Verify values
+            Assert.assertEquals("a", sink.getValue(0));
+            Assert.assertEquals("b", sink.getValue(1));
+            Assert.assertEquals("a", sink.getValue(2));
+            Assert.assertEquals("b", sink.getValue(3));
+            Assert.assertEquals("c", sink.getValue(4));
+            Assert.assertEquals("a", sink.getValue(5));
+
+            // Verify indices - duplicates should have same index
+            Assert.assertEquals(0, sink.getIndex(0)); // "a"
+            Assert.assertEquals(1, sink.getIndex(1)); // "b"
+            Assert.assertEquals(0, sink.getIndex(2)); // "a"
+            Assert.assertEquals(1, sink.getIndex(3)); // "b"
+            Assert.assertEquals(2, sink.getIndex(4)); // "c"
+            Assert.assertEquals(0, sink.getIndex(5)); // "a"
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testEncodeToByteArray() throws QwpParseException {
+        String[] values = {"foo", "bar", "foo"};
+        int rowCount = values.length;
+
+        int size = QwpSymbolDecoder.maxEncodedSize(values, null);
+        byte[] buf = new byte[size];
+
+        int offset = QwpSymbolDecoder.encode(buf, 0, values, null);
+        Assert.assertTrue(offset <= size);
+
+        // Decode from byte array by copying to direct memory
+        long address = Unsafe.malloc(offset, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < offset; i++) {
+                Unsafe.getUnsafe().putByte(address + i, buf[i]);
+            }
+
+            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(rowCount);
+            QwpSymbolDecoder.INSTANCE.decode(address, offset, rowCount, false, sink);
+
+            Assert.assertEquals("foo", sink.getValue(0));
+            Assert.assertEquals("bar", sink.getValue(1));
+            Assert.assertEquals("foo", sink.getValue(2));
+            Assert.assertEquals(sink.getIndex(0), sink.getIndex(2)); // Same index for "foo"
+        } finally {
+            Unsafe.free(address, offset, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testInsufficientDataForDictionary() {
+        // Create truncated data
+        int size = 5;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long pos = address;
+            // Dictionary size = 1
+            pos = QwpVarint.encode(pos, 1);
+            // String length = 100 (but we don't have that much data)
+            QwpVarint.encode(pos, 100);
+
+            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(1);
+            QwpSymbolDecoder.INSTANCE.decode(address, size, 1, false, sink);
+            Assert.fail("Expected exception");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testInvalidDictionaryIndex() {
+        // Create encoding where index exceeds dictionary size
+        int size = 100;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long pos = address;
+
+            // Dictionary: 1 entry
+            pos = QwpVarint.encode(pos, 1);
+
+            // Entry "a"
+            byte[] aBytes = "a".getBytes(StandardCharsets.UTF_8);
+            pos = QwpVarint.encode(pos, aBytes.length);
+            for (byte b : aBytes) {
+                Unsafe.getUnsafe().putByte(pos++, b);
+            }
+
+            // Value: index 5 (invalid, only 1 entry)
+            pos = QwpVarint.encode(pos, 5);
+
+            int actualSize = (int) (pos - address);
+            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(1);
+            QwpSymbolDecoder.INSTANCE.decode(address, actualSize, 1, false, sink);
+            Assert.fail("Expected exception");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
+            Assert.assertTrue(e.getMessage().contains("index out of bounds"));
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
 
     @Test
     public void testSymbolIndexMapping() throws QwpParseException {
@@ -228,36 +302,31 @@ public class QwpSymbolDecoderTest {
         }
     }
 
-    // ==================== Null Handling Tests ====================
-
     @Test
-    public void testSymbolWithNulls() throws QwpParseException {
-        // Using null bitmap
-        String[] values = {"a", null, "b", null};
-        boolean[] nulls = {false, true, false, true};
-        int rowCount = values.length;
-
-        // Replace nulls for encoding
-        String[] encodeValues = new String[rowCount];
+    public void testSymbolLargeColumn() throws QwpParseException {
+        // 10000 rows with 100 unique symbols
+        int rowCount = 10000;
+        int uniqueSymbols = 100;
+        String[] values = new String[rowCount];
         for (int i = 0; i < rowCount; i++) {
-            encodeValues[i] = values[i] != null ? values[i] : "";
+            values[i] = "sym_" + (i % uniqueSymbols);
         }
 
-        int size = QwpSymbolDecoder.maxEncodedSize(encodeValues, nulls);
+        int size = QwpSymbolDecoder.maxEncodedSize(values, null);
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            long end = QwpSymbolDecoder.encode(address, encodeValues, nulls);
+            long end = QwpSymbolDecoder.encode(address, values, null);
             int actualSize = (int) (end - address);
 
             QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(rowCount);
-            QwpSymbolDecoder.INSTANCE.decode(address, actualSize, rowCount, true, sink);
+            int consumed = QwpSymbolDecoder.INSTANCE.decode(address, actualSize, rowCount, false, sink);
 
-            Assert.assertEquals("a", sink.getValue(0));
-            Assert.assertFalse(sink.isNull(0));
-            Assert.assertTrue(sink.isNull(1));
-            Assert.assertEquals("b", sink.getValue(2));
-            Assert.assertFalse(sink.isNull(2));
-            Assert.assertTrue(sink.isNull(3));
+            Assert.assertEquals(actualSize, consumed);
+            // Verify some values
+            Assert.assertEquals("sym_0", sink.getValue(0));
+            Assert.assertEquals("sym_50", sink.getValue(50));
+            Assert.assertEquals("sym_99", sink.getValue(99));
+            Assert.assertEquals("sym_0", sink.getValue(100));
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
@@ -307,8 +376,6 @@ public class QwpSymbolDecoderTest {
         }
     }
 
-    // ==================== Repeated Values Tests ====================
-
     @Test
     public void testSymbolRepeatedValues() throws QwpParseException {
         // High cardinality with many repeats
@@ -337,8 +404,6 @@ public class QwpSymbolDecoderTest {
         }
     }
 
-    // ==================== UTF-8 Tests ====================
-
     @Test
     public void testSymbolUtf8() throws QwpParseException {
         String[] values = {"日本語", "中文", "한국어", "Ελληνικά"};
@@ -361,124 +426,36 @@ public class QwpSymbolDecoderTest {
         }
     }
 
-    // ==================== Error Handling Tests ====================
-
     @Test
-    public void testInvalidDictionaryIndex() {
-        // Create encoding where index exceeds dictionary size
-        int size = 100;
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long pos = address;
+    public void testSymbolWithNulls() throws QwpParseException {
+        // Using null bitmap
+        String[] values = {"a", null, "b", null};
+        boolean[] nulls = {false, true, false, true};
+        int rowCount = values.length;
 
-            // Dictionary: 1 entry
-            pos = QwpVarint.encode(pos, 1);
-
-            // Entry "a"
-            byte[] aBytes = "a".getBytes(StandardCharsets.UTF_8);
-            pos = QwpVarint.encode(pos, aBytes.length);
-            for (byte b : aBytes) {
-                Unsafe.getUnsafe().putByte(pos++, b);
-            }
-
-            // Value: index 5 (invalid, only 1 entry)
-            pos = QwpVarint.encode(pos, 5);
-
-            int actualSize = (int) (pos - address);
-            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(1);
-            QwpSymbolDecoder.INSTANCE.decode(address, actualSize, 1, false, sink);
-            Assert.fail("Expected exception");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
-            Assert.assertTrue(e.getMessage().contains("index out of bounds"));
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testInsufficientDataForDictionary() {
-        // Create truncated data
-        int size = 5;
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long pos = address;
-            // Dictionary size = 1
-            pos = QwpVarint.encode(pos, 1);
-            // String length = 100 (but we don't have that much data)
-            QwpVarint.encode(pos, 100);
-
-            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(1);
-            QwpSymbolDecoder.INSTANCE.decode(address, size, 1, false, sink);
-            Assert.fail("Expected exception");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    // ==================== Large Column Tests ====================
-
-    @Test
-    public void testSymbolLargeColumn() throws QwpParseException {
-        // 10000 rows with 100 unique symbols
-        int rowCount = 10000;
-        int uniqueSymbols = 100;
-        String[] values = new String[rowCount];
+        // Replace nulls for encoding
+        String[] encodeValues = new String[rowCount];
         for (int i = 0; i < rowCount; i++) {
-            values[i] = "sym_" + (i % uniqueSymbols);
+            encodeValues[i] = values[i] != null ? values[i] : "";
         }
 
-        int size = QwpSymbolDecoder.maxEncodedSize(values, null);
+        int size = QwpSymbolDecoder.maxEncodedSize(encodeValues, nulls);
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            long end = QwpSymbolDecoder.encode(address, values, null);
+            long end = QwpSymbolDecoder.encode(address, encodeValues, nulls);
             int actualSize = (int) (end - address);
 
             QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(rowCount);
-            int consumed = QwpSymbolDecoder.INSTANCE.decode(address, actualSize, rowCount, false, sink);
+            QwpSymbolDecoder.INSTANCE.decode(address, actualSize, rowCount, true, sink);
 
-            Assert.assertEquals(actualSize, consumed);
-            // Verify some values
-            Assert.assertEquals("sym_0", sink.getValue(0));
-            Assert.assertEquals("sym_50", sink.getValue(50));
-            Assert.assertEquals("sym_99", sink.getValue(99));
-            Assert.assertEquals("sym_0", sink.getValue(100));
+            Assert.assertEquals("a", sink.getValue(0));
+            Assert.assertFalse(sink.isNull(0));
+            Assert.assertTrue(sink.isNull(1));
+            Assert.assertEquals("b", sink.getValue(2));
+            Assert.assertFalse(sink.isNull(2));
+            Assert.assertTrue(sink.isNull(3));
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    // ==================== Byte Array Encoding Tests ====================
-
-    @Test
-    public void testEncodeToByteArray() throws QwpParseException {
-        String[] values = {"foo", "bar", "foo"};
-        int rowCount = values.length;
-
-        int size = QwpSymbolDecoder.maxEncodedSize(values, null);
-        byte[] buf = new byte[size];
-
-        int offset = QwpSymbolDecoder.encode(buf, 0, values, null);
-        Assert.assertTrue(offset <= size);
-
-        // Decode from byte array by copying to direct memory
-        long address = Unsafe.malloc(offset, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < offset; i++) {
-                Unsafe.getUnsafe().putByte(address + i, buf[i]);
-            }
-
-            QwpSymbolDecoder.ArraySymbolSink sink = new QwpSymbolDecoder.ArraySymbolSink(rowCount);
-            QwpSymbolDecoder.INSTANCE.decode(address, offset, rowCount, false, sink);
-
-            Assert.assertEquals("foo", sink.getValue(0));
-            Assert.assertEquals("bar", sink.getValue(1));
-            Assert.assertEquals("foo", sink.getValue(2));
-            Assert.assertEquals(sink.getIndex(0), sink.getIndex(2)); // Same index for "foo"
-        } finally {
-            Unsafe.free(address, offset, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }

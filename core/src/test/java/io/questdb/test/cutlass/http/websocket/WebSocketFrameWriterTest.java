@@ -39,135 +39,32 @@ import java.nio.charset.StandardCharsets;
 public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
 
     @Test
-    public void testWriteSmallFrame() {
+    public void testAllOpcodes() {
         long buf = allocateBuffer(16);
         try {
-            int written = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, 5, false);
+            // Verify all opcodes produce correct first byte
+            int[] opcodes = {
+                    WebSocketOpcode.CONTINUATION,
+                    WebSocketOpcode.TEXT,
+                    WebSocketOpcode.BINARY,
+                    WebSocketOpcode.CLOSE,
+                    WebSocketOpcode.PING,
+                    WebSocketOpcode.PONG
+            };
+            byte[] expectedFirstBytes = {
+                    (byte) 0x80,  // CONTINUATION + FIN
+                    (byte) 0x81,  // TEXT + FIN
+                    (byte) 0x82,  // BINARY + FIN
+                    (byte) 0x88,  // CLOSE + FIN
+                    (byte) 0x89,  // PING + FIN
+                    (byte) 0x8A   // PONG + FIN
+            };
 
-            Assert.assertEquals(2, written);
-            Assert.assertEquals((byte) 0x82, Unsafe.getUnsafe().getByte(buf));
-            Assert.assertEquals((byte) 0x05, Unsafe.getUnsafe().getByte(buf + 1));
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWriteMediumFrame() {
-        long buf = allocateBuffer(16);
-        try {
-            int payloadLen = 1000;
-            int written = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, payloadLen, false);
-
-            Assert.assertEquals(4, written);
-            Assert.assertEquals((byte) 0x82, Unsafe.getUnsafe().getByte(buf));
-            Assert.assertEquals((byte) 126, Unsafe.getUnsafe().getByte(buf + 1));
-            Assert.assertEquals((byte) (payloadLen >> 8), Unsafe.getUnsafe().getByte(buf + 2));
-            Assert.assertEquals((byte) (payloadLen & 0xFF), Unsafe.getUnsafe().getByte(buf + 3));
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWriteLargeFrame() {
-        long buf = allocateBuffer(16);
-        try {
-            long payloadLen = 100000L;
-            int written = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, payloadLen, false);
-
-            Assert.assertEquals(10, written);
-            Assert.assertEquals((byte) 0x82, Unsafe.getUnsafe().getByte(buf));
-            Assert.assertEquals((byte) 127, Unsafe.getUnsafe().getByte(buf + 1));
-            Assert.assertEquals(payloadLen,
-                    Long.reverseBytes(Unsafe.getUnsafe().getLong(buf + 2)));
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWriteTextFrame() {
-        long buf = allocateBuffer(16);
-        try {
-            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.TEXT, 10, false);
-
-            Assert.assertEquals((byte) 0x81, Unsafe.getUnsafe().getByte(buf));
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWriteCloseFrame() {
-        long buf = allocateBuffer(16);
-        try {
-            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.CLOSE, 2, false);
-
-            Assert.assertEquals((byte) 0x88, Unsafe.getUnsafe().getByte(buf));
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWritePingFrame() {
-        long buf = allocateBuffer(16);
-        try {
-            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.PING, 4, false);
-
-            Assert.assertEquals((byte) 0x89, Unsafe.getUnsafe().getByte(buf));
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWritePongFrame() {
-        long buf = allocateBuffer(16);
-        try {
-            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.PONG, 4, false);
-
-            Assert.assertEquals((byte) 0x8A, Unsafe.getUnsafe().getByte(buf));
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWriteNonFinalFrame() {
-        long buf = allocateBuffer(16);
-        try {
-            WebSocketFrameWriter.writeHeader(buf, false, WebSocketOpcode.BINARY, 5, false);
-
-            Assert.assertEquals((byte) 0x02, Unsafe.getUnsafe().getByte(buf));  // No FIN bit
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWriteContinuationFrame() {
-        long buf = allocateBuffer(16);
-        try {
-            WebSocketFrameWriter.writeHeader(buf, false, WebSocketOpcode.CONTINUATION, 5, false);
-
-            Assert.assertEquals((byte) 0x00, Unsafe.getUnsafe().getByte(buf));
-        } finally {
-            freeBuffer(buf, 16);
-        }
-    }
-
-    @Test
-    public void testWriteFinalContinuationFrame() {
-        long buf = allocateBuffer(16);
-        try {
-            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.CONTINUATION, 5, false);
-
-            Assert.assertEquals((byte) 0x80, Unsafe.getUnsafe().getByte(buf));
+            for (int i = 0; i < opcodes.length; i++) {
+                WebSocketFrameWriter.writeHeader(buf, true, opcodes[i], 0, false);
+                Assert.assertEquals("Opcode " + opcodes[i] + " first byte mismatch",
+                        expectedFirstBytes[i], Unsafe.getUnsafe().getByte(buf));
+            }
         } finally {
             freeBuffer(buf, 16);
         }
@@ -187,135 +84,6 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
         Assert.assertEquals(6, WebSocketFrameWriter.headerSize(125, true));
         Assert.assertEquals(8, WebSocketFrameWriter.headerSize(126, true));
         Assert.assertEquals(14, WebSocketFrameWriter.headerSize(65536, true));
-    }
-
-    @Test
-    public void testWriteCloseFrameWithCode() {
-        long buf = allocateBuffer(32);
-        try {
-            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.CLOSE, 2, false);
-            WebSocketFrameWriter.writeClosePayload(buf + headerLen, 1000, null);
-
-            Assert.assertEquals(2, headerLen);
-            short code = Short.reverseBytes(Unsafe.getUnsafe().getShort(buf + 2));
-            Assert.assertEquals(1000, code);
-        } finally {
-            freeBuffer(buf, 32);
-        }
-    }
-
-    @Test
-    public void testWriteCloseFrameWithCodeAndReason() {
-        long buf = allocateBuffer(64);
-        try {
-            String reason = "Goodbye";
-            byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
-
-            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.CLOSE, 2 + reasonBytes.length, false);
-            int payloadLen = WebSocketFrameWriter.writeClosePayload(
-                    buf + headerLen, 1001, reason);
-
-            Assert.assertEquals(2 + reasonBytes.length, payloadLen);
-
-            short code = Short.reverseBytes(Unsafe.getUnsafe().getShort(buf + headerLen));
-            Assert.assertEquals(1001, code);
-
-            byte[] writtenReason = readBytes(buf + headerLen + 2, reasonBytes.length);
-            Assert.assertArrayEquals(reasonBytes, writtenReason);
-        } finally {
-            freeBuffer(buf, 64);
-        }
-    }
-
-    @Test
-    public void testWriteCompleteCloseFrame() {
-        long buf = allocateBuffer(64);
-        try {
-            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, 1000, "Normal");
-
-            // Verify header
-            Assert.assertEquals((byte) 0x88, Unsafe.getUnsafe().getByte(buf));  // CLOSE
-
-            // Parse what we wrote
-            WebSocketFrameParser parser = new WebSocketFrameParser();
-            int consumed = parser.parse(buf, buf + totalLen);
-
-            Assert.assertEquals(totalLen, consumed);
-            Assert.assertEquals(WebSocketOpcode.CLOSE, parser.getOpcode());
-            Assert.assertTrue(parser.isFin());
-        } finally {
-            freeBuffer(buf, 64);
-        }
-    }
-
-    @Test
-    public void testWritePingFrameComplete() {
-        long buf = allocateBuffer(32);
-        try {
-            byte[] payload = {0x01, 0x02, 0x03, 0x04};
-            int totalLen = WebSocketFrameWriter.writePingFrame(buf, payload, 0, payload.length);
-
-            // Verify header
-            Assert.assertEquals((byte) 0x89, Unsafe.getUnsafe().getByte(buf));
-
-            // Verify payload
-            for (int i = 0; i < payload.length; i++) {
-                Assert.assertEquals(payload[i], Unsafe.getUnsafe().getByte(buf + 2 + i));
-            }
-
-            Assert.assertEquals(2 + payload.length, totalLen);
-        } finally {
-            freeBuffer(buf, 32);
-        }
-    }
-
-    @Test
-    public void testWritePongFrameComplete() {
-        long buf = allocateBuffer(32);
-        try {
-            byte[] payload = {0x01, 0x02, 0x03, 0x04};
-            int totalLen = WebSocketFrameWriter.writePongFrame(buf, payload, 0, payload.length);
-
-            // Verify header
-            Assert.assertEquals((byte) 0x8A, Unsafe.getUnsafe().getByte(buf));
-
-            // Verify payload
-            for (int i = 0; i < payload.length; i++) {
-                Assert.assertEquals(payload[i], Unsafe.getUnsafe().getByte(buf + 2 + i));
-            }
-
-            Assert.assertEquals(2 + payload.length, totalLen);
-        } finally {
-            freeBuffer(buf, 32);
-        }
-    }
-
-    @Test
-    public void testWritePongFrameFromMemory() {
-        long buf = allocateBuffer(32);
-        long payloadBuf = allocateBuffer(16);
-        try {
-            // Write ping payload to memory
-            byte[] payload = {0x11, 0x22, 0x33, 0x44};
-            writeBytes(payloadBuf, payload);
-
-            int totalLen = WebSocketFrameWriter.writePongFrame(buf, payloadBuf, payload.length);
-
-            // Verify header
-            Assert.assertEquals((byte) 0x8A, Unsafe.getUnsafe().getByte(buf));
-
-            // Verify payload was copied
-            for (int i = 0; i < payload.length; i++) {
-                Assert.assertEquals(payload[i], Unsafe.getUnsafe().getByte(buf + 2 + i));
-            }
-
-            Assert.assertEquals(2 + payload.length, totalLen);
-        } finally {
-            freeBuffer(buf, 32);
-            freeBuffer(payloadBuf, 16);
-        }
     }
 
     @Test
@@ -448,27 +216,6 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testWriteHeaderWithMaskKey() {
-        long buf = allocateBuffer(32);
-        try {
-            int maskKey = 0x12345678;
-            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
-                    WebSocketOpcode.BINARY, 10, maskKey);
-
-            // Should be 2 (basic header) + 4 (mask key) = 6
-            Assert.assertEquals(6, headerLen);
-
-            // Verify mask bit is set
-            Assert.assertEquals((byte) (0x80 | 10), Unsafe.getUnsafe().getByte(buf + 1));
-
-            // Verify mask key
-            Assert.assertEquals(maskKey, Unsafe.getUnsafe().getInt(buf + 2));
-        } finally {
-            freeBuffer(buf, 32);
-        }
-    }
-
-    @Test
     public void testWrite16BitLengthBoundary() {
         long buf = allocateBuffer(16);
         try {
@@ -503,6 +250,58 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testWriteCloseFrame() {
+        long buf = allocateBuffer(16);
+        try {
+            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.CLOSE, 2, false);
+
+            Assert.assertEquals((byte) 0x88, Unsafe.getUnsafe().getByte(buf));
+        } finally {
+            freeBuffer(buf, 16);
+        }
+    }
+
+    @Test
+    public void testWriteCloseFrameWithCode() {
+        long buf = allocateBuffer(32);
+        try {
+            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
+                    WebSocketOpcode.CLOSE, 2, false);
+            WebSocketFrameWriter.writeClosePayload(buf + headerLen, 1000, null);
+
+            Assert.assertEquals(2, headerLen);
+            short code = Short.reverseBytes(Unsafe.getUnsafe().getShort(buf + 2));
+            Assert.assertEquals(1000, code);
+        } finally {
+            freeBuffer(buf, 32);
+        }
+    }
+
+    @Test
+    public void testWriteCloseFrameWithCodeAndReason() {
+        long buf = allocateBuffer(64);
+        try {
+            String reason = "Goodbye";
+            byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
+
+            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
+                    WebSocketOpcode.CLOSE, 2 + reasonBytes.length, false);
+            int payloadLen = WebSocketFrameWriter.writeClosePayload(
+                    buf + headerLen, 1001, reason);
+
+            Assert.assertEquals(2 + reasonBytes.length, payloadLen);
+
+            short code = Short.reverseBytes(Unsafe.getUnsafe().getShort(buf + headerLen));
+            Assert.assertEquals(1001, code);
+
+            byte[] writtenReason = readBytes(buf + headerLen + 2, reasonBytes.length);
+            Assert.assertArrayEquals(reasonBytes, writtenReason);
+        } finally {
+            freeBuffer(buf, 64);
+        }
+    }
+
+    @Test
     public void testWriteCloseFrameWithEmptyReason() {
         long buf = allocateBuffer(32);
         try {
@@ -533,32 +332,233 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testAllOpcodes() {
+    public void testWriteCompleteCloseFrame() {
+        long buf = allocateBuffer(64);
+        try {
+            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, 1000, "Normal");
+
+            // Verify header
+            Assert.assertEquals((byte) 0x88, Unsafe.getUnsafe().getByte(buf));  // CLOSE
+
+            // Parse what we wrote
+            WebSocketFrameParser parser = new WebSocketFrameParser();
+            int consumed = parser.parse(buf, buf + totalLen);
+
+            Assert.assertEquals(totalLen, consumed);
+            Assert.assertEquals(WebSocketOpcode.CLOSE, parser.getOpcode());
+            Assert.assertTrue(parser.isFin());
+        } finally {
+            freeBuffer(buf, 64);
+        }
+    }
+
+    @Test
+    public void testWriteContinuationFrame() {
         long buf = allocateBuffer(16);
         try {
-            // Verify all opcodes produce correct first byte
-            int[] opcodes = {
-                    WebSocketOpcode.CONTINUATION,
-                    WebSocketOpcode.TEXT,
-                    WebSocketOpcode.BINARY,
-                    WebSocketOpcode.CLOSE,
-                    WebSocketOpcode.PING,
-                    WebSocketOpcode.PONG
-            };
-            byte[] expectedFirstBytes = {
-                    (byte) 0x80,  // CONTINUATION + FIN
-                    (byte) 0x81,  // TEXT + FIN
-                    (byte) 0x82,  // BINARY + FIN
-                    (byte) 0x88,  // CLOSE + FIN
-                    (byte) 0x89,  // PING + FIN
-                    (byte) 0x8A   // PONG + FIN
-            };
+            WebSocketFrameWriter.writeHeader(buf, false, WebSocketOpcode.CONTINUATION, 5, false);
 
-            for (int i = 0; i < opcodes.length; i++) {
-                WebSocketFrameWriter.writeHeader(buf, true, opcodes[i], 0, false);
-                Assert.assertEquals("Opcode " + opcodes[i] + " first byte mismatch",
-                        expectedFirstBytes[i], Unsafe.getUnsafe().getByte(buf));
+            Assert.assertEquals((byte) 0x00, Unsafe.getUnsafe().getByte(buf));
+        } finally {
+            freeBuffer(buf, 16);
+        }
+    }
+
+    @Test
+    public void testWriteFinalContinuationFrame() {
+        long buf = allocateBuffer(16);
+        try {
+            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.CONTINUATION, 5, false);
+
+            Assert.assertEquals((byte) 0x80, Unsafe.getUnsafe().getByte(buf));
+        } finally {
+            freeBuffer(buf, 16);
+        }
+    }
+
+    @Test
+    public void testWriteHeaderWithMaskKey() {
+        long buf = allocateBuffer(32);
+        try {
+            int maskKey = 0x12345678;
+            int headerLen = WebSocketFrameWriter.writeHeader(buf, true,
+                    WebSocketOpcode.BINARY, 10, maskKey);
+
+            // Should be 2 (basic header) + 4 (mask key) = 6
+            Assert.assertEquals(6, headerLen);
+
+            // Verify mask bit is set
+            Assert.assertEquals((byte) (0x80 | 10), Unsafe.getUnsafe().getByte(buf + 1));
+
+            // Verify mask key
+            Assert.assertEquals(maskKey, Unsafe.getUnsafe().getInt(buf + 2));
+        } finally {
+            freeBuffer(buf, 32);
+        }
+    }
+
+    @Test
+    public void testWriteLargeFrame() {
+        long buf = allocateBuffer(16);
+        try {
+            long payloadLen = 100000L;
+            int written = WebSocketFrameWriter.writeHeader(buf, true,
+                    WebSocketOpcode.BINARY, payloadLen, false);
+
+            Assert.assertEquals(10, written);
+            Assert.assertEquals((byte) 0x82, Unsafe.getUnsafe().getByte(buf));
+            Assert.assertEquals((byte) 127, Unsafe.getUnsafe().getByte(buf + 1));
+            Assert.assertEquals(payloadLen,
+                    Long.reverseBytes(Unsafe.getUnsafe().getLong(buf + 2)));
+        } finally {
+            freeBuffer(buf, 16);
+        }
+    }
+
+    @Test
+    public void testWriteMediumFrame() {
+        long buf = allocateBuffer(16);
+        try {
+            int payloadLen = 1000;
+            int written = WebSocketFrameWriter.writeHeader(buf, true,
+                    WebSocketOpcode.BINARY, payloadLen, false);
+
+            Assert.assertEquals(4, written);
+            Assert.assertEquals((byte) 0x82, Unsafe.getUnsafe().getByte(buf));
+            Assert.assertEquals((byte) 126, Unsafe.getUnsafe().getByte(buf + 1));
+            Assert.assertEquals((byte) (payloadLen >> 8), Unsafe.getUnsafe().getByte(buf + 2));
+            Assert.assertEquals((byte) (payloadLen & 0xFF), Unsafe.getUnsafe().getByte(buf + 3));
+        } finally {
+            freeBuffer(buf, 16);
+        }
+    }
+
+    @Test
+    public void testWriteNonFinalFrame() {
+        long buf = allocateBuffer(16);
+        try {
+            WebSocketFrameWriter.writeHeader(buf, false, WebSocketOpcode.BINARY, 5, false);
+
+            Assert.assertEquals((byte) 0x02, Unsafe.getUnsafe().getByte(buf));  // No FIN bit
+        } finally {
+            freeBuffer(buf, 16);
+        }
+    }
+
+    @Test
+    public void testWritePingFrame() {
+        long buf = allocateBuffer(16);
+        try {
+            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.PING, 4, false);
+
+            Assert.assertEquals((byte) 0x89, Unsafe.getUnsafe().getByte(buf));
+        } finally {
+            freeBuffer(buf, 16);
+        }
+    }
+
+    @Test
+    public void testWritePingFrameComplete() {
+        long buf = allocateBuffer(32);
+        try {
+            byte[] payload = {0x01, 0x02, 0x03, 0x04};
+            int totalLen = WebSocketFrameWriter.writePingFrame(buf, payload, 0, payload.length);
+
+            // Verify header
+            Assert.assertEquals((byte) 0x89, Unsafe.getUnsafe().getByte(buf));
+
+            // Verify payload
+            for (int i = 0; i < payload.length; i++) {
+                Assert.assertEquals(payload[i], Unsafe.getUnsafe().getByte(buf + 2 + i));
             }
+
+            Assert.assertEquals(2 + payload.length, totalLen);
+        } finally {
+            freeBuffer(buf, 32);
+        }
+    }
+
+    @Test
+    public void testWritePongFrame() {
+        long buf = allocateBuffer(16);
+        try {
+            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.PONG, 4, false);
+
+            Assert.assertEquals((byte) 0x8A, Unsafe.getUnsafe().getByte(buf));
+        } finally {
+            freeBuffer(buf, 16);
+        }
+    }
+
+    @Test
+    public void testWritePongFrameComplete() {
+        long buf = allocateBuffer(32);
+        try {
+            byte[] payload = {0x01, 0x02, 0x03, 0x04};
+            int totalLen = WebSocketFrameWriter.writePongFrame(buf, payload, 0, payload.length);
+
+            // Verify header
+            Assert.assertEquals((byte) 0x8A, Unsafe.getUnsafe().getByte(buf));
+
+            // Verify payload
+            for (int i = 0; i < payload.length; i++) {
+                Assert.assertEquals(payload[i], Unsafe.getUnsafe().getByte(buf + 2 + i));
+            }
+
+            Assert.assertEquals(2 + payload.length, totalLen);
+        } finally {
+            freeBuffer(buf, 32);
+        }
+    }
+
+    @Test
+    public void testWritePongFrameFromMemory() {
+        long buf = allocateBuffer(32);
+        long payloadBuf = allocateBuffer(16);
+        try {
+            // Write ping payload to memory
+            byte[] payload = {0x11, 0x22, 0x33, 0x44};
+            writeBytes(payloadBuf, payload);
+
+            int totalLen = WebSocketFrameWriter.writePongFrame(buf, payloadBuf, payload.length);
+
+            // Verify header
+            Assert.assertEquals((byte) 0x8A, Unsafe.getUnsafe().getByte(buf));
+
+            // Verify payload was copied
+            for (int i = 0; i < payload.length; i++) {
+                Assert.assertEquals(payload[i], Unsafe.getUnsafe().getByte(buf + 2 + i));
+            }
+
+            Assert.assertEquals(2 + payload.length, totalLen);
+        } finally {
+            freeBuffer(buf, 32);
+            freeBuffer(payloadBuf, 16);
+        }
+    }
+
+    @Test
+    public void testWriteSmallFrame() {
+        long buf = allocateBuffer(16);
+        try {
+            int written = WebSocketFrameWriter.writeHeader(buf, true,
+                    WebSocketOpcode.BINARY, 5, false);
+
+            Assert.assertEquals(2, written);
+            Assert.assertEquals((byte) 0x82, Unsafe.getUnsafe().getByte(buf));
+            Assert.assertEquals((byte) 0x05, Unsafe.getUnsafe().getByte(buf + 1));
+        } finally {
+            freeBuffer(buf, 16);
+        }
+    }
+
+    @Test
+    public void testWriteTextFrame() {
+        long buf = allocateBuffer(16);
+        try {
+            WebSocketFrameWriter.writeHeader(buf, true, WebSocketOpcode.TEXT, 10, false);
+
+            Assert.assertEquals((byte) 0x81, Unsafe.getUnsafe().getByte(buf));
         } finally {
             freeBuffer(buf, 16);
         }

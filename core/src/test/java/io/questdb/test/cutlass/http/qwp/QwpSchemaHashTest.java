@@ -39,31 +39,6 @@ public class QwpSchemaHashTest {
     private static final byte TYPE_LONG = 0x05;
 
     @Test
-    public void testEmptySchema() {
-        String[] names = {};
-        byte[] types = {};
-        long hash = QwpSchemaHash.computeSchemaHash(names, types);
-        // Empty input should produce the same hash consistently
-        Assert.assertEquals(hash, QwpSchemaHash.computeSchemaHash(names, types));
-    }
-
-    @Test
-    public void testSingleColumn() {
-        String[] names = {"price"};
-        byte[] types = {0x07}; // DOUBLE
-        long hash = QwpSchemaHash.computeSchemaHash(names, types);
-        Assert.assertNotEquals(0, hash);
-    }
-
-    @Test
-    public void testMultipleColumns() {
-        String[] names = {"symbol", "price", "timestamp"};
-        byte[] types = {0x09, 0x07, 0x0A}; // SYMBOL, DOUBLE, TIMESTAMP
-        long hash = QwpSchemaHash.computeSchemaHash(names, types);
-        Assert.assertNotEquals(0, hash);
-    }
-
-    @Test
     public void testColumnOrderMatters() {
         // Order 1
         String[] names1 = {"price", "symbol"};
@@ -80,34 +55,6 @@ public class QwpSchemaHashTest {
     }
 
     @Test
-    public void testTypeAffectsHash() {
-        // Same name, different type
-        String[] names = {"value"};
-
-        byte[] types1 = {0x04}; // INT
-        byte[] types2 = {0x05}; // LONG
-
-        long hash1 = QwpSchemaHash.computeSchemaHash(names, types1);
-        long hash2 = QwpSchemaHash.computeSchemaHash(names, types2);
-
-        Assert.assertNotEquals("Type should affect hash", hash1, hash2);
-    }
-
-    @Test
-    public void testNameAffectsHash() {
-        // Different names, same type
-        byte[] types = {0x07}; // DOUBLE
-
-        String[] names1 = {"price"};
-        String[] names2 = {"value"};
-
-        long hash1 = QwpSchemaHash.computeSchemaHash(names1, types);
-        long hash2 = QwpSchemaHash.computeSchemaHash(names2, types);
-
-        Assert.assertNotEquals("Name should affect hash", hash1, hash2);
-    }
-
-    @Test
     public void testDeterministic() {
         String[] names = {"col1", "col2", "col3"};
         byte[] types = {0x01, 0x02, 0x03};
@@ -121,50 +68,38 @@ public class QwpSchemaHashTest {
     }
 
     @Test
-    public void testXXHash64KnownValue() {
-        // Test against a known XXHash64 value
-        // "abc" with seed 0 should produce a specific value
-        byte[] data = "abc".getBytes(StandardCharsets.UTF_8);
-        long hash = QwpSchemaHash.hash(data);
-
-        // XXH64("abc", 0) = 0x44BC2CF5AD770999
-        Assert.assertEquals(0x44BC2CF5AD770999L, hash);
+    public void testEmptySchema() {
+        String[] names = {};
+        byte[] types = {};
+        long hash = QwpSchemaHash.computeSchemaHash(names, types);
+        // Empty input should produce the same hash consistently
+        Assert.assertEquals(hash, QwpSchemaHash.computeSchemaHash(names, types));
     }
 
     @Test
-    public void testXXHash64Empty() {
-        byte[] data = new byte[0];
-        long hash = QwpSchemaHash.hash(data);
-        // XXH64("", 0) = 0xEF46DB3751D8E999
-        Assert.assertEquals(0xEF46DB3751D8E999L, hash);
-    }
+    public void testHasherReset() {
+        QwpSchemaHash.Hasher hasher = new QwpSchemaHash.Hasher();
 
-    @Test
-    public void testXXHash64LongerString() {
-        // Test with a longer string to exercise the main loop
-        byte[] data = "Hello, World! This is a test string for XXHash64.".getBytes(StandardCharsets.UTF_8);
-        long hash1 = QwpSchemaHash.hash(data);
-        long hash2 = QwpSchemaHash.hash(data);
-        Assert.assertEquals(hash1, hash2);
-        Assert.assertNotEquals(0, hash1);
-    }
+        byte[] data1 = "first".getBytes(StandardCharsets.UTF_8);
+        byte[] data2 = "second".getBytes(StandardCharsets.UTF_8);
 
-    @Test
-    public void testXXHash64DirectMemory() {
-        byte[] data = "test data".getBytes(StandardCharsets.UTF_8);
-        long addr = Unsafe.malloc(data.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < data.length; i++) {
-                Unsafe.getUnsafe().putByte(addr + i, data[i]);
-            }
+        // Hash first data
+        hasher.reset(0);
+        hasher.update(data1);
+        long hash1 = hasher.getValue();
 
-            long hashFromBytes = QwpSchemaHash.hash(data);
-            long hashFromMem = QwpSchemaHash.hash(addr, data.length);
+        // Reset and hash second data
+        hasher.reset(0);
+        hasher.update(data2);
+        long hash2 = hasher.getValue();
 
-            Assert.assertEquals("Direct memory hash should match byte array hash", hashFromBytes, hashFromMem);
-        } finally {
-            Unsafe.free(addr, data.length, MemoryTag.NATIVE_DEFAULT);
-        }
+        // Should be different
+        Assert.assertNotEquals(hash1, hash2);
+
+        // Reset and hash first again - should be same as original
+        hasher.reset(0);
+        hasher.update(data1);
+        Assert.assertEquals(hash1, hasher.getValue());
     }
 
     @Test
@@ -215,29 +150,58 @@ public class QwpSchemaHashTest {
     }
 
     @Test
-    public void testHasherReset() {
-        QwpSchemaHash.Hasher hasher = new QwpSchemaHash.Hasher();
+    public void testLargeSchema() {
+        // Test with many columns
+        int columnCount = 100;
+        String[] names = new String[columnCount];
+        byte[] types = new byte[columnCount];
 
-        byte[] data1 = "first".getBytes(StandardCharsets.UTF_8);
-        byte[] data2 = "second".getBytes(StandardCharsets.UTF_8);
+        for (int i = 0; i < columnCount; i++) {
+            names[i] = "column_" + i;
+            types[i] = (byte) ((i % 15) + 1); // Cycle through types 1-15
+        }
 
-        // Hash first data
-        hasher.reset(0);
-        hasher.update(data1);
-        long hash1 = hasher.getValue();
+        long hash1 = QwpSchemaHash.computeSchemaHash(names, types);
+        long hash2 = QwpSchemaHash.computeSchemaHash(names, types);
 
-        // Reset and hash second data
-        hasher.reset(0);
-        hasher.update(data2);
-        long hash2 = hasher.getValue();
+        Assert.assertEquals("Large schema should hash consistently", hash1, hash2);
+    }
 
-        // Should be different
-        Assert.assertNotEquals(hash1, hash2);
+    @Test
+    public void testMultipleColumns() {
+        String[] names = {"symbol", "price", "timestamp"};
+        byte[] types = {0x09, 0x07, 0x0A}; // SYMBOL, DOUBLE, TIMESTAMP
+        long hash = QwpSchemaHash.computeSchemaHash(names, types);
+        Assert.assertNotEquals(0, hash);
+    }
 
-        // Reset and hash first again - should be same as original
-        hasher.reset(0);
-        hasher.update(data1);
-        Assert.assertEquals(hash1, hasher.getValue());
+    @Test
+    public void testNameAffectsHash() {
+        // Different names, same type
+        byte[] types = {0x07}; // DOUBLE
+
+        String[] names1 = {"price"};
+        String[] names2 = {"value"};
+
+        long hash1 = QwpSchemaHash.computeSchemaHash(names1, types);
+        long hash2 = QwpSchemaHash.computeSchemaHash(names2, types);
+
+        Assert.assertNotEquals("Name should affect hash", hash1, hash2);
+    }
+
+    @Test
+    public void testNullableFlagAffectsHash() {
+        String[] names = {"value"};
+
+        // Non-nullable
+        byte[] types1 = {0x05}; // LONG
+        // Nullable (high bit set)
+        byte[] types2 = {(byte) 0x85}; // LONG | 0x80
+
+        long hash1 = QwpSchemaHash.computeSchemaHash(names, types1);
+        long hash2 = QwpSchemaHash.computeSchemaHash(names, types2);
+
+        Assert.assertNotEquals("Nullable flag should affect hash", hash1, hash2);
     }
 
     @Test
@@ -297,36 +261,85 @@ public class QwpSchemaHashTest {
     }
 
     @Test
-    public void testNullableFlagAffectsHash() {
+    public void testSingleColumn() {
+        String[] names = {"price"};
+        byte[] types = {0x07}; // DOUBLE
+        long hash = QwpSchemaHash.computeSchemaHash(names, types);
+        Assert.assertNotEquals(0, hash);
+    }
+
+    @Test
+    public void testTypeAffectsHash() {
+        // Same name, different type
         String[] names = {"value"};
 
-        // Non-nullable
-        byte[] types1 = {0x05}; // LONG
-        // Nullable (high bit set)
-        byte[] types2 = {(byte) 0x85}; // LONG | 0x80
+        byte[] types1 = {0x04}; // INT
+        byte[] types2 = {0x05}; // LONG
 
         long hash1 = QwpSchemaHash.computeSchemaHash(names, types1);
         long hash2 = QwpSchemaHash.computeSchemaHash(names, types2);
 
-        Assert.assertNotEquals("Nullable flag should affect hash", hash1, hash2);
+        Assert.assertNotEquals("Type should affect hash", hash1, hash2);
     }
 
     @Test
-    public void testLargeSchema() {
-        // Test with many columns
-        int columnCount = 100;
-        String[] names = new String[columnCount];
-        byte[] types = new byte[columnCount];
+    public void testXXHash64DirectMemory() {
+        byte[] data = "test data".getBytes(StandardCharsets.UTF_8);
+        long addr = Unsafe.malloc(data.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < data.length; i++) {
+                Unsafe.getUnsafe().putByte(addr + i, data[i]);
+            }
 
-        for (int i = 0; i < columnCount; i++) {
-            names[i] = "column_" + i;
-            types[i] = (byte) ((i % 15) + 1); // Cycle through types 1-15
+            long hashFromBytes = QwpSchemaHash.hash(data);
+            long hashFromMem = QwpSchemaHash.hash(addr, data.length);
+
+            Assert.assertEquals("Direct memory hash should match byte array hash", hashFromBytes, hashFromMem);
+        } finally {
+            Unsafe.free(addr, data.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testXXHash64Empty() {
+        byte[] data = new byte[0];
+        long hash = QwpSchemaHash.hash(data);
+        // XXH64("", 0) = 0xEF46DB3751D8E999
+        Assert.assertEquals(0xEF46DB3751D8E999L, hash);
+    }
+
+    @Test
+    public void testXXHash64Exactly32Bytes() {
+        // Edge case: exactly 32 bytes
+        byte[] data = new byte[32];
+        for (int i = 0; i < data.length; i++) {
+            data[i] = (byte) (i & 0xFF);
         }
 
-        long hash1 = QwpSchemaHash.computeSchemaHash(names, types);
-        long hash2 = QwpSchemaHash.computeSchemaHash(names, types);
+        long hash = QwpSchemaHash.hash(data);
+        Assert.assertNotEquals(0, hash);
+        Assert.assertEquals(hash, QwpSchemaHash.hash(data));
+    }
 
-        Assert.assertEquals("Large schema should hash consistently", hash1, hash2);
+    @Test
+    public void testXXHash64KnownValue() {
+        // Test against a known XXHash64 value
+        // "abc" with seed 0 should produce a specific value
+        byte[] data = "abc".getBytes(StandardCharsets.UTF_8);
+        long hash = QwpSchemaHash.hash(data);
+
+        // XXH64("abc", 0) = 0x44BC2CF5AD770999
+        Assert.assertEquals(0x44BC2CF5AD770999L, hash);
+    }
+
+    @Test
+    public void testXXHash64LongerString() {
+        // Test with a longer string to exercise the main loop
+        byte[] data = "Hello, World! This is a test string for XXHash64.".getBytes(StandardCharsets.UTF_8);
+        long hash1 = QwpSchemaHash.hash(data);
+        long hash2 = QwpSchemaHash.hash(data);
+        Assert.assertEquals(hash1, hash2);
+        Assert.assertNotEquals(0, hash1);
     }
 
     @Test
@@ -341,19 +354,6 @@ public class QwpSchemaHashTest {
         Assert.assertNotEquals(0, hash);
 
         // Verify deterministic
-        Assert.assertEquals(hash, QwpSchemaHash.hash(data));
-    }
-
-    @Test
-    public void testXXHash64Exactly32Bytes() {
-        // Edge case: exactly 32 bytes
-        byte[] data = new byte[32];
-        for (int i = 0; i < data.length; i++) {
-            data[i] = (byte) (i & 0xFF);
-        }
-
-        long hash = QwpSchemaHash.hash(data);
-        Assert.assertNotEquals(0, hash);
         Assert.assertEquals(hash, QwpSchemaHash.hash(data));
     }
 

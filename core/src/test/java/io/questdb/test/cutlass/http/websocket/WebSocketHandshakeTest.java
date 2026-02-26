@@ -39,83 +39,62 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     // ==================== UPGRADE HEADER TESTS ====================
 
     @Test
-    public void testIsWebSocketUpgrade() {
-        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("websocket")));
-        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("WebSocket")));
-        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("WEBSOCKET")));
-        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("WeBsOcKeT")));
+    public void testBadRequestResponseSize() {
+        long buf = allocateBuffer(256);
+        try {
+            String reason = "Test reason";
+            int written = WebSocketHandshake.writeBadRequestResponse(buf, reason);
+
+            // Verify the response is properly terminated
+            byte[] response = readBytes(buf, written);
+            String responseStr = new String(response, StandardCharsets.US_ASCII);
+            Assert.assertTrue(responseStr.contains("\r\n\r\n"));
+            Assert.assertTrue(responseStr.endsWith(reason));
+        } finally {
+            freeBuffer(buf, 256);
+        }
     }
 
     @Test
-    public void testIsNotWebSocketUpgrade() {
-        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(null));
-        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("")));
-        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("http")));
-        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("websocket-extension")));
-        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("web")));
+    public void testComputeAcceptKeyConsistent() {
+        // Same key should always produce same accept value
+        String clientKey = "x3JJHMbDL1EzLkh9GBhXDw==";
+
+        String accept1 = WebSocketHandshake.computeAcceptKey(clientKey);
+        String accept2 = WebSocketHandshake.computeAcceptKey(clientKey);
+        String accept3 = WebSocketHandshake.computeAcceptKey(clientKey);
+
+        Assert.assertEquals(accept1, accept2);
+        Assert.assertEquals(accept2, accept3);
     }
 
     // ==================== CONNECTION HEADER TESTS ====================
 
     @Test
-    public void testIsConnectionUpgrade() {
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("Upgrade")));
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("upgrade")));
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("UPGRADE")));
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("keep-alive, Upgrade")));
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("Upgrade, keep-alive")));
+    public void testComputeAcceptKeyDifferentKeys() {
+        // Different keys should produce different accept values
+        String key1 = "dGhlIHNhbXBsZSBub25jZQ==";
+        String key2 = "x3JJHMbDL1EzLkh9GBhXDw==";
+
+        String accept1 = WebSocketHandshake.computeAcceptKey(key1);
+        String accept2 = WebSocketHandshake.computeAcceptKey(key2);
+
+        Assert.assertNotEquals(accept1, accept2);
     }
 
     @Test
-    public void testIsNotConnectionUpgrade() {
-        Assert.assertFalse(WebSocketHandshake.isConnectionUpgrade(null));
-        Assert.assertFalse(WebSocketHandshake.isConnectionUpgrade(new Utf8String("")));
-        Assert.assertFalse(WebSocketHandshake.isConnectionUpgrade(new Utf8String("keep-alive")));
-        Assert.assertFalse(WebSocketHandshake.isConnectionUpgrade(new Utf8String("close")));
+    public void testComputeAcceptKeyKnownValues() {
+        // Additional test vectors to verify SHA-1 computation
+        // RFC 6455 test vector
+        String acceptKey = WebSocketHandshake.computeAcceptKey("dGhlIHNhbXBsZSBub25jZQ==");
+        Assert.assertEquals("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", acceptKey);
+
+        // Verify different keys produce different results
+        String acceptKey2 = WebSocketHandshake.computeAcceptKey("x3JJHMbDL1EzLkh9GBhXDw==");
+        Assert.assertNotEquals(acceptKey, acceptKey2);
     }
 
     // ==================== VERSION HEADER TESTS ====================
-
-    @Test
-    public void testIsValidVersion() {
-        Assert.assertTrue(WebSocketHandshake.isValidVersion(new Utf8String("13")));
-    }
-
-    @Test
-    public void testIsInvalidVersion() {
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(null));
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("")));
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("12")));
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("14")));
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("0")));
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("8")));
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("abc")));
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("13a")));
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("1 3")));
-    }
-
-    // ==================== KEY VALIDATION TESTS ====================
-
-    @Test
-    public void testIsValidKey() {
-        // Valid base64-encoded 16-byte keys (24 chars)
-        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ==")));
-        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("x3JJHMbDL1EzLkh9GBhXDw==")));
-        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("AAAAAAAAAAAAAAAAAAAAAA==")));
-        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("0123456789ABCDEFGHIJ+/==")));
-    }
-
-    @Test
-    public void testIsInvalidKey() {
-        Assert.assertFalse(WebSocketHandshake.isValidKey(null));
-        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("")));
-        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("short")));
-        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("waytoolongforavalidbase64keyvalue==")));
-        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("invalid!chars!here!==")));
-        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("has spaces in it  ==")));
-    }
-
-    // ==================== ACCEPT KEY COMPUTATION TESTS ====================
 
     @Test
     public void testComputeAcceptKeyRFCExample() {
@@ -137,50 +116,132 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         Assert.assertEquals(expectedAccept, acceptKey);
     }
 
+    // ==================== KEY VALIDATION TESTS ====================
+
     @Test
-    public void testComputeAcceptKeyDifferentKeys() {
-        // Different keys should produce different accept values
-        String key1 = "dGhlIHNhbXBsZSBub25jZQ==";
-        String key2 = "x3JJHMbDL1EzLkh9GBhXDw==";
-
-        String accept1 = WebSocketHandshake.computeAcceptKey(key1);
-        String accept2 = WebSocketHandshake.computeAcceptKey(key2);
-
-        Assert.assertNotEquals(accept1, accept2);
+    public void testConnectionHeaderCaseSensitivity() {
+        // Connection header variations
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("UPGRADE")));
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("uPgRaDe")));
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("keep-alive, UPGRADE, something")));
     }
 
     @Test
-    public void testComputeAcceptKeyConsistent() {
-        // Same key should always produce same accept value
-        String clientKey = "x3JJHMbDL1EzLkh9GBhXDw==";
+    public void testConnectionHeaderWithMultipleValues() {
+        // Connection header can have multiple values
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(
+                new Utf8String("keep-alive, Upgrade")));
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(
+                new Utf8String("Upgrade, keep-alive")));
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(
+                new Utf8String("Connection, Upgrade, keep-alive")));
+    }
 
-        String accept1 = WebSocketHandshake.computeAcceptKey(clientKey);
-        String accept2 = WebSocketHandshake.computeAcceptKey(clientKey);
-        String accept3 = WebSocketHandshake.computeAcceptKey(clientKey);
+    // ==================== ACCEPT KEY COMPUTATION TESTS ====================
 
-        Assert.assertEquals(accept1, accept2);
-        Assert.assertEquals(accept2, accept3);
+    @Test
+    public void testIsConnectionUpgrade() {
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("Upgrade")));
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("upgrade")));
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("UPGRADE")));
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("keep-alive, Upgrade")));
+        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("Upgrade, keep-alive")));
+    }
+
+    @Test
+    public void testIsInvalidKey() {
+        Assert.assertFalse(WebSocketHandshake.isValidKey(null));
+        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("")));
+        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("short")));
+        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("waytoolongforavalidbase64keyvalue==")));
+        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("invalid!chars!here!==")));
+        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("has spaces in it  ==")));
+    }
+
+    @Test
+    public void testIsInvalidVersion() {
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(null));
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("")));
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("12")));
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("14")));
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("0")));
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("8")));
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("abc")));
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("13a")));
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("1 3")));
+    }
+
+    @Test
+    public void testIsNotConnectionUpgrade() {
+        Assert.assertFalse(WebSocketHandshake.isConnectionUpgrade(null));
+        Assert.assertFalse(WebSocketHandshake.isConnectionUpgrade(new Utf8String("")));
+        Assert.assertFalse(WebSocketHandshake.isConnectionUpgrade(new Utf8String("keep-alive")));
+        Assert.assertFalse(WebSocketHandshake.isConnectionUpgrade(new Utf8String("close")));
     }
 
     // ==================== RESPONSE WRITING TESTS ====================
 
     @Test
-    public void testWriteResponse() {
-        long buf = allocateBuffer(256);
+    public void testIsNotWebSocketUpgrade() {
+        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(null));
+        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("")));
+        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("http")));
+        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("websocket-extension")));
+        Assert.assertFalse(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("web")));
+    }
+
+    @Test
+    public void testIsValidKey() {
+        // Valid base64-encoded 16-byte keys (24 chars)
+        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ==")));
+        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("x3JJHMbDL1EzLkh9GBhXDw==")));
+        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("AAAAAAAAAAAAAAAAAAAAAA==")));
+        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("0123456789ABCDEFGHIJ+/==")));
+    }
+
+    @Test
+    public void testIsValidVersion() {
+        Assert.assertTrue(WebSocketHandshake.isValidVersion(new Utf8String("13")));
+    }
+
+    // ==================== VALIDATION TESTS ====================
+
+    @Test
+    public void testIsWebSocketUpgrade() {
+        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("websocket")));
+        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("WebSocket")));
+        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("WEBSOCKET")));
+        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("WeBsOcKeT")));
+    }
+
+    @Test
+    public void testKeyWithAllBase64Characters() {
+        // Test key containing varied base64 characters
+        // Use a valid 24-char base64 string with varied characters including +/
+        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("abcd+/0123456789ABCDEF==")));
+    }
+
+    @Test
+    public void testKeyWithTrailingWhitespace() {
+        // Keys should not have whitespace
+        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ= "))); // Trailing space
+        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String(" dGhlIHNhbXBsZSBub25jZQ="))); // Leading space
+    }
+
+    @Test
+    public void testProtocolWithSpecialCharacters() {
+        long buf = allocateBuffer(512);
         try {
             String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-            int written = WebSocketHandshake.writeResponse(buf, acceptKey);
+            String protocol = "qwp.streaming"; // Protocol with dots
+            int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, protocol);
 
             byte[] response = readBytes(buf, written);
             String responseStr = new String(response, StandardCharsets.US_ASCII);
 
-            Assert.assertTrue(responseStr.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
-            Assert.assertTrue(responseStr.contains("Upgrade: websocket\r\n"));
-            Assert.assertTrue(responseStr.contains("Connection: Upgrade\r\n"));
-            Assert.assertTrue(responseStr.contains("Sec-WebSocket-Accept: " + acceptKey + "\r\n"));
-            Assert.assertTrue(responseStr.endsWith("\r\n\r\n"));
+            Assert.assertTrue(responseStr.contains("Sec-WebSocket-Protocol: " + protocol + "\r\n"));
         } finally {
-            freeBuffer(buf, 256);
+            freeBuffer(buf, 512);
         }
     }
 
@@ -199,159 +260,18 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testWriteResponseComplete() {
-        // Full end-to-end test
-        String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";
-        String acceptKey = WebSocketHandshake.computeAcceptKey(clientKey);
+    public void testResponseSizeWithProtocol() {
+        String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+        String protocol = "qwp";
+        int expectedSize = WebSocketHandshake.responseSizeWithProtocol(acceptKey, protocol);
 
-        long buf = allocateBuffer(256);
+        long buf = allocateBuffer(512);
         try {
-            int written = WebSocketHandshake.writeResponse(buf, acceptKey);
-
-            byte[] response = readBytes(buf, written);
-            String responseStr = new String(response, StandardCharsets.US_ASCII);
-
-            // Verify full response
-            String expected = """
-                    HTTP/1.1 101 Switching Protocols\r
-                    Upgrade: websocket\r
-                    Connection: Upgrade\r
-                    Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
-                    \r
-                    """;
-            Assert.assertEquals(expected, responseStr);
+            int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, protocol);
+            Assert.assertEquals(expectedSize, written);
         } finally {
-            freeBuffer(buf, 256);
+            freeBuffer(buf, 512);
         }
-    }
-
-    // ==================== VALIDATION TESTS ====================
-
-    @Test
-    public void testValidateSuccess() {
-        String result = WebSocketHandshake.validate(
-                new Utf8String("websocket"),
-                new Utf8String("Upgrade"),
-                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
-                new Utf8String("13")
-        );
-        Assert.assertNull(result);
-    }
-
-    @Test
-    public void testValidateMissingUpgrade() {
-        String result = WebSocketHandshake.validate(
-                null,
-                new Utf8String("Upgrade"),
-                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
-                new Utf8String("13")
-        );
-        Assert.assertNotNull(result);
-        Assert.assertTrue(result.contains("Upgrade"));
-    }
-
-    @Test
-    public void testValidateInvalidUpgrade() {
-        String result = WebSocketHandshake.validate(
-                new Utf8String("http"),
-                new Utf8String("Upgrade"),
-                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
-                new Utf8String("13")
-        );
-        Assert.assertNotNull(result);
-        Assert.assertTrue(result.contains("Upgrade"));
-    }
-
-    @Test
-    public void testValidateMissingConnection() {
-        String result = WebSocketHandshake.validate(
-                new Utf8String("websocket"),
-                null,
-                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
-                new Utf8String("13")
-        );
-        Assert.assertNotNull(result);
-        Assert.assertTrue(result.contains("Connection"));
-    }
-
-    @Test
-    public void testValidateInvalidConnection() {
-        String result = WebSocketHandshake.validate(
-                new Utf8String("websocket"),
-                new Utf8String("close"),
-                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
-                new Utf8String("13")
-        );
-        Assert.assertNotNull(result);
-        Assert.assertTrue(result.contains("Connection"));
-    }
-
-    @Test
-    public void testValidateMissingKey() {
-        String result = WebSocketHandshake.validate(
-                new Utf8String("websocket"),
-                new Utf8String("Upgrade"),
-                null,
-                new Utf8String("13")
-        );
-        Assert.assertNotNull(result);
-        Assert.assertTrue(result.contains("Key"));
-    }
-
-    @Test
-    public void testValidateInvalidKey() {
-        String result = WebSocketHandshake.validate(
-                new Utf8String("websocket"),
-                new Utf8String("Upgrade"),
-                new Utf8String("invalid"),
-                new Utf8String("13")
-        );
-        Assert.assertNotNull(result);
-        Assert.assertTrue(result.contains("Key"));
-    }
-
-    @Test
-    public void testValidateMissingVersion() {
-        String result = WebSocketHandshake.validate(
-                new Utf8String("websocket"),
-                new Utf8String("Upgrade"),
-                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
-                null
-        );
-        Assert.assertNotNull(result);
-        Assert.assertTrue(result.contains("version"));
-    }
-
-    @Test
-    public void testValidateInvalidVersion() {
-        String result = WebSocketHandshake.validate(
-                new Utf8String("websocket"),
-                new Utf8String("Upgrade"),
-                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
-                new Utf8String("8")
-        );
-        Assert.assertNotNull(result);
-        Assert.assertTrue(result.contains("version"));
-    }
-
-    // ==================== EDGE CASES ====================
-
-    @Test
-    public void testConnectionHeaderWithMultipleValues() {
-        // Connection header can have multiple values
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(
-                new Utf8String("keep-alive, Upgrade")));
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(
-                new Utf8String("Upgrade, keep-alive")));
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(
-                new Utf8String("Connection, Upgrade, keep-alive")));
-    }
-
-    @Test
-    public void testKeyWithAllBase64Characters() {
-        // Test key containing varied base64 characters
-        // Use a valid 24-char base64 string with varied characters including +/
-        Assert.assertTrue(WebSocketHandshake.isValidKey(new Utf8String("abcd+/0123456789ABCDEF==")));
     }
 
     @Test
@@ -385,7 +305,160 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         }
     }
 
+    @Test
+    public void testUpgradeHeaderCaseSensitivity() {
+        // Upgrade header variations
+        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("WEBSOCKET")));
+        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("wEbSoCkEt")));
+    }
+
+    @Test
+    public void testValidateAllHeadersInvalid() {
+        // All headers null
+        String result = WebSocketHandshake.validate(null, null, null, null);
+        Assert.assertNotNull(result);
+    }
+
+    // ==================== EDGE CASES ====================
+
+    @Test
+    public void testValidateInvalidConnection() {
+        String result = WebSocketHandshake.validate(
+                new Utf8String("websocket"),
+                new Utf8String("close"),
+                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
+                new Utf8String("13")
+        );
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.contains("Connection"));
+    }
+
+    @Test
+    public void testValidateInvalidKey() {
+        String result = WebSocketHandshake.validate(
+                new Utf8String("websocket"),
+                new Utf8String("Upgrade"),
+                new Utf8String("invalid"),
+                new Utf8String("13")
+        );
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.contains("Key"));
+    }
+
+    @Test
+    public void testValidateInvalidUpgrade() {
+        String result = WebSocketHandshake.validate(
+                new Utf8String("http"),
+                new Utf8String("Upgrade"),
+                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
+                new Utf8String("13")
+        );
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.contains("Upgrade"));
+    }
+
     // ==================== ERROR RESPONSE TESTS ====================
+
+    @Test
+    public void testValidateInvalidVersion() {
+        String result = WebSocketHandshake.validate(
+                new Utf8String("websocket"),
+                new Utf8String("Upgrade"),
+                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
+                new Utf8String("8")
+        );
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.contains("version"));
+    }
+
+    @Test
+    public void testValidateMissingConnection() {
+        String result = WebSocketHandshake.validate(
+                new Utf8String("websocket"),
+                null,
+                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
+                new Utf8String("13")
+        );
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.contains("Connection"));
+    }
+
+    @Test
+    public void testValidateMissingKey() {
+        String result = WebSocketHandshake.validate(
+                new Utf8String("websocket"),
+                new Utf8String("Upgrade"),
+                null,
+                new Utf8String("13")
+        );
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.contains("Key"));
+    }
+
+    // ==================== PROTOCOL NEGOTIATION TESTS ====================
+
+    @Test
+    public void testValidateMissingUpgrade() {
+        String result = WebSocketHandshake.validate(
+                null,
+                new Utf8String("Upgrade"),
+                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
+                new Utf8String("13")
+        );
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.contains("Upgrade"));
+    }
+
+    @Test
+    public void testValidateMissingVersion() {
+        String result = WebSocketHandshake.validate(
+                new Utf8String("websocket"),
+                new Utf8String("Upgrade"),
+                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
+                null
+        );
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.contains("version"));
+    }
+
+    @Test
+    public void testValidateSuccess() {
+        String result = WebSocketHandshake.validate(
+                new Utf8String("websocket"),
+                new Utf8String("Upgrade"),
+                new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="),
+                new Utf8String("13")
+        );
+        Assert.assertNull(result);
+    }
+
+    @Test
+    public void testVersionHeaderEdgeCases() {
+        // Edge cases for version parsing
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("1 3"))); // Space in middle
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String(" 13"))); // Leading space
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("13 "))); // Trailing space
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("-13"))); // Negative sign
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("13.0"))); // Decimal
+        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("1a3"))); // Letter in middle
+    }
+
+    // ==================== ADDITIONAL EDGE CASE TESTS ====================
+
+    @Test
+    public void testVersionNotSupportedResponseSize() {
+        long buf = allocateBuffer(256);
+        try {
+            int written = WebSocketHandshake.writeVersionNotSupportedResponse(buf);
+
+            // Verify the response is properly terminated
+            byte[] response = readBytes(buf, written);
+            String responseStr = new String(response, StandardCharsets.US_ASCII);
+            Assert.assertTrue(responseStr.contains("\r\n\r\n"));
+        } finally {
+            freeBuffer(buf, 256);
+        }
+    }
 
     @Test
     public void testWriteBadRequestResponse() {
@@ -421,55 +494,47 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testWriteVersionNotSupportedResponse() {
+    public void testWriteResponse() {
         long buf = allocateBuffer(256);
         try {
-            int written = WebSocketHandshake.writeVersionNotSupportedResponse(buf);
-
-            byte[] response = readBytes(buf, written);
-            String responseStr = new String(response, StandardCharsets.US_ASCII);
-
-            Assert.assertTrue(responseStr.startsWith("HTTP/1.1 426 Upgrade Required\r\n"));
-            Assert.assertTrue(responseStr.contains("Sec-WebSocket-Version: 13\r\n"));
-        } finally {
-            freeBuffer(buf, 256);
-        }
-    }
-
-    // ==================== PROTOCOL NEGOTIATION TESTS ====================
-
-    @Test
-    public void testWriteResponseWithProtocol() {
-        long buf = allocateBuffer(512);
-        try {
             String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-            String protocol = "qwp";
-            int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, protocol);
+            int written = WebSocketHandshake.writeResponse(buf, acceptKey);
 
             byte[] response = readBytes(buf, written);
             String responseStr = new String(response, StandardCharsets.US_ASCII);
 
             Assert.assertTrue(responseStr.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+            Assert.assertTrue(responseStr.contains("Upgrade: websocket\r\n"));
+            Assert.assertTrue(responseStr.contains("Connection: Upgrade\r\n"));
             Assert.assertTrue(responseStr.contains("Sec-WebSocket-Accept: " + acceptKey + "\r\n"));
-            Assert.assertTrue(responseStr.contains("Sec-WebSocket-Protocol: " + protocol + "\r\n"));
             Assert.assertTrue(responseStr.endsWith("\r\n\r\n"));
         } finally {
-            freeBuffer(buf, 512);
+            freeBuffer(buf, 256);
         }
     }
 
     @Test
-    public void testWriteResponseWithNullProtocol() {
+    public void testWriteResponseComplete() {
+        // Full end-to-end test
+        String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";
+        String acceptKey = WebSocketHandshake.computeAcceptKey(clientKey);
+
         long buf = allocateBuffer(256);
         try {
-            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-            int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, null);
+            int written = WebSocketHandshake.writeResponse(buf, acceptKey);
 
             byte[] response = readBytes(buf, written);
             String responseStr = new String(response, StandardCharsets.US_ASCII);
 
-            // Should not contain protocol header
-            Assert.assertFalse(responseStr.contains("Sec-WebSocket-Protocol:"));
+            // Verify full response
+            String expected = """
+                    HTTP/1.1 101 Switching Protocols\r
+                    Upgrade: websocket\r
+                    Connection: Upgrade\r
+                    Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
+                    \r
+                    """;
+            Assert.assertEquals(expected, responseStr);
         } finally {
             freeBuffer(buf, 256);
         }
@@ -493,120 +558,55 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testResponseSizeWithProtocol() {
-        String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-        String protocol = "qwp";
-        int expectedSize = WebSocketHandshake.responseSizeWithProtocol(acceptKey, protocol);
-
-        long buf = allocateBuffer(512);
-        try {
-            int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, protocol);
-            Assert.assertEquals(expectedSize, written);
-        } finally {
-            freeBuffer(buf, 512);
-        }
-    }
-
-    // ==================== ADDITIONAL EDGE CASE TESTS ====================
-
-    @Test
-    public void testBadRequestResponseSize() {
+    public void testWriteResponseWithNullProtocol() {
         long buf = allocateBuffer(256);
         try {
-            String reason = "Test reason";
-            int written = WebSocketHandshake.writeBadRequestResponse(buf, reason);
+            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+            int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, null);
 
-            // Verify the response is properly terminated
             byte[] response = readBytes(buf, written);
             String responseStr = new String(response, StandardCharsets.US_ASCII);
-            Assert.assertTrue(responseStr.contains("\r\n\r\n"));
-            Assert.assertTrue(responseStr.endsWith(reason));
+
+            // Should not contain protocol header
+            Assert.assertFalse(responseStr.contains("Sec-WebSocket-Protocol:"));
         } finally {
             freeBuffer(buf, 256);
         }
     }
 
     @Test
-    public void testVersionNotSupportedResponseSize() {
+    public void testWriteResponseWithProtocol() {
+        long buf = allocateBuffer(512);
+        try {
+            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+            String protocol = "qwp";
+            int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, protocol);
+
+            byte[] response = readBytes(buf, written);
+            String responseStr = new String(response, StandardCharsets.US_ASCII);
+
+            Assert.assertTrue(responseStr.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+            Assert.assertTrue(responseStr.contains("Sec-WebSocket-Accept: " + acceptKey + "\r\n"));
+            Assert.assertTrue(responseStr.contains("Sec-WebSocket-Protocol: " + protocol + "\r\n"));
+            Assert.assertTrue(responseStr.endsWith("\r\n\r\n"));
+        } finally {
+            freeBuffer(buf, 512);
+        }
+    }
+
+    @Test
+    public void testWriteVersionNotSupportedResponse() {
         long buf = allocateBuffer(256);
         try {
             int written = WebSocketHandshake.writeVersionNotSupportedResponse(buf);
 
-            // Verify the response is properly terminated
             byte[] response = readBytes(buf, written);
             String responseStr = new String(response, StandardCharsets.US_ASCII);
-            Assert.assertTrue(responseStr.contains("\r\n\r\n"));
+
+            Assert.assertTrue(responseStr.startsWith("HTTP/1.1 426 Upgrade Required\r\n"));
+            Assert.assertTrue(responseStr.contains("Sec-WebSocket-Version: 13\r\n"));
         } finally {
             freeBuffer(buf, 256);
-        }
-    }
-
-    @Test
-    public void testComputeAcceptKeyKnownValues() {
-        // Additional test vectors to verify SHA-1 computation
-        // RFC 6455 test vector
-        String acceptKey = WebSocketHandshake.computeAcceptKey("dGhlIHNhbXBsZSBub25jZQ==");
-        Assert.assertEquals("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", acceptKey);
-
-        // Verify different keys produce different results
-        String acceptKey2 = WebSocketHandshake.computeAcceptKey("x3JJHMbDL1EzLkh9GBhXDw==");
-        Assert.assertNotEquals(acceptKey, acceptKey2);
-    }
-
-    @Test
-    public void testValidateAllHeadersInvalid() {
-        // All headers null
-        String result = WebSocketHandshake.validate(null, null, null, null);
-        Assert.assertNotNull(result);
-    }
-
-    @Test
-    public void testConnectionHeaderCaseSensitivity() {
-        // Connection header variations
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("UPGRADE")));
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("uPgRaDe")));
-        Assert.assertTrue(WebSocketHandshake.isConnectionUpgrade(new Utf8String("keep-alive, UPGRADE, something")));
-    }
-
-    @Test
-    public void testUpgradeHeaderCaseSensitivity() {
-        // Upgrade header variations
-        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("WEBSOCKET")));
-        Assert.assertTrue(WebSocketHandshake.isWebSocketUpgrade(new Utf8String("wEbSoCkEt")));
-    }
-
-    @Test
-    public void testVersionHeaderEdgeCases() {
-        // Edge cases for version parsing
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("1 3"))); // Space in middle
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String(" 13"))); // Leading space
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("13 "))); // Trailing space
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("-13"))); // Negative sign
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("13.0"))); // Decimal
-        Assert.assertFalse(WebSocketHandshake.isValidVersion(new Utf8String("1a3"))); // Letter in middle
-    }
-
-    @Test
-    public void testKeyWithTrailingWhitespace() {
-        // Keys should not have whitespace
-        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ= "))); // Trailing space
-        Assert.assertFalse(WebSocketHandshake.isValidKey(new Utf8String(" dGhlIHNhbXBsZSBub25jZQ="))); // Leading space
-    }
-
-    @Test
-    public void testProtocolWithSpecialCharacters() {
-        long buf = allocateBuffer(512);
-        try {
-            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-            String protocol = "qwp.streaming"; // Protocol with dots
-            int written = WebSocketHandshake.writeResponseWithProtocol(buf, acceptKey, protocol);
-
-            byte[] response = readBytes(buf, written);
-            String responseStr = new String(response, StandardCharsets.US_ASCII);
-
-            Assert.assertTrue(responseStr.contains("Sec-WebSocket-Protocol: " + protocol + "\r\n"));
-        } finally {
-            freeBuffer(buf, 512);
         }
     }
 }

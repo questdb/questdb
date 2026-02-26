@@ -33,81 +33,6 @@ import java.util.Random;
 public class QwpZigZagTest {
 
     @Test
-    public void testEncodeDecodeZero() {
-        Assert.assertEquals(0, QwpZigZag.encode(0L));
-        Assert.assertEquals(0, QwpZigZag.decode(0L));
-    }
-
-    @Test
-    public void testEncodePositive() {
-        // ZigZag encoding maps:
-        // 0 -> 0
-        // 1 -> 2
-        // 2 -> 4
-        // n -> 2n
-        Assert.assertEquals(2, QwpZigZag.encode(1L));
-        Assert.assertEquals(4, QwpZigZag.encode(2L));
-        Assert.assertEquals(6, QwpZigZag.encode(3L));
-        Assert.assertEquals(200, QwpZigZag.encode(100L));
-    }
-
-    @Test
-    public void testEncodeNegative() {
-        // ZigZag encoding maps:
-        // -1 -> 1
-        // -2 -> 3
-        // -n -> 2n - 1
-        Assert.assertEquals(1, QwpZigZag.encode(-1L));
-        Assert.assertEquals(3, QwpZigZag.encode(-2L));
-        Assert.assertEquals(5, QwpZigZag.encode(-3L));
-        Assert.assertEquals(199, QwpZigZag.encode(-100L));
-    }
-
-    @Test
-    public void testEncodeMinLong() {
-        long encoded = QwpZigZag.encode(Long.MIN_VALUE);
-        Assert.assertEquals(-1L, encoded); // All bits set (unsigned max)
-        Assert.assertEquals(Long.MIN_VALUE, QwpZigZag.decode(encoded));
-    }
-
-    @Test
-    public void testEncodeMaxLong() {
-        long encoded = QwpZigZag.encode(Long.MAX_VALUE);
-        Assert.assertEquals(-2L, encoded); // 0xFFFFFFFFFFFFFFFE (all bits except LSB)
-        Assert.assertEquals(Long.MAX_VALUE, QwpZigZag.decode(encoded));
-    }
-
-    @Test
-    public void testSymmetry() {
-        // Test that encode then decode returns the original value
-        long[] testValues = {
-                0, 1, -1, 2, -2,
-                100, -100,
-                1000000, -1000000,
-                Long.MAX_VALUE, Long.MIN_VALUE,
-                Long.MAX_VALUE / 2, Long.MIN_VALUE / 2
-        };
-
-        for (long value : testValues) {
-            long encoded = QwpZigZag.encode(value);
-            long decoded = QwpZigZag.decode(encoded);
-            Assert.assertEquals("Failed for value: " + value, value, decoded);
-        }
-    }
-
-    @Test
-    public void testRoundTripRandomValues() {
-        Random random = new Random(42); // Fixed seed for reproducibility
-
-        for (int i = 0; i < 1000; i++) {
-            long value = random.nextLong();
-            long encoded = QwpZigZag.encode(value);
-            long decoded = QwpZigZag.decode(encoded);
-            Assert.assertEquals("Failed for value: " + value, value, decoded);
-        }
-    }
-
-    @Test
     public void testEncodeDecodeInt() {
         // Test 32-bit version
         Assert.assertEquals(0, QwpZigZag.encode(0));
@@ -129,6 +54,51 @@ public class QwpZigZagTest {
     }
 
     @Test
+    public void testEncodeDecodeZero() {
+        Assert.assertEquals(0, QwpZigZag.encode(0L));
+        Assert.assertEquals(0, QwpZigZag.decode(0L));
+    }
+
+    @Test
+    public void testEncodeMaxLong() {
+        long encoded = QwpZigZag.encode(Long.MAX_VALUE);
+        Assert.assertEquals(-2L, encoded); // 0xFFFFFFFFFFFFFFFE (all bits except LSB)
+        Assert.assertEquals(Long.MAX_VALUE, QwpZigZag.decode(encoded));
+    }
+
+    @Test
+    public void testEncodeMinLong() {
+        long encoded = QwpZigZag.encode(Long.MIN_VALUE);
+        Assert.assertEquals(-1L, encoded); // All bits set (unsigned max)
+        Assert.assertEquals(Long.MIN_VALUE, QwpZigZag.decode(encoded));
+    }
+
+    @Test
+    public void testEncodeNegative() {
+        // ZigZag encoding maps:
+        // -1 -> 1
+        // -2 -> 3
+        // -n -> 2n - 1
+        Assert.assertEquals(1, QwpZigZag.encode(-1L));
+        Assert.assertEquals(3, QwpZigZag.encode(-2L));
+        Assert.assertEquals(5, QwpZigZag.encode(-3L));
+        Assert.assertEquals(199, QwpZigZag.encode(-100L));
+    }
+
+    @Test
+    public void testEncodePositive() {
+        // ZigZag encoding maps:
+        // 0 -> 0
+        // 1 -> 2
+        // 2 -> 4
+        // n -> 2n
+        Assert.assertEquals(2, QwpZigZag.encode(1L));
+        Assert.assertEquals(4, QwpZigZag.encode(2L));
+        Assert.assertEquals(6, QwpZigZag.encode(3L));
+        Assert.assertEquals(200, QwpZigZag.encode(100L));
+    }
+
+    @Test
     public void testEncodingPattern() {
         // Verify the exact encoding pattern matches the formula:
         // zigzag(n) = (n << 1) ^ (n >> 63)
@@ -140,6 +110,18 @@ public class QwpZigZagTest {
             long encoded = QwpZigZag.encode((long) n);
             long expected = (n >= 0) ? (2L * n) : (-2L * n - 1);
             Assert.assertEquals("Encoding mismatch for n=" + n, expected, encoded);
+        }
+    }
+
+    @Test
+    public void testRoundTripRandomValues() {
+        Random random = new Random(42); // Fixed seed for reproducibility
+
+        for (int i = 0; i < 1000; i++) {
+            long value = random.nextLong();
+            long encoded = QwpZigZag.encode(value);
+            long decoded = QwpZigZag.decode(encoded);
+            Assert.assertEquals("Failed for value: " + value, value, decoded);
         }
     }
 
@@ -162,5 +144,23 @@ public class QwpZigZagTest {
 
         // 64 encodes to 128, which requires 2 bytes as varint
         Assert.assertEquals(128, QwpZigZag.encode(64L));
+    }
+
+    @Test
+    public void testSymmetry() {
+        // Test that encode then decode returns the original value
+        long[] testValues = {
+                0, 1, -1, 2, -2,
+                100, -100,
+                1000000, -1000000,
+                Long.MAX_VALUE, Long.MIN_VALUE,
+                Long.MAX_VALUE / 2, Long.MIN_VALUE / 2
+        };
+
+        for (long value : testValues) {
+            long encoded = QwpZigZag.encode(value);
+            long decoded = QwpZigZag.decode(encoded);
+            Assert.assertEquals("Failed for value: " + value, value, decoded);
+        }
     }
 }

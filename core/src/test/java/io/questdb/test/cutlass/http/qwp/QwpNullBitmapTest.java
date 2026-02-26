@@ -32,30 +32,6 @@ import org.junit.Test;
 
 public class QwpNullBitmapTest {
 
-    // ==================== Size Calculation Tests ====================
-
-    @Test
-    public void testBitmapSizeCalculation() {
-        Assert.assertEquals(0, QwpNullBitmap.sizeInBytes(0));
-        Assert.assertEquals(1, QwpNullBitmap.sizeInBytes(1));
-        Assert.assertEquals(1, QwpNullBitmap.sizeInBytes(7));
-        Assert.assertEquals(1, QwpNullBitmap.sizeInBytes(8));
-        Assert.assertEquals(2, QwpNullBitmap.sizeInBytes(9));
-        Assert.assertEquals(2, QwpNullBitmap.sizeInBytes(16));
-        Assert.assertEquals(3, QwpNullBitmap.sizeInBytes(17));
-        Assert.assertEquals(125, QwpNullBitmap.sizeInBytes(1000));
-        Assert.assertEquals(125000, QwpNullBitmap.sizeInBytes(1000000));
-    }
-
-    // ==================== Empty Bitmap Tests ====================
-
-    @Test
-    public void testEmptyBitmap() {
-        Assert.assertEquals(0, QwpNullBitmap.sizeInBytes(0));
-    }
-
-    // ==================== All Nulls Tests ====================
-
     @Test
     public void testAllNulls() {
         int rowCount = 16;
@@ -89,60 +65,6 @@ public class QwpNullBitmapTest {
         }
     }
 
-    // ==================== No Nulls Tests ====================
-
-    @Test
-    public void testNoNulls() {
-        int rowCount = 16;
-        int size = QwpNullBitmap.sizeInBytes(rowCount);
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpNullBitmap.fillNoneNull(address, rowCount);
-            Assert.assertTrue(QwpNullBitmap.noneNull(address, rowCount));
-            Assert.assertEquals(0, QwpNullBitmap.countNulls(address, rowCount));
-
-            for (int i = 0; i < rowCount; i++) {
-                Assert.assertFalse(QwpNullBitmap.isNull(address, i));
-            }
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    // ==================== Mixed Nulls Tests ====================
-
-    @Test
-    public void testMixedNulls() {
-        int rowCount = 20;
-        int size = QwpNullBitmap.sizeInBytes(rowCount);
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpNullBitmap.fillNoneNull(address, rowCount);
-
-            // Set specific rows as null: 0, 2, 5, 19
-            QwpNullBitmap.setNull(address, 0);
-            QwpNullBitmap.setNull(address, 2);
-            QwpNullBitmap.setNull(address, 5);
-            QwpNullBitmap.setNull(address, 19);
-
-            Assert.assertTrue(QwpNullBitmap.isNull(address, 0));
-            Assert.assertFalse(QwpNullBitmap.isNull(address, 1));
-            Assert.assertTrue(QwpNullBitmap.isNull(address, 2));
-            Assert.assertFalse(QwpNullBitmap.isNull(address, 3));
-            Assert.assertFalse(QwpNullBitmap.isNull(address, 4));
-            Assert.assertTrue(QwpNullBitmap.isNull(address, 5));
-            Assert.assertTrue(QwpNullBitmap.isNull(address, 19));
-
-            Assert.assertEquals(4, QwpNullBitmap.countNulls(address, rowCount));
-            Assert.assertFalse(QwpNullBitmap.allNull(address, rowCount));
-            Assert.assertFalse(QwpNullBitmap.noneNull(address, rowCount));
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    // ==================== Bit Order Tests (LSB First) ====================
-
     @Test
     public void testBitmapBitOrder() {
         // Test LSB-first bit ordering
@@ -171,8 +93,6 @@ public class QwpNullBitmapTest {
         }
     }
 
-    // ==================== Byte Alignment Tests ====================
-
     @Test
     public void testBitmapByteAlignment() {
         // Test that bits 8-15 go into second byte
@@ -195,7 +115,18 @@ public class QwpNullBitmapTest {
         }
     }
 
-    // ==================== Partial Last Byte Tests ====================
+    @Test
+    public void testBitmapSizeCalculation() {
+        Assert.assertEquals(0, QwpNullBitmap.sizeInBytes(0));
+        Assert.assertEquals(1, QwpNullBitmap.sizeInBytes(1));
+        Assert.assertEquals(1, QwpNullBitmap.sizeInBytes(7));
+        Assert.assertEquals(1, QwpNullBitmap.sizeInBytes(8));
+        Assert.assertEquals(2, QwpNullBitmap.sizeInBytes(9));
+        Assert.assertEquals(2, QwpNullBitmap.sizeInBytes(16));
+        Assert.assertEquals(3, QwpNullBitmap.sizeInBytes(17));
+        Assert.assertEquals(125, QwpNullBitmap.sizeInBytes(1000));
+        Assert.assertEquals(125000, QwpNullBitmap.sizeInBytes(1000000));
+    }
 
     @Test
     public void testBitmapWithPartialLastByte() {
@@ -218,27 +149,6 @@ public class QwpNullBitmapTest {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
     }
-
-    // ==================== Clear Null Tests ====================
-
-    @Test
-    public void testClearNull() {
-        int rowCount = 8;
-        int size = QwpNullBitmap.sizeInBytes(rowCount);
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpNullBitmap.fillAllNull(address, rowCount);
-            Assert.assertTrue(QwpNullBitmap.isNull(address, 3));
-
-            QwpNullBitmap.clearNull(address, 3);
-            Assert.assertFalse(QwpNullBitmap.isNull(address, 3));
-            Assert.assertEquals(7, QwpNullBitmap.countNulls(address, rowCount));
-        } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    // ==================== Byte Array Tests ====================
 
     @Test
     public void testByteArrayOperations() {
@@ -279,7 +189,27 @@ public class QwpNullBitmapTest {
         Assert.assertFalse(QwpNullBitmap.isNull(bitmap, offset, 4));
     }
 
-    // ==================== Large Bitmap Tests ====================
+    @Test
+    public void testClearNull() {
+        int rowCount = 8;
+        int size = QwpNullBitmap.sizeInBytes(rowCount);
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpNullBitmap.fillAllNull(address, rowCount);
+            Assert.assertTrue(QwpNullBitmap.isNull(address, 3));
+
+            QwpNullBitmap.clearNull(address, 3);
+            Assert.assertFalse(QwpNullBitmap.isNull(address, 3));
+            Assert.assertEquals(7, QwpNullBitmap.countNulls(address, rowCount));
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testEmptyBitmap() {
+        Assert.assertEquals(0, QwpNullBitmap.sizeInBytes(0));
+    }
 
     @Test
     public void testLargeBitmap() {
@@ -304,6 +234,54 @@ public class QwpNullBitmapTest {
             Assert.assertTrue(QwpNullBitmap.isNull(address, 99900));
             Assert.assertFalse(QwpNullBitmap.isNull(address, 1));
             Assert.assertFalse(QwpNullBitmap.isNull(address, 99));
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testMixedNulls() {
+        int rowCount = 20;
+        int size = QwpNullBitmap.sizeInBytes(rowCount);
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpNullBitmap.fillNoneNull(address, rowCount);
+
+            // Set specific rows as null: 0, 2, 5, 19
+            QwpNullBitmap.setNull(address, 0);
+            QwpNullBitmap.setNull(address, 2);
+            QwpNullBitmap.setNull(address, 5);
+            QwpNullBitmap.setNull(address, 19);
+
+            Assert.assertTrue(QwpNullBitmap.isNull(address, 0));
+            Assert.assertFalse(QwpNullBitmap.isNull(address, 1));
+            Assert.assertTrue(QwpNullBitmap.isNull(address, 2));
+            Assert.assertFalse(QwpNullBitmap.isNull(address, 3));
+            Assert.assertFalse(QwpNullBitmap.isNull(address, 4));
+            Assert.assertTrue(QwpNullBitmap.isNull(address, 5));
+            Assert.assertTrue(QwpNullBitmap.isNull(address, 19));
+
+            Assert.assertEquals(4, QwpNullBitmap.countNulls(address, rowCount));
+            Assert.assertFalse(QwpNullBitmap.allNull(address, rowCount));
+            Assert.assertFalse(QwpNullBitmap.noneNull(address, rowCount));
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testNoNulls() {
+        int rowCount = 16;
+        int size = QwpNullBitmap.sizeInBytes(rowCount);
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpNullBitmap.fillNoneNull(address, rowCount);
+            Assert.assertTrue(QwpNullBitmap.noneNull(address, rowCount));
+            Assert.assertEquals(0, QwpNullBitmap.countNulls(address, rowCount));
+
+            for (int i = 0; i < rowCount; i++) {
+                Assert.assertFalse(QwpNullBitmap.isNull(address, i));
+            }
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }

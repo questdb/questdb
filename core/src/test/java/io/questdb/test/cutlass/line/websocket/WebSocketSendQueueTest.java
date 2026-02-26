@@ -27,10 +27,10 @@ package io.questdb.test.cutlass.line.websocket;
 import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.cutlass.http.client.WebSocketClient;
 import io.questdb.client.cutlass.http.client.WebSocketFrameHandler;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.InFlightWindow;
 import io.questdb.client.cutlass.qwp.client.MicrobatchBuffer;
 import io.questdb.client.cutlass.qwp.client.WebSocketSendQueue;
-import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -118,40 +118,6 @@ public class WebSocketSendQueueTest {
             closeQuietly(queue);
             batch0.close();
             batch1.close();
-            client.close();
-        }
-    }
-
-    @Test
-    public void testFlushFailsWhenServerClosesConnection() throws Exception {
-        InFlightWindow window = new InFlightWindow(8, 5_000);
-        FakeWebSocketClient client = new FakeWebSocketClient();
-        WebSocketSendQueue queue = null;
-        CountDownLatch closeDelivered = new CountDownLatch(1);
-        AtomicBoolean fired = new AtomicBoolean(false);
-
-        try {
-            window.addInFlight(0);
-            client.setTryReceiveBehavior(handler -> {
-                if (fired.compareAndSet(false, true)) {
-                    handler.onClose(1006, "boom");
-                    closeDelivered.countDown();
-                    return true;
-                }
-                return false;
-            });
-
-            queue = new WebSocketSendQueue(client, window, 1_000, 500);
-            assertTrue("Expected close callback", closeDelivered.await(2, TimeUnit.SECONDS));
-
-            try {
-                queue.flush();
-                fail("Expected flush failure after close");
-            } catch (LineSenderException e) {
-                assertTrue(e.getMessage().contains("closed"));
-            }
-        } finally {
-            closeQuietly(queue);
             client.close();
         }
     }
@@ -253,12 +219,44 @@ public class WebSocketSendQueueTest {
         }
     }
 
-    private static MicrobatchBuffer sealedBuffer(byte value) {
-        MicrobatchBuffer buffer = new MicrobatchBuffer(64);
-        buffer.writeByte(value);
-        buffer.incrementRowCount();
-        buffer.seal();
-        return buffer;
+    @Test
+    public void testFlushFailsWhenServerClosesConnection() throws Exception {
+        InFlightWindow window = new InFlightWindow(8, 5_000);
+        FakeWebSocketClient client = new FakeWebSocketClient();
+        WebSocketSendQueue queue = null;
+        CountDownLatch closeDelivered = new CountDownLatch(1);
+        AtomicBoolean fired = new AtomicBoolean(false);
+
+        try {
+            window.addInFlight(0);
+            client.setTryReceiveBehavior(handler -> {
+                if (fired.compareAndSet(false, true)) {
+                    handler.onClose(1006, "boom");
+                    closeDelivered.countDown();
+                    return true;
+                }
+                return false;
+            });
+
+            queue = new WebSocketSendQueue(client, window, 1_000, 500);
+            assertTrue("Expected close callback", closeDelivered.await(2, TimeUnit.SECONDS));
+
+            try {
+                queue.flush();
+                fail("Expected flush failure after close");
+            } catch (LineSenderException e) {
+                assertTrue(e.getMessage().contains("closed"));
+            }
+        } finally {
+            closeQuietly(queue);
+            client.close();
+        }
+    }
+
+    private static void closeQuietly(WebSocketSendQueue queue) {
+        if (queue != null) {
+            queue.close();
+        }
     }
 
     private static void emitBinary(WebSocketFrameHandler handler, byte[] payload) {
@@ -273,28 +271,36 @@ public class WebSocketSendQueueTest {
         }
     }
 
-    private static void closeQuietly(WebSocketSendQueue queue) {
-        if (queue != null) {
-            queue.close();
-        }
-    }
-
-    private interface TryReceiveBehavior {
-        boolean tryReceive(WebSocketFrameHandler handler);
+    private static MicrobatchBuffer sealedBuffer(byte value) {
+        MicrobatchBuffer buffer = new MicrobatchBuffer(64);
+        buffer.writeByte(value);
+        buffer.incrementRowCount();
+        buffer.seal();
+        return buffer;
     }
 
     private interface SendBehavior {
         void send(long dataPtr, int length);
     }
 
+    private interface TryReceiveBehavior {
+        boolean tryReceive(WebSocketFrameHandler handler);
+    }
+
     private static class FakeWebSocketClient extends WebSocketClient {
         private volatile TryReceiveBehavior behavior = handler -> false;
+        private volatile boolean connected = true;
         private volatile SendBehavior sendBehavior = (dataPtr, length) -> {
         };
-        private volatile boolean connected = true;
 
         private FakeWebSocketClient() {
             super(DefaultHttpClientConfiguration.INSTANCE, PlainSocketFactory.INSTANCE);
+        }
+
+        @Override
+        public void close() {
+            connected = false;
+            super.close();
         }
 
         @Override
@@ -307,23 +313,17 @@ public class WebSocketSendQueueTest {
             sendBehavior.send(dataPtr, length);
         }
 
-        @Override
-        public boolean tryReceiveFrame(WebSocketFrameHandler handler) {
-            return behavior.tryReceive(handler);
+        public void setSendBehavior(SendBehavior sendBehavior) {
+            this.sendBehavior = sendBehavior;
         }
 
         public void setTryReceiveBehavior(TryReceiveBehavior behavior) {
             this.behavior = behavior;
         }
 
-        public void setSendBehavior(SendBehavior sendBehavior) {
-            this.sendBehavior = sendBehavior;
-        }
-
         @Override
-        public void close() {
-            connected = false;
-            super.close();
+        public boolean tryReceiveFrame(WebSocketFrameHandler handler) {
+            return behavior.tryReceive(handler);
         }
 
         @Override

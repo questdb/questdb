@@ -61,6 +61,68 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testWebSocketCloseHandshake() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                URI uri = new URI("ws://localhost:" + httpPort + "/write/v4");
+
+                CountDownLatch openLatch = new CountDownLatch(1);
+                CountDownLatch closeLatch = new CountDownLatch(1);
+                AtomicBoolean opened = new AtomicBoolean(false);
+                AtomicInteger closeCode = new AtomicInteger(-1);
+                AtomicReference<String> closeReason = new AtomicReference<>();
+                AtomicReference<Throwable> error = new AtomicReference<>();
+
+                HttpClient client = HttpClient.newHttpClient();
+
+                WebSocket.Listener listener = new WebSocket.Listener() {
+                    @Override
+                    public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+                        closeCode.set(statusCode);
+                        closeReason.set(reason);
+                        closeLatch.countDown();
+                        return CompletableFuture.completedFuture(null);
+                    }
+
+                    @Override
+                    public void onError(WebSocket webSocket, Throwable err) {
+                        error.set(err);
+                        openLatch.countDown();
+                        closeLatch.countDown();
+                    }
+
+                    @Override
+                    public void onOpen(WebSocket webSocket) {
+                        opened.set(true);
+                        openLatch.countDown();
+                        webSocket.request(1);
+                    }
+                };
+
+                WebSocket webSocket = client.newWebSocketBuilder()
+                        .connectTimeout(Duration.ofSeconds(5))
+                        .buildAsync(uri, listener)
+                        .get(10, TimeUnit.SECONDS);
+
+                Assert.assertTrue("WebSocket should open", openLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue("WebSocket should be opened", opened.get());
+                Assert.assertNull("No error should occur", error.get());
+
+                // Send close frame
+                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "client closing")
+                        .get(5, TimeUnit.SECONDS);
+
+                // Server should respond with close frame
+                Assert.assertTrue("Should receive close response", closeLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertEquals("Close code should be normal", WebSocket.NORMAL_CLOSURE, closeCode.get());
+            }
+        });
+    }
+
+    @Test
     public void testWebSocketConnectAndSendBinaryMessage() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -79,13 +141,6 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
 
                 WebSocket.Listener listener = new WebSocket.Listener() {
                     @Override
-                    public void onOpen(WebSocket webSocket) {
-                        opened.set(true);
-                        openLatch.countDown();
-                        webSocket.request(1);
-                    }
-
-                    @Override
                     public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
                         webSocket.request(1);
                         return CompletableFuture.completedFuture(null);
@@ -95,6 +150,13 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                     public void onError(WebSocket webSocket, Throwable err) {
                         error.set(err);
                         openLatch.countDown();
+                    }
+
+                    @Override
+                    public void onOpen(WebSocket webSocket) {
+                        opened.set(true);
+                        openLatch.countDown();
+                        webSocket.request(1);
                     }
                 };
 
@@ -126,72 +188,6 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testWebSocketMultipleBinaryMessages() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-                URI uri = new URI("ws://localhost:" + httpPort + "/write/v4");
-
-                CountDownLatch openLatch = new CountDownLatch(1);
-                AtomicBoolean opened = new AtomicBoolean(false);
-                AtomicReference<Throwable> error = new AtomicReference<>();
-
-                HttpClient client = HttpClient.newHttpClient();
-
-                WebSocket.Listener listener = new WebSocket.Listener() {
-                    @Override
-                    public void onOpen(WebSocket webSocket) {
-                        opened.set(true);
-                        openLatch.countDown();
-                        webSocket.request(1);
-                    }
-
-                    @Override
-                    public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
-                        webSocket.request(1);
-                        return CompletableFuture.completedFuture(null);
-                    }
-
-                    @Override
-                    public void onError(WebSocket webSocket, Throwable err) {
-                        error.set(err);
-                        openLatch.countDown();
-                    }
-                };
-
-                WebSocket webSocket = client.newWebSocketBuilder()
-                        .connectTimeout(Duration.ofSeconds(5))
-                        .buildAsync(uri, listener)
-                        .get(10, TimeUnit.SECONDS);
-
-                Assert.assertTrue("WebSocket should open", openLatch.await(5, TimeUnit.SECONDS));
-                Assert.assertTrue("WebSocket should be opened", opened.get());
-                Assert.assertNull("No error should occur", error.get());
-
-                // Send multiple binary messages
-                int numMessages = 10;
-                for (int i = 0; i < numMessages; i++) {
-                    String ilpLine = "cpu,host=server" + i + " usage=" + (50.0 + i) + " " + (1234567890L + i) + "\n";
-                    byte[] data = ilpLine.getBytes(StandardCharsets.UTF_8);
-                    ByteBuffer buffer = ByteBuffer.wrap(data);
-
-                    CompletableFuture<WebSocket> sendFuture = webSocket.sendBinary(buffer, true);
-                    sendFuture.get(5, TimeUnit.SECONDS);
-                }
-
-                // Give the server time to process
-                Thread.sleep(200);
-
-                // Close the connection
-                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "test complete")
-                        .get(5, TimeUnit.SECONDS);
-            }
-        });
-    }
-
-    @Test
     public void testWebSocketLargeBinaryMessage() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -208,13 +204,6 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
 
                 WebSocket.Listener listener = new WebSocket.Listener() {
                     @Override
-                    public void onOpen(WebSocket webSocket) {
-                        opened.set(true);
-                        openLatch.countDown();
-                        webSocket.request(1);
-                    }
-
-                    @Override
                     public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
                         webSocket.request(1);
                         return CompletableFuture.completedFuture(null);
@@ -224,6 +213,13 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                     public void onError(WebSocket webSocket, Throwable err) {
                         error.set(err);
                         openLatch.countDown();
+                    }
+
+                    @Override
+                    public void onOpen(WebSocket webSocket) {
+                        opened.set(true);
+                        openLatch.countDown();
+                        webSocket.request(1);
                     }
                 };
 
@@ -258,6 +254,72 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testWebSocketMultipleBinaryMessages() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                URI uri = new URI("ws://localhost:" + httpPort + "/write/v4");
+
+                CountDownLatch openLatch = new CountDownLatch(1);
+                AtomicBoolean opened = new AtomicBoolean(false);
+                AtomicReference<Throwable> error = new AtomicReference<>();
+
+                HttpClient client = HttpClient.newHttpClient();
+
+                WebSocket.Listener listener = new WebSocket.Listener() {
+                    @Override
+                    public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
+                        webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
+                    }
+
+                    @Override
+                    public void onError(WebSocket webSocket, Throwable err) {
+                        error.set(err);
+                        openLatch.countDown();
+                    }
+
+                    @Override
+                    public void onOpen(WebSocket webSocket) {
+                        opened.set(true);
+                        openLatch.countDown();
+                        webSocket.request(1);
+                    }
+                };
+
+                WebSocket webSocket = client.newWebSocketBuilder()
+                        .connectTimeout(Duration.ofSeconds(5))
+                        .buildAsync(uri, listener)
+                        .get(10, TimeUnit.SECONDS);
+
+                Assert.assertTrue("WebSocket should open", openLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue("WebSocket should be opened", opened.get());
+                Assert.assertNull("No error should occur", error.get());
+
+                // Send multiple binary messages
+                int numMessages = 10;
+                for (int i = 0; i < numMessages; i++) {
+                    String ilpLine = "cpu,host=server" + i + " usage=" + (50.0 + i) + " " + (1234567890L + i) + "\n";
+                    byte[] data = ilpLine.getBytes(StandardCharsets.UTF_8);
+                    ByteBuffer buffer = ByteBuffer.wrap(data);
+
+                    CompletableFuture<WebSocket> sendFuture = webSocket.sendBinary(buffer, true);
+                    sendFuture.get(5, TimeUnit.SECONDS);
+                }
+
+                // Give the server time to process
+                Thread.sleep(200);
+
+                // Close the connection
+                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "test complete")
+                        .get(5, TimeUnit.SECONDS);
+            }
+        });
+    }
+
+    @Test
     public void testWebSocketPingPong() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -276,6 +338,13 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
 
                 WebSocket.Listener listener = new WebSocket.Listener() {
                     @Override
+                    public void onError(WebSocket webSocket, Throwable err) {
+                        error.set(err);
+                        openLatch.countDown();
+                        pongLatch.countDown();
+                    }
+
+                    @Override
                     public void onOpen(WebSocket webSocket) {
                         opened.set(true);
                         openLatch.countDown();
@@ -288,13 +357,6 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                         pongLatch.countDown();
                         webSocket.request(1);
                         return CompletableFuture.completedFuture(null);
-                    }
-
-                    @Override
-                    public void onError(WebSocket webSocket, Throwable err) {
-                        error.set(err);
-                        openLatch.countDown();
-                        pongLatch.countDown();
                     }
                 };
 
@@ -323,68 +385,6 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testWebSocketCloseHandshake() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
-            )) {
-                int httpPort = serverMain.getHttpServerPort();
-                URI uri = new URI("ws://localhost:" + httpPort + "/write/v4");
-
-                CountDownLatch openLatch = new CountDownLatch(1);
-                CountDownLatch closeLatch = new CountDownLatch(1);
-                AtomicBoolean opened = new AtomicBoolean(false);
-                AtomicInteger closeCode = new AtomicInteger(-1);
-                AtomicReference<String> closeReason = new AtomicReference<>();
-                AtomicReference<Throwable> error = new AtomicReference<>();
-
-                HttpClient client = HttpClient.newHttpClient();
-
-                WebSocket.Listener listener = new WebSocket.Listener() {
-                    @Override
-                    public void onOpen(WebSocket webSocket) {
-                        opened.set(true);
-                        openLatch.countDown();
-                        webSocket.request(1);
-                    }
-
-                    @Override
-                    public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-                        closeCode.set(statusCode);
-                        closeReason.set(reason);
-                        closeLatch.countDown();
-                        return CompletableFuture.completedFuture(null);
-                    }
-
-                    @Override
-                    public void onError(WebSocket webSocket, Throwable err) {
-                        error.set(err);
-                        openLatch.countDown();
-                        closeLatch.countDown();
-                    }
-                };
-
-                WebSocket webSocket = client.newWebSocketBuilder()
-                        .connectTimeout(Duration.ofSeconds(5))
-                        .buildAsync(uri, listener)
-                        .get(10, TimeUnit.SECONDS);
-
-                Assert.assertTrue("WebSocket should open", openLatch.await(5, TimeUnit.SECONDS));
-                Assert.assertTrue("WebSocket should be opened", opened.get());
-                Assert.assertNull("No error should occur", error.get());
-
-                // Send close frame
-                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "client closing")
-                        .get(5, TimeUnit.SECONDS);
-
-                // Server should respond with close frame
-                Assert.assertTrue("Should receive close response", closeLatch.await(5, TimeUnit.SECONDS));
-                Assert.assertEquals("Close code should be normal", WebSocket.NORMAL_CLOSURE, closeCode.get());
-            }
-        });
-    }
-
-    @Test
     public void testWebSocketReconnect() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -403,16 +403,16 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
 
                     WebSocket.Listener listener = new WebSocket.Listener() {
                         @Override
+                        public void onError(WebSocket webSocket, Throwable err) {
+                            error.set(err);
+                            openLatch.countDown();
+                        }
+
+                        @Override
                         public void onOpen(WebSocket webSocket) {
                             opened.set(true);
                             openLatch.countDown();
                             webSocket.request(1);
-                        }
-
-                        @Override
-                        public void onError(WebSocket webSocket, Throwable err) {
-                            error.set(err);
-                            openLatch.countDown();
                         }
                     };
 

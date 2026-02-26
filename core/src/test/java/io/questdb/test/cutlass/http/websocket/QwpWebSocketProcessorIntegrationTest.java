@@ -43,8 +43,6 @@ import java.util.List;
  */
 public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest {
 
-    // ==================== BASIC INTEGRATION TESTS ====================
-
     @Test
     public void testBytesProcessedNotResetOnClear() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
@@ -124,8 +122,6 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
         }
     }
 
-    // ==================== ERROR HANDLING TESTS ====================
-
     @Test
     public void testCloseWithReasonMessage() {
         QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
@@ -172,8 +168,6 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
             Assert.assertEquals("Invalid line format", state.getResponseErrorMessage());
         }
     }
-
-    // ==================== RESPONSE HANDLING TESTS ====================
 
     @Test
     public void testErrorStateIgnoresData() {
@@ -229,8 +223,6 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
             }
         }
     }
-
-    // ==================== CLOSE HANDLING TESTS ====================
 
     @Test
     public void testManySmallMessages() {
@@ -302,8 +294,6 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
         }
     }
 
-    // ==================== PING/PONG TESTS ====================
-
     @Test
     public void testPingPongCallbacks() {
         QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
@@ -322,8 +312,6 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
             freeBuffer(ptr, pingData.length);
         }
     }
-
-    // ==================== METRICS TRACKING TESTS ====================
 
     @Test
     public void testProcessMessageAfterAccumulation() {
@@ -378,8 +366,6 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
         }
     }
 
-    // ==================== LARGE DATA TESTS ====================
-
     @Test
     public void testRapidMessageProcessing() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(256)) {
@@ -430,8 +416,6 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
         }
     }
 
-    // ==================== CONCURRENT ACCESS SIMULATION ====================
-
     @Test
     public void testSuccessResponseFlow() {
         try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
@@ -459,8 +443,6 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
             Assert.assertFalse(state.hasResponse());
         }
     }
-
-    // ==================== CALLBACK IMPLEMENTATIONS ====================
 
     private long allocateAndWrite(byte[] data) {
         long ptr = Unsafe.malloc(data.length, MemoryTag.NATIVE_DEFAULT);
@@ -591,8 +573,6 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
         public void onTextMessage(long payload, int length) {
         }
     }
-
-    // ==================== HELPER METHODS ====================
 
     /**
      * Callback that accumulates binary data into the state.

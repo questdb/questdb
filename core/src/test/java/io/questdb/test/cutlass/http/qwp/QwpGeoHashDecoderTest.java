@@ -35,7 +35,38 @@ import org.junit.Test;
 
 public class QwpGeoHashDecoderTest {
 
-    // ==================== GEOBYTE (1-7 bits) Tests ====================
+    @Test
+    public void testCalculateEncodedSize() {
+        // Basic size calculation
+        int size = QwpGeoHashDecoder.calculateEncodedSize(10, 5, false);
+        // 1 byte (precision varint) + 10 * 1 byte (values) = 11
+        Assert.assertEquals(11, size);
+
+        // With nullable
+        size = QwpGeoHashDecoder.calculateEncodedSize(10, 5, true);
+        // 2 bytes (null bitmap) + 1 byte (precision) + 10 * 1 byte (values) = 13
+        Assert.assertEquals(13, size);
+
+        // Larger precision
+        size = QwpGeoHashDecoder.calculateEncodedSize(10, 40, false);
+        // 1 byte (precision varint) + 10 * 5 bytes (values) = 51
+        Assert.assertEquals(51, size);
+    }
+
+    @Test
+    public void testDecodeEmptyColumn() throws QwpParseException {
+        QwpGeoHashDecoder.ArrayGeoHashSink sink = new QwpGeoHashDecoder.ArrayGeoHashSink(0);
+        int consumed = QwpGeoHashDecoder.INSTANCE.decode(0, 0, 0, false, sink);
+        Assert.assertEquals(0, consumed);
+    }
+
+    @Test
+    public void testDecodeGeoHashAllNulls() throws QwpParseException {
+        long[] values = {0L, 0L, 0L};
+        boolean[] nulls = {true, true, true};
+        int precision = 10;
+        testRoundTrip(values, precision, nulls);
+    }
 
     @Test
     public void testDecodeGeoHashByte() throws QwpParseException {
@@ -61,26 +92,6 @@ public class QwpGeoHashDecoderTest {
         testRoundTrip(values, precision, null);
     }
 
-    // ==================== GEOSHORT (8-15 bits) Tests ====================
-
-    @Test
-    public void testDecodeGeoHashShort() throws QwpParseException {
-        // 10-bit precision (typical for 2 geohash characters)
-        long[] values = {0b1011010110, 0b0100101001, 0b1111111111, 0b0000000000};
-        int precision = 10;
-        testRoundTrip(values, precision, null);
-    }
-
-    @Test
-    public void testDecodeGeoHashShort15Bits() throws QwpParseException {
-        // Maximum bits for GEOSHORT
-        long[] values = {0b111011010110110, 0b010010100101001, 0b111111111111111};
-        int precision = 15;
-        testRoundTrip(values, precision, null);
-    }
-
-    // ==================== GEOINT (16-31 bits) Tests ====================
-
     @Test
     public void testDecodeGeoHashInt() throws QwpParseException {
         // 20-bit precision (typical for 4 geohash characters)
@@ -96,8 +107,6 @@ public class QwpGeoHashDecoderTest {
         int precision = 31;
         testRoundTrip(values, precision, null);
     }
-
-    // ==================== GEOLONG (32-60 bits) Tests ====================
 
     @Test
     public void testDecodeGeoHashLong() throws QwpParseException {
@@ -120,7 +129,21 @@ public class QwpGeoHashDecoderTest {
         testRoundTrip(values, precision, null);
     }
 
-    // ==================== Null Handling Tests ====================
+    @Test
+    public void testDecodeGeoHashShort() throws QwpParseException {
+        // 10-bit precision (typical for 2 geohash characters)
+        long[] values = {0b1011010110, 0b0100101001, 0b1111111111, 0b0000000000};
+        int precision = 10;
+        testRoundTrip(values, precision, null);
+    }
+
+    @Test
+    public void testDecodeGeoHashShort15Bits() throws QwpParseException {
+        // Maximum bits for GEOSHORT
+        long[] values = {0b111011010110110, 0b010010100101001, 0b111111111111111};
+        int precision = 15;
+        testRoundTrip(values, precision, null);
+    }
 
     @Test
     public void testDecodeGeoHashWithNulls() throws QwpParseException {
@@ -131,77 +154,17 @@ public class QwpGeoHashDecoderTest {
     }
 
     @Test
-    public void testDecodeGeoHashAllNulls() throws QwpParseException {
-        long[] values = {0L, 0L, 0L};
-        boolean[] nulls = {true, true, true};
-        int precision = 10;
-        testRoundTrip(values, precision, nulls);
-    }
-
-    // ==================== Precision Tests ====================
-
-    @Test
-    public void testDecodePrecisionExtraction() throws QwpParseException {
-        // Test that precision is correctly extracted for various values
-        int[] precisions = {1, 5, 7, 8, 10, 15, 16, 20, 31, 32, 40, 60};
-
-        for (int precision : precisions) {
-            long[] values = {1L << (precision - 1)}; // Set highest bit
-            testRoundTrip(values, precision, null);
-        }
-    }
-
-    @Test
-    public void testDecodePackedValue() throws QwpParseException {
-        // Test various packed value sizes
-        // 3-byte packed (17-24 bits)
-        long[] values3 = {0x123456L};
-        testRoundTrip(values3, 24, null);
-
-        // 5-byte packed (33-40 bits)
-        long[] values5 = {0x123456789AL};
-        testRoundTrip(values5, 40, null);
-
-        // 6-byte packed (41-48 bits)
-        long[] values6 = {0x123456789ABCL};
-        testRoundTrip(values6, 48, null);
-
-        // 7-byte packed (49-56 bits)
-        long[] values7 = {0x123456789ABCDEL};
-        testRoundTrip(values7, 56, null);
-    }
-
-    @Test
-    public void testDecodeVariablePrecision() throws QwpParseException {
-        // Test boundary precision values
-
-        // GEOBYTE boundary
-        testRoundTrip(new long[]{0x7F}, 7, null);  // Max for GEOBYTE
-        testRoundTrip(new long[]{0xFF}, 8, null);  // Min for GEOSHORT
-
-        // GEOSHORT boundary
-        testRoundTrip(new long[]{0x7FFF}, 15, null);  // Max for GEOSHORT
-        testRoundTrip(new long[]{0xFFFF}, 16, null);  // Min for GEOINT
-
-        // GEOINT boundary
-        testRoundTrip(new long[]{0x7FFFFFFFL}, 31, null);  // Max for GEOINT
-        testRoundTrip(new long[]{0xFFFFFFFFL}, 32, null);  // Min for GEOLONG
-    }
-
-    // ==================== Error Handling Tests ====================
-
-    @Test
-    public void testDecodeInvalidPrecisionZero() {
-        long address = Unsafe.malloc(10, MemoryTag.NATIVE_DEFAULT);
+    public void testDecodeInsufficientDataForValues() {
+        long address = Unsafe.malloc(5, MemoryTag.NATIVE_DEFAULT);
         try {
-            // Encode precision = 0 (invalid)
-            QwpVarint.encode(address, 0);
+            // Encode precision = 10 (needs 2 bytes per value), but only provide 4 bytes total
+            QwpVarint.encode(address, 10);
 
-            QwpGeoHashDecoder.ArrayGeoHashSink sink = new QwpGeoHashDecoder.ArrayGeoHashSink(1);
+            QwpGeoHashDecoder.ArrayGeoHashSink sink = new QwpGeoHashDecoder.ArrayGeoHashSink(5);
             Assert.assertThrows(QwpParseException.class, () ->
-                    QwpGeoHashDecoder.INSTANCE.decode(address, 10, 1, false, sink));
+                    QwpGeoHashDecoder.INSTANCE.decode(address, 5, 5, false, sink));
         } finally {
-            Unsafe.free(address, 10, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, 5, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -221,30 +184,19 @@ public class QwpGeoHashDecoderTest {
     }
 
     @Test
-    public void testDecodeInsufficientDataForValues() {
-        long address = Unsafe.malloc(5, MemoryTag.NATIVE_DEFAULT);
+    public void testDecodeInvalidPrecisionZero() {
+        long address = Unsafe.malloc(10, MemoryTag.NATIVE_DEFAULT);
         try {
-            // Encode precision = 10 (needs 2 bytes per value), but only provide 4 bytes total
-            QwpVarint.encode(address, 10);
+            // Encode precision = 0 (invalid)
+            QwpVarint.encode(address, 0);
 
-            QwpGeoHashDecoder.ArrayGeoHashSink sink = new QwpGeoHashDecoder.ArrayGeoHashSink(5);
+            QwpGeoHashDecoder.ArrayGeoHashSink sink = new QwpGeoHashDecoder.ArrayGeoHashSink(1);
             Assert.assertThrows(QwpParseException.class, () ->
-                    QwpGeoHashDecoder.INSTANCE.decode(address, 5, 5, false, sink));
+                    QwpGeoHashDecoder.INSTANCE.decode(address, 10, 1, false, sink));
         } finally {
-            Unsafe.free(address, 5, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, 10, MemoryTag.NATIVE_DEFAULT);
         }
     }
-
-    // ==================== Empty Column Tests ====================
-
-    @Test
-    public void testDecodeEmptyColumn() throws QwpParseException {
-        QwpGeoHashDecoder.ArrayGeoHashSink sink = new QwpGeoHashDecoder.ArrayGeoHashSink(0);
-        int consumed = QwpGeoHashDecoder.INSTANCE.decode(0, 0, 0, false, sink);
-        Assert.assertEquals(0, consumed);
-    }
-
-    // ==================== Large Column Tests ====================
 
     @Test
     public void testDecodeLargeColumn() throws QwpParseException {
@@ -275,7 +227,53 @@ public class QwpGeoHashDecoderTest {
         testRoundTrip(values, precision, nulls);
     }
 
-    // ==================== Column Type Mapping Tests ====================
+    @Test
+    public void testDecodePackedValue() throws QwpParseException {
+        // Test various packed value sizes
+        // 3-byte packed (17-24 bits)
+        long[] values3 = {0x123456L};
+        testRoundTrip(values3, 24, null);
+
+        // 5-byte packed (33-40 bits)
+        long[] values5 = {0x123456789AL};
+        testRoundTrip(values5, 40, null);
+
+        // 6-byte packed (41-48 bits)
+        long[] values6 = {0x123456789ABCL};
+        testRoundTrip(values6, 48, null);
+
+        // 7-byte packed (49-56 bits)
+        long[] values7 = {0x123456789ABCDEL};
+        testRoundTrip(values7, 56, null);
+    }
+
+    @Test
+    public void testDecodePrecisionExtraction() throws QwpParseException {
+        // Test that precision is correctly extracted for various values
+        int[] precisions = {1, 5, 7, 8, 10, 15, 16, 20, 31, 32, 40, 60};
+
+        for (int precision : precisions) {
+            long[] values = {1L << (precision - 1)}; // Set highest bit
+            testRoundTrip(values, precision, null);
+        }
+    }
+
+    @Test
+    public void testDecodeVariablePrecision() throws QwpParseException {
+        // Test boundary precision values
+
+        // GEOBYTE boundary
+        testRoundTrip(new long[]{0x7F}, 7, null);  // Max for GEOBYTE
+        testRoundTrip(new long[]{0xFF}, 8, null);  // Min for GEOSHORT
+
+        // GEOSHORT boundary
+        testRoundTrip(new long[]{0x7FFF}, 15, null);  // Max for GEOSHORT
+        testRoundTrip(new long[]{0xFFFF}, 16, null);  // Min for GEOINT
+
+        // GEOINT boundary
+        testRoundTrip(new long[]{0x7FFFFFFFL}, 31, null);  // Max for GEOINT
+        testRoundTrip(new long[]{0xFFFFFFFFL}, 32, null);  // Min for GEOLONG
+    }
 
     @Test
     public void testGetColumnType() {
@@ -326,28 +324,6 @@ public class QwpGeoHashDecoderTest {
             Assert.assertEquals(8, QwpGeoHashDecoder.getStorageSize(bits));
         }
     }
-
-    // ==================== Size Calculation Tests ====================
-
-    @Test
-    public void testCalculateEncodedSize() {
-        // Basic size calculation
-        int size = QwpGeoHashDecoder.calculateEncodedSize(10, 5, false);
-        // 1 byte (precision varint) + 10 * 1 byte (values) = 11
-        Assert.assertEquals(11, size);
-
-        // With nullable
-        size = QwpGeoHashDecoder.calculateEncodedSize(10, 5, true);
-        // 2 bytes (null bitmap) + 1 byte (precision) + 10 * 1 byte (values) = 13
-        Assert.assertEquals(13, size);
-
-        // Larger precision
-        size = QwpGeoHashDecoder.calculateEncodedSize(10, 40, false);
-        // 1 byte (precision varint) + 10 * 5 bytes (values) = 51
-        Assert.assertEquals(51, size);
-    }
-
-    // ==================== Helper Methods ====================
 
     private void testRoundTrip(long[] values, int precision, boolean[] nulls) throws QwpParseException {
         int rowCount = values.length;

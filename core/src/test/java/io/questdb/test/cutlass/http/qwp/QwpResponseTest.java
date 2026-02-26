@@ -24,7 +24,10 @@
 
 package io.questdb.test.cutlass.http.qwp;
 
-import io.questdb.cutlass.qwp.protocol.*;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpResponse;
+import io.questdb.cutlass.qwp.protocol.QwpResponseEncoder;
+import io.questdb.cutlass.qwp.protocol.QwpStatusCode;
 import io.questdb.std.ObjList;
 import org.junit.Test;
 
@@ -35,42 +38,60 @@ import static org.junit.Assert.*;
  */
 public class QwpResponseTest {
 
-    // ==================== Status Code Tests ====================
-
     @Test
-    public void testStatusCodeName() {
-        assertEquals("OK", QwpStatusCode.name(QwpStatusCode.OK));
-        assertEquals("PARTIAL", QwpStatusCode.name(QwpStatusCode.PARTIAL));
-        assertEquals("SCHEMA_REQUIRED", QwpStatusCode.name(QwpStatusCode.SCHEMA_REQUIRED));
-        assertEquals("SCHEMA_MISMATCH", QwpStatusCode.name(QwpStatusCode.SCHEMA_MISMATCH));
-        assertEquals("TABLE_NOT_FOUND", QwpStatusCode.name(QwpStatusCode.TABLE_NOT_FOUND));
-        assertEquals("PARSE_ERROR", QwpStatusCode.name(QwpStatusCode.PARSE_ERROR));
-        assertEquals("INTERNAL_ERROR", QwpStatusCode.name(QwpStatusCode.INTERNAL_ERROR));
-        assertEquals("OVERLOADED", QwpStatusCode.name(QwpStatusCode.OVERLOADED));
-        assertEquals("UNKNOWN(255)", QwpStatusCode.name((byte) 0xFF));
+    public void testCalculateSizeError() {
+        QwpResponse response = QwpResponse.parseError("test");
+        // 1 (status) + 1 (varint len) + 4 (message)
+        assertEquals(6, QwpResponseEncoder.calculateSize(response));
     }
 
     @Test
-    public void testStatusCodeIsRetriable() {
-        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.OK));
-        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.PARTIAL));
-        assertTrue(QwpStatusCode.isRetriable(QwpStatusCode.SCHEMA_REQUIRED));
-        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.SCHEMA_MISMATCH));
-        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.TABLE_NOT_FOUND));
-        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.PARSE_ERROR));
-        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.INTERNAL_ERROR));
-        assertTrue(QwpStatusCode.isRetriable(QwpStatusCode.OVERLOADED));
+    public void testCalculateSizeOk() {
+        QwpResponse response = QwpResponse.ok();
+        assertEquals(1, QwpResponseEncoder.calculateSize(response));
     }
 
     @Test
-    public void testStatusCodeIsSuccess() {
-        assertTrue(QwpStatusCode.isSuccess(QwpStatusCode.OK));
-        assertTrue(QwpStatusCode.isSuccess(QwpStatusCode.PARTIAL));
-        assertFalse(QwpStatusCode.isSuccess(QwpStatusCode.SCHEMA_REQUIRED));
-        assertFalse(QwpStatusCode.isSuccess(QwpStatusCode.INTERNAL_ERROR));
+    public void testCalculateSizePartial() {
+        ObjList<QwpResponse.TableError> errors = new ObjList<>();
+        errors.add(new QwpResponse.TableError(0, QwpStatusCode.PARSE_ERROR, "err"));
+
+        QwpResponse response = QwpResponse.partial(errors);
+        // 1 (status) + 1 (count) + 1 (tableIndex) + 1 (errorCode) + 1 (msgLen) + 3 (msg)
+        assertEquals(8, QwpResponseEncoder.calculateSize(response));
     }
 
-    // ==================== Response Factory Tests ====================
+    @Test
+    public void testDecodeTruncatedErrorMessage() {
+        // Create a response with truncated message length
+        byte[] truncated = new byte[]{QwpStatusCode.PARSE_ERROR, 50}; // says 50 bytes but only 2 bytes total
+
+        try {
+            QwpResponseEncoder.decode(truncated, 0, truncated.length);
+            fail("Expected exception");
+        } catch (QwpParseException e) {
+            assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+        }
+    }
+
+    @Test
+    public void testDecodeTruncatedResponse() {
+        try {
+            QwpResponseEncoder.decode(new byte[0], 0, 0);
+            fail("Expected exception");
+        } catch (QwpParseException e) {
+            assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+        }
+    }
+
+    @Test
+    public void testGenerateInternalErrorResponse() {
+        QwpResponse response = QwpResponse.internalError("out of memory");
+
+        assertEquals(QwpStatusCode.INTERNAL_ERROR, response.getStatusCode());
+        assertFalse(response.isSuccess());
+        assertEquals("out of memory", response.getErrorMessage());
+    }
 
     @Test
     public void testGenerateOkResponse() {
@@ -84,33 +105,13 @@ public class QwpResponseTest {
     }
 
     @Test
-    public void testGenerateSchemaRequiredResponse() {
-        QwpResponse response = QwpResponse.schemaRequired("trades");
+    public void testGenerateOverloadedResponse() {
+        QwpResponse response = QwpResponse.overloaded();
 
-        assertEquals(QwpStatusCode.SCHEMA_REQUIRED, response.getStatusCode());
+        assertEquals(QwpStatusCode.OVERLOADED, response.getStatusCode());
         assertFalse(response.isSuccess());
         assertTrue(response.isRetriable());
-        assertTrue(response.getErrorMessage().contains("trades"));
-    }
-
-    @Test
-    public void testGenerateSchemaMismatchResponse() {
-        QwpResponse response = QwpResponse.schemaMismatch("trades", "price");
-
-        assertEquals(QwpStatusCode.SCHEMA_MISMATCH, response.getStatusCode());
-        assertFalse(response.isSuccess());
-        assertFalse(response.isRetriable());
-        assertTrue(response.getErrorMessage().contains("trades"));
-        assertTrue(response.getErrorMessage().contains("price"));
-    }
-
-    @Test
-    public void testGenerateTableNotFoundResponse() {
-        QwpResponse response = QwpResponse.tableNotFound("missing_table");
-
-        assertEquals(QwpStatusCode.TABLE_NOT_FOUND, response.getStatusCode());
-        assertFalse(response.isSuccess());
-        assertTrue(response.getErrorMessage().contains("missing_table"));
+        assertNotNull(response.getErrorMessage());
     }
 
     @Test
@@ -120,25 +121,6 @@ public class QwpResponseTest {
         assertEquals(QwpStatusCode.PARSE_ERROR, response.getStatusCode());
         assertFalse(response.isSuccess());
         assertEquals("invalid varint at offset 42", response.getErrorMessage());
-    }
-
-    @Test
-    public void testGenerateInternalErrorResponse() {
-        QwpResponse response = QwpResponse.internalError("out of memory");
-
-        assertEquals(QwpStatusCode.INTERNAL_ERROR, response.getStatusCode());
-        assertFalse(response.isSuccess());
-        assertEquals("out of memory", response.getErrorMessage());
-    }
-
-    @Test
-    public void testGenerateOverloadedResponse() {
-        QwpResponse response = QwpResponse.overloaded();
-
-        assertEquals(QwpStatusCode.OVERLOADED, response.getStatusCode());
-        assertFalse(response.isSuccess());
-        assertTrue(response.isRetriable());
-        assertNotNull(response.getErrorMessage());
     }
 
     @Test
@@ -153,6 +135,51 @@ public class QwpResponseTest {
         assertTrue(response.isSuccess()); // Partial is considered success
         assertNotNull(response.getTableErrors());
         assertEquals(2, response.getTableErrors().size());
+    }
+
+    @Test
+    public void testGenerateSchemaMismatchResponse() {
+        QwpResponse response = QwpResponse.schemaMismatch("trades", "price");
+
+        assertEquals(QwpStatusCode.SCHEMA_MISMATCH, response.getStatusCode());
+        assertFalse(response.isSuccess());
+        assertFalse(response.isRetriable());
+        assertTrue(response.getErrorMessage().contains("trades"));
+        assertTrue(response.getErrorMessage().contains("price"));
+    }
+
+    @Test
+    public void testGenerateSchemaRequiredResponse() {
+        QwpResponse response = QwpResponse.schemaRequired("trades");
+
+        assertEquals(QwpStatusCode.SCHEMA_REQUIRED, response.getStatusCode());
+        assertFalse(response.isSuccess());
+        assertTrue(response.isRetriable());
+        assertTrue(response.getErrorMessage().contains("trades"));
+    }
+
+    @Test
+    public void testGenerateTableNotFoundResponse() {
+        QwpResponse response = QwpResponse.tableNotFound("missing_table");
+
+        assertEquals(QwpStatusCode.TABLE_NOT_FOUND, response.getStatusCode());
+        assertFalse(response.isSuccess());
+        assertTrue(response.getErrorMessage().contains("missing_table"));
+    }
+
+    @Test
+    public void testPartialResponseErrorMessages() {
+        QwpResponse.TableError error = new QwpResponse.TableError(
+                5, QwpStatusCode.INTERNAL_ERROR, "detailed error message here");
+
+        assertEquals(5, error.getTableIndex());
+        assertEquals(QwpStatusCode.INTERNAL_ERROR, error.getErrorCode());
+        assertEquals("detailed error message here", error.getErrorMessage());
+
+        String str = error.toString();
+        assertTrue(str.contains("5"));
+        assertTrue(str.contains("INTERNAL_ERROR"));
+        assertTrue(str.contains("detailed error message here"));
     }
 
     @Test
@@ -178,59 +205,37 @@ public class QwpResponseTest {
     }
 
     @Test
-    public void testPartialResponseErrorMessages() {
-        QwpResponse.TableError error = new QwpResponse.TableError(
-                5, QwpStatusCode.INTERNAL_ERROR, "detailed error message here");
-
-        assertEquals(5, error.getTableIndex());
-        assertEquals(QwpStatusCode.INTERNAL_ERROR, error.getErrorCode());
-        assertEquals("detailed error message here", error.getErrorMessage());
-
-        String str = error.toString();
-        assertTrue(str.contains("5"));
-        assertTrue(str.contains("INTERNAL_ERROR"));
-        assertTrue(str.contains("detailed error message here"));
-    }
-
-    // ==================== Encoder Tests ====================
-
-    @Test
-    public void testResponseSerializationOk() {
-        QwpResponse response = QwpResponse.ok();
-        byte[] encoded = QwpResponseEncoder.encode(response);
-
-        assertEquals(1, encoded.length);
-        assertEquals(QwpStatusCode.OK, encoded[0]);
-    }
-
-    @Test
-    public void testResponseSerializationError() {
-        QwpResponse response = QwpResponse.parseError("bad data");
-        byte[] encoded = QwpResponseEncoder.encode(response);
-
-        // First byte is status code
-        assertEquals(QwpStatusCode.PARSE_ERROR, encoded[0]);
-
-        // Should be: status + varint(8) + "bad data"
-        assertEquals(1 + 1 + 8, encoded.length);
-    }
-
-    @Test
-    public void testResponseSerializationPartial() {
+    public void testResponseRoundTripEmptyPartial() throws QwpParseException {
         ObjList<QwpResponse.TableError> errors = new ObjList<>();
-        errors.add(new QwpResponse.TableError(0, QwpStatusCode.SCHEMA_MISMATCH, "type error"));
+        QwpResponse original = QwpResponse.partial(errors);
+        byte[] encoded = QwpResponseEncoder.encode(original);
+        QwpResponse decoded = QwpResponseEncoder.decode(encoded, 0, encoded.length);
 
-        QwpResponse response = QwpResponse.partial(errors);
-        byte[] encoded = QwpResponseEncoder.encode(response);
-
-        // First byte is PARTIAL
-        assertEquals(QwpStatusCode.PARTIAL, encoded[0]);
-
-        // Should have: status + errorCount + (tableIndex + errorCode + msgLen + msg)
-        assertTrue(encoded.length > 1);
+        assertEquals(QwpStatusCode.PARTIAL, decoded.getStatusCode());
+        assertEquals(0, decoded.getTableErrors().size());
     }
 
-    // ==================== Round-trip Tests ====================
+    @Test
+    public void testResponseRoundTripError() throws QwpParseException {
+        QwpResponse original = QwpResponse.internalError("something went wrong");
+        byte[] encoded = QwpResponseEncoder.encode(original);
+        QwpResponse decoded = QwpResponseEncoder.decode(encoded, 0, encoded.length);
+
+        assertEquals(QwpStatusCode.INTERNAL_ERROR, decoded.getStatusCode());
+        assertEquals("something went wrong", decoded.getErrorMessage());
+    }
+
+    @Test
+    public void testResponseRoundTripLargeTableIndex() throws QwpParseException {
+        ObjList<QwpResponse.TableError> errors = new ObjList<>();
+        errors.add(new QwpResponse.TableError(255, QwpStatusCode.PARSE_ERROR, "error at table 255"));
+
+        QwpResponse original = QwpResponse.partial(errors);
+        byte[] encoded = QwpResponseEncoder.encode(original);
+        QwpResponse decoded = QwpResponseEncoder.decode(encoded, 0, encoded.length);
+
+        assertEquals(255, decoded.getTableErrors().get(0).getTableIndex());
+    }
 
     @Test
     public void testResponseRoundTripOk() throws QwpParseException {
@@ -243,13 +248,13 @@ public class QwpResponseTest {
     }
 
     @Test
-    public void testResponseRoundTripError() throws QwpParseException {
-        QwpResponse original = QwpResponse.internalError("something went wrong");
+    public void testResponseRoundTripOverloaded() throws QwpParseException {
+        QwpResponse original = QwpResponse.overloaded();
         byte[] encoded = QwpResponseEncoder.encode(original);
         QwpResponse decoded = QwpResponseEncoder.decode(encoded, 0, encoded.length);
 
-        assertEquals(QwpStatusCode.INTERNAL_ERROR, decoded.getStatusCode());
-        assertEquals("something went wrong", decoded.getErrorMessage());
+        assertEquals(QwpStatusCode.OVERLOADED, decoded.getStatusCode());
+        assertTrue(decoded.isRetriable());
     }
 
     @Test
@@ -286,27 +291,6 @@ public class QwpResponseTest {
     }
 
     @Test
-    public void testResponseRoundTripOverloaded() throws QwpParseException {
-        QwpResponse original = QwpResponse.overloaded();
-        byte[] encoded = QwpResponseEncoder.encode(original);
-        QwpResponse decoded = QwpResponseEncoder.decode(encoded, 0, encoded.length);
-
-        assertEquals(QwpStatusCode.OVERLOADED, decoded.getStatusCode());
-        assertTrue(decoded.isRetriable());
-    }
-
-    @Test
-    public void testResponseRoundTripEmptyPartial() throws QwpParseException {
-        ObjList<QwpResponse.TableError> errors = new ObjList<>();
-        QwpResponse original = QwpResponse.partial(errors);
-        byte[] encoded = QwpResponseEncoder.encode(original);
-        QwpResponse decoded = QwpResponseEncoder.decode(encoded, 0, encoded.length);
-
-        assertEquals(QwpStatusCode.PARTIAL, decoded.getStatusCode());
-        assertEquals(0, decoded.getTableErrors().size());
-    }
-
-    @Test
     public void testResponseRoundTripUnicodeMessage() throws QwpParseException {
         String unicode = "エラー: テーブルが見つかりません 日本語";
         QwpResponse original = QwpResponse.parseError(unicode);
@@ -318,68 +302,40 @@ public class QwpResponseTest {
     }
 
     @Test
-    public void testResponseRoundTripLargeTableIndex() throws QwpParseException {
-        ObjList<QwpResponse.TableError> errors = new ObjList<>();
-        errors.add(new QwpResponse.TableError(255, QwpStatusCode.PARSE_ERROR, "error at table 255"));
+    public void testResponseSerializationError() {
+        QwpResponse response = QwpResponse.parseError("bad data");
+        byte[] encoded = QwpResponseEncoder.encode(response);
 
-        QwpResponse original = QwpResponse.partial(errors);
-        byte[] encoded = QwpResponseEncoder.encode(original);
-        QwpResponse decoded = QwpResponseEncoder.decode(encoded, 0, encoded.length);
+        // First byte is status code
+        assertEquals(QwpStatusCode.PARSE_ERROR, encoded[0]);
 
-        assertEquals(255, decoded.getTableErrors().get(0).getTableIndex());
-    }
-
-    // ==================== Error Handling Tests ====================
-
-    @Test
-    public void testDecodeTruncatedResponse() {
-        try {
-            QwpResponseEncoder.decode(new byte[0], 0, 0);
-            fail("Expected exception");
-        } catch (QwpParseException e) {
-            assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
-        }
+        // Should be: status + varint(8) + "bad data"
+        assertEquals(1 + 1 + 8, encoded.length);
     }
 
     @Test
-    public void testDecodeTruncatedErrorMessage() {
-        // Create a response with truncated message length
-        byte[] truncated = new byte[]{QwpStatusCode.PARSE_ERROR, 50}; // says 50 bytes but only 2 bytes total
-
-        try {
-            QwpResponseEncoder.decode(truncated, 0, truncated.length);
-            fail("Expected exception");
-        } catch (QwpParseException e) {
-            assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
-        }
-    }
-
-    // ==================== Size Calculation Tests ====================
-
-    @Test
-    public void testCalculateSizeOk() {
+    public void testResponseSerializationOk() {
         QwpResponse response = QwpResponse.ok();
-        assertEquals(1, QwpResponseEncoder.calculateSize(response));
+        byte[] encoded = QwpResponseEncoder.encode(response);
+
+        assertEquals(1, encoded.length);
+        assertEquals(QwpStatusCode.OK, encoded[0]);
     }
 
     @Test
-    public void testCalculateSizeError() {
-        QwpResponse response = QwpResponse.parseError("test");
-        // 1 (status) + 1 (varint len) + 4 (message)
-        assertEquals(6, QwpResponseEncoder.calculateSize(response));
-    }
-
-    @Test
-    public void testCalculateSizePartial() {
+    public void testResponseSerializationPartial() {
         ObjList<QwpResponse.TableError> errors = new ObjList<>();
-        errors.add(new QwpResponse.TableError(0, QwpStatusCode.PARSE_ERROR, "err"));
+        errors.add(new QwpResponse.TableError(0, QwpStatusCode.SCHEMA_MISMATCH, "type error"));
 
         QwpResponse response = QwpResponse.partial(errors);
-        // 1 (status) + 1 (count) + 1 (tableIndex) + 1 (errorCode) + 1 (msgLen) + 3 (msg)
-        assertEquals(8, QwpResponseEncoder.calculateSize(response));
-    }
+        byte[] encoded = QwpResponseEncoder.encode(response);
 
-    // ==================== toString Tests ====================
+        // First byte is PARTIAL
+        assertEquals(QwpStatusCode.PARTIAL, encoded[0]);
+
+        // Should have: status + errorCount + (tableIndex + errorCode + msgLen + msg)
+        assertTrue(encoded.length > 1);
+    }
 
     @Test
     public void testResponseToString() {
@@ -395,5 +351,38 @@ public class QwpResponseTest {
         QwpResponse partial = QwpResponse.partial(errors);
         assertTrue(partial.toString().contains("PARTIAL"));
         assertTrue(partial.toString().contains("tableErrors"));
+    }
+
+    @Test
+    public void testStatusCodeIsRetriable() {
+        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.OK));
+        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.PARTIAL));
+        assertTrue(QwpStatusCode.isRetriable(QwpStatusCode.SCHEMA_REQUIRED));
+        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.SCHEMA_MISMATCH));
+        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.TABLE_NOT_FOUND));
+        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.PARSE_ERROR));
+        assertFalse(QwpStatusCode.isRetriable(QwpStatusCode.INTERNAL_ERROR));
+        assertTrue(QwpStatusCode.isRetriable(QwpStatusCode.OVERLOADED));
+    }
+
+    @Test
+    public void testStatusCodeIsSuccess() {
+        assertTrue(QwpStatusCode.isSuccess(QwpStatusCode.OK));
+        assertTrue(QwpStatusCode.isSuccess(QwpStatusCode.PARTIAL));
+        assertFalse(QwpStatusCode.isSuccess(QwpStatusCode.SCHEMA_REQUIRED));
+        assertFalse(QwpStatusCode.isSuccess(QwpStatusCode.INTERNAL_ERROR));
+    }
+
+    @Test
+    public void testStatusCodeName() {
+        assertEquals("OK", QwpStatusCode.name(QwpStatusCode.OK));
+        assertEquals("PARTIAL", QwpStatusCode.name(QwpStatusCode.PARTIAL));
+        assertEquals("SCHEMA_REQUIRED", QwpStatusCode.name(QwpStatusCode.SCHEMA_REQUIRED));
+        assertEquals("SCHEMA_MISMATCH", QwpStatusCode.name(QwpStatusCode.SCHEMA_MISMATCH));
+        assertEquals("TABLE_NOT_FOUND", QwpStatusCode.name(QwpStatusCode.TABLE_NOT_FOUND));
+        assertEquals("PARSE_ERROR", QwpStatusCode.name(QwpStatusCode.PARSE_ERROR));
+        assertEquals("INTERNAL_ERROR", QwpStatusCode.name(QwpStatusCode.INTERNAL_ERROR));
+        assertEquals("OVERLOADED", QwpStatusCode.name(QwpStatusCode.OVERLOADED));
+        assertEquals("UNKNOWN(255)", QwpStatusCode.name((byte) 0xFF));
     }
 }

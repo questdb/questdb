@@ -52,78 +52,66 @@ public class QwpWebSocketAckIntegrationTest extends AbstractWebSocketTest {
     private static final Log LOG = LogFactory.getLog(QwpWebSocketAckIntegrationTest.class);
     private static final int TEST_PORT = 19500 + (int) (Os.currentTimeMicros() % 100);
 
-    /**
-     * Test that ACKs are properly sent and received for a single message.
-     * Uses async mode to enable ACK handling via InFlightWindow.
-     */
     @Test
-    public void testSingleMessageAck() throws Exception {
-        AckingServerHandler handler = new AckingServerHandler();
+    public void testAsyncFlushFailsFastOnInvalidAckPayload() throws Exception {
+        InvalidAckPayloadHandler handler = new InvalidAckPayloadHandler();
+        int port = TEST_PORT + 21;
 
-        try (TestWebSocketServer server = new TestWebSocketServer(TEST_PORT, handler)) {
+        try (TestWebSocketServer server = new TestWebSocketServer(port, handler)) {
             server.start();
             Assert.assertTrue("Server failed to start", server.awaitStart(5, TimeUnit.SECONDS));
 
-            // Use async mode with no auto-flush (manual flush only)
+            boolean errorCaught = false;
+            long start = System.currentTimeMillis();
             try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
-                    "localhost", TEST_PORT, false, 0, 0, 0)) {
-
-                // Send one row
+                    "localhost", port, false, 0, 0, 0)) {
                 sender.table("test")
-                        .longColumn("value", 42)
+                        .longColumn("value", 1)
                         .atNow();
-
-                // Flush and wait for ACK
                 sender.flush();
-
-                // Verify server received the message
-                Assert.assertTrue("Server should receive message",
-                        handler.awaitMessages(1, 5, TimeUnit.SECONDS));
-                Assert.assertEquals("Should receive 1 message", 1, handler.getMessageCount());
-
-                // Verify ACK was sent
-                Assert.assertEquals("Should send 1 ACK", 1, handler.getAckCount());
+            } catch (Exception e) {
+                errorCaught = true;
+                Assert.assertTrue(
+                        e.getMessage().contains("Invalid ACK response payload")
+                                || e.getMessage().contains("Error in send queue")
+                );
             }
+
+            long duration = System.currentTimeMillis() - start;
+            Assert.assertTrue("Expected invalid ACK error", errorCaught);
+            Assert.assertTrue("Flush should fail quickly on invalid ACK [duration=" + duration + "ms]", duration < 10_000);
         }
     }
 
-    /**
-     * Test that multiple messages are all ACKed correctly.
-     * Uses async mode to enable ACK handling via InFlightWindow.
-     */
     @Test
-    public void testMultipleMessagesAck() throws Exception {
-        AckingServerHandler handler = new AckingServerHandler();
+    public void testAsyncFlushFailsFastOnServerClose() throws Exception {
+        ClosingServerHandler handler = new ClosingServerHandler();
+        int port = TEST_PORT + 20;
 
-        try (TestWebSocketServer server = new TestWebSocketServer(TEST_PORT + 1, handler)) {
+        try (TestWebSocketServer server = new TestWebSocketServer(port, handler)) {
             server.start();
             Assert.assertTrue("Server failed to start", server.awaitStart(5, TimeUnit.SECONDS));
 
-            // Use async mode with no auto-flush (manual flush only)
+            boolean errorCaught = false;
+            long start = System.currentTimeMillis();
             try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
-                    "localhost", TEST_PORT + 1, false, 0, 0, 0)) {
-
-                // Send multiple rows
-                int numRows = 10;
-                for (int i = 0; i < numRows; i++) {
-                    sender.table("test")
-                            .longColumn("value", i)
-                            .at(i * 1000L, ChronoUnit.MICROS);
-                }
-
-                // Flush and wait for all ACKs
+                    "localhost", port, false, 0, 0, 0)) {
+                sender.table("test")
+                        .longColumn("value", 1)
+                        .atNow();
                 sender.flush();
-
-                // Verify server received all messages
-                Assert.assertTrue("Server should receive messages",
-                        handler.awaitMessages(1, 5, TimeUnit.SECONDS)); // At least 1 batch
-
-                // Verify ACKs were sent
-                Assert.assertTrue("Should send at least 1 ACK", handler.getAckCount() >= 1);
-
-                LOG.info().$("Received ").$(handler.getMessageCount()).$(" messages, sent ")
-                        .$(handler.getAckCount()).$(" ACKs").$();
+            } catch (Exception e) {
+                errorCaught = true;
+                Assert.assertTrue(
+                        e.getMessage().contains("closed")
+                                || e.getMessage().contains("Error in send queue")
+                                || e.getMessage().contains("failed")
+                );
             }
+
+            long duration = System.currentTimeMillis() - start;
+            Assert.assertTrue("Expected async close error", errorCaught);
+            Assert.assertTrue("Flush should fail quickly on close [duration=" + duration + "ms]", duration < 10_000);
         }
     }
 
@@ -281,66 +269,78 @@ public class QwpWebSocketAckIntegrationTest extends AbstractWebSocketTest {
         }
     }
 
+    /**
+     * Test that multiple messages are all ACKed correctly.
+     * Uses async mode to enable ACK handling via InFlightWindow.
+     */
     @Test
-    public void testAsyncFlushFailsFastOnServerClose() throws Exception {
-        ClosingServerHandler handler = new ClosingServerHandler();
-        int port = TEST_PORT + 20;
+    public void testMultipleMessagesAck() throws Exception {
+        AckingServerHandler handler = new AckingServerHandler();
 
-        try (TestWebSocketServer server = new TestWebSocketServer(port, handler)) {
+        try (TestWebSocketServer server = new TestWebSocketServer(TEST_PORT + 1, handler)) {
             server.start();
             Assert.assertTrue("Server failed to start", server.awaitStart(5, TimeUnit.SECONDS));
 
-            boolean errorCaught = false;
-            long start = System.currentTimeMillis();
+            // Use async mode with no auto-flush (manual flush only)
             try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
-                    "localhost", port, false, 0, 0, 0)) {
-                sender.table("test")
-                        .longColumn("value", 1)
-                        .atNow();
-                sender.flush();
-            } catch (Exception e) {
-                errorCaught = true;
-                Assert.assertTrue(
-                        e.getMessage().contains("closed")
-                                || e.getMessage().contains("Error in send queue")
-                                || e.getMessage().contains("failed")
-                );
-            }
+                    "localhost", TEST_PORT + 1, false, 0, 0, 0)) {
 
-            long duration = System.currentTimeMillis() - start;
-            Assert.assertTrue("Expected async close error", errorCaught);
-            Assert.assertTrue("Flush should fail quickly on close [duration=" + duration + "ms]", duration < 10_000);
+                // Send multiple rows
+                int numRows = 10;
+                for (int i = 0; i < numRows; i++) {
+                    sender.table("test")
+                            .longColumn("value", i)
+                            .at(i * 1000L, ChronoUnit.MICROS);
+                }
+
+                // Flush and wait for all ACKs
+                sender.flush();
+
+                // Verify server received all messages
+                Assert.assertTrue("Server should receive messages",
+                        handler.awaitMessages(1, 5, TimeUnit.SECONDS)); // At least 1 batch
+
+                // Verify ACKs were sent
+                Assert.assertTrue("Should send at least 1 ACK", handler.getAckCount() >= 1);
+
+                LOG.info().$("Received ").$(handler.getMessageCount()).$(" messages, sent ")
+                        .$(handler.getAckCount()).$(" ACKs").$();
+            }
         }
     }
 
+    /**
+     * Test that ACKs are properly sent and received for a single message.
+     * Uses async mode to enable ACK handling via InFlightWindow.
+     */
     @Test
-    public void testAsyncFlushFailsFastOnInvalidAckPayload() throws Exception {
-        InvalidAckPayloadHandler handler = new InvalidAckPayloadHandler();
-        int port = TEST_PORT + 21;
+    public void testSingleMessageAck() throws Exception {
+        AckingServerHandler handler = new AckingServerHandler();
 
-        try (TestWebSocketServer server = new TestWebSocketServer(port, handler)) {
+        try (TestWebSocketServer server = new TestWebSocketServer(TEST_PORT, handler)) {
             server.start();
             Assert.assertTrue("Server failed to start", server.awaitStart(5, TimeUnit.SECONDS));
 
-            boolean errorCaught = false;
-            long start = System.currentTimeMillis();
+            // Use async mode with no auto-flush (manual flush only)
             try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
-                    "localhost", port, false, 0, 0, 0)) {
-                sender.table("test")
-                        .longColumn("value", 1)
-                        .atNow();
-                sender.flush();
-            } catch (Exception e) {
-                errorCaught = true;
-                Assert.assertTrue(
-                        e.getMessage().contains("Invalid ACK response payload")
-                                || e.getMessage().contains("Error in send queue")
-                );
-            }
+                    "localhost", TEST_PORT, false, 0, 0, 0)) {
 
-            long duration = System.currentTimeMillis() - start;
-            Assert.assertTrue("Expected invalid ACK error", errorCaught);
-            Assert.assertTrue("Flush should fail quickly on invalid ACK [duration=" + duration + "ms]", duration < 10_000);
+                // Send one row
+                sender.table("test")
+                        .longColumn("value", 42)
+                        .atNow();
+
+                // Flush and wait for ACK
+                sender.flush();
+
+                // Verify server received the message
+                Assert.assertTrue("Server should receive message",
+                        handler.awaitMessages(1, 5, TimeUnit.SECONDS));
+                Assert.assertEquals("Should receive 1 message", 1, handler.getMessageCount());
+
+                // Verify ACK was sent
+                Assert.assertEquals("Should send 1 ACK", 1, handler.getAckCount());
+            }
         }
     }
 
@@ -401,194 +401,6 @@ public class QwpWebSocketAckIntegrationTest extends AbstractWebSocketTest {
     // ==================== SERVER HANDLERS ====================
 
     /**
-     * Server handler that sends ACKs for each received message.
-     */
-    private static class AckingServerHandler implements TestWebSocketServer.WebSocketServerHandler {
-        private final AtomicInteger messageCount = new AtomicInteger(0);
-        private final AtomicInteger ackCount = new AtomicInteger(0);
-        private final AtomicLong nextSequence = new AtomicLong(0);
-        private final CountDownLatch messageLatch = new CountDownLatch(1);
-
-        @Override
-        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
-            int count = messageCount.incrementAndGet();
-            long sequence = nextSequence.getAndIncrement();
-
-            LOG.debug().$("Server received message ").$(count).$(", sending ACK for seq ").$(sequence).$();
-
-            // Send ACK response
-            try {
-                byte[] ackResponse = createAckResponse(sequence);
-                client.sendBinary(ackResponse);
-                ackCount.incrementAndGet();
-            } catch (IOException e) {
-                LOG.error().$("Failed to send ACK: ").$(e).$();
-            }
-
-            messageLatch.countDown();
-        }
-
-        public int getMessageCount() {
-            return messageCount.get();
-        }
-
-        public int getAckCount() {
-            return ackCount.get();
-        }
-
-        public boolean awaitMessages(int count, long timeout, TimeUnit unit) throws InterruptedException {
-            return messageLatch.await(timeout, unit);
-        }
-    }
-
-    /**
-     * Server handler that tracks received sequence numbers.
-     */
-    private static class SequenceTrackingHandler implements TestWebSocketServer.WebSocketServerHandler {
-        final CopyOnWriteArrayList<Long> receivedSequences = new CopyOnWriteArrayList<>();
-        private final AtomicInteger ackCount = new AtomicInteger(0);
-        private final AtomicLong nextSequence = new AtomicLong(0);
-
-        @Override
-        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
-            long sequence = nextSequence.getAndIncrement();
-            receivedSequences.add(sequence);
-
-            LOG.debug().$("Server tracking sequence ").$(sequence).$();
-
-            // Send ACK response
-            try {
-                byte[] ackResponse = createAckResponse(sequence);
-                client.sendBinary(ackResponse);
-                ackCount.incrementAndGet();
-            } catch (IOException e) {
-                LOG.error().$("Failed to send ACK: ").$(e).$();
-            }
-        }
-
-        public int getAckCount() {
-            return ackCount.get();
-        }
-    }
-
-    /**
-     * Server handler that sends an error response for a specific message.
-     */
-    private static class ErroringServerHandler implements TestWebSocketServer.WebSocketServerHandler {
-        private final int errorOnMessage;
-        private final AtomicInteger messageCount = new AtomicInteger(0);
-        private final AtomicLong nextSequence = new AtomicLong(0);
-
-        ErroringServerHandler(int errorOnMessage) {
-            this.errorOnMessage = errorOnMessage;
-        }
-
-        @Override
-        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
-            int count = messageCount.getAndIncrement();
-            long sequence = nextSequence.getAndIncrement();
-
-            try {
-                if (count == errorOnMessage) {
-                    LOG.info().$("Server sending ERROR for message ").$(count).$();
-                    byte[] errorResponse = createErrorResponse(sequence,
-                            WebSocketResponse.STATUS_PARSE_ERROR, "Test error");
-                    client.sendBinary(errorResponse);
-                } else {
-                    LOG.debug().$("Server sending ACK for message ").$(count).$();
-                    byte[] ackResponse = createAckResponse(sequence);
-                    client.sendBinary(ackResponse);
-                }
-            } catch (IOException e) {
-                LOG.error().$("Failed to send response: ").$(e).$();
-            }
-        }
-    }
-
-    /**
-     * Server handler that delays ACKs to test blocking behavior.
-     */
-    private static class DelayedAckHandler implements TestWebSocketServer.WebSocketServerHandler {
-        private final long delayMs;
-        private final AtomicLong nextSequence = new AtomicLong(0);
-
-        DelayedAckHandler(long delayMs) {
-            this.delayMs = delayMs;
-        }
-
-        @Override
-        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
-            long sequence = nextSequence.getAndIncrement();
-
-            LOG.debug().$("Server delaying ACK by ").$(delayMs).$("ms").$();
-
-            // Delay before sending ACK
-            new Thread(() -> {
-                try {
-                    Thread.sleep(delayMs);
-                    byte[] ackResponse = createAckResponse(sequence);
-                    client.sendBinary(ackResponse);
-                    LOG.debug().$("Server sent delayed ACK for seq ").$(sequence).$();
-                } catch (Exception e) {
-                    LOG.error().$("Failed to send delayed ACK: ").$(e).$();
-                }
-            }).start();
-        }
-    }
-
-    private static class ClosingServerHandler implements TestWebSocketServer.WebSocketServerHandler {
-        @Override
-        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
-            try {
-                client.sendClose(WebSocketCloseCode.GOING_AWAY, "bye");
-            } catch (IOException e) {
-                LOG.error().$("Failed to send close frame: ").$(e).$();
-            }
-        }
-    }
-
-    private static class InvalidAckPayloadHandler implements TestWebSocketServer.WebSocketServerHandler {
-        @Override
-        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
-            try {
-                client.sendBinary(new byte[]{1, 2, 3});
-            } catch (IOException e) {
-                LOG.error().$("Failed to send invalid payload: ").$(e).$();
-            }
-        }
-    }
-
-    private static class PingThenDelayedAckHandler implements TestWebSocketServer.WebSocketServerHandler {
-        private final long delayMs;
-        private final AtomicLong nextSequence = new AtomicLong(0);
-
-        private PingThenDelayedAckHandler(long delayMs) {
-            this.delayMs = delayMs;
-        }
-
-        @Override
-        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
-            long sequence = nextSequence.getAndIncrement();
-            try {
-                client.sendPing(new byte[]{42});
-            } catch (IOException e) {
-                LOG.error().$("Failed to send ping: ").$(e).$();
-            }
-
-            new Thread(() -> {
-                try {
-                    Thread.sleep(delayMs);
-                    client.sendBinary(createAckResponse(sequence));
-                } catch (Exception e) {
-                    LOG.error().$("Failed to send delayed ACK: ").$(e).$();
-                }
-            }).start();
-        }
-    }
-
-    // ==================== HELPER METHODS ====================
-
-    /**
      * Creates a binary ACK response using WebSocketResponse format.
      * Format: status (1 byte) + sequence (8 bytes little-endian)
      */
@@ -640,5 +452,193 @@ public class QwpWebSocketAckIntegrationTest extends AbstractWebSocketTest {
         System.arraycopy(msgBytes, 0, response, 11, msgBytes.length);
 
         return response;
+    }
+
+    /**
+     * Server handler that sends ACKs for each received message.
+     */
+    private static class AckingServerHandler implements TestWebSocketServer.WebSocketServerHandler {
+        private final AtomicInteger ackCount = new AtomicInteger(0);
+        private final AtomicInteger messageCount = new AtomicInteger(0);
+        private final CountDownLatch messageLatch = new CountDownLatch(1);
+        private final AtomicLong nextSequence = new AtomicLong(0);
+
+        public boolean awaitMessages(int count, long timeout, TimeUnit unit) throws InterruptedException {
+            return messageLatch.await(timeout, unit);
+        }
+
+        public int getAckCount() {
+            return ackCount.get();
+        }
+
+        public int getMessageCount() {
+            return messageCount.get();
+        }
+
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            int count = messageCount.incrementAndGet();
+            long sequence = nextSequence.getAndIncrement();
+
+            LOG.debug().$("Server received message ").$(count).$(", sending ACK for seq ").$(sequence).$();
+
+            // Send ACK response
+            try {
+                byte[] ackResponse = createAckResponse(sequence);
+                client.sendBinary(ackResponse);
+                ackCount.incrementAndGet();
+            } catch (IOException e) {
+                LOG.error().$("Failed to send ACK: ").$(e).$();
+            }
+
+            messageLatch.countDown();
+        }
+    }
+
+    private static class ClosingServerHandler implements TestWebSocketServer.WebSocketServerHandler {
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            try {
+                client.sendClose(WebSocketCloseCode.GOING_AWAY, "bye");
+            } catch (IOException e) {
+                LOG.error().$("Failed to send close frame: ").$(e).$();
+            }
+        }
+    }
+
+    /**
+     * Server handler that delays ACKs to test blocking behavior.
+     */
+    private static class DelayedAckHandler implements TestWebSocketServer.WebSocketServerHandler {
+        private final long delayMs;
+        private final AtomicLong nextSequence = new AtomicLong(0);
+
+        DelayedAckHandler(long delayMs) {
+            this.delayMs = delayMs;
+        }
+
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            long sequence = nextSequence.getAndIncrement();
+
+            LOG.debug().$("Server delaying ACK by ").$(delayMs).$("ms").$();
+
+            // Delay before sending ACK
+            new Thread(() -> {
+                try {
+                    Thread.sleep(delayMs);
+                    byte[] ackResponse = createAckResponse(sequence);
+                    client.sendBinary(ackResponse);
+                    LOG.debug().$("Server sent delayed ACK for seq ").$(sequence).$();
+                } catch (Exception e) {
+                    LOG.error().$("Failed to send delayed ACK: ").$(e).$();
+                }
+            }).start();
+        }
+    }
+
+    /**
+     * Server handler that sends an error response for a specific message.
+     */
+    private static class ErroringServerHandler implements TestWebSocketServer.WebSocketServerHandler {
+        private final int errorOnMessage;
+        private final AtomicInteger messageCount = new AtomicInteger(0);
+        private final AtomicLong nextSequence = new AtomicLong(0);
+
+        ErroringServerHandler(int errorOnMessage) {
+            this.errorOnMessage = errorOnMessage;
+        }
+
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            int count = messageCount.getAndIncrement();
+            long sequence = nextSequence.getAndIncrement();
+
+            try {
+                if (count == errorOnMessage) {
+                    LOG.info().$("Server sending ERROR for message ").$(count).$();
+                    byte[] errorResponse = createErrorResponse(sequence,
+                            WebSocketResponse.STATUS_PARSE_ERROR, "Test error");
+                    client.sendBinary(errorResponse);
+                } else {
+                    LOG.debug().$("Server sending ACK for message ").$(count).$();
+                    byte[] ackResponse = createAckResponse(sequence);
+                    client.sendBinary(ackResponse);
+                }
+            } catch (IOException e) {
+                LOG.error().$("Failed to send response: ").$(e).$();
+            }
+        }
+    }
+
+    private static class InvalidAckPayloadHandler implements TestWebSocketServer.WebSocketServerHandler {
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            try {
+                client.sendBinary(new byte[]{1, 2, 3});
+            } catch (IOException e) {
+                LOG.error().$("Failed to send invalid payload: ").$(e).$();
+            }
+        }
+    }
+
+    // ==================== HELPER METHODS ====================
+
+    private static class PingThenDelayedAckHandler implements TestWebSocketServer.WebSocketServerHandler {
+        private final long delayMs;
+        private final AtomicLong nextSequence = new AtomicLong(0);
+
+        private PingThenDelayedAckHandler(long delayMs) {
+            this.delayMs = delayMs;
+        }
+
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            long sequence = nextSequence.getAndIncrement();
+            try {
+                client.sendPing(new byte[]{42});
+            } catch (IOException e) {
+                LOG.error().$("Failed to send ping: ").$(e).$();
+            }
+
+            new Thread(() -> {
+                try {
+                    Thread.sleep(delayMs);
+                    client.sendBinary(createAckResponse(sequence));
+                } catch (Exception e) {
+                    LOG.error().$("Failed to send delayed ACK: ").$(e).$();
+                }
+            }).start();
+        }
+    }
+
+    /**
+     * Server handler that tracks received sequence numbers.
+     */
+    private static class SequenceTrackingHandler implements TestWebSocketServer.WebSocketServerHandler {
+        final CopyOnWriteArrayList<Long> receivedSequences = new CopyOnWriteArrayList<>();
+        private final AtomicInteger ackCount = new AtomicInteger(0);
+        private final AtomicLong nextSequence = new AtomicLong(0);
+
+        public int getAckCount() {
+            return ackCount.get();
+        }
+
+        @Override
+        public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
+            long sequence = nextSequence.getAndIncrement();
+            receivedSequences.add(sequence);
+
+            LOG.debug().$("Server tracking sequence ").$(sequence).$();
+
+            // Send ACK response
+            try {
+                byte[] ackResponse = createAckResponse(sequence);
+                client.sendBinary(ackResponse);
+                ackCount.incrementAndGet();
+            } catch (IOException e) {
+                LOG.error().$("Failed to send ACK: ").$(e).$();
+            }
+        }
     }
 }

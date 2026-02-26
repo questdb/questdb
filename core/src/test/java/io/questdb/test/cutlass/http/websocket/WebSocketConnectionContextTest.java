@@ -42,8 +42,6 @@ import java.util.List;
  */
 public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
 
-    // ==================== STATE MANAGEMENT TESTS ====================
-
     @Test
     public void testBufferCleanupOnClose() {
         long memBefore = Unsafe.getMemUsed();
@@ -126,8 +124,6 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
             Assert.assertEquals(WebSocketConnectionContext.STATE_CLOSED, ctx.getState());
         }
     }
-
-    // ==================== RECEIVE HANDLING TESTS ====================
 
     @Test
     public void testCloseWithEmptyPayload() {
@@ -241,8 +237,6 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== BUFFER MANAGEMENT TESTS ====================
-
     @Test
     public void testPingDuringClose() {
         try (WebSocketConnectionContext ctx = createContext()) {
@@ -308,8 +302,6 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
             Assert.assertEquals(WebSocketConnectionContext.STATE_CLOSED, ctx.getState());
         }
     }
-
-    // ==================== SEND HANDLING TESTS ====================
 
     @Test
     public void testReceiveDataAfterCloseSent() {
@@ -439,8 +431,6 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== CLOSE HANDLING EDGE CASES ====================
-
     @Test
     public void testReceivePongFrame() {
         try (WebSocketConnectionContext ctx = createContext()) {
@@ -521,8 +511,6 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
             }
         }
     }
-
-    // ==================== PROTOCOL ERROR TESTS ====================
 
     @Test
     public void testRejectNestedFragmentation() {
@@ -624,8 +612,6 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== RESOURCE MANAGEMENT TESTS ====================
-
     @Test
     public void testSendBinaryFrame() {
         try (WebSocketConnectionContext ctx = createContext()) {
@@ -683,8 +669,6 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== PENDING OPERATIONS TESTS ====================
-
     @Test
     public void testSendPongFrame() {
         try (WebSocketConnectionContext ctx = createContext()) {
@@ -722,8 +706,6 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
         }
     }
 
-    // ==================== CONFIGURATION TESTS ====================
-
     @Test
     public void testStateTransitionToClosed() {
         try (WebSocketConnectionContext ctx = createContext()) {
@@ -745,8 +727,6 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
             Assert.assertFalse(ctx.isClosed());
         }
     }
-
-    // ==================== HELPER METHODS ====================
 
     private WebSocketConnectionContext createContext() {
         return createContext(65536);
