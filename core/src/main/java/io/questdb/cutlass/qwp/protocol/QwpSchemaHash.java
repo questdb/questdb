@@ -110,19 +110,19 @@ public final class QwpSchemaHash {
     }
 
     /**
-     * Computes the schema hash directly from column buffers without intermediate arrays.
-     * This is the most efficient method when column data is already available.
+     * Computes the schema hash directly from column definitions without intermediate arrays.
+     * This is the most efficient method when column metadata is already available.
      *
-     * @param columns list of column buffers
+     * @param columns list of column definitions
      * @return the schema hash
      */
-    public static long computeSchemaHashDirect(io.questdb.std.ObjList<QwpTableBuffer.ColumnBuffer> columns) {
+    public static long computeSchemaHashDirect(io.questdb.std.ObjList<QwpColumnDef> columns) {
         // Use pooled hasher to avoid allocation
         Hasher hasher = HASHER_POOL.get();
         hasher.reset(DEFAULT_SEED);
 
         for (int i = 0, n = columns.size(); i < n; i++) {
-            QwpTableBuffer.ColumnBuffer col = columns.get(i);
+            QwpColumnDef col = columns.get(i);
             String name = col.getName();
             // Encode UTF-8 directly without allocating byte array
             for (int j = 0, len = name.length(); j < len; j++) {
@@ -153,7 +153,7 @@ public final class QwpSchemaHash {
                 }
             }
             // Wire type code: type | (nullable ? 0x80 : 0)
-            byte wireType = (byte) (col.getType() | (col.nullable ? 0x80 : 0));
+            byte wireType = (byte) (col.getTypeCode() | (col.isNullable() ? 0x80 : 0));
             hasher.update(wireType);
         }
 

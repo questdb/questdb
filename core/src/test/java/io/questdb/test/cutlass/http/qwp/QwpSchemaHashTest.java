@@ -24,8 +24,8 @@
 
 package io.questdb.test.cutlass.http.qwp;
 
+import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaHash;
-import io.questdb.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -242,11 +242,11 @@ public class QwpSchemaHashTest {
 
     @Test
     public void testSchemaHashDirectInvalidSurrogatePair() {
-        ObjList<QwpTableBuffer.ColumnBuffer> invalidCols = new ObjList<>();
-        invalidCols.add(new QwpTableBuffer.ColumnBuffer("\uD800X", TYPE_LONG, false));
+        ObjList<QwpColumnDef> invalidCols = new ObjList<>();
+        invalidCols.add(new QwpColumnDef("\uD800X", TYPE_LONG, false));
 
-        ObjList<QwpTableBuffer.ColumnBuffer> expectedCols = new ObjList<>();
-        expectedCols.add(new QwpTableBuffer.ColumnBuffer("?X", TYPE_LONG, false));
+        ObjList<QwpColumnDef> expectedCols = new ObjList<>();
+        expectedCols.add(new QwpColumnDef("?X", TYPE_LONG, false));
 
         long hashInvalid = QwpSchemaHash.computeSchemaHashDirect(invalidCols);
         long hashExpected = QwpSchemaHash.computeSchemaHashDirect(expectedCols);
