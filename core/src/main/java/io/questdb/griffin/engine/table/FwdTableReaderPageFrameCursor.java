@@ -194,7 +194,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
-
             }
         }
         toTop();
