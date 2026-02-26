@@ -164,7 +164,8 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     }
                     yield TimestampConstant.newInstance(timestampDriver.parseQuotedLiteral(fillNode.token), type);
                 }
-                default -> throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+                default ->
+                        throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             };
         } catch (NumericException e) {
             throw SqlException.position(fillNode.position).put("invalid fill value: ").put(fillNode.token);
