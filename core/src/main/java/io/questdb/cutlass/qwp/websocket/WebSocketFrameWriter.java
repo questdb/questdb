@@ -100,23 +100,6 @@ public final class WebSocketFrameWriter {
     }
 
     /**
-     * Writes a binary frame with payload from a memory address.
-     *
-     * @param buf        the buffer to write to
-     * @param payloadPtr pointer to the payload data
-     * @param payloadLen length of payload
-     * @return the total number of bytes written
-     */
-    public static int writeBinaryFrame(long buf, long payloadPtr, int payloadLen) {
-        int headerLen = writeHeader(buf, true, WebSocketOpcode.BINARY, payloadLen, false);
-
-        // Copy payload from memory
-        Unsafe.getUnsafe().copyMemory(payloadPtr, buf + headerLen, payloadLen);
-
-        return headerLen + payloadLen;
-    }
-
-    /**
      * Writes a binary frame header only (for when payload is written separately).
      *
      * @param buf        the buffer to write to
