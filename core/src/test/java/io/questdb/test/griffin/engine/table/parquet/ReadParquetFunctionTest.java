@@ -150,6 +150,44 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         null, parallel, false
                 );
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                bindVariableService.clear();
+                bindVariableService.setInt("v", -999);
+                assertQueryNoLeakCheck(
+                        "id\n",
+                        "SELECT id FROM read_parquet('x.parquet') WHERE id = :v",
+                        null, parallel, false
+                );
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                bindVariableService.clear();
+                bindVariableService.setInt("v", 42);
+                assertQueryNoLeakCheck(
+                        "id\n42\n",
+                        "SELECT id FROM read_parquet('x.parquet') WHERE id = :v",
+                        null, parallel, false
+                );
+
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                bindVariableService.clear();
+                bindVariableService.setStr("v", "no_such_value");
+                assertQueryNoLeakCheck(
+                        "name\n",
+                        "SELECT name FROM read_parquet('x.parquet') WHERE name = :v",
+                        null, parallel, false
+                );
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                bindVariableService.clear();
+                bindVariableService.setInt(0, -999);
+                assertQueryNoLeakCheck(
+                        "id\n",
+                        "SELECT id FROM read_parquet('x.parquet') WHERE id = $1",
+                        null, parallel, false
+                );
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             }
         });
     }

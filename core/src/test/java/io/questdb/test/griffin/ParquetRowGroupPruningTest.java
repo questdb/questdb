@@ -89,6 +89,18 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     null, true, false
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            bindVariableService.clear();
+            bindVariableService.setInt("v", -991);
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = :v ORDER BY ts DESC", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            bindVariableService.clear();
+            bindVariableService.setInt("v", 42);
+            assertQueryNoLeakCheck("val\n42\n", "SELECT val FROM x WHERE val = :v ORDER BY ts DESC", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
         });
     }
 
@@ -519,6 +531,37 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBloomFilterIntBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            bindVariableService.clear();
+            bindVariableService.setInt("v", 25_000);
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            bindVariableService.clear();
+            bindVariableService.setInt("v", 50_000);
+            assertQueryNoLeakCheck("val\n50000\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 25_000);
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = $1", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testBloomFilterIntInList() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -910,6 +953,31 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val = '❤️'",
                     null, true, false
             );
+        });
+    }
+
+    @Test
+    public void testBloomFilterVarcharBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('abc', '2024-01-01T00:00:00.000000Z'),
+                    ('❤️', '2024-01-01T01:00:00.000000Z'),
+                    ('xyz', '2024-01-01T02:00:00.000000Z'),
+                    ('xxx', '2024-01-02T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "ghi");
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            bindVariableService.clear();
+            bindVariableService.setStr("v", "❤️");
+            assertQueryNoLeakCheck("val\n❤️\n", "SELECT val FROM x WHERE val = :v", null, true, false);
         });
     }
 
@@ -1726,6 +1794,39 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val = 99_999",
                     null, true, false
             );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningIntBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (10_000, '2024-01-01T00:00:00.000000Z'),
+                    (20_000, '2024-01-01T01:00:00.000000Z'),
+                    (30_000, '2024-01-01T02:00:00.000000Z'),
+                    (40_000, '2024-01-01T03:00:00.000000Z'),
+                    (50_000, '2024-01-01T04:00:00.000000Z'),
+                    (60_000, '2024-01-02T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            bindVariableService.clear();
+            bindVariableService.setInt("v", 30_000);
+            assertQueryNoLeakCheck("val\n30000\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            bindVariableService.clear();
+            bindVariableService.setInt("v", 99_999);
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = :v", null, true, false);
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 99_999);
+            assertQueryNoLeakCheck("val\n", "SELECT val FROM x WHERE val = $1", null, true, false);
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
