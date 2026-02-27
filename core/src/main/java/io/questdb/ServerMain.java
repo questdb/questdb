@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+// CI trigger
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
