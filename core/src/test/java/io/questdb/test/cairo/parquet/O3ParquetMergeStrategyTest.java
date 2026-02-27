@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo;
+package io.questdb.test.cairo.parquet;
 
 import io.questdb.cairo.O3ParquetMergeStrategy;
 import io.questdb.cairo.O3ParquetMergeStrategy.ActionType;
@@ -654,6 +654,51 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
         Assert.assertEquals(300, O3ParquetMergeStrategy.getRowGroupMin(bounds, 1));
         Assert.assertEquals(400, O3ParquetMergeStrategy.getRowGroupMax(bounds, 1));
         Assert.assertEquals(75, O3ParquetMergeStrategy.getRowGroupRowCount(bounds, 1));
+    }
+
+    @Test
+    public void testSingleRowGroupOverlapDoesNotMergeNeighbors() throws Exception {
+        assertMemoryLeak(() -> {
+            LongList rowGroupBounds = new LongList();
+            // 10 contiguous row groups, 100 rows each, timestamps [0..99], [100..199], ..., [900..999]
+            for (int i = 0; i < 10; i++) {
+                O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, i * 100L, i * 100L + 99, 100);
+            }
+
+            ObjList<MergeAction> actions = new ObjList<>();
+
+            // Single O3 row at timestamp 550, within RG5's range [500..599]
+            long sortedTimestampsAddr = allocateSortedTimestamps(550);
+            try {
+                O3ParquetMergeStrategy.computeMergeActions(
+                        rowGroupBounds,
+                        sortedTimestampsAddr,
+                        0, 0,
+                        0,
+                        actions
+                );
+
+                // Expected: 5 COPY (RG0-4) + 1 MERGE (RG5) + 4 COPY (RG6-9) = 10 actions
+                Assert.assertEquals(10, actions.size());
+
+                for (int i = 0; i < 5; i++) {
+                    Assert.assertEquals("action " + i, ActionType.COPY_ROW_GROUP_SLICE, actions.get(i).type);
+                    Assert.assertEquals("action " + i + " rgIndex", i, actions.get(i).rowGroupIndex);
+                }
+
+                Assert.assertEquals(ActionType.MERGE, actions.get(5).type);
+                Assert.assertEquals(5, actions.get(5).rowGroupIndex);
+                Assert.assertEquals(0, actions.get(5).o3Lo);
+                Assert.assertEquals(0, actions.get(5).o3Hi);
+
+                for (int i = 6; i < 10; i++) {
+                    Assert.assertEquals("action " + i, ActionType.COPY_ROW_GROUP_SLICE, actions.get(i).type);
+                    Assert.assertEquals("action " + i + " rgIndex", i, actions.get(i).rowGroupIndex);
+                }
+            } finally {
+                freeSortedTimestamps(sortedTimestampsAddr, 1);
+            }
+        });
     }
 
     @Test

@@ -3910,7 +3910,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
             return 1;
         }
-        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows());
+        // In-order optimization applies only when commit timestamps >= inOrderMinTimestamp.
+        // For native last partition: use the partition's max timestamp, so only appending data is optimized.
+        // For parquet last partition: use Long.MAX_VALUE to disable optimization entirely,
+        // batching more transactions to reduce the number of expensive parquet O3 merges.
+        long inOrderMinTimestamp = isLastPartitionParquet() ? Long.MAX_VALUE : txWriter.getMaxTimestamp();
+        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), inOrderMinTimestamp);
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
@@ -6020,6 +6025,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
     }
+
 
     private void lock() {
         try {

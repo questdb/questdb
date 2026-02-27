@@ -273,8 +273,15 @@ stages:
             displayName: "Upload Rust coverage report"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
             inputs:
-              pathToPublish: "$(Build.SourcesDirectory)/rust-coverage"
+              pathToPublish: "$(Build.SourcesDirectory)/cobertura.xml"
               artifactName: "rust-coverage"
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Upload merged JaCoCo report"
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
+            inputs:
+              pathToPublish: "$(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml"
+              artifactName: "jacoco-merged-coverage-report"
 
           - bash: |
               set -eux
