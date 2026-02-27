@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::mem;
 
 use super::util::ExactSizedIter;
@@ -13,6 +12,7 @@ use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::{DictPage, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
+use rapidhash::RapidHashMap;
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;
 const HEADER_FLAG_ASCII: u8 = 1 << 1;
@@ -170,13 +170,17 @@ pub fn varchar_to_dict_pages(
         .collect();
 
     // Build dictionary: deduplicate strings
-    let mut dict_map: HashMap<&[u8], u32> = HashMap::new();
+    let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
+    let mut keys = Vec::with_capacity(utf8_slices.len() - null_count);
     for s in utf8_slices.iter().flatten() {
-        if !dict_map.contains_key(s) {
+        if let Some(&key) = dict_map.get(s) {
+            keys.push(key);
+        } else {
             let key = dict_entries.len() as u32;
             dict_map.insert(s, key);
             dict_entries.push(s);
+            keys.push(key);
         }
     }
 
@@ -205,10 +209,13 @@ pub fn varchar_to_dict_pages(
     };
     let bits_per_key = super::util::bit_width(max_key as u64);
     let non_null_len = aux.len() - null_count;
-    let keys = utf8_slices.iter().filter_map(|s| s.map(|v| dict_map[v]));
-    let keys = ExactSizedIter::new(keys, non_null_len);
     data_buffer.push(bits_per_key);
-    encode_u32(&mut data_buffer, keys, non_null_len, bits_per_key as u32)?;
+    encode_u32(
+        &mut data_buffer,
+        keys.into_iter(),
+        non_null_len,
+        bits_per_key as u32,
+    )?;
 
     let data_page = build_plain_page(
         data_buffer,
