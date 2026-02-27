@@ -141,7 +141,7 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatLen, int capacity) {
+        protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatCardinality, int capacity) {
             long compPtr = allocator.malloc((long) capacity * Double.BYTES);
             zeroFillDoubles(compPtr, 0, capacity);
             mapValue.putLong(valueIndex + COMP_SLOT, compPtr);
@@ -153,14 +153,14 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        protected void onShapeGrow(MapValue mapValue, int oldFlatLen, long newCapacity, boolean needsRemap) {
+        protected void onShapeGrow(MapValue mapValue, int oldFlatCardinality, long newCapacity, boolean needsRemap) {
             long oldCompPtr = mapValue.getLong(valueIndex + COMP_SLOT);
             long newCompPtr = allocator.malloc(newCapacity * Double.BYTES);
             zeroFillDoubles(newCompPtr, 0, (int) newCapacity);
             if (!needsRemap) {
-                Unsafe.getUnsafe().copyMemory(oldCompPtr, newCompPtr, (long) oldFlatLen * Double.BYTES);
+                Unsafe.getUnsafe().copyMemory(oldCompPtr, newCompPtr, (long) oldFlatCardinality * Double.BYTES);
             } else {
-                for (int fi = 0; fi < oldFlatLen; fi++) {
+                for (int fi = 0; fi < oldFlatCardinality; fi++) {
                     ArrayView.flatIndexToCoords(fi, accStrides, coords);
                     int newFi = ArrayView.coordsToFlatIndex(coords, newStrides);
                     Unsafe.getUnsafe().putDouble(

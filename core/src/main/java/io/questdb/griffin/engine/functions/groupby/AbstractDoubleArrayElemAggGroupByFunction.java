@@ -49,44 +49,44 @@ import org.jetbrains.annotations.NotNull;
  * Supports N-dimensional arrays. Per-group state in MapValue uses 3 LONG slots:
  * <pre>
  * valueIndex + 0: LONG  ptr to compact block (0 = NULL group)
- * valueIndex + 1: LONG  accFlatLen — number of meaningful elements
- * valueIndex + 2: LONG  capacity — allocated element count (&gt;= accFlatLen)
+ * valueIndex + 1: LONG  accFlatCardinality — number of meaningful elements
+ * valueIndex + 2: LONG  capacity — allocated element count (&gt;= accFlatCardinality)
  * </pre>
  *
- * <h3>Compact block layout</h3>
+ * <h2>Compact block layout</h2>
  * <pre>
  * [int dataSize][int shape[0]] ... [int shape[nDims-1]][double data[capacity]]
  *  └─ headerSize bytes ──────────────────────────────┘
  * </pre>
- * {@code dataSize = accFlatLen * Double.BYTES} — covers meaningful data only, not the
+ * {@code dataSize = accFlatCardinality * Double.BYTES} — covers meaningful data only, not the
  * overallocated tail. This is what {@link ArrayTypeDriver#getCompactPlainValue} reads.
  *
- * <h3>Sentinel values</h3>
+ * <h2>Sentinel values</h2>
  * <ul>
  *   <li>{@code ptr == 0}: all inputs seen so far were NULL; group result is NULL.</li>
  *   <li>{@code Double.NaN} in a data slot: no finite value has been accumulated at that position yet.
- *       First finite value replaces NaN outright; subsequent values go through {@link #combine}.</li>
+ *       First finite value replaces NaN outright; subsequent values go through {@link #accumulateOne}.</li>
  * </ul>
  *
- * <h3>Overallocation</h3>
+ * <h2>Overallocation</h2>
  * Allocation is expensive at every dimensionality, and nD shape changes additionally require
  * a coordinate remap of the entire accumulator. To reduce realloc frequency, data blocks are
  * overallocated by a factor of {@code pow(1.5, nDims)} (1D: 1.5x, 2D: 2.25x, 3D: 3.375x).
- * {@code capacity} tracks the allocated element count separately from {@code accFlatLen} so
+ * {@code capacity} tracks the allocated element count separately from {@code accFlatCardinality} so
  * 1D growth can often extend in-place without reallocation.
  *
- * <h3>Shape growth</h3>
+ * <h2>Shape growth</h2>
  * When a new input has a larger dimension than the current accumulator, the shape grows to
- * the per-dimension max. For 1D, if the new flat length fits within capacity, positions are
+ * the per-dimension max. For 1D, if the new flat cardinality fits within capacity, positions are
  * extended in-place (no remap needed — flat indices are unchanged). For nD, or when capacity
  * is exceeded, a new block is allocated and old values are remapped via coordinate conversion.
  *
- * <h3>Extensibility</h3>
- * Subclasses must implement {@link #combine} for the element-wise aggregation operation.
- * The avg variant additionally overrides {@link #accumulateInput} and {@link #mergeValues}
- * for count tracking, and uses the hook methods ({@link #onComputeFirst}, {@link #onShapeGrow},
- * {@link #onMergeShallowCopy}, {@link #onMergeShapeGrow}) to maintain its per-element count
- * arrays in sync with shape changes.
+ * <h2>Extensibility</h2>
+ * Subclasses must implement {@link #accumulateOne} and {@link #mergeOne} for the element-wise
+ * aggregation operation. The avg variant additionally overrides {@link #accumulateInput} and
+ * {@link #mergeValues} for count tracking, and uses the hook methods ({@link #onComputeFirst},
+ * {@link #onShapeGrow}, {@link #onMergeShallowCopy}) to maintain its per-element count arrays
+ * in sync with shape changes.
  */
 public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
 
@@ -196,15 +196,15 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
             setNull(mapValue);
             return;
         }
-        int flatLen = array.getCardinality();
-        int capacity = Math.max(flatLen, (int) (flatLen * Math.pow(OVERALLOC_BASE, nDims)));
+        int flatCardinality = array.getCardinality();
+        int capacity = Math.max(flatCardinality, (int) (flatCardinality * Math.pow(OVERALLOC_BASE, nDims)));
         long blockSize = headerSize + (long) capacity * Double.BYTES;
         long ptr = allocator.malloc(blockSize);
 
-        writeHeaderFromArray(ptr, array, flatLen);
+        writeHeaderFromArray(ptr, array, flatCardinality);
         long dataPtr = ptr + headerSize;
         if (array.isVanilla()) {
-            for (int i = 0; i < flatLen; i++) {
+            for (int i = 0; i < flatCardinality; i++) {
                 Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, array.getDouble(i));
             }
         } else {
@@ -223,12 +223,12 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
                 outFi++;
             } while (ArrayView.incrementCoords(coords, inputShape));
         }
-        nanFill(dataPtr, flatLen, capacity);
+        nanFill(dataPtr, flatCardinality, capacity);
 
         mapValue.putLong(valueIndex, ptr);
-        mapValue.putLong(valueIndex + 1, flatLen);
+        mapValue.putLong(valueIndex + 1, flatCardinality);
         mapValue.putLong(valueIndex + 2, capacity);
-        onComputeFirst(mapValue, array, flatLen, capacity);
+        onComputeFirst(mapValue, array, flatCardinality, capacity);
     }
 
     /**
@@ -296,7 +296,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG); // ptr
-        columnTypes.add(ColumnType.LONG); // accFlatLen
+        columnTypes.add(ColumnType.LONG); // accFlatCardinality
         columnTypes.add(ColumnType.LONG); // capacity
         initExtraValueTypes(columnTypes);
     }
@@ -339,7 +339,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
             return;
         }
 
-        int srcFlatLen = (int) srcValue.getLong(valueIndex + 1);
+        int srcFlatCardinality = (int) srcValue.getLong(valueIndex + 1);
         readShapeFromHeader(destPtr, accShape);
         readShapeFromHeader(srcPtr, inputShape);
         boolean shapeChanged = computeMaxShape();
@@ -348,7 +348,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         }
 
         long destDataPtr = destValue.getLong(valueIndex) + headerSize;
-        mergeValues(destDataPtr, srcPtr + headerSize, shapeChanged ? newShape : accShape, inputShape, srcFlatLen, destValue, srcValue);
+        mergeValues(destDataPtr, srcPtr + headerSize, shapeChanged ? newShape : accShape, inputShape, srcFlatCardinality, destValue, srcValue);
     }
 
     @Override
@@ -372,6 +372,8 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
 
     /**
      * Allows subclasses to register additional MapValue slots (e.g. count, countPtr for avg).
+     *
+     * @param columnTypes the column types to append additional slots to
      */
     protected void initExtraValueTypes(ArrayColumnTypes columnTypes) {
     }
@@ -380,6 +382,8 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * Hook called before the accumulation loop in {@link #accumulateInput}.
      * Subclasses can cache MapValue slot values into instance fields for use in
      * {@link #accumulateOne}.
+     *
+     * @param mapValue the map value for the current group
      */
     protected void onBeforeAccumulate(MapValue mapValue) {
     }
@@ -388,16 +392,19 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * Hook called before the merge loop in {@link #mergeValues}.
      * Subclasses can cache MapValue slot values into instance fields for use in
      * {@link #mergeOne}.
+     *
+     * @param destValue the destination map value to merge into
+     * @param srcValue  the source map value to merge from
      */
     protected void onBeforeMerge(MapValue destValue, MapValue srcValue) {
     }
 
     /**
      * Called after the first non-null array is stored in a new group.
-     * Base slots (ptr, accFlatLen, capacity) have already been written.
+     * Base slots (ptr, accFlatCardinality, capacity) have already been written.
      * Subclasses can use this to initialize auxiliary state (e.g. per-element counts).
      */
-    protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatLen, int capacity) {
+    protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatCardinality, int capacity) {
     }
 
     /**
@@ -417,11 +424,11 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * indices are preserved and data can be bulk-copied.
      *
      * @param mapValue    the group's MapValue (base slots already updated)
-     * @param oldFlatLen  number of elements before growth
+     * @param oldFlatCardinality  number of elements before growth
      * @param newCapacity allocated element count after growth
      * @param needsRemap  true if old and new flat layouts differ (strides changed)
      */
-    protected void onShapeGrow(MapValue mapValue, int oldFlatLen, long newCapacity, boolean needsRemap) {
+    protected void onShapeGrow(MapValue mapValue, int oldFlatCardinality, long newCapacity, boolean needsRemap) {
     }
 
     /**
@@ -515,15 +522,15 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * @param srcDataPtr  pointer to src's data section
      * @param destShape   dest's current shape (after any growth)
      * @param srcShape    src's shape
-     * @param srcFlatLen  number of elements in src's data
+     * @param srcFlatCardinality  number of elements in src's data
      * @param destValue   dest's MapValue (for subclass access to extra slots)
      * @param srcValue    src's MapValue (for subclass access to extra slots)
      */
-    protected void mergeValues(long destDataPtr, long srcDataPtr, int[] destShape, int[] srcShape, int srcFlatLen, MapValue destValue, MapValue srcValue) {
+    protected void mergeValues(long destDataPtr, long srcDataPtr, int[] destShape, int[] srcShape, int srcFlatCardinality, MapValue destValue, MapValue srcValue) {
         onBeforeMerge(destValue, srcValue);
         if (innerDimsMatch(srcShape, destShape)) {
             // Flat path: inner dimensions match, so flat indices are identical.
-            for (int i = 0; i < srcFlatLen; i++) {
+            for (int i = 0; i < srcFlatCardinality; i++) {
                 double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
                 if (Numbers.isFinite(srcVal)) {
                     mergeOne(destDataPtr, i, srcVal, i);
@@ -532,7 +539,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         } else {
             ArrayView.computeRowMajorStrides(destShape, accStrides);
             ArrayView.computeRowMajorStrides(srcShape, newStrides);
-            for (int fi = 0; fi < srcFlatLen; fi++) {
+            for (int fi = 0; fi < srcFlatCardinality; fi++) {
                 double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) fi * Double.BYTES);
                 if (Numbers.isFinite(srcVal)) {
                     ArrayView.flatIndexToCoords(fi, newStrides, coords);
@@ -612,42 +619,42 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      *   <li>No remap + capacity exceeded → new block, bulk copy, NaN-fill tail</li>
      *   <li>Remap needed → new block, NaN-fill all, coordinate remap</li>
      * </ol>
-     * Updates the 3 base MapValue slots (ptr, accFlatLen, capacity) and calls
+     * Updates the 3 base MapValue slots (ptr, accFlatCardinality, capacity) and calls
      * {@link #onShapeGrow} so subclasses can grow their auxiliary arrays.
      */
-    private void growAccumulator(MapValue mapValue, int accFlatLen) {
-        int newFlatLen = ArrayView.computeRowMajorStrides(newShape, newStrides);
+    private void growAccumulator(MapValue mapValue, int accFlatCardinality) {
+        int newFlatCardinality = ArrayView.computeRowMajorStrides(newShape, newStrides);
         long ptr = mapValue.getLong(valueIndex);
         long capacity = mapValue.getLong(valueIndex + 2);
         boolean needsRemap = checkNeedsRemap();
 
-        if (!needsRemap && newFlatLen <= capacity) {
+        if (!needsRemap && newFlatCardinality <= capacity) {
             // In-place extension: flat indices unchanged, NaN-fill the tail.
             long dataPtr = ptr + headerSize;
-            nanFill(dataPtr, accFlatLen, newFlatLen);
-            writeHeader(ptr, newShape, newFlatLen);
-            mapValue.putLong(valueIndex + 1, newFlatLen);
-            onShapeGrow(mapValue, accFlatLen, capacity, needsRemap);
+            nanFill(dataPtr, accFlatCardinality, newFlatCardinality);
+            writeHeader(ptr, newShape, newFlatCardinality);
+            mapValue.putLong(valueIndex + 1, newFlatCardinality);
+            onShapeGrow(mapValue, accFlatCardinality, capacity, needsRemap);
         } else {
-            long newCapacity = Math.max(newFlatLen, (long) (newFlatLen * Math.pow(OVERALLOC_BASE, nDims)));
+            long newCapacity = Math.max(newFlatCardinality, (long) (newFlatCardinality * Math.pow(OVERALLOC_BASE, nDims)));
             long newBlockSize = headerSize + newCapacity * Double.BYTES;
             long newPtr = allocator.malloc(newBlockSize);
-            writeHeader(newPtr, newShape, newFlatLen);
+            writeHeader(newPtr, newShape, newFlatCardinality);
             long newDataPtr = newPtr + headerSize;
 
             if (needsRemap) {
                 nanFill(newDataPtr, 0, (int) newCapacity);
-                remapData(ptr + headerSize, accFlatLen, accStrides, newDataPtr, newStrides);
+                remapData(ptr + headerSize, accFlatCardinality, accStrides, newDataPtr, newStrides);
             } else {
                 // Flat layout preserved: bulk copy + NaN-fill tail.
-                Unsafe.getUnsafe().copyMemory(ptr + headerSize, newDataPtr, (long) accFlatLen * Double.BYTES);
-                nanFill(newDataPtr, accFlatLen, (int) newCapacity);
+                Unsafe.getUnsafe().copyMemory(ptr + headerSize, newDataPtr, (long) accFlatCardinality * Double.BYTES);
+                nanFill(newDataPtr, accFlatCardinality, (int) newCapacity);
             }
 
             mapValue.putLong(valueIndex, newPtr);
-            mapValue.putLong(valueIndex + 1, newFlatLen);
+            mapValue.putLong(valueIndex + 1, newFlatCardinality);
             mapValue.putLong(valueIndex + 2, newCapacity);
-            onShapeGrow(mapValue, accFlatLen, newCapacity, needsRemap);
+            onShapeGrow(mapValue, accFlatCardinality, newCapacity, needsRemap);
         }
     }
 
@@ -655,8 +662,8 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * Copies each element from the old data layout to the new data layout,
      * translating flat indices through coordinates to account for changed strides.
      */
-    private void remapData(long oldDataPtr, int oldFlatLen, int[] oldStrides, long newDataPtr, int[] targetStrides) {
-        for (int fi = 0; fi < oldFlatLen; fi++) {
+    private void remapData(long oldDataPtr, int oldFlatCardinality, int[] oldStrides, long newDataPtr, int[] targetStrides) {
+        for (int fi = 0; fi < oldFlatCardinality; fi++) {
             ArrayView.flatIndexToCoords(fi, oldStrides, coords);
             int newFi = ArrayView.coordsToFlatIndex(coords, targetStrides);
             Unsafe.getUnsafe().putDouble(
@@ -669,8 +676,8 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     /**
      * Writes the compact block header: dataSize (in bytes) followed by nDims shape integers.
      */
-    private void writeHeader(long ptr, int[] shape, int flatLen) {
-        Unsafe.getUnsafe().putInt(ptr, flatLen * Double.BYTES);
+    private void writeHeader(long ptr, int[] shape, int flatCardinality) {
+        Unsafe.getUnsafe().putInt(ptr, flatCardinality * Double.BYTES);
         long shapePtr = ptr + Integer.BYTES;
         for (int d = 0; d < nDims; d++) {
             Unsafe.getUnsafe().putInt(shapePtr + (long) d * Integer.BYTES, shape[d]);
@@ -680,8 +687,8 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     /**
      * Writes the compact block header, reading shape dimensions from an ArrayView.
      */
-    private void writeHeaderFromArray(long ptr, ArrayView array, int flatLen) {
-        Unsafe.getUnsafe().putInt(ptr, flatLen * Double.BYTES);
+    private void writeHeaderFromArray(long ptr, ArrayView array, int flatCardinality) {
+        Unsafe.getUnsafe().putInt(ptr, flatCardinality * Double.BYTES);
         long shapePtr = ptr + Integer.BYTES;
         for (int d = 0; d < nDims; d++) {
             Unsafe.getUnsafe().putInt(shapePtr + (long) d * Integer.BYTES, array.getDimLen(d));

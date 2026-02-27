@@ -136,7 +136,7 @@ import io.questdb.std.str.Utf8Sequence;
 public abstract class ArrayView implements QuietCloseable {
 
     /**
-     * Computes row-major strides for the given shape and returns the total flat length
+     * Computes row-major strides for the given shape and returns the flat cardinality
      * (product of all dimensions).
      * <p>
      * For shape {@code {3, 4}}: strides = {@code {4, 1}}, returns 12.
@@ -146,7 +146,7 @@ public abstract class ArrayView implements QuietCloseable {
      *
      * @param shape   dimension lengths (read)
      * @param strides destination for computed strides (written, same length as shape)
-     * @return total flat element count (product of all dimension lengths)
+     * @return flat cardinality (product of all dimension lengths)
      */
     public static int computeRowMajorStrides(int[] shape, int[] strides) {
         int stride = 1;

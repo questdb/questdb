@@ -48,7 +48,7 @@ import io.questdb.std.ObjList;
  * {@code array_elem_avg}).
  * <p>
  * Handles nD shape resolution, NaN-fill, coordinate iteration, and the
- * accumulate-or-seed pattern. Subclasses only provide {@link #combine} for the
+ * accumulate-or-seed pattern. Subclasses only provide {@link #accumulate} for the
  * element-wise operation. Sum and avg use {@link #kahanAccumulate} for
  * compensated summation. The avg variant additionally overrides
  * {@link #beforeAccumulation} and {@link #postProcess} for per-position

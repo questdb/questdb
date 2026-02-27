@@ -269,7 +269,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             if (ptr == 0) {
                 return ArrayConstant.NULL;
             }
-            int accFlatLen = (int) rec.getLong(valueIndex + 1);
+            int accFlatCardinality = (int) rec.getLong(valueIndex + 1);
             long count = rec.getLong(valueIndex + COUNT_SLOT);
             long countPtr = rec.getLong(valueIndex + COUNT_PTR_SLOT);
             long dataPtr = ptr + headerSize;
@@ -280,7 +280,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             }
             arrayOut.applyShape();
 
-            for (int i = 0; i < accFlatLen; i++) {
+            for (int i = 0; i < accFlatCardinality; i++) {
                 double sum = Unsafe.getUnsafe().getDouble(dataPtr + (long) i * Double.BYTES);
                 if (Numbers.isFinite(sum)) {
                     long c = count == VARIABLE_MODE
@@ -319,7 +319,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
          */
         @Override
         protected void mergeValues(long destDataPtr, long srcDataPtr, int[] destShape, int[] srcShape,
-                                   int srcFlatLen, MapValue destValue, MapValue srcValue) {
+                                   int srcFlatCardinality, MapValue destValue, MapValue srcValue) {
             long destCount = destValue.getLong(valueIndex + COUNT_SLOT);
             long destCountPtr = destValue.getLong(valueIndex + COUNT_PTR_SLOT);
             long srcCount = srcValue.getLong(valueIndex + COUNT_SLOT);
@@ -350,7 +350,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
 
             // Merge sums (Kahan compensated)
             if (flatPath) {
-                for (int i = 0; i < srcFlatLen; i++) {
+                for (int i = 0; i < srcFlatCardinality; i++) {
                     double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
                     if (Numbers.isFinite(srcVal)) {
                         long addr = destDataPtr + (long) i * Double.BYTES;
@@ -369,7 +369,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                     }
                 }
             } else {
-                for (int fi = 0; fi < srcFlatLen; fi++) {
+                for (int fi = 0; fi < srcFlatCardinality; fi++) {
                     double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) fi * Double.BYTES);
                     if (Numbers.isFinite(srcVal)) {
                         ArrayView.flatIndexToCoords(fi, newStrides, coords);
@@ -395,13 +395,13 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             if (needsVariable) {
                 if (srcCount == VARIABLE_MODE) {
                     if (flatPath) {
-                        for (int i = 0; i < srcFlatLen; i++) {
+                        for (int i = 0; i < srcFlatCardinality; i++) {
                             long srcC = Unsafe.getUnsafe().getLong(srcCountPtr + (long) i * Long.BYTES);
                             long destAddr = destCountPtr + (long) i * Long.BYTES;
                             Unsafe.getUnsafe().putLong(destAddr, Unsafe.getUnsafe().getLong(destAddr) + srcC);
                         }
                     } else {
-                        for (int fi = 0; fi < srcFlatLen; fi++) {
+                        for (int fi = 0; fi < srcFlatCardinality; fi++) {
                             ArrayView.flatIndexToCoords(fi, newStrides, coords);
                             int destFi = ArrayView.coordsToFlatIndex(coords, accStrides);
                             long srcC = Unsafe.getUnsafe().getLong(srcCountPtr + (long) fi * Long.BYTES);
@@ -412,7 +412,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                 } else {
                     // Src uniform: add srcCount to positions where src had finite values
                     if (flatPath) {
-                        for (int i = 0; i < srcFlatLen; i++) {
+                        for (int i = 0; i < srcFlatCardinality; i++) {
                             double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
                             if (Numbers.isFinite(srcVal)) {
                                 long destAddr = destCountPtr + (long) i * Long.BYTES;
@@ -420,7 +420,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                             }
                         }
                     } else {
-                        for (int fi = 0; fi < srcFlatLen; fi++) {
+                        for (int fi = 0; fi < srcFlatCardinality; fi++) {
                             double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) fi * Double.BYTES);
                             if (Numbers.isFinite(srcVal)) {
                                 ArrayView.flatIndexToCoords(fi, newStrides, coords);
@@ -445,7 +445,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
          * Always allocates a zero-filled compensation buffer for Kahan summation.
          */
         @Override
-        protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatLen, int capacity) {
+        protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatCardinality, int capacity) {
             // Read from the accumulator (already linearized by computeFirst) rather than
             // the original array, so non-vanilla inputs are handled correctly.
             // NaN values in the sum buffer serve as "no data yet" sentinels: computeNext()
@@ -453,7 +453,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             // The count[i]=0 invariant is coupled to this — both must agree on "no data".
             long dataPtr = mapValue.getLong(valueIndex) + headerSize;
             boolean allFinite = true;
-            for (int i = 0; i < flatLen; i++) {
+            for (int i = 0; i < flatCardinality; i++) {
                 if (!Numbers.isFinite(Unsafe.getUnsafe().getDouble(dataPtr + (long) i * Double.BYTES))) {
                     allFinite = false;
                     break;
@@ -464,11 +464,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                 mapValue.putLong(valueIndex + COUNT_PTR_SLOT, 0);
             } else {
                 long countPtr = allocator.malloc((long) capacity * Long.BYTES);
-                for (int i = 0; i < flatLen; i++) {
+                for (int i = 0; i < flatCardinality; i++) {
                     Unsafe.getUnsafe().putLong(countPtr + (long) i * Long.BYTES,
                             Numbers.isFinite(Unsafe.getUnsafe().getDouble(dataPtr + (long) i * Double.BYTES)) ? 1 : 0);
                 }
-                zeroFillLongs(countPtr, flatLen, capacity);
+                zeroFillLongs(countPtr, flatCardinality, capacity);
                 mapValue.putLong(valueIndex + COUNT_SLOT, VARIABLE_MODE);
                 mapValue.putLong(valueIndex + COUNT_PTR_SLOT, countPtr);
             }
@@ -491,10 +491,10 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
          * Remaps count and compensation arrays when shape grows. Always transitions to variable count mode.
          */
         @Override
-        protected void onShapeGrow(MapValue mapValue, int oldFlatLen, long newCapacity, boolean needsRemap) {
+        protected void onShapeGrow(MapValue mapValue, int oldFlatCardinality, long newCapacity, boolean needsRemap) {
             long count = mapValue.getLong(valueIndex + COUNT_SLOT);
             long countPtr = mapValue.getLong(valueIndex + COUNT_PTR_SLOT);
-            countPtr = growCounts(countPtr, count, count == VARIABLE_MODE, oldFlatLen, newCapacity, needsRemap);
+            countPtr = growCounts(countPtr, count, count == VARIABLE_MODE, oldFlatCardinality, newCapacity, needsRemap);
             mapValue.putLong(valueIndex + COUNT_SLOT, VARIABLE_MODE);
             mapValue.putLong(valueIndex + COUNT_PTR_SLOT, countPtr);
 
@@ -502,9 +502,9 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             long newCompPtr = allocator.malloc(newCapacity * Double.BYTES);
             zeroFillDoubles(newCompPtr, 0, (int) newCapacity);
             if (!needsRemap) {
-                Unsafe.getUnsafe().copyMemory(oldCompPtr, newCompPtr, (long) oldFlatLen * Double.BYTES);
+                Unsafe.getUnsafe().copyMemory(oldCompPtr, newCompPtr, (long) oldFlatCardinality * Double.BYTES);
             } else {
-                for (int fi = 0; fi < oldFlatLen; fi++) {
+                for (int fi = 0; fi < oldFlatCardinality; fi++) {
                     ArrayView.flatIndexToCoords(fi, accStrides, coords);
                     int newFi = ArrayView.coordsToFlatIndex(coords, newStrides);
                     Unsafe.getUnsafe().putDouble(
@@ -534,26 +534,26 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
          * @param oldCountPtr  pointer to the old count array (ignored if uniform mode)
          * @param uniformCount scalar count value if in uniform mode
          * @param isVariable   true if currently in variable mode
-         * @param oldFlatLen   number of elements in the old count array
+         * @param oldFlatCardinality   number of elements in the old count array
          * @param newCapacity  allocated size for the new count array
          * @param needsRemap   true if flat layout changed (strides differ)
          * @return pointer to the new count array
          */
         private long growCounts(long oldCountPtr, long uniformCount, boolean isVariable,
-                                int oldFlatLen, long newCapacity, boolean needsRemap) {
+                                int oldFlatCardinality, long newCapacity, boolean needsRemap) {
             long newCountPtr = allocator.malloc(newCapacity * Long.BYTES);
             zeroFillLongs(newCountPtr, 0, (int) newCapacity);
             if (!needsRemap) {
                 if (isVariable) {
-                    Unsafe.getUnsafe().copyMemory(oldCountPtr, newCountPtr, (long) oldFlatLen * Long.BYTES);
+                    Unsafe.getUnsafe().copyMemory(oldCountPtr, newCountPtr, (long) oldFlatCardinality * Long.BYTES);
                 } else {
-                    for (int i = 0; i < oldFlatLen; i++) {
+                    for (int i = 0; i < oldFlatCardinality; i++) {
                         Unsafe.getUnsafe().putLong(newCountPtr + (long) i * Long.BYTES, uniformCount);
                     }
                 }
             } else {
                 // Coordinate remap (accStrides/newStrides set by base class)
-                for (int fi = 0; fi < oldFlatLen; fi++) {
+                for (int fi = 0; fi < oldFlatCardinality; fi++) {
                     ArrayView.flatIndexToCoords(fi, accStrides, coords);
                     int newFi = ArrayView.coordsToFlatIndex(coords, newStrides);
                     long val = isVariable
@@ -567,17 +567,17 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
 
         /**
          * Transitions from uniform to variable count mode.
-         * Allocates a {@code long[capacity]} array and fills positions {@code [0, currentFlatLen)}
+         * Allocates a {@code long[capacity]} array and fills positions {@code [0, currentFlatCardinality)}
          * with the current uniform count, zero-filling the overallocated tail.
          *
          * @return pointer to the new per-element count array
          */
-        private long transitionToVariable(int currentFlatLen, long uniformCount, long capacity) {
+        private long transitionToVariable(int currentFlatCardinality, long uniformCount, long capacity) {
             long countPtr = allocator.malloc(capacity * Long.BYTES);
-            for (int i = 0; i < currentFlatLen; i++) {
+            for (int i = 0; i < currentFlatCardinality; i++) {
                 Unsafe.getUnsafe().putLong(countPtr + (long) i * Long.BYTES, uniformCount);
             }
-            zeroFillLongs(countPtr, currentFlatLen, (int) capacity);
+            zeroFillLongs(countPtr, currentFlatCardinality, (int) capacity);
             return countPtr;
         }
 
