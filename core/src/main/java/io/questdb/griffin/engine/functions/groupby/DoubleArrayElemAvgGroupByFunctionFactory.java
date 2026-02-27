@@ -531,12 +531,12 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
          * conversion via {@link #accStrides}/{@link #newStrides} (already populated by
          * the base class).
          *
-         * @param oldCountPtr  pointer to the old count array (ignored if uniform mode)
-         * @param uniformCount scalar count value if in uniform mode
-         * @param isVariable   true if currently in variable mode
-         * @param oldFlatCardinality   number of elements in the old count array
-         * @param newCapacity  allocated size for the new count array
-         * @param needsRemap   true if flat layout changed (strides differ)
+         * @param oldCountPtr        pointer to the old count array (ignored if uniform mode)
+         * @param uniformCount       scalar count value if in uniform mode
+         * @param isVariable         true if currently in variable mode
+         * @param oldFlatCardinality number of elements in the old count array
+         * @param newCapacity        allocated size for the new count array
+         * @param needsRemap         true if flat layout changed (strides differ)
          * @return pointer to the new count array
          */
         private long growCounts(long oldCountPtr, long uniformCount, boolean isVariable,
