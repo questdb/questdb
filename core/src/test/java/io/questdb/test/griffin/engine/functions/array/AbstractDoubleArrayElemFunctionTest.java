@@ -48,6 +48,17 @@ public abstract class AbstractDoubleArrayElemFunctionTest extends AbstractCairoT
     }
 
     @Test
+    public void test2dZeroLengthPlusValid() throws Exception {
+        // [1:1] with exclusive upper bound selects zero rows → (0,3) shape
+        // Zero-length array should be treated like NULL (skipped), result is the other array
+        assertElemWise(
+                "[[1.0,2.0,3.0]]",
+                "ARRAY[[10.0, 20.0, 30.0]][1:1]",
+                "ARRAY[[1.0, 2.0, 3.0]]"
+        );
+    }
+
+    @Test
     public void test2dNanAtGrownPositions() throws Exception {
         assertElemWise(
                 "[[1.0,2.0,null],[3.0,4.0,null],[null,null,null]]",

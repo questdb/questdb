@@ -121,11 +121,30 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
     }
 
     @Test
+    public void test3dProgressiveGrowth() throws Exception {
+        assertGroupByTyped("DOUBLE[][][]",
+                "[[[1.0,2.0],[300.0,400.0]],[[30.0,40.0],[700.0,800.0]]]",
+                "ARRAY[[[1.0, 2.0]]]",
+                "ARRAY[[[10.0, 20.0]], [[30.0, 40.0]]]",
+                "ARRAY[[[100.0, 200.0], [300.0, 400.0]], [[500.0, 600.0], [700.0, 800.0]]]"
+        );
+    }
+
+    @Test
     public void test3dRemapInnermostGrowsOuterGtOne() throws Exception {
         assertGroupByTyped("DOUBLE[][][]",
                 "[[[1.0,2.0,3.0,40.0,50.0]],[[4.0,5.0,6.0,90.0,100.0]]]",
                 "ARRAY[[[1.0, 2.0, 3.0]], [[4.0, 5.0, 6.0]]]",
                 "ARRAY[[[10.0, 20.0, 30.0, 40.0, 50.0]], [[60.0, 70.0, 80.0, 90.0, 100.0]]]"
+        );
+    }
+
+    @Test
+    public void test4dGroupBy() throws Exception {
+        assertGroupByTyped("DOUBLE[][][][]",
+                "[[[[1.0,2.0]],[[30.0,40.0]]],[[[50.0,60.0]],[[70.0,80.0]]]]",
+                "ARRAY[[[[1.0, 2.0]]]]",
+                "ARRAY[[[[10.0, 20.0]], [[30.0, 40.0]]], [[[50.0, 60.0]], [[70.0, 80.0]]]]"
         );
     }
 
@@ -219,6 +238,34 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0])");
             assertQueryNoLeakCheck("arr\n[1.0,2.0]\n", "SELECT array_elem_min(arr) arr FROM tab", null, false, true);
+        });
+    }
+
+    @Test
+    public void testTransposedAsymmetricGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[][])");
+            execute("INSERT INTO tab VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])");
+            execute("INSERT INTO tab VALUES (ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])");
+            assertQueryNoLeakCheck(
+                    "arr\n[[1.0,3.0,5.0],[2.0,4.0,6.0],[30.0,60.0,null]]\n",
+                    "SELECT array_elem_min(transpose(arr)) arr FROM tab",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testTransposedGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[][])");
+            execute("INSERT INTO tab VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0]])");
+            execute("INSERT INTO tab VALUES (ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])");
+            assertQueryNoLeakCheck(
+                    "arr\n[[1.0,3.0],[2.0,4.0],[30.0,60.0]]\n",
+                    "SELECT array_elem_min(transpose(arr)) arr FROM tab",
+                    null, false, true
+            );
         });
     }
 

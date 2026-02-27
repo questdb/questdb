@@ -79,6 +79,51 @@ public class DoubleArrayElemSumFunctionFactoryTest extends AbstractDoubleArrayEl
     }
 
     @Test
+    public void test3dAllDimsDiffer() throws Exception {
+        assertElemWise(
+                "[[[11.0,22.0,30.0],[43.0,54.0,60.0],[70.0,80.0,90.0]],[[105.0,116.0,120.0],[137.0,148.0,150.0],[160.0,170.0,180.0]],[[190.0,200.0,210.0],[220.0,230.0,240.0],[250.0,260.0,270.0]]]",
+                "ARRAY[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]",
+                "ARRAY[[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0], [70.0, 80.0, 90.0]], [[100.0, 110.0, 120.0], [130.0, 140.0, 150.0], [160.0, 170.0, 180.0]], [[190.0, 200.0, 210.0], [220.0, 230.0, 240.0], [250.0, 260.0, 270.0]]]"
+        );
+    }
+
+    @Test
+    public void test3dExtremeAsymmetry() throws Exception {
+        assertElemWise(
+                "[[[11.0,2.0,3.0]],[[20.0,null,null]],[[30.0,null,null]]]",
+                "ARRAY[[[1.0, 2.0, 3.0]]]",
+                "ARRAY[[[10.0]], [[20.0]], [[30.0]]]"
+        );
+    }
+
+    @Test
+    public void test3dInnermostDimDiffers() throws Exception {
+        assertElemWise(
+                "[[[11.0,22.0,30.0,40.0],[53.0,64.0,70.0,80.0]]]",
+                "ARRAY[[[1.0, 2.0], [3.0, 4.0]]]",
+                "ARRAY[[[10.0, 20.0, 30.0, 40.0], [50.0, 60.0, 70.0, 80.0]]]"
+        );
+    }
+
+    @Test
+    public void test3dSameShape() throws Exception {
+        assertElemWise(
+                "[[[10.0,12.0],[14.0,16.0]],[[18.0,20.0],[22.0,24.0]]]",
+                "ARRAY[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]",
+                "ARRAY[[[9.0, 10.0], [11.0, 12.0]], [[13.0, 14.0], [15.0, 16.0]]]"
+        );
+    }
+
+    @Test
+    public void test4dMixedGrowth() throws Exception {
+        assertElemWise(
+                "[[[[11.0,22.0]],[[30.0,40.0]]],[[[3.0,4.0]],[[null,null]]]]",
+                "ARRAY[[[[1.0, 2.0]]], [[[3.0, 4.0]]]]",
+                "ARRAY[[[[10.0, 20.0]], [[30.0, 40.0]]]]"
+        );
+    }
+
+    @Test
     public void testAllElementsNanAtOnePosition() throws Exception {
         assertElemWise("[null,6.0]", "ARRAY[null, 1.0]", "ARRAY[null, 2.0]", "ARRAY[null, 3.0]");
     }
@@ -138,12 +183,93 @@ public class DoubleArrayElemSumFunctionFactoryTest extends AbstractDoubleArrayEl
     }
 
     @Test
+    public void testSliceChain() throws Exception {
+        assertElemWise("[21.0,31.0]",
+                "ARRAY[10.0, 20.0, 30.0, 40.0, 50.0][2:5][1:3]",
+                "ARRAY[1.0, 1.0]"
+        );
+    }
+
+    @Test
+    public void testSliced1d() throws Exception {
+        assertElemWise("[25.0,35.0]",
+                "ARRAY[10.0, 20.0, 30.0, 40.0][2:4]",
+                "ARRAY[5.0, 5.0]"
+        );
+    }
+
+    @Test
+    public void testSliced2dInnerDim() throws Exception {
+        assertElemWise("[[12.0,23.0],[35.0,46.0]]",
+                "ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]][1:3, 2:4]",
+                "ARRAY[[10.0, 20.0], [30.0, 40.0]]"
+        );
+    }
+
+    @Test
+    public void testSliced2dOuterDim() throws Exception {
+        assertElemWise("[[13.0,24.0],[35.0,46.0]]",
+                "ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]][2:4]",
+                "ARRAY[[10.0, 20.0], [30.0, 40.0]]"
+        );
+    }
+
+    @Test
+    public void testSlicedPlusDifferentShape() throws Exception {
+        assertElemWise("[[12.0,23.0,30.0],[40.0,50.0,60.0]]",
+                "ARRAY[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]][1:2, 2:4]",
+                "ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]]"
+        );
+    }
+
+    @Test
     public void testThreeArraysSameLength() throws Exception {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(
                 "array_elem_sum\n[9.0,12.0]\n",
                 "SELECT array_elem_sum(ARRAY[1.0, 2.0], ARRAY[3.0, 4.0], ARRAY[5.0, 6.0])",
                 null, true, true
         ));
+    }
+
+    @Test
+    public void testTransposedBothDifferentShapes() throws Exception {
+        assertElemWise("[[11.0,3.0,5.0],[22.0,4.0,6.0],[30.0,null,null]]",
+                "transpose(ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])",
+                "transpose(ARRAY[[10.0, 20.0, 30.0]])"
+        );
+    }
+
+    @Test
+    public void testTransposedInput() throws Exception {
+        assertElemWise("[[3.0,9.0],[9.0,15.0]]",
+                "transpose(ARRAY[[2.0, 4.0], [6.0, 8.0]])",
+                "ARRAY[[1.0, 3.0], [5.0, 7.0]]"
+        );
+    }
+
+    @Test
+    public void testTransposedPlusSlicedPlusVanilla() throws Exception {
+        assertElemWise("[[111.0,200.0,300.0],[32.0,null,null],[3.0,null,null]]",
+                "transpose(ARRAY[[1.0, 2.0, 3.0]])",
+                "ARRAY[[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]][1:3, 1:2]",
+                "ARRAY[[100.0, 200.0, 300.0]]"
+        );
+    }
+
+    @Test
+    public void testTransposedPlusVanillaDifferentShapes() throws Exception {
+        assertElemWise("[[11.0,24.0,30.0,40.0],[52.0,65.0,70.0,80.0],[3.0,6.0,null,null]]",
+                "transpose(ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])",
+                "ARRAY[[10.0, 20.0, 30.0, 40.0], [50.0, 60.0, 70.0, 80.0]]"
+        );
+    }
+
+    @Test
+    public void testTransposedPlusVanillaSameShape() throws Exception {
+        assertElemWise("[[11.0,24.0],[32.0,45.0],[53.0,66.0]]",
+                "transpose(ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])",
+                "ARRAY[[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]]"
+        );
     }
 
     @Test
