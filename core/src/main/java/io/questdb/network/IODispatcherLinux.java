@@ -28,6 +28,7 @@ import io.questdb.std.Misc;
 
 public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private final Epoll epoll;
+    private IORequestProcessor<C> inDispatcherRequestProcessor;
     private boolean pendingAccept;
 
     public IODispatcherLinux(
@@ -37,6 +38,10 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
         registerListenerFd();
+    }
+
+    public void setInDispatcherRequestProcessor(IORequestProcessor<C> requestProcessor) {
+        this.inDispatcherRequestProcessor = requestProcessor;
     }
 
     @Override
@@ -232,6 +237,24 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(id)
                     .$(", err=").$(nf.errno())
                     .I$();
+        }
+    }
+
+    @Override
+    protected void publishOperation(int operation, C context) {
+        if (inDispatcherRequestProcessor == null) {
+            super.publishOperation(operation, context);
+            return;
+        }
+
+        try {
+            context.init();
+            inDispatcherRequestProcessor.onRequest(operation, context, this);
+        } catch (TlsSessionInitFailedException e) {
+            LOG.error().$("could not initialize connection context [fd=").$(context.getFd())
+                    .$(", e=").$safe(e.getFlyweightMessage())
+                    .I$();
+            disconnect(context, DISCONNECT_REASON_TLS_SESSION_INIT_FAILED);
         }
     }
 
