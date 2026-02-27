@@ -624,6 +624,8 @@ public class RecordToRowCopierUtils {
         int copyAnyToByte = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToByte", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
         int copyAnyToShort = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToShort", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
         int copyAnyToBool = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToBool", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToUInt32 = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToUInt32", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToUInt64 = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToUInt64", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
 
         // Pool column type constants
         int toColumnType_0 = asm.getPoolCount();
@@ -810,6 +812,28 @@ public class RecordToRowCopierUtils {
                         asm.iconst(toColumnWriterIndex);
                         asm.iconst(fromColumnTypeTag);
                         asm.invokeStatic(copyAnyToBool);
+                        continue;
+                    }
+                    // Skip same-tag sources (INT→UINT32, LONG→UINT64) because the
+                    // sentinel null value collides with a valid unsigned value.
+                    // Raw copy preserves full unsigned range; null propagation is
+                    // not possible for these conversions.
+                    if (toColumnType == ColumnType.UINT32 && !ColumnType.isUnsigned(fromColumnType) && fromColumnTypeTag != ColumnType.INT) {
+                        asm.aload(2);
+                        asm.aload(3);
+                        asm.iconst(i);
+                        asm.iconst(toColumnWriterIndex);
+                        asm.iconst(fromColumnTypeTag);
+                        asm.invokeStatic(copyAnyToUInt32);
+                        continue;
+                    }
+                    if (toColumnType == ColumnType.UINT64 && !ColumnType.isUnsigned(fromColumnType) && fromColumnTypeTag != ColumnType.LONG) {
+                        asm.aload(2);
+                        asm.aload(3);
+                        asm.iconst(i);
+                        asm.iconst(toColumnWriterIndex);
+                        asm.iconst(fromColumnTypeTag);
+                        asm.invokeStatic(copyAnyToUInt64);
                         continue;
                     }
                 }
@@ -1841,6 +1865,8 @@ public class RecordToRowCopierUtils {
         int copyAnyToByte = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToByte", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
         int copyAnyToShort = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToShort", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
         int copyAnyToBool = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToBool", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToUInt32 = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToUInt32", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
+        int copyAnyToUInt64 = asm.poolMethod(RecordToRowCopierUtils.class, "copyAnyToUInt64", "(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/TableWriter$Row;III)V");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
@@ -2011,6 +2037,28 @@ public class RecordToRowCopierUtils {
                     asm.iconst(toColumnWriterIndex);
                     asm.iconst(fromColumnTypeTag);
                     asm.invokeStatic(copyAnyToBool);
+                    continue;
+                }
+                // Skip same-tag sources (INT→UINT32, LONG→UINT64) because the
+                // sentinel null value collides with a valid unsigned value.
+                // Raw copy preserves full unsigned range; null propagation is
+                // not possible for these conversions.
+                if (toColumnType == ColumnType.UINT32 && !ColumnType.isUnsigned(fromColumnType) && fromColumnTypeTag != ColumnType.INT) {
+                    asm.aload(2);
+                    asm.aload(3);
+                    asm.iconst(i);
+                    asm.iconst(toColumnWriterIndex);
+                    asm.iconst(fromColumnTypeTag);
+                    asm.invokeStatic(copyAnyToUInt32);
+                    continue;
+                }
+                if (toColumnType == ColumnType.UINT64 && !ColumnType.isUnsigned(fromColumnType) && fromColumnTypeTag != ColumnType.LONG) {
+                    asm.aload(2);
+                    asm.aload(3);
+                    asm.iconst(i);
+                    asm.iconst(toColumnWriterIndex);
+                    asm.iconst(fromColumnTypeTag);
+                    asm.invokeStatic(copyAnyToUInt64);
                     continue;
                 }
             }
@@ -3239,6 +3287,68 @@ public class RecordToRowCopierUtils {
             case ColumnType.LONG -> {
                 long v = rec.getLong(fromCol);
                 if (v != Numbers.LONG_NULL) row.putBool(toCol, v != 0);
+            }
+        }
+    }
+
+    public static void copyAnyToUInt32(Record rec, TableWriter.Row row, int fromCol, int toCol, int fromTypeTag) {
+        switch (fromTypeTag) {
+            case ColumnType.INT -> row.putInt(toCol, rec.getInt(fromCol));
+            case ColumnType.LONG -> {
+                long v = rec.getLong(fromCol);
+                if (v != Numbers.LONG_NULL) row.putInt(toCol, (int) v);
+            }
+            case ColumnType.FLOAT -> {
+                float v = rec.getFloat(fromCol);
+                if (!Float.isNaN(v)) row.putInt(toCol, (int) v);
+            }
+            case ColumnType.DOUBLE -> {
+                double v = rec.getDouble(fromCol);
+                if (!Double.isNaN(v)) row.putInt(toCol, (int) v);
+            }
+            case ColumnType.SHORT -> {
+                if (!rec.isNull(fromCol)) row.putInt(toCol, rec.getShort(fromCol));
+            }
+            case ColumnType.BYTE -> {
+                if (!rec.isNull(fromCol)) row.putInt(toCol, rec.getByte(fromCol));
+            }
+            case ColumnType.BOOLEAN -> {
+                if (!rec.isNull(fromCol)) row.putInt(toCol, rec.getBool(fromCol) ? 1 : 0);
+            }
+            case ColumnType.TIMESTAMP, ColumnType.DATE -> {
+                long v = rec.getLong(fromCol);
+                if (v != Numbers.LONG_NULL) row.putInt(toCol, (int) v);
+            }
+        }
+    }
+
+    public static void copyAnyToUInt64(Record rec, TableWriter.Row row, int fromCol, int toCol, int fromTypeTag) {
+        switch (fromTypeTag) {
+            case ColumnType.INT -> {
+                int v = rec.getInt(fromCol);
+                if (v != Numbers.INT_NULL) row.putLong(toCol, v);
+            }
+            case ColumnType.LONG -> row.putLong(toCol, rec.getLong(fromCol));
+            case ColumnType.FLOAT -> {
+                float v = rec.getFloat(fromCol);
+                if (!Float.isNaN(v)) row.putLong(toCol, (long) v);
+            }
+            case ColumnType.DOUBLE -> {
+                double v = rec.getDouble(fromCol);
+                if (!Double.isNaN(v)) row.putLong(toCol, (long) v);
+            }
+            case ColumnType.SHORT -> {
+                if (!rec.isNull(fromCol)) row.putLong(toCol, rec.getShort(fromCol));
+            }
+            case ColumnType.BYTE -> {
+                if (!rec.isNull(fromCol)) row.putLong(toCol, rec.getByte(fromCol));
+            }
+            case ColumnType.BOOLEAN -> {
+                if (!rec.isNull(fromCol)) row.putLong(toCol, rec.getBool(fromCol) ? 1L : 0L);
+            }
+            case ColumnType.TIMESTAMP, ColumnType.DATE -> {
+                long v = rec.getLong(fromCol);
+                if (v != Numbers.LONG_NULL) row.putLong(toCol, v);
             }
         }
     }

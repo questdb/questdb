@@ -47,6 +47,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
@@ -253,6 +254,16 @@ public class ConvertOperatorImpl implements Closeable {
                                     openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
+
+                                    // Copy source .n bitmap to destination .n when destination type
+                                    // needs a bitmap (BOOLEAN, BYTE, SHORT, UINT16/32/64).
+                                    // The source .n was generated from sentinel values in openColumnsRO.
+                                    if (srcNullBitmapFd > -1 && ColumnType.needsNullBitmap(newType)) {
+                                        copyNullBitmapToDestination(
+                                                columnName, partitionTimestamp, columnIndex,
+                                                srcNullBitmapFd, pathTrimToLen
+                                        );
+                                    }
 
                                     LOG.info().$("converting column [at=").$safe(path.trimTo(pathTrimToLen))
                                             .$(", column=").$safe(columnName)
@@ -467,6 +478,34 @@ public class ConvertOperatorImpl implements Closeable {
                 // Re-try opening the .n file
                 nullBitmapFd = ff.openRO(nFile(path.trimTo(pathTrimToLen), name, columnNameTxn));
             }
+        }
+    }
+
+    private void copyNullBitmapToDestination(
+            CharSequence name, long partitionTimestamp, int columnIndex,
+            long srcNullBitmapFd, int pathTrimToLen
+    ) {
+        long bitmapSize = ff.length(srcNullBitmapFd);
+        if (bitmapSize <= 0) {
+            return;
+        }
+        long dstColumnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+        nFile(path.trimTo(pathTrimToLen), name, dstColumnNameTxn);
+        long dstBitmapFd = TableUtils.openRW(ff, path.$(), LOG, fileOpenOpts);
+        try {
+            long srcAddr = TableUtils.mapRO(ff, srcNullBitmapFd, bitmapSize, MemoryTag.MMAP_DEFAULT);
+            try {
+                long dstAddr = TableUtils.mapRW(ff, dstBitmapFd, bitmapSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().copyMemory(srcAddr, dstAddr, bitmapSize);
+                } finally {
+                    ff.munmap(dstAddr, bitmapSize, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                ff.munmap(srcAddr, bitmapSize, MemoryTag.MMAP_DEFAULT);
+            }
+        } finally {
+            ff.close(dstBitmapFd);
         }
     }
 

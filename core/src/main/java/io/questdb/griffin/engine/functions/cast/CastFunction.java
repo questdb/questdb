@@ -25,11 +25,17 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public interface CastFunction extends UnaryFunction {
     @Override
     default int getComplexity() {
         return Function.addComplexity(COMPLEXITY_CAST, getArg().getComplexity());
+    }
+
+    @Override
+    default boolean isNull(Record rec) {
+        return getArg().isNull(rec);
     }
 }

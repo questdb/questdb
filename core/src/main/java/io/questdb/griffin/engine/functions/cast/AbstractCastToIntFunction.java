@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
 
@@ -32,6 +33,11 @@ import io.questdb.griffin.engine.functions.IntFunction;
  * Abstract base class for functions that cast values to int.
  */
 public abstract class AbstractCastToIntFunction extends IntFunction implements CastFunction {
+
+    @Override
+    public boolean isNull(Record rec) {
+        return arg.isNull(rec);
+    }
     /**
      * The function argument to cast.
      */

@@ -52,7 +52,7 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertFalse(record.getBool(0));
+                Assert.assertTrue(record.isNull(0));
             }
         }
     }

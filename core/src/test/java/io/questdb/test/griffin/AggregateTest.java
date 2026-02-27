@@ -224,10 +224,10 @@ public class AggregateTest extends AbstractCairoTest {
         String[] aggregateFunctions = {"first"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL", ":SYMBOL"),
-                new TypeVal(ColumnType.BOOLEAN, ":BOOLEAN", "true:BOOLEAN"),
-                new TypeVal(ColumnType.BYTE, ":BYTE", "1:BYTE"),
+                new TypeVal(ColumnType.BOOLEAN, ":BOOLEAN", ":BOOLEAN"),
+                new TypeVal(ColumnType.BYTE, ":BYTE", ":BYTE"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR"),
-                new TypeVal(ColumnType.SHORT, ":SHORT", "1:SHORT"),
+                new TypeVal(ColumnType.SHORT, ":SHORT", ":SHORT"),
                 new TypeVal(ColumnType.INT, "null:INT", "null:INT"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "null:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", ":DATE"),

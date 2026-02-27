@@ -52,10 +52,5 @@ public class CastBooleanToByteFunctionFactory implements FunctionFactory {
         public byte getByte(Record rec) {
             return arg.getByte(rec);
         }
-
-        @Override
-        public boolean isNull(Record rec) {
-            return arg.isNull(rec);
-        }
     }
 }

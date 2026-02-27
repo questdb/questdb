@@ -4584,10 +4584,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ? bitmapColumns.getQuick(columnIndex) : null;
 
         if (srcBitmapMem == null) {
-            // No bitmap source — fill with zeros (not null) for new rows
-            long dstByteStart = dstRowOffset >> 3;
-            for (long i = dstByteStart; i < dstByteEnd; i++) {
-                Unsafe.getUnsafe().putByte(dstBitmapMem.addressOf(i), (byte) 0);
+            // No bitmap source — clear bits for new rows (not null).
+            // Use per-bit clearing to preserve existing bits in shared bytes
+            // (e.g., column-top null bits in the same byte).
+            for (long i = 0; i < rowCount; i++) {
+                long dstBit = dstRowOffset + i;
+                long dstByteIdx = dstBit >> 3;
+                int dstBitIdx = (int) (dstBit & 7);
+                long dstAddr = dstBitmapMem.addressOf(dstByteIdx);
+                byte existing = Unsafe.getUnsafe().getByte(dstAddr);
+                Unsafe.getUnsafe().putByte(dstAddr, (byte) (existing & ~(1 << dstBitIdx)));
             }
             return;
         }
@@ -4770,9 +4776,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            // Copy null bitmap from WAL segment to main table
+            // Copy null bitmap from WAL segment to main table.
+            // The bitmap destination offset must be the absolute partition row,
+            // not the column-relative offset (dstRowCount) which subtracts column-top.
+            // Column-top rows are already marked as null in the bitmap by openNewColumnFiles().
             if (!designatedTimestamp) {
-                copyWalBitmapToPartition(columnIndex, columnRowCount, dstRowCount, copyRowCount);
+                long bitmapDstRowOffset = txWriter.getTransientRowCount() + existingLagRows;
+                copyWalBitmapToPartition(columnIndex, columnRowCount, bitmapDstRowOffset, copyRowCount);
             }
         } catch (Throwable th) {
             handleColumnTaskException(
@@ -6430,7 +6440,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // will have to switch partition internally
         long partitionTimestampHiLimit = txWriter.getCurrentPartitionMaxTimestamp(partitionTimestampHi);
         try {
-            o3RowCount += o3MoveUncommitted();
+            long originalO3 = o3RowCount;
+            long transientRowsAdded = o3MoveUncommitted();
+            o3RowCount += transientRowsAdded;
+
+            // Build O3 null bitmap for BYPASS WAL tables so that bitmap-null
+            // types (BOOLEAN, BYTE, SHORT, UINT*) preserve null status during merge.
+            if (!metadata.isWalEnabled()) {
+                setupO3NullBitmapForBypassWal(originalO3, transientRowsAdded);
+            }
 
             // we may need to re-use file descriptors when this partition is the "current" one
             // we cannot open file again due to sharing violation
@@ -10296,6 +10314,82 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void setRowValueNotNull(int columnIndex) {
         assert rowValueIsNotNull.getQuick(columnIndex) != masterRef;
         rowValueIsNotNull.setQuick(columnIndex, masterRef);
+    }
+
+    private void setupO3NullBitmapForBypassWal(long originalO3, long transientRowsAdded) {
+        long totalO3 = originalO3 + transientRowsAdded;
+        if (totalO3 <= 0) {
+            return;
+        }
+
+        ensureO3NullBitmapArrays();
+
+        for (int i = 0; i < columnCount; i++) {
+            int type = metadata.getColumnType(i);
+            if (type <= 0 || !ColumnType.needsNullBitmap(type)) {
+                continue;
+            }
+
+            MemoryMA bitmapMem = getNullBitmapColumn(i);
+            if (bitmapMem == null || !bitmapMem.isOpen()) {
+                continue;
+            }
+
+            long appendOffset = bitmapMem.getAppendOffset();
+            long totalBits;
+            if (appendOffset == 0) {
+                totalBits = 0;
+            } else if (bitmapBitCount == 0) {
+                totalBits = appendOffset * 8;
+            } else {
+                totalBits = (appendOffset - 1) * 8 + bitmapBitCount;
+            }
+
+            long committed = totalBits - transientRowsAdded - originalO3;
+            if (committed < 0 || totalBits < totalO3) {
+                continue;
+            }
+
+            long o3BitmapSize = (totalO3 + 7) >> 3;
+            long o3BitmapAddr = Unsafe.malloc(o3BitmapSize, MemoryTag.NATIVE_O3);
+            Vect.memset(o3BitmapAddr, o3BitmapSize, 0);
+
+            // O3 rows (indices 0..originalO3-1): bitmap bits written after moved rows'
+            // bits in nullBitmapColumns, at positions committed + transientRowsAdded + k.
+            for (long k = 0; k < originalO3; k++) {
+                long srcBit = committed + transientRowsAdded + k;
+                long srcByteOffset = srcBit >> 3;
+                int srcBitIndex = (int) (srcBit & 7);
+                byte srcByte = Unsafe.getUnsafe().getByte(bitmapMem.addressOf(srcByteOffset));
+                if ((srcByte & (1 << srcBitIndex)) != 0) {
+                    long dstByteOffset = k >> 3;
+                    int dstBitIndex = (int) (k & 7);
+                    long dstAddr = o3BitmapAddr + dstByteOffset;
+                    byte dstByte = Unsafe.getUnsafe().getByte(dstAddr);
+                    Unsafe.getUnsafe().putByte(dstAddr, (byte) (dstByte | (1 << dstBitIndex)));
+                }
+            }
+
+            // Moved rows (indices originalO3..totalO3-1): bitmap bits at positions
+            // committed + j in nullBitmapColumns, appended after O3 rows in o3 memory.
+            for (long j = 0; j < transientRowsAdded; j++) {
+                long srcBit = committed + j;
+                long srcByteOffset = srcBit >> 3;
+                int srcBitIndex = (int) (srcBit & 7);
+                byte srcByte = Unsafe.getUnsafe().getByte(bitmapMem.addressOf(srcByteOffset));
+                if ((srcByte & (1 << srcBitIndex)) != 0) {
+                    long dstBit = originalO3 + j;
+                    long dstByteOffset = dstBit >> 3;
+                    int dstBitIndex = (int) (dstBit & 7);
+                    long dstAddr = o3BitmapAddr + dstByteOffset;
+                    byte dstByte = Unsafe.getUnsafe().getByte(dstAddr);
+                    Unsafe.getUnsafe().putByte(dstAddr, (byte) (dstByte | (1 << dstBitIndex)));
+                }
+            }
+
+            o3NullBitmapAddrs[i] = o3BitmapAddr;
+            o3NullBitmapAllocSizes[i] = o3BitmapSize;
+        }
     }
 
     private void setupO3NullBitmapFromWal() {

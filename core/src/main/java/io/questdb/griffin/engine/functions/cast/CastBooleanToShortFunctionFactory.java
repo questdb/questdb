@@ -52,10 +52,5 @@ public class CastBooleanToShortFunctionFactory implements FunctionFactory {
         public short getShort(Record rec) {
             return arg.getShort(rec);
         }
-
-        @Override
-        public boolean isNull(Record rec) {
-            return arg.isNull(rec);
-        }
     }
 }

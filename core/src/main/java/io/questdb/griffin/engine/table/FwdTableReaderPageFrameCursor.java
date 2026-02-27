@@ -257,8 +257,10 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
             // Null bitmap: address points to byte 0 of the partition bitmap.
             // isNull() uses partitionLo + rowIndex to compute the absolute bit position.
+            // Bitmap must be provided even for column-top frames (partitionHiAdjusted <= 0)
+            // so that isNull() correctly returns true for column-top rows of bitmap-null types.
             final MemoryR bitmapMem = reader.getNullBitmapColumn(base, columnIndex);
-            if (bitmapMem != null && partitionHiAdjusted > 0) {
+            if (bitmapMem != null && bitmapMem.size() > 0) {
                 nullBitmapPageAddresses.setQuick(i, bitmapMem.getPageAddress(0));
                 nullBitmapPageSizes.setQuick(i, bitmapMem.size());
             } else {

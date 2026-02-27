@@ -549,6 +549,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public boolean isNull(int columnIndex) {
+        // Column-top: the column has no data page for this frame.
+        // This check must come first because the bitmap may exist but have
+        // incorrect bits for column-top rows (not yet initialized to 1).
+        final long dataAddress = pageAddresses.get(columnOffset + columnIndex);
+        if (dataAddress == 0) {
+            return true;
+        }
         if (nullBitmapAddresses != null) {
             final long address = nullBitmapAddresses.get(columnOffset + columnIndex);
             if (address != 0) {

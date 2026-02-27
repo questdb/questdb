@@ -928,4 +928,1129 @@ public class NullBitmapTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ========================
+    // Type conversion with bitmap migration (ConvertOperatorImpl path)
+    // ========================
+
+    @Test
+    public void testConversionFloatToDouble() throws Exception {
+        // FLOAT uses NaN sentinel for nulls. Converting to DOUBLE should
+        // generate .n bitmap from NaN sentinels and preserve nulls.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val FLOAT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 3.14),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0.0),
+                    ('2024-01-01T00:00:03.000000Z', NULL),
+                    ('2024-01-01T00:00:04.000000Z', -1.5)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            assertSql(
+                    """
+                            val
+                            3.140000104904175
+                            null
+                            0.0
+                            null
+                            -1.5
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionDoubleToFloat() throws Exception {
+        // DOUBLE uses NaN sentinel for nulls. Converting to FLOAT should preserve nulls.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 2.718),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0.0),
+                    ('2024-01-01T00:00:03.000000Z', -99.9)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE FLOAT");
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+        });
+    }
+
+    @Test
+    public void testConversionIntToLong() throws Exception {
+        // INT uses INT_NULL (Integer.MIN_VALUE) sentinel. Converting to LONG
+        // should preserve nulls through the native conversion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 42),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0),
+                    ('2024-01-01T00:00:03.000000Z', -100)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE LONG");
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            assertSql(
+                    """
+                            val
+                            42
+                            null
+                            0
+                            -100
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionIntToShort() throws Exception {
+        // INT (sentinel-null) → SHORT (bitmap-null). Verifies sentinel scanning
+        // during conversion produces correct bitmap for the destination type.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 10),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0),
+                    ('2024-01-01T00:00:03.000000Z', NULL),
+                    ('2024-01-01T00:00:04.000000Z', 127)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE SHORT");
+            drainWalQueue();
+
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            10
+
+                            0
+
+                            127
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionIntToByte() throws Exception {
+        // INT (sentinel-null) → BYTE (bitmap-null). Verifies sentinel scanning
+        // produces correct bitmap for bitmap-only destination type.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 5),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0),
+                    ('2024-01-01T00:00:03.000000Z', 100)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE BYTE");
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            5
+
+                            0
+                            100
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionLongToInt() throws Exception {
+        // LONG (LONG_NULL sentinel) → INT (INT_NULL sentinel).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 42),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0),
+                    ('2024-01-01T00:00:03.000000Z', -1)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE INT");
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            42
+                            null
+                            0
+                            -1
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionDoubleToInt() throws Exception {
+        // DOUBLE (NaN sentinel) → INT (INT_NULL sentinel).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 42.0),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0.0),
+                    ('2024-01-01T00:00:03.000000Z', -1.0)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE INT");
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            42
+                            null
+                            0
+                            -1
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionIntToBooleanWithNulls() throws Exception {
+        // INT (sentinel-null) → BOOLEAN (bitmap-null).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE BOOLEAN");
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            true
+
+                            false
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    // ========================
+    // ADD COLUMN column-top scenarios
+    // ========================
+
+    @Test
+    public void testAddBooleanColumnToExistingTable() throws Exception {
+        // ADD COLUMN for a bitmap-type to a table with existing data.
+        // Old rows should appear as NULL for the new column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-01T00:00:01.000000Z', 2),
+                    ('2024-01-01T00:00:02.000000Z', 3)
+                    """);
+
+            execute("ALTER TABLE t ADD COLUMN flag BOOLEAN");
+
+            // Insert rows after ADD COLUMN
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:03.000000Z', 4, true),
+                    ('2024-01-01T00:00:04.000000Z', 5, false)
+                    """);
+
+            // Old rows should have NULL for flag column
+            assertSql(
+                    """
+                            ts\tval\tflag
+                            2024-01-01T00:00:00.000000Z\t1\t
+                            2024-01-01T00:00:01.000000Z\t2\t
+                            2024-01-01T00:00:02.000000Z\t3\t
+                            2024-01-01T00:00:03.000000Z\t4\ttrue
+                            2024-01-01T00:00:04.000000Z\t5\tfalse
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+
+            // IS NULL should find 3 old rows
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE flag IS NULL");
+            // IS NOT NULL should find 2 new rows
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE flag IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testAddByteColumnToExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-01T00:00:01.000000Z', 2)
+                    """);
+
+            execute("ALTER TABLE t ADD COLUMN b BYTE");
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:02.000000Z', 3, 42),
+                    ('2024-01-01T00:00:03.000000Z', 4, NULL)
+                    """);
+
+            assertSql(
+                    """
+                            ts\tval\tb
+                            2024-01-01T00:00:00.000000Z\t1\t
+                            2024-01-01T00:00:01.000000Z\t2\t
+                            2024-01-01T00:00:02.000000Z\t3\t42
+                            2024-01-01T00:00:03.000000Z\t4\t
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+
+            // 3 nulls: 2 column-top + 1 explicit NULL
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE b IS NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE b IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testAddShortColumnToExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-01T00:00:01.000000Z', 2)
+                    """);
+
+            execute("ALTER TABLE t ADD COLUMN s SHORT");
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:02.000000Z', 3, 1000),
+                    ('2024-01-01T00:00:03.000000Z', 4, NULL)
+                    """);
+
+            // Column-top rows are null, explicit NULL row is null
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE s IS NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE s IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testAddUInt32ColumnToExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-01T00:00:01.000000Z', 2)
+                    """);
+
+            execute("ALTER TABLE t ADD COLUMN u UINT32");
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:02.000000Z', 3, 100::UINT32),
+                    ('2024-01-01T00:00:03.000000Z', 4, NULL)
+                    """);
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE u IS NULL");
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE u IS NOT NULL");
+
+            // Verify non-null value reads correctly
+            assertSql(
+                    """
+                            u
+
+
+                            100
+
+                            """,
+                    "SELECT u FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddColumnAcrossMultiplePartitions() throws Exception {
+        // ADD COLUMN with data spanning multiple partitions.
+        // Old partitions should all have NULL for the new column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-02T00:00:00.000000Z', 2),
+                    ('2024-01-03T00:00:00.000000Z', 3)
+                    """);
+
+            execute("ALTER TABLE t ADD COLUMN flag BOOLEAN");
+
+            // Insert into new partitions and an existing partition
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-03T00:00:01.000000Z', 4, true),
+                    ('2024-01-04T00:00:00.000000Z', 5, false)
+                    """);
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE flag IS NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE flag IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testAddColumnThenInsertNullAndNonNull() throws Exception {
+        // Verifies that after ADD COLUMN, both explicit NULL inserts
+        // and column-top nulls are correctly tracked in the bitmap.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-01T00:00:01.000000Z', 2)
+                    """);
+
+            execute("ALTER TABLE t ADD COLUMN b BYTE");
+
+            // Insert mix of nulls and values
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:02.000000Z', 3, 10),
+                    ('2024-01-01T00:00:03.000000Z', 4, NULL),
+                    ('2024-01-01T00:00:04.000000Z', 5, 20),
+                    ('2024-01-01T00:00:05.000000Z', 6, NULL)
+                    """);
+
+            // 2 column-top + 2 explicit NULL = 4 nulls
+            assertSql("cnt\n4\n", "SELECT COUNT(*) AS cnt FROM t WHERE b IS NULL");
+            // 2 non-null values
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE b IS NOT NULL");
+
+            // Verify COALESCE handles both types of null
+            assertSql(
+                    """
+                            c
+                            -1
+                            -1
+                            10
+                            -1
+                            20
+                            -1
+                            """,
+                    "SELECT COALESCE(b, -1::BYTE) AS c FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    // ========================
+    // Edge cases
+    // ========================
+
+    @Test
+    public void testAllNullPartition() throws Exception {
+        // All values are null — bitmap should be all 1s.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', NULL),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', NULL),
+                    ('2024-01-01T00:00:03.000000Z', NULL)
+                    """);
+
+            assertSql("cnt\n4\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n0\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            // Verify bitmap contents: all 4 bits set = 0x0F
+            try (TableReader reader = getReader("t")) {
+                reader.openPartition(0);
+                int base = reader.getColumnBase(0);
+                MemoryCR bitmapMem = reader.getNullBitmapColumn(base, 1);
+                Assert.assertNotNull(bitmapMem);
+                long addr = bitmapMem.getPageAddress(0);
+                byte b = Unsafe.getUnsafe().getByte(addr);
+                Assert.assertEquals("All 4 null bits set", (byte) 0x0F, b);
+            }
+        });
+    }
+
+    @Test
+    public void testNoNullPartition() throws Exception {
+        // No values are null — bitmap should be all 0s.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-01T00:00:01.000000Z', 2),
+                    ('2024-01-01T00:00:02.000000Z', 3),
+                    ('2024-01-01T00:00:03.000000Z', 4)
+                    """);
+
+            assertSql("cnt\n0\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n4\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            // Verify bitmap contents: no bits set = 0x00
+            try (TableReader reader = getReader("t")) {
+                reader.openPartition(0);
+                int base = reader.getColumnBase(0);
+                MemoryCR bitmapMem = reader.getNullBitmapColumn(base, 1);
+                Assert.assertNotNull(bitmapMem);
+                long addr = bitmapMem.getPageAddress(0);
+                byte b = Unsafe.getUnsafe().getByte(addr);
+                Assert.assertEquals("No null bits set", (byte) 0x00, b);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiPartitionMixedNulls() throws Exception {
+        // Data across 3 partitions with different null patterns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val BOOLEAN) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', true),
+                    ('2024-01-01T00:00:01.000000Z', false),
+                    ('2024-01-02T00:00:00.000000Z', NULL),
+                    ('2024-01-02T00:00:01.000000Z', NULL),
+                    ('2024-01-03T00:00:00.000000Z', true),
+                    ('2024-01-03T00:00:01.000000Z', NULL),
+                    ('2024-01-03T00:00:02.000000Z', false)
+                    """);
+
+            // Partition 1: 0 nulls, Partition 2: 2 nulls, Partition 3: 1 null = 3 total
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n4\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            // Verify per-day null counts
+            assertSql(
+                    """
+                            day\tnull_cnt
+                            2024-01-01T00:00:00.000000Z\t0
+                            2024-01-02T00:00:00.000000Z\t2
+                            2024-01-03T00:00:00.000000Z\t1
+                            """,
+                    "SELECT ts AS day, COUNT(*) - COUNT(val) AS null_cnt FROM t SAMPLE BY 1d ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionAllNullIntToDouble() throws Exception {
+        // All values are null — verifies edge case of conversion when every
+        // value in .d is the sentinel.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', NULL),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', NULL)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n0\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n0\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testConversionNoNullIntToDouble() throws Exception {
+        // No values are null — verifies clean conversion without null contamination.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-01T00:00:01.000000Z', 2),
+                    ('2024-01-01T00:00:02.000000Z', 0)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n0\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql("cnt\n0\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            1.0
+                            2.0
+                            0.0
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionMultiPartitionIntToDouble() throws Exception {
+        // Type conversion across multiple partitions, each with different null patterns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 10),
+                    ('2024-01-01T00:00:01.000000Z', 20),
+                    ('2024-01-02T00:00:00.000000Z', NULL),
+                    ('2024-01-02T00:00:01.000000Z', NULL),
+                    ('2024-01-03T00:00:00.000000Z', 30),
+                    ('2024-01-03T00:00:01.000000Z', NULL)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            10.0
+                            20.0
+                            null
+                            null
+                            30.0
+                            null
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testLazyBitmapMigrationDeleteAndReread() throws Exception {
+        // Delete .n file for BYTE column, then re-read.
+        // Since BYTE has no sentinel, regenerated bitmap will have all-zeros (no nulls).
+        // This verifies the lazy migration code path runs without error,
+        // though null info is lost for sentinel-free types.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 42),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0)
+                    """);
+
+            // Before deletion: 1 null
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            // Delete .n file
+            FilesFacade ff = configuration.getFilesFacade();
+            TableToken token = engine.verifyTableName("t");
+            try (Path path = new Path()) {
+                final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                TableUtils.setPathForNativePartition(path.trimTo(rootLen), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY,
+                        1704067200000000L, -1L);
+                TableUtils.nFile(path, "val");
+                Assert.assertTrue(ff.exists(path.$()));
+                ff.remove(path.$());
+                Assert.assertFalse(ff.exists(path.$()));
+            }
+
+            engine.releaseAllReaders();
+
+            // After regeneration: BYTE has no sentinel, so all rows appear non-null
+            // (null info is lost for types without sentinels when .n is deleted)
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL OR val IS NULL");
+        });
+    }
+
+    @Test
+    public void testAddColumnWalTable() throws Exception {
+        // ADD COLUMN on WAL table — verify column-top nulls and explicit NULL inserts work.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1),
+                    ('2024-01-01T00:00:01.000000Z', 2)
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t ADD COLUMN flag BOOLEAN");
+            drainWalQueue();
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:02.000000Z', 3, true),
+                    ('2024-01-01T00:00:03.000000Z', 4, NULL)
+                    """);
+            drainWalQueue();
+
+            // Column-top rows (val=1,2) and explicit NULL (val=4) should all be null
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE flag IS NULL");
+            // Only the true insert should be non-null
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE flag IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testAddColumnWalThenConvert() throws Exception {
+        // ADD COLUMN (bitmap-type), then ALTER TYPE on another column.
+        // Stress-test: multiple schema modifications, verify everything stays consistent.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 10),
+                    ('2024-01-01T00:00:01.000000Z', NULL)
+                    """);
+            drainWalQueue();
+
+            // Add a BOOLEAN column
+            execute("ALTER TABLE t ADD COLUMN flag BOOLEAN");
+            drainWalQueue();
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:02.000000Z', 20, true),
+                    ('2024-01-01T00:00:03.000000Z', NULL, false)
+                    """);
+            drainWalQueue();
+
+            // Now convert INT → DOUBLE
+            execute("ALTER TABLE t ALTER COLUMN val TYPE DOUBLE");
+            drainWalQueue();
+
+            // INT nulls should be preserved as DOUBLE NaN
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            // BOOLEAN column-top nulls should still be tracked
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE flag IS NULL");
+
+            assertSql(
+                    """
+                            val\tflag
+                            10.0\t
+                            null\t
+                            20.0\ttrue
+                            null\tfalse
+                            """,
+                    "SELECT val, flag FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionDoubleToBoolean() throws Exception {
+        // DOUBLE (NaN sentinel) → BOOLEAN (bitmap-null). Cross-category conversion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1.0),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0.0)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE BOOLEAN");
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            true
+
+                            false
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    // ========================
+    // Cross-type null propagation via INSERT INTO ... SELECT (CastFunction path)
+    // ========================
+
+    @Test
+    public void testCrossTypeNullPropagation() throws Exception {
+        assertMemoryLeak(() -> {
+            // INT → SHORT
+            execute("CREATE TABLE int_src (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO int_src VALUES ('2024-01-01', 100), ('2024-01-02', NULL), ('2024-01-03', 0)");
+            execute("CREATE TABLE short_dst (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO short_dst SELECT * FROM int_src");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tval
+                            2024-01-01T00:00:00.000000Z\t100
+                            2024-01-02T00:00:00.000000Z\t
+                            2024-01-03T00:00:00.000000Z\t0
+                            """,
+                    "SELECT * FROM short_dst", "ts", true, true
+            );
+            assertSql("total\tnon_null\n3\t2\n", "SELECT COUNT(*) AS total, COUNT(val) AS non_null FROM short_dst");
+
+            // INT → BYTE
+            execute("CREATE TABLE byte_dst (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO byte_dst SELECT * FROM int_src");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tval
+                            2024-01-01T00:00:00.000000Z\t100
+                            2024-01-02T00:00:00.000000Z\t
+                            2024-01-03T00:00:00.000000Z\t0
+                            """,
+                    "SELECT * FROM byte_dst", "ts", true, true
+            );
+            assertSql("total\tnon_null\n3\t2\n", "SELECT COUNT(*) AS total, COUNT(val) AS non_null FROM byte_dst");
+
+            // INT → UINT16
+            execute("CREATE TABLE uint16_dst (ts TIMESTAMP, val UINT16) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO uint16_dst SELECT * FROM int_src");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tval
+                            2024-01-01T00:00:00.000000Z\t100
+                            2024-01-02T00:00:00.000000Z\t
+                            2024-01-03T00:00:00.000000Z\t0
+                            """,
+                    "SELECT * FROM uint16_dst", "ts", true, true
+            );
+            assertSql("total\tnon_null\n3\t2\n", "SELECT COUNT(*) AS total, COUNT(val) AS non_null FROM uint16_dst");
+
+            // INT → UINT32: skipped because INT_NULL (-2147483648) collides with
+            // valid UINT32 value 2147483648. Same-tag conversion uses raw copy,
+            // so null propagation is not possible.
+
+            // LONG → SHORT
+            execute("CREATE TABLE long_src (ts TIMESTAMP, val LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO long_src VALUES ('2024-01-01', 50), ('2024-01-02', NULL), ('2024-01-03', 0)");
+            execute("CREATE TABLE long_short_dst (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO long_short_dst SELECT * FROM long_src");
+            assertSql("total\tnon_null\n3\t2\n", "SELECT COUNT(*) AS total, COUNT(val) AS non_null FROM long_short_dst");
+
+            // LONG → BYTE
+            execute("CREATE TABLE long_byte_dst (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO long_byte_dst SELECT * FROM long_src");
+            assertSql("total\tnon_null\n3\t2\n", "SELECT COUNT(*) AS total, COUNT(val) AS non_null FROM long_byte_dst");
+
+            // LONG → UINT64: skipped because LONG_NULL (-9223372036854775808) collides
+            // with valid UINT64 value 9223372036854775808. Same-tag conversion uses
+            // raw copy, so null propagation is not possible.
+
+            // FLOAT → SHORT
+            execute("CREATE TABLE float_src (ts TIMESTAMP, val FLOAT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO float_src VALUES ('2024-01-01', 10.5), ('2024-01-02', NULL), ('2024-01-03', 0.0)");
+            execute("CREATE TABLE float_short_dst (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO float_short_dst SELECT * FROM float_src");
+            assertSql("total\tnon_null\n3\t2\n", "SELECT COUNT(*) AS total, COUNT(val) AS non_null FROM float_short_dst");
+
+            // FLOAT → BYTE
+            execute("CREATE TABLE float_byte_dst (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO float_byte_dst SELECT * FROM float_src");
+            assertSql("total\tnon_null\n3\t2\n", "SELECT COUNT(*) AS total, COUNT(val) AS non_null FROM float_byte_dst");
+
+            // DOUBLE → SHORT
+            execute("CREATE TABLE double_src (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO double_src VALUES ('2024-01-01', 20.5), ('2024-01-02', NULL), ('2024-01-03', 0.0)");
+            execute("CREATE TABLE double_short_dst (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO double_short_dst SELECT * FROM double_src");
+            assertSql("total\tnon_null\n3\t2\n", "SELECT COUNT(*) AS total, COUNT(val) AS non_null FROM double_short_dst");
+
+            // DOUBLE → BYTE
+            execute("CREATE TABLE double_byte_dst (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO double_byte_dst SELECT * FROM double_src");
+            assertSql("total\tnon_null\n3\t2\n", "SELECT COUNT(*) AS total, COUNT(val) AS non_null FROM double_byte_dst");
+        });
+    }
+
+    @Test
+    public void testConversionBooleanToInt() throws Exception {
+        // BOOLEAN (bitmap-null) → INT (sentinel-null).
+        // Source is a bitmap-only type, destination is sentinel-based.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val BOOLEAN) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', true),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', false)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE INT");
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            1
+                            null
+                            0
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionShortToDouble() throws Exception {
+        // SHORT (bitmap-null) → DOUBLE (NaN sentinel).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 100),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0),
+                    ('2024-01-01T00:00:03.000000Z', -1)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            100.0
+                            null
+                            0.0
+                            -1.0
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testConversionByteToLong() throws Exception {
+        // BYTE (bitmap-null) → LONG (LONG_NULL sentinel).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 10),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0),
+                    ('2024-01-01T00:00:03.000000Z', -1)
+                    """);
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+
+            execute("ALTER TABLE t ALTER COLUMN val TYPE LONG");
+            drainWalQueue();
+
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NULL");
+            assertSql("cnt\n3\n", "SELECT COUNT(*) AS cnt FROM t WHERE val IS NOT NULL");
+
+            assertSql(
+                    """
+                            val
+                            10
+                            null
+                            0
+                            -1
+                            """,
+                    "SELECT val FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testO3MergePreservesBitmapNulls() throws Exception {
+        // O3 (out-of-order) inserts trigger a partition merge. The merge must
+        // carry over the null bitmaps for bitmap-null column types.
+        assertMemoryLeak(() -> {
+            // BYPASS WAL so O3 merge happens synchronously in the writer.
+            execute("CREATE TABLE o3_null (ts TIMESTAMP, sh SHORT, by BYTE, b BOOLEAN) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+
+            // Batch 1: in-order rows across two partitions
+            execute("""
+                    INSERT INTO o3_null VALUES
+                    ('2024-01-01T01:00:00.000000Z', 10, 1, true),
+                    ('2024-01-01T01:00:01.000000Z', NULL, NULL, NULL),
+                    ('2024-01-01T02:00:00.000000Z', 20, 2, false),
+                    ('2024-01-01T02:00:01.000000Z', NULL, NULL, NULL)
+                    """);
+
+            // Batch 2: O3 insert into the first partition, forcing merge
+            execute("""
+                    INSERT INTO o3_null VALUES
+                    ('2024-01-01T01:00:00.500000Z', 15, 3, true),
+                    ('2024-01-01T01:00:01.500000Z', NULL, NULL, NULL)
+                    """);
+
+            // Partition 1 underwent O3 merge – verify nulls survived
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsh\tby\tb
+                            2024-01-01T01:00:00.000000Z\t10\t1\ttrue
+                            2024-01-01T01:00:00.500000Z\t15\t3\ttrue
+                            2024-01-01T01:00:01.000000Z\t\t\t
+                            2024-01-01T01:00:01.500000Z\t\t\t
+                            2024-01-01T02:00:00.000000Z\t20\t2\tfalse
+                            2024-01-01T02:00:01.000000Z\t\t\t
+                            """,
+                    "SELECT * FROM o3_null", "ts", true, true
+            );
+
+            // Verify counts: 6 total, 3 non-null per column
+            assertSql(
+                    "total\tsh_nn\tby_nn\tb_nn\n6\t3\t3\t3\n",
+                    "SELECT COUNT(*) AS total, COUNT(sh) AS sh_nn, COUNT(by) AS by_nn, COUNT(b) AS b_nn FROM o3_null"
+            );
+        });
+    }
+
+    @Test
+    public void testO3MergeWithMovedUncommittedRows() throws Exception {
+        // When O3 mode activates, uncommitted in-order rows are moved into O3
+        // memory alongside the O3 rows. The null bitmap reconstruction must
+        // handle both groups with the correct bit ordering.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o3_move (ts TIMESTAMP, sh SHORT, by BYTE, b BOOLEAN) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+
+            // Insert and commit in-order rows
+            execute("""
+                    INSERT INTO o3_move VALUES
+                    ('2024-01-01T01:00:00.000000Z', 10, 1, true),
+                    ('2024-01-01T01:00:01.000000Z', NULL, NULL, NULL)
+                    """);
+
+            // Insert more in-order rows WITHOUT committing, then insert O3
+            // rows in the same transaction. The in-order rows become
+            // "moved uncommitted" during o3MoveUncommitted().
+            execute("""
+                    INSERT INTO o3_move VALUES
+                    ('2024-01-01T01:00:03.000000Z', 30, 3, false),
+                    ('2024-01-01T01:00:04.000000Z', NULL, NULL, NULL),
+                    ('2024-01-01T01:00:02.000000Z', NULL, NULL, NULL),
+                    ('2024-01-01T01:00:02.500000Z', 25, 5, true)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsh\tby\tb
+                            2024-01-01T01:00:00.000000Z\t10\t1\ttrue
+                            2024-01-01T01:00:01.000000Z\t\t\t
+                            2024-01-01T01:00:02.000000Z\t\t\t
+                            2024-01-01T01:00:02.500000Z\t25\t5\ttrue
+                            2024-01-01T01:00:03.000000Z\t30\t3\tfalse
+                            2024-01-01T01:00:04.000000Z\t\t\t
+                            """,
+                    "SELECT * FROM o3_move", "ts", true, true
+            );
+
+            assertSql(
+                    "total\tsh_nn\tby_nn\tb_nn\n6\t3\t3\t3\n",
+                    "SELECT COUNT(*) AS total, COUNT(sh) AS sh_nn, COUNT(by) AS by_nn, COUNT(b) AS b_nn FROM o3_move"
+            );
+        });
+    }
 }

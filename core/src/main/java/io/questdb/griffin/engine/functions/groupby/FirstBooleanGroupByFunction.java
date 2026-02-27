@@ -54,15 +54,9 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        if (arg.isNull(record)) {
-            mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-            mapValue.putBool(valueIndex + 1, false);
-            mapValue.putBool(valueIndex + 2, true);
-            return;
-        }
         mapValue.putLong(valueIndex, rowId);
         mapValue.putBool(valueIndex + 1, arg.getBool(record));
-        mapValue.putBool(valueIndex + 2, false);
+        mapValue.putBool(valueIndex + 2, arg.isNull(record));
     }
 
     @Override
@@ -132,7 +126,7 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
         if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putBool(valueIndex + 1, srcValue.getBool(valueIndex + 1));
-            destValue.putBool(valueIndex + 2, false);
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 

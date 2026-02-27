@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.NullBitmapMigrator;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -189,6 +190,15 @@ public class CopyWalSegmentUtils {
 
         if (bitmapFd > -1 && bitmapColumn != null) {
             copyBitmapFile(ff, bitmapColumn, bitmapFd, startRowNumber, rowCount, columnRollSink, commitMode);
+        } else if (bitmapColumn == null && ColumnType.needsNullBitmap(newColumnType)
+                && columnType != newColumnType && success) {
+            // Source type doesn't have .n bitmap but destination type needs one.
+            // Generate bitmap from source sentinel values so null info is preserved.
+            generateBitmapFromSentinels(
+                    ff, options, walPath, newSegment, columnName,
+                    columnType, primaryColumn, startRowNumber, rowCount,
+                    columnRollSink, commitMode
+            );
         }
     }
 
@@ -243,6 +253,47 @@ public class CopyWalSegmentUtils {
         }
 
         columnRollSink.setDestBitmapSize(dstBitmapByteCount);
+    }
+
+    private static void generateBitmapFromSentinels(
+            FilesFacade ff,
+            int options,
+            Path walPath,
+            int newSegment,
+            CharSequence columnName,
+            int sourceColumnType,
+            MemoryMA primaryColumn,
+            long startRowNumber,
+            long rowCount,
+            SegmentColumnRollSink columnRollSink,
+            int commitMode
+    ) {
+        Path nPath = Path.PATH2.get().of(walPath).slash().put(newSegment);
+        int setPathRoot = nPath.size();
+        nFile(nPath, columnName, COLUMN_NAME_TXN_NONE);
+
+        int typeSize = ColumnType.sizeOf(sourceColumnType);
+        long srcDataOffset = startRowNumber * typeSize;
+        long srcDataSize = rowCount * typeSize;
+        long mapSize = srcDataOffset + srcDataSize;
+        long dataAddr = TableUtils.mapRO(ff, primaryColumn.getFd(), mapSize, MEMORY_TAG);
+        try {
+            NullBitmapMigrator.ensureNullBitmap(
+                    ff, nPath.$(), sourceColumnType, dataAddr + srcDataOffset, rowCount, 0
+            );
+        } finally {
+            ff.munmap(dataAddr, mapSize, MEMORY_TAG);
+        }
+
+        // Open the generated .n file and register in the column roll sink
+        long bitmapFd = openRW(ff, nFile(nPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE), LOG, options);
+        columnRollSink.setDestBitmapFd(bitmapFd);
+        long bitmapSize = (rowCount + 7) >> 3;
+        columnRollSink.setDestBitmapSize(bitmapSize);
+
+        if (commitMode != CommitMode.NOSYNC) {
+            ff.fsync(bitmapFd);
+        }
     }
 
     private static boolean copyFixLenFile(

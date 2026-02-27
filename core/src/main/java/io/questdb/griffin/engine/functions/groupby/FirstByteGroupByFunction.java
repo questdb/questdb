@@ -54,15 +54,9 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        if (arg.isNull(record)) {
-            mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-            mapValue.putByte(valueIndex + 1, (byte) 0);
-            mapValue.putBool(valueIndex + 2, true);
-            return;
-        }
         mapValue.putLong(valueIndex, rowId);
         mapValue.putByte(valueIndex + 1, arg.getByte(record));
-        mapValue.putBool(valueIndex + 2, false);
+        mapValue.putBool(valueIndex + 2, arg.isNull(record));
     }
 
     @Override
@@ -132,7 +126,7 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
         if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putByte(valueIndex + 1, srcValue.getByte(valueIndex + 1));
-            destValue.putBool(valueIndex + 2, false);
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 

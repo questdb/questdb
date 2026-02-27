@@ -54,15 +54,9 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        if (arg.isNull(record)) {
-            mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-            mapValue.putShort(valueIndex + 1, (short) 0);
-            mapValue.putBool(valueIndex + 2, true);
-            return;
-        }
         mapValue.putLong(valueIndex, rowId);
         mapValue.putShort(valueIndex + 1, arg.getShort(record));
-        mapValue.putBool(valueIndex + 2, false);
+        mapValue.putBool(valueIndex + 2, arg.isNull(record));
     }
 
     @Override
@@ -132,7 +126,7 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
         if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putShort(valueIndex + 1, srcValue.getShort(valueIndex + 1));
-            destValue.putBool(valueIndex + 2, false);
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 

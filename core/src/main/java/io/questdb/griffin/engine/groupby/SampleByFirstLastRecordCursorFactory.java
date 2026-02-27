@@ -72,6 +72,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private static final int TIMESTAMP_OUT_INDEX = 2;
     private final RecordCursorFactory base;
     private final LongList crossFrameRow;
+    private final boolean[] crossFrameRowNull;
     private final SampleByFirstLastRecordCursor cursor;
     private final int[] firstLastIndexByCol;
     private final int groupBySymbolColIndex;
@@ -113,6 +114,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             isKeyColumn = new boolean[columns.size()];
             crossFrameRow = new LongList(columns.size());
             crossFrameRow.setPos(columns.size());
+            crossFrameRowNull = new boolean[columns.size()];
             this.timestampIndex = timestampIndex;
             buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);
             int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
@@ -665,6 +667,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 if (i == groupByTimestampIndex) {
                     long tsIndex = rowIdOutAddress.get(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset;
                     crossFrameRow.set(i, samplePeriodAddress.get(tsIndex));
+                    crossFrameRowNull[i] = false;
                 } else {
                     long rowId = rowIdOutAddress.get(firstLastIndexByCol[i]);
                     saveRowIdValueToCrossRow(rowId, i);
@@ -707,8 +710,10 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             long pageAddress = frameMemory.getPageAddress(frameColIndex);
             if (pageAddress > 0) {
                 saveFixedColToBufferWithLongAlignment(columnIndex, crossFrameRow, columnType, pageAddress, rowId);
+                crossFrameRowNull[columnIndex] = false;
             } else {
                 crossFrameRow.set(columnIndex, LongNullUtils.getLongNull(columnType));
+                crossFrameRowNull[columnIndex] = true;
             }
         }
 
@@ -735,6 +740,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             @Override
             public byte getByte(int col) {
                 return currentRecord.getByte(col);
+            }
+
+            @Override
+            public boolean isNull(int col) {
+                return currentRecord.isNull(col);
             }
 
             @Override
@@ -811,6 +821,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
             private class SampleByCrossRecord implements Record {
                 @Override
+                public boolean isNull(int col) {
+                    return crossFrameRowNull[col];
+                }
+
+                @Override
                 public byte getByte(int col) {
                     return (byte) crossFrameRow.getQuick(col);
                 }
@@ -880,6 +895,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             private class SampleByDataRecord implements Record {
                 private final long[] pageAddresses = new long[queryToFrameColumnMapping.length];
                 private long currentRow;
+
+                @Override
+                public boolean isNull(int col) {
+                    return pageAddresses[col] <= 0;
+                }
 
                 @Override
                 public byte getByte(int col) {
