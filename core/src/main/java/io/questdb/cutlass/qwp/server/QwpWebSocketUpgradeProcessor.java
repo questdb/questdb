@@ -298,6 +298,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         // WebSocket connections don't park like normal HTTP requests
     }
 
+    /**
+     * Receives and processes WebSocket frames until the socket would block.
+     */
     @Override
     public void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
         // Ensure state is available
@@ -313,34 +316,37 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         int recvBufferSize = context.getRecvBufferSize();
 
         try {
-            // Read data from socket
-            int recvBufferLen = state.getRecvBufferLen();
-            if (recvBufferLen >= recvBufferSize) {
-                // Buffer is full but the parser still needs more data — the frame
-                // payload exceeds recv buffer capacity. Disconnect to avoid spinning.
-                LOG.error().$("WebSocket frame too large for recv buffer [fd=").$(context.getFd())
-                        .$(", bufferSize=").$(recvBufferSize).I$();
-                throw ServerDisconnectException.INSTANCE;
+            // Keep reading while the socket is hot.
+            while (true) {
+                int recvBufferLen = state.getRecvBufferLen();
+                if (recvBufferLen >= recvBufferSize) {
+                    // Buffer is full but the parser still needs more data — the frame
+                    // payload exceeds recv buffer capacity. Disconnect to avoid spinning.
+                    LOG.error().$("WebSocket frame too large for recv buffer [fd=").$(context.getFd())
+                            .$(", bufferSize=").$(recvBufferSize).I$();
+                    throw ServerDisconnectException.INSTANCE;
+                }
+
+                int read = socket.recv(recvBuffer + recvBufferLen, recvBufferSize - recvBufferLen);
+                if (read < 0) {
+                    // Connection closed
+                    LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
+                    throw ServerDisconnectException.INSTANCE;
+                }
+
+                if (read == 0) {
+                    // No data available from kernel right now, hand back to dispatcher.
+                    throw PeerIsSlowToWriteException.INSTANCE;
+                }
+
+                recvBufferLen += read;
+                LOG.debug().$("WebSocket recv [fd=").$(context.getFd()).$(", bytes=").$(read).$(", total=").$(recvBufferLen).I$();
+
+                FrameProcessResult frameProcessResult = processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
+                if (frameProcessResult == FrameProcessResult.NEED_MORE_DATA) {
+                    // Partial frame is buffered and compacted; continue reading immediately.
+                }
             }
-            int read = socket.recv(recvBuffer + recvBufferLen, recvBufferSize - recvBufferLen);
-
-            if (read < 0) {
-                // Connection closed
-                LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
-                throw ServerDisconnectException.INSTANCE;
-            }
-
-            if (read == 0) {
-                // No data available, wait for more
-                throw PeerIsSlowToWriteException.INSTANCE;
-            }
-
-            recvBufferLen += read;
-            state.setRecvBufferLen(recvBufferLen);
-            LOG.debug().$("WebSocket recv [fd=").$(context.getFd()).$(", bytes=").$(read).$(", total=").$(recvBufferLen).I$();
-
-            // Parse WebSocket frames
-            processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
 
         } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
             throw e;
@@ -547,10 +553,11 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
-            throws ServerDisconnectException, PeerIsSlowToWriteException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private FrameProcessResult processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
+            throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         long bufferEnd = buffer + bufferLen;
         long pos = buffer;
+        FrameProcessResult result = FrameProcessResult.COMPLETE;
 
         try {
             while (pos < bufferEnd) {
@@ -564,8 +571,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
                 if (consumed == 0 || frameParser.getState() == WebSocketFrameParser.STATE_NEED_MORE ||
                         frameParser.getState() == WebSocketFrameParser.STATE_NEED_PAYLOAD) {
-                    // Need more data — finally block compacts the buffer
-                    throw PeerIsSlowToWriteException.INSTANCE;
+                    result = FrameProcessResult.NEED_MORE_DATA;
+                    break;
                 }
 
                 // Frame parsed successfully
@@ -585,8 +592,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 handleWebSocketFrame(context, state, opcode, payloadPtr, payloadLen);
             }
 
-            // All frames processed — flush any pending cumulative ACK
-            flushPendingAck(context, state);
+            if (result == FrameProcessResult.COMPLETE) {
+                // All frames processed — flush any pending cumulative ACK
+                flushPendingAck(context, state);
+            }
         } finally {
             // Compact unprocessed bytes to buffer start and update state.
             // Handles both normal exit (remaining=0) and exception unwind
@@ -597,6 +606,13 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
             state.setRecvBufferLen(remaining);
         }
+
+        return result;
+    }
+
+    private enum FrameProcessResult {
+        COMPLETE,
+        NEED_MORE_DATA
     }
 
     /**
