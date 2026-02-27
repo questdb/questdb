@@ -37,7 +37,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
  * <pre>
  * [null bitmap if nullable]: ceil(rowCount/8) bytes
  * [precision]: varint (number of bits, 1-60)
- * [values]: rowCount * ceil(precision/8) bytes
+ * [values]: (rowCount - nullCount) * ceil(precision/8) bytes (packed, non-null only)
  * </pre>
  */
 public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
@@ -48,6 +48,7 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
     private boolean currentIsNull;
     // Iteration state
     private int currentRow;
+    private int currentValueIndex;
     // Wire pointers
     private long nullBitmapAddress;
     // Configuration
@@ -71,9 +72,10 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
             currentIsNull = false;
         }
 
-        // Read geohash value
-        long valueAddress = valuesAddress + (long) currentRow * valueSize;
+        // Read geohash value from packed array (non-null values only)
+        long valueAddress = valuesAddress + (long) currentValueIndex * valueSize;
         currentGeoHash = readValue(valueAddress, valueSize);
+        currentValueIndex++;
         return false;
     }
 
@@ -147,11 +149,13 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
         this.nameUtf8.of(nameAddress, nameAddress + nameLength);
 
         int offset = 0;
+        int nullCount = 0;
         long limit = dataAddress + dataLength;
 
         if (nullable) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             this.nullBitmapAddress = dataAddress;
+            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
             offset += bitmapSize;
         } else {
             this.nullBitmapAddress = 0;
@@ -172,7 +176,8 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
 
         this.valueSize = (precision + 7) / 8;
         this.valuesAddress = dataAddress + offset;
-        offset += rowCount * valueSize;
+        int valueCount = rowCount - nullCount;
+        offset += valueCount * valueSize;
 
         resetRowPosition();
         return offset;
@@ -181,6 +186,7 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
     @Override
     public void resetRowPosition() {
         currentRow = -1;
+        currentValueIndex = 0;
         currentIsNull = false;
         currentGeoHash = 0;
     }

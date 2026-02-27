@@ -25,7 +25,9 @@
 package io.questdb.test.cutlass.http.qwp;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpGeoHashDecoder;
+import io.questdb.cutlass.qwp.protocol.QwpNullBitmap;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.MemoryTag;
@@ -34,6 +36,80 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class QwpGeoHashDecoderTest {
+
+    @Test
+    public void testCursorNullablePackedValues() throws QwpParseException {
+        // 5 rows, precision=5 (1 byte per value), rows 1 and 3 are null.
+        // Values are packed: only non-null values are stored after the null bitmap.
+        // This matches the packed format used by QwpFixedWidthColumnCursor and
+        // QwpDecimalColumnCursor for nullable columns.
+        int rowCount = 5;
+        int precision = 5;
+        int valueSize = 1;
+        int nullCount = 2;
+        int nonNullCount = rowCount - nullCount;
+
+        int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+        int precisionVarintSize = 1;
+        int packedSize = bitmapSize + precisionVarintSize + nonNullCount * valueSize;
+
+        // Allocate extra space so the buggy cursor doesn't read past the buffer
+        int allocSize = bitmapSize + precisionVarintSize + rowCount * valueSize;
+
+        long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // Zero out buffer
+            for (int i = 0; i < allocSize; i++) {
+                Unsafe.getUnsafe().putByte(address + i, (byte) 0);
+            }
+
+            // Write null bitmap (rows 1 and 3 are null)
+            QwpNullBitmap.fillNoneNull(address, rowCount);
+            QwpNullBitmap.setNull(address, 1);
+            QwpNullBitmap.setNull(address, 3);
+
+            // Write precision varint
+            QwpVarint.encode(address + bitmapSize, precision);
+
+            // Write packed values (only non-null rows)
+            long valuesStart = address + bitmapSize + precisionVarintSize;
+            Unsafe.getUnsafe().putByte(valuesStart, (byte) 22);      // row 0
+            Unsafe.getUnsafe().putByte(valuesStart + 1, (byte) 31);  // row 2
+            Unsafe.getUnsafe().putByte(valuesStart + 2, (byte) 21);  // row 4
+
+            // Initialize cursor
+            QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
+            int consumed = cursor.of(address, allocSize, rowCount, true, 0, 0);
+
+            // Verify bytes consumed matches packed format
+            Assert.assertEquals("Bytes consumed should match packed format size", packedSize, consumed);
+
+            // Row 0: not null, value = 22
+            cursor.advanceRow();
+            Assert.assertFalse("Row 0 should not be null", cursor.isNull());
+            Assert.assertEquals("Row 0 value", 22L, cursor.getGeoHash());
+
+            // Row 1: null
+            cursor.advanceRow();
+            Assert.assertTrue("Row 1 should be null", cursor.isNull());
+
+            // Row 2: not null, value = 31
+            cursor.advanceRow();
+            Assert.assertFalse("Row 2 should not be null", cursor.isNull());
+            Assert.assertEquals("Row 2 value", 31L, cursor.getGeoHash());
+
+            // Row 3: null
+            cursor.advanceRow();
+            Assert.assertTrue("Row 3 should be null", cursor.isNull());
+
+            // Row 4: not null, value = 21
+            cursor.advanceRow();
+            Assert.assertFalse("Row 4 should not be null", cursor.isNull());
+            Assert.assertEquals("Row 4 value", 21L, cursor.getGeoHash());
+        } finally {
+            Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
 
     @Test
     public void testCalculateEncodedSize() {
@@ -328,8 +404,16 @@ public class QwpGeoHashDecoderTest {
     private void testRoundTrip(long[] values, int precision, boolean[] nulls) throws QwpParseException {
         int rowCount = values.length;
         boolean nullable = nulls != null;
+        int nullCount = 0;
+        if (nullable) {
+            for (boolean isNull : nulls) {
+                if (isNull) {
+                    nullCount++;
+                }
+            }
+        }
 
-        int size = QwpGeoHashDecoder.calculateEncodedSize(rowCount, precision, nullable);
+        int size = QwpGeoHashDecoder.calculateEncodedSize(rowCount, precision, nullable, nullCount);
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             // Encode

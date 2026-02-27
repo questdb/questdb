@@ -71,13 +71,17 @@ public final class QwpGeoHashDecoder implements QwpColumnDecoder {
      * @return encoded size in bytes
      */
     public static int calculateEncodedSize(int rowCount, int precision, boolean nullable) {
+        return calculateEncodedSize(rowCount, precision, nullable, 0);
+    }
+
+    public static int calculateEncodedSize(int rowCount, int precision, boolean nullable, int nullCount) {
         int size = 0;
         if (nullable) {
             size += QwpNullBitmap.sizeInBytes(rowCount);
         }
         // Calculate varint size for precision (precision is 1-60, fits in 1 byte)
         size += varintSize(precision);
-        size += rowCount * ((precision + 7) / 8);
+        size += (rowCount - nullCount) * ((precision + 7) / 8);
         return size;
     }
 
@@ -110,11 +114,13 @@ public final class QwpGeoHashDecoder implements QwpColumnDecoder {
         // Write precision
         pos = QwpVarint.encode(pos, precision);
 
-        // Write values
+        // Write packed values (non-null only)
         int valueSize = (precision + 7) / 8;
         for (int i = 0; i < rowCount; i++) {
-            writeValue(pos, values[i], valueSize);
-            pos += valueSize;
+            if (nulls == null || !nulls[i]) {
+                writeValue(pos, values[i], valueSize);
+                pos += valueSize;
+            }
         }
 
         return pos;
@@ -187,8 +193,15 @@ public final class QwpGeoHashDecoder implements QwpColumnDecoder {
         // Calculate value size in bytes based on precision
         int valueSize = (precision + 7) / 8;
 
-        // Check if we have enough data for all values
-        int valuesSize = rowCount * valueSize;
+        // Count non-null values for packed format
+        int nullCount = 0;
+        if (nullable) {
+            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
+        }
+        int valueCount = rowCount - nullCount;
+        int valuesSize = valueCount * valueSize;
+
+        // Check if we have enough data for packed values
         if (offset + valuesSize > sourceLength) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INSUFFICIENT_DATA,
@@ -196,16 +209,18 @@ public final class QwpGeoHashDecoder implements QwpColumnDecoder {
             );
         }
 
-        // Decode values
+        // Decode packed values (non-null only)
         GeoHashColumnSink geoSink = (GeoHashColumnSink) sink;
         long valuesAddress = sourceAddress + offset;
+        int valueIndex = 0;
 
         for (int i = 0; i < rowCount; i++) {
             if (nullable && QwpNullBitmap.isNull(nullBitmapAddress, i)) {
                 sink.putNull(i);
             } else {
-                long value = readValue(valuesAddress + (long) i * valueSize, valueSize);
+                long value = readValue(valuesAddress + (long) valueIndex * valueSize, valueSize);
                 geoSink.putGeoHash(i, value, precision);
+                valueIndex++;
             }
         }
 
