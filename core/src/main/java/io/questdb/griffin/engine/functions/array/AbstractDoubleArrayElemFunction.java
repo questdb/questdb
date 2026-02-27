@@ -61,19 +61,38 @@ import io.questdb.std.ObjList;
  */
 public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction implements MultiArgFunction {
 
-    /** Reusable output array, reshaped per call. */
-    protected final DirectArray arrayOut;
-    /** The variadic DOUBLE[] arguments. */
+    /**
+     * The variadic DOUBLE[] arguments.
+     */
     protected final ObjList<Function> args;
-    /** Scratch: coordinate vector for nD iteration (size nDims). */
+    /**
+     * Reusable output array, reshaped per call.
+     */
+    protected final DirectArray arrayOut;
+    /**
+     * Cached array views from the current row, populated by {@link #scanInputs}.
+     * Null entries represent NULL/empty inputs.
+     */
+    private final ObjList<ArrayView> cachedViews = new ObjList<>();
+    /**
+     * Scratch: coordinate vector for nD iteration (size nDims).
+     */
     protected int[] coords;
-    /** Scratch: shape of the current input being accumulated (size nDims). */
+    /**
+     * Scratch: shape of the current input being accumulated (size nDims).
+     */
     protected int[] inputShape;
-    /** Scratch: per-dimension max across all inputs (size nDims). */
+    /**
+     * Scratch: per-dimension max across all inputs (size nDims).
+     */
     protected int[] maxShape;
-    /** Number of array dimensions; 0 until resolved from weak dims. */
+    /**
+     * Number of array dimensions; 0 until resolved from weak dims.
+     */
     protected int nDims;
-    /** Scratch: row-major strides for the output shape (size nDims). */
+    /**
+     * Scratch: row-major strides for the output shape (size nDims).
+     */
     protected int[] outStrides;
 
     protected AbstractDoubleArrayElemFunction(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
@@ -90,6 +109,170 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         }
         this.arrayOut = new DirectArray(configuration);
         this.arrayOut.setType(type);
+    }
+
+    @Override
+    public ObjList<Function> args() {
+        return args;
+    }
+
+    @Override
+    public void close() {
+        MultiArgFunction.super.close();
+        Misc.free(arrayOut);
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        boolean canUseFlatPath = scanInputs(rec);
+
+        int totalFlatLen = 1;
+        for (int d = 0; d < nDims; d++) {
+            arrayOut.setDimLen(d, maxShape[d]);
+            totalFlatLen *= maxShape[d];
+        }
+        if (totalFlatLen == 0) {
+            return ArrayConstant.NULL;
+        }
+        arrayOut.applyShape();
+        for (int i = 0; i < totalFlatLen; i++) {
+            arrayOut.putDouble(i, Double.NaN);
+        }
+        beforeAccumulation(totalFlatLen);
+
+        if (canUseFlatPath) {
+            accumulateFlat();
+        } else {
+            accumulateCoords();
+        }
+
+        postProcess(totalFlatLen);
+        return arrayOut;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        MultiArgFunction.super.init(symbolTableSource, executionContext);
+        int resolvedDims = 0;
+        for (int i = 0, n = args.size(); i < n; i++) {
+            int d = ColumnType.decodeWeakArrayDimensionality(args.getQuick(i).getType());
+            if (d > 0) {
+                resolvedDims = d;
+                break;
+            }
+        }
+        if (resolvedDims > 0) {
+            this.nDims = resolvedDims;
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resolvedDims);
+            this.arrayOut.setType(type);
+            this.maxShape = new int[resolvedDims];
+            this.coords = new int[resolvedDims];
+            this.inputShape = new int[resolvedDims];
+            this.outStrides = new int[resolvedDims];
+        }
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return false;
+    }
+
+    /**
+     * Coordinate-based nD path: for each cached input, iterates that input's
+     * coordinates and maps each to the output via row-major strides.
+     * Uses {@code arr.getStride(d)} for the input flat index, handling
+     * non-vanilla strides (transpose, slicing).
+     */
+    private void accumulateCoords() {
+        ArrayView.computeRowMajorStrides(maxShape, outStrides);
+        for (int a = 0, n = cachedViews.size(); a < n; a++) {
+            ArrayView arr = cachedViews.getQuick(a);
+            if (arr == null) {
+                continue;
+            }
+            for (int d = 0; d < nDims; d++) {
+                inputShape[d] = arr.getDimLen(d);
+                coords[d] = 0;
+            }
+            do {
+                int inputFi = 0;
+                for (int d = 0; d < nDims; d++) {
+                    inputFi += coords[d] * arr.getStride(d);
+                }
+                double val = arr.getDouble(inputFi);
+                if (Numbers.isFinite(val)) {
+                    int outFi = ArrayView.coordsToFlatIndex(coords, outStrides);
+                    accumulate(outFi, val);
+                }
+            } while (ArrayView.incrementCoords(coords, inputShape));
+        }
+    }
+
+    /**
+     * Flat fast path: all non-null inputs are vanilla row-major with inner dims
+     * matching the output, so flat index {@code i} in the input maps to the same
+     * logical coordinate as flat index {@code i} in the output.
+     */
+    private void accumulateFlat() {
+        for (int a = 0, n = cachedViews.size(); a < n; a++) {
+            ArrayView arr = cachedViews.getQuick(a);
+            if (arr == null) {
+                continue;
+            }
+            int len = arr.getFlatViewLength();
+            for (int i = 0; i < len; i++) {
+                double val = arr.getDouble(i);
+                if (Numbers.isFinite(val)) {
+                    accumulate(i, val);
+                }
+            }
+        }
+    }
+
+    /**
+     * Evaluates all arguments once, caching views in {@link #cachedViews}.
+     * Populates {@link #maxShape} with the per-dimension max across non-null inputs.
+     * Checks whether the flat fast path is usable: all non-null inputs must be
+     * vanilla row-major with inner dimensions (d &ge; 1) matching the output's.
+     *
+     * @return true if the flat path can be used, false if coordinate path is needed
+     */
+    private boolean scanInputs(Record rec) {
+        for (int d = 0; d < nDims; d++) {
+            maxShape[d] = 0;
+        }
+        int n = args.size();
+        cachedViews.clear();
+        cachedViews.setPos(n);
+        boolean canUseFlatPath = true;
+        for (int i = 0; i < n; i++) {
+            ArrayView a = args.getQuick(i).getArray(rec);
+            if (a == null || a.isNull()) {
+                cachedViews.setQuick(i, null);
+                continue;
+            }
+            cachedViews.setQuick(i, a);
+            for (int d = 0; d < nDims; d++) {
+                maxShape[d] = Math.max(maxShape[d], a.getDimLen(d));
+            }
+            if (canUseFlatPath && !a.isVanilla()) {
+                canUseFlatPath = false;
+            }
+        }
+        if (canUseFlatPath) {
+            for (int i = 0; i < n; i++) {
+                ArrayView a = cachedViews.getQuick(i);
+                if (a == null) {
+                    continue;
+                }
+                for (int d = 1; d < nDims; d++) {
+                    if (a.getDimLen(d) != maxShape[d]) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return canUseFlatPath;
     }
 
     /**
@@ -123,70 +306,6 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         return resolvedDims;
     }
 
-    @Override
-    public ObjList<Function> args() {
-        return args;
-    }
-
-    @Override
-    public void close() {
-        MultiArgFunction.super.close();
-        Misc.free(arrayOut);
-    }
-
-    @Override
-    public ArrayView getArray(Record rec) {
-        boolean canUseFlatPath = scanInputs(rec);
-
-        int totalFlatLen = 1;
-        for (int d = 0; d < nDims; d++) {
-            arrayOut.setDimLen(d, maxShape[d]);
-            totalFlatLen *= maxShape[d];
-        }
-        if (totalFlatLen == 0) {
-            return ArrayConstant.NULL;
-        }
-        arrayOut.applyShape();
-        for (int i = 0; i < totalFlatLen; i++) {
-            arrayOut.putDouble(i, Double.NaN);
-        }
-        beforeAccumulation(totalFlatLen);
-
-        if (canUseFlatPath) {
-            accumulateFlat(rec);
-        } else {
-            accumulateCoords(rec);
-        }
-
-        postProcess(totalFlatLen);
-        return arrayOut;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        MultiArgFunction.super.init(symbolTableSource, executionContext);
-        int resolvedDims = 0;
-        for (int i = 0, n = args.size(); i < n; i++) {
-            int d = ColumnType.decodeArrayDimensionality(args.getQuick(i).getType());
-            if (d > 0) {
-                resolvedDims = d;
-                break;
-            }
-        }
-        this.nDims = resolvedDims;
-        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resolvedDims);
-        this.arrayOut.setType(type);
-        this.maxShape = new int[resolvedDims];
-        this.coords = new int[resolvedDims];
-        this.inputShape = new int[resolvedDims];
-        this.outStrides = new int[resolvedDims];
-    }
-
-    @Override
-    public boolean isThreadSafe() {
-        return false;
-    }
-
     /**
      * Accumulates a single finite value at the given output position.
      * Seeds the position (replaces NaN) on first value, otherwise combines.
@@ -201,11 +320,15 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         }
     }
 
-    /** Called before the accumulation loop. Subclasses use this to initialize per-position state. */
+    /**
+     * Called before the accumulation loop. Subclasses use this to initialize per-position state.
+     */
     protected void beforeAccumulation(int totalFlatLen) {
     }
 
-    /** The element-wise aggregation operation (e.g. {@code Math.max}, {@code Math.min}, {@code +}). */
+    /**
+     * The element-wise aggregation operation (e.g. {@code Math.max}, {@code Math.min}, {@code +}).
+     */
     protected abstract double combine(double cur, double val);
 
     /**
@@ -225,102 +348,9 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         }
     }
 
-    /** Called after all inputs are accumulated. Avg uses this to divide sums by counts. */
+    /**
+     * Called after all inputs are accumulated. Avg uses this to divide sums by counts.
+     */
     protected void postProcess(int totalFlatLen) {
-    }
-
-    /**
-     * Scans all inputs, populating {@link #maxShape} with the per-dimension max
-     * across non-null inputs. Also checks whether the flat fast path is usable:
-     * all non-null inputs must be vanilla row-major with inner dimensions (d &ge; 1)
-     * matching the output's. If no non-null inputs exist, maxShape remains all-zeros.
-     *
-     * @return true if the flat path can be used, false if coordinate path is needed
-     */
-    private boolean scanInputs(Record rec) {
-        for (int d = 0; d < nDims; d++) {
-            maxShape[d] = 0;
-        }
-        boolean canUseFlatPath = true;
-        for (int i = 0, n = args.size(); i < n; i++) {
-            ArrayView a = args.getQuick(i).getArray(rec);
-            if (a == null || a.isNull()) {
-                continue;
-            }
-            for (int d = 0; d < nDims; d++) {
-                maxShape[d] = Math.max(maxShape[d], a.getDimLen(d));
-            }
-            if (canUseFlatPath && !a.isVanilla()) {
-                canUseFlatPath = false;
-            }
-        }
-        if (canUseFlatPath) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                ArrayView a = args.getQuick(i).getArray(rec);
-                if (a == null || a.isNull()) {
-                    continue;
-                }
-                for (int d = 1; d < nDims; d++) {
-                    if (a.getDimLen(d) != maxShape[d]) {
-                        return false;
-                    }
-                }
-            }
-        }
-        return canUseFlatPath;
-    }
-
-    /**
-     * Flat fast path: all non-null inputs are vanilla row-major with inner dims
-     * matching the output, so flat index {@code i} in the input maps to the same
-     * logical coordinate as flat index {@code i} in the output. No coordinate
-     * arithmetic, no bounds check per dimension — just a bare linear scan.
-     */
-    private void accumulateFlat(Record rec) {
-        for (int a = 0, n = args.size(); a < n; a++) {
-            ArrayView arr = args.getQuick(a).getArray(rec);
-            if (arr == null || arr.isNull()) {
-                continue;
-            }
-            int len = arr.getFlatViewLength();
-            for (int i = 0; i < len; i++) {
-                double val = arr.getDouble(i);
-                if (Numbers.isFinite(val)) {
-                    accumulate(i, val);
-                }
-            }
-        }
-    }
-
-    /**
-     * Coordinate-based nD path: for each input, iterates that input's coordinates
-     * and maps each to the output via row-major strides. Uses {@code arr.getStride(d)}
-     * for the input flat index, handling non-vanilla strides (transpose, slicing).
-     * No bounds checking needed — the output shape is the per-dimension max, so
-     * every input coordinate is always in bounds for the output.
-     */
-    private void accumulateCoords(Record rec) {
-        ArrayView.computeRowMajorStrides(maxShape, outStrides);
-        for (int a = 0, n = args.size(); a < n; a++) {
-            ArrayView arr = args.getQuick(a).getArray(rec);
-            if (arr == null || arr.isNull()) {
-                continue;
-            }
-            for (int d = 0; d < nDims; d++) {
-                inputShape[d] = arr.getDimLen(d);
-                coords[d] = 0;
-            }
-            do {
-                int inputFi = 0;
-                for (int d = 0; d < nDims; d++) {
-                    inputFi += coords[d] * arr.getStride(d);
-                }
-                double val = arr.getDouble(inputFi);
-                if (Numbers.isFinite(val)) {
-                    int outFi = ArrayView.coordsToFlatIndex(coords, outStrides);
-                    accumulate(outFi, val);
-                }
-            } while (ArrayView.incrementCoords(coords, inputShape));
-        }
     }
 }

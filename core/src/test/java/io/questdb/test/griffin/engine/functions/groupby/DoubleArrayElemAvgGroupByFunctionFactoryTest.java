@@ -315,6 +315,27 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
     }
 
     @Test
+    public void testKahanCompensation() throws Exception {
+        // Without Kahan: 1e15 + 1.0 = 1e15 (1.0 lost to rounding), so naive avg's
+        // internal sum ≈ 0 instead of 1000, giving avg ≈ [0, ...] instead of [~0.998, 1.0].
+        // With Kahan: sum = 1000.0, count = 1002, avg = 1000.0/1002 ≈ 0.998003992015968.
+        // Position 1: sum = 1000.0, count = 1002, avg = 1000.0/1002.
+        // Both positions should give the same result since they have the same pattern.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("INSERT INTO tab VALUES (ARRAY[1e15, 1e15])");
+            for (int i = 0; i < 1000; i++) {
+                execute("INSERT INTO tab VALUES (ARRAY[1.0, 1.0])");
+            }
+            execute("INSERT INTO tab VALUES (ARRAY[-1e15, -1e15])");
+            // sum = 1000.0, count = 1002, avg = 1000/1002
+            double expected = 1000.0 / 1002.0;
+            assertQueryNoLeakCheck("arr\n[" + expected + "," + expected + "]\n",
+                    "SELECT array_elem_avg(arr) arr FROM tab", null, false, true);
+        });
+    }
+
+    @Test
     public void testVariableLengthArrays() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");

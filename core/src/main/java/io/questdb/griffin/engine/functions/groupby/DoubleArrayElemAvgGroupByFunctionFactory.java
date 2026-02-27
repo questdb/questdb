@@ -124,7 +124,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
          */
         @Override
         protected void accumulateInput(long dataPtr, ArrayView array, int[] currentAccShape, MapValue mapValue) {
-            int inputFlatLen = array.getFlatViewLength();
+            int inputFlatLen = array.getCardinality();
             long count = mapValue.getLong(valueIndex + COUNT_SLOT);
             long countPtr = mapValue.getLong(valueIndex + COUNT_PTR_SLOT);
             long compPtr = mapValue.getLong(valueIndex + COMP_SLOT);

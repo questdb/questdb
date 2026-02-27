@@ -278,6 +278,22 @@ public class DoubleArrayElemSumGroupByFunctionFactoryTest extends AbstractDouble
     }
 
     @Test
+    public void testKahanCompensation() throws Exception {
+        // Without Kahan: 1e15 + 1.0 = 1e15 (1.0 lost to rounding), so naive sum at
+        // position 0 would be ≈ 0 (1e15 - 1e15, with the 1.0s lost). With Kahan:
+        // compensation preserves the 1.0s, giving exactly 1000.0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("INSERT INTO tab VALUES (ARRAY[1e15, 0.0])");
+            for (int i = 0; i < 1000; i++) {
+                execute("INSERT INTO tab VALUES (ARRAY[1.0, 1.0])");
+            }
+            execute("INSERT INTO tab VALUES (ARRAY[-1e15, 0.0])");
+            assertQueryNoLeakCheck("arr\n[1000.0,1000.0]\n", "SELECT array_elem_sum(arr) arr FROM tab", null, false, true);
+        });
+    }
+
+    @Test
     public void testVariableLengthArrays() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");

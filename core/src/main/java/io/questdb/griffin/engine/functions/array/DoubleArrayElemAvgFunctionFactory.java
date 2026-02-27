@@ -64,6 +64,11 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "array_elem_avg";
+        }
+
+        @Override
         protected void accumulate(int outIndex, double val) {
             kahanAccumulate(outIndex, val, compensation);
             counts.increment(outIndex);
@@ -81,11 +86,6 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
         @Override
         protected double combine(double cur, double val) {
             return cur + val;
-        }
-
-        @Override
-        public String getName() {
-            return "array_elem_avg";
         }
 
         @Override

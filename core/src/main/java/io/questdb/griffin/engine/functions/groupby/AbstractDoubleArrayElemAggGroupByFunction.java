@@ -166,11 +166,11 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         ArrayView array = arg.getArray(record);
-        if (array == null || array.isNull() || array.getFlatViewLength() == 0) {
+        if (array == null || array.isNull() || array.getCardinality() == 0) {
             setNull(mapValue);
             return;
         }
-        int flatLen = array.getFlatViewLength();
+        int flatLen = array.getCardinality();
         int capacity = Math.max(flatLen, (int) (flatLen * Math.pow(OVERALLOC_BASE, nDims)));
         long blockSize = headerSize + (long) capacity * Double.BYTES;
         long ptr = allocator.malloc(blockSize);
@@ -215,7 +215,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         ArrayView array = arg.getArray(record);
-        if (array == null || array.isNull() || array.getFlatViewLength() == 0) {
+        if (array == null || array.isNull() || array.getCardinality() == 0) {
             return;
         }
         long ptr = mapValue.getLong(valueIndex);
@@ -451,7 +451,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * @param mapValue        the group's MapValue (for subclass access to extra slots)
      */
     protected void accumulateInput(long dataPtr, ArrayView array, int[] currentAccShape, MapValue mapValue) {
-        int inputFlatLen = array.getFlatViewLength();
+        int inputFlatLen = array.getCardinality();
         onBeforeAccumulate(mapValue);
         if (array.isVanilla() && innerDimsMatch(inputShape, currentAccShape)) {
             // Flat path: input is vanilla row-major and inner dimensions match, so flat indices are identical.
