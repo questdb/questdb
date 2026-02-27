@@ -25,7 +25,9 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -68,6 +70,40 @@ public abstract class AbstractDoubleArrayElemParallelGroupByTest extends Abstrac
                     "SELECT " + funcName() + "(arr) arr FROM tab",
                     null, false, true
             );
+        });
+    }
+
+    /**
+     * Keyed GROUP BY executed via an explicit 4-worker pool.
+     * Multiple workers processing different page frames builds separate per-worker
+     * maps, forcing {@code merge()} to combine partial results.
+     * Each row is {timestamp, groupKey, arrayExpression}.
+     */
+    protected void assertKeyedParallelGroupBy(String expected, String[][] rows) throws Exception {
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    execute(
+                            compiler,
+                            "CREATE TABLE tab (ts TIMESTAMP, grp INT, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    for (String[] row : rows) {
+                        execute(
+                                compiler,
+                                "INSERT INTO tab VALUES ('" + row[0] + "', " + row[1] + ", " + row[2] + ")",
+                                sqlExecutionContext
+                        );
+                    }
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT grp, " + funcName() + "(arr) arr FROM tab ORDER BY grp",
+                            sink,
+                            expected
+                    );
+                }, configuration, LOG);
+            }
         });
     }
 }
