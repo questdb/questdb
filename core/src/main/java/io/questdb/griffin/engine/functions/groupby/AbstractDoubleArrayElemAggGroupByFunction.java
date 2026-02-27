@@ -144,6 +144,15 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         }
     }
 
+    /**
+     * Fills double positions {@code [from, to)} with {@code 0.0}.
+     */
+    static void zeroFillDoubles(long ptr, int from, int to) {
+        for (int i = from; i < to; i++) {
+            Unsafe.getUnsafe().putDouble(ptr + (long) i * Double.BYTES, 0.0);
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(arg);
@@ -349,6 +358,22 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     }
 
     /**
+     * Hook called before the accumulation loop in {@link #accumulateInput}.
+     * Subclasses can cache MapValue slot values into instance fields for use in
+     * {@link #accumulateOne}.
+     */
+    protected void onBeforeAccumulate(MapValue mapValue) {
+    }
+
+    /**
+     * Hook called before the merge loop in {@link #mergeValues}.
+     * Subclasses can cache MapValue slot values into instance fields for use in
+     * {@link #mergeOne}.
+     */
+    protected void onBeforeMerge(MapValue destValue, MapValue srcValue) {
+    }
+
+    /**
      * Called after the first non-null array is stored in a new group.
      * Base slots (ptr, accFlatLen, capacity) have already been written.
      * Subclasses can use this to initialize auxiliary state (e.g. per-element counts).
@@ -397,6 +422,17 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     }
 
     /**
+     * Accumulates a single finite input value at the given accumulator position.
+     * Default implementation seeds (replaces NaN) or combines via {@link #combine}.
+     * The sum subclass overrides with Kahan compensated summation.
+     */
+    protected void accumulateOne(long dataPtr, int accFi, double inputVal) {
+        long addr = dataPtr + (long) accFi * Double.BYTES;
+        double accVal = Unsafe.getUnsafe().getDouble(addr);
+        Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? combine(accVal, inputVal) : inputVal);
+    }
+
+    /**
      * Accumulates values from a single input array into the group's data buffer.
      * <p>
      * For 1D, flat indices match between input and accumulator so values are combined directly.
@@ -416,14 +452,13 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      */
     protected void accumulateInput(long dataPtr, ArrayView array, int[] currentAccShape, MapValue mapValue) {
         int inputFlatLen = array.getFlatViewLength();
+        onBeforeAccumulate(mapValue);
         if (array.isVanilla() && innerDimsMatch(inputShape, currentAccShape)) {
             // Flat path: input is vanilla row-major and inner dimensions match, so flat indices are identical.
             for (int i = 0; i < inputFlatLen; i++) {
                 double inputVal = array.getDouble(i);
                 if (Numbers.isFinite(inputVal)) {
-                    long addr = dataPtr + (long) i * Double.BYTES;
-                    double accVal = Unsafe.getUnsafe().getDouble(addr);
-                    Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? combine(accVal, inputVal) : inputVal);
+                    accumulateOne(dataPtr, i, inputVal);
                 }
             }
         } else {
@@ -440,12 +475,26 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
                 double inputVal = array.getDouble(inputFi);
                 if (Numbers.isFinite(inputVal)) {
                     int accFi = ArrayView.coordsToFlatIndex(coords, accStrides);
-                    long addr = dataPtr + (long) accFi * Double.BYTES;
-                    double accVal = Unsafe.getUnsafe().getDouble(addr);
-                    Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? combine(accVal, inputVal) : inputVal);
+                    accumulateOne(dataPtr, accFi, inputVal);
                 }
             } while (ArrayView.incrementCoords(coords, inputShape));
         }
+    }
+
+    /**
+     * Merges a single finite src value into the dest at the given flat indices.
+     * Default implementation seeds (replaces NaN) or combines via {@link #combine}.
+     * The sum subclass overrides with Kahan compensated summation.
+     *
+     * @param destDataPtr pointer to dest's data section
+     * @param destFi      flat index in dest's layout
+     * @param srcVal      finite value from src (already checked by caller)
+     * @param srcFi       flat index in src's layout (for subclass compensation lookup)
+     */
+    protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
+        long destAddr = destDataPtr + (long) destFi * Double.BYTES;
+        double destVal = Unsafe.getUnsafe().getDouble(destAddr);
+        Unsafe.getUnsafe().putDouble(destAddr, Numbers.isFinite(destVal) ? combine(destVal, srcVal) : srcVal);
     }
 
     /**
@@ -464,14 +513,13 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * @param srcValue    src's MapValue (for subclass access to extra slots)
      */
     protected void mergeValues(long destDataPtr, long srcDataPtr, int[] destShape, int[] srcShape, int srcFlatLen, MapValue destValue, MapValue srcValue) {
+        onBeforeMerge(destValue, srcValue);
         if (innerDimsMatch(srcShape, destShape)) {
             // Flat path: inner dimensions match, so flat indices are identical.
             for (int i = 0; i < srcFlatLen; i++) {
                 double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
                 if (Numbers.isFinite(srcVal)) {
-                    long addr = destDataPtr + (long) i * Double.BYTES;
-                    double destVal = Unsafe.getUnsafe().getDouble(addr);
-                    Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(destVal) ? combine(destVal, srcVal) : srcVal);
+                    mergeOne(destDataPtr, i, srcVal, i);
                 }
             }
         } else {
@@ -482,9 +530,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
                 if (Numbers.isFinite(srcVal)) {
                     ArrayView.flatIndexToCoords(fi, newStrides, coords);
                     int destFi = ArrayView.coordsToFlatIndex(coords, accStrides);
-                    long addr = destDataPtr + (long) destFi * Double.BYTES;
-                    double destVal = Unsafe.getUnsafe().getDouble(addr);
-                    Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(destVal) ? combine(destVal, srcVal) : srcVal);
+                    mergeOne(destDataPtr, destFi, srcVal, fi);
                 }
             }
         }

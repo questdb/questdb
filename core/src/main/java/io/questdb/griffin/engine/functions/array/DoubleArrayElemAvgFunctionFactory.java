@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DoubleList;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -55,6 +56,7 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
     }
 
     private static final class Func extends AbstractDoubleArrayElemFunction {
+        private final DoubleList compensation = new DoubleList();
         private final IntList counts = new IntList();
 
         Func(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
@@ -62,10 +64,18 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        protected void accumulate(int outIndex, double val) {
+            kahanAccumulate(outIndex, val, compensation);
+            counts.increment(outIndex);
+        }
+
+        @Override
         protected void beforeAccumulation(int totalFlatLen) {
             counts.clear();
             counts.setPos(totalFlatLen);
             counts.zero(0);
+            compensation.setPos(totalFlatLen);
+            compensation.fill(0, totalFlatLen, 0.0);
         }
 
         @Override
@@ -76,11 +86,6 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "array_elem_avg";
-        }
-
-        @Override
-        protected void onAccumulate(int outFlatIndex) {
-            counts.increment(outFlatIndex);
         }
 
         @Override

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DoubleList;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -55,8 +56,21 @@ public class DoubleArrayElemSumFunctionFactory implements FunctionFactory {
     }
 
     private static final class Func extends AbstractDoubleArrayElemFunction {
+        private final DoubleList compensation = new DoubleList();
+
         Func(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
             super(configuration, args, resolvedDims);
+        }
+
+        @Override
+        protected void accumulate(int outIndex, double val) {
+            kahanAccumulate(outIndex, val, compensation);
+        }
+
+        @Override
+        protected void beforeAccumulation(int totalFlatLen) {
+            compensation.setPos(totalFlatLen);
+            compensation.fill(0, totalFlatLen, 0.0);
         }
 
         @Override

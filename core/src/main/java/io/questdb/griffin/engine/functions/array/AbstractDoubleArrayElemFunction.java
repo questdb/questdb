@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
+import io.questdb.std.DoubleList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -48,9 +49,10 @@ import io.questdb.std.ObjList;
  * <p>
  * Handles nD shape resolution, NaN-fill, coordinate iteration, and the
  * accumulate-or-seed pattern. Subclasses only provide {@link #combine} for the
- * element-wise operation. The avg variant additionally overrides
- * {@link #beforeAccumulation}, {@link #onAccumulate}, and {@link #postProcess}
- * for per-position count tracking and final division.
+ * element-wise operation. Sum and avg use {@link #kahanAccumulate} for
+ * compensated summation. The avg variant additionally overrides
+ * {@link #beforeAccumulation} and {@link #postProcess} for per-position
+ * count tracking and final division.
  * <p>
  * When all non-null inputs are vanilla row-major and share inner dimensions with
  * the output, uses a flat fast path that avoids coordinate arithmetic entirely.
@@ -185,15 +187,42 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         return false;
     }
 
-    /** Called before the accumulation loop. Avg uses this to initialize per-position counts. */
+    /**
+     * Accumulates a single finite value at the given output position.
+     * Seeds the position (replaces NaN) on first value, otherwise combines.
+     * Sum and avg override with Kahan compensated summation.
+     */
+    protected void accumulate(int outIndex, double val) {
+        double cur = arrayOut.getDouble(outIndex);
+        if (Numbers.isFinite(cur)) {
+            arrayOut.putDouble(outIndex, combine(cur, val));
+        } else {
+            arrayOut.putDouble(outIndex, val);
+        }
+    }
+
+    /** Called before the accumulation loop. Subclasses use this to initialize per-position state. */
     protected void beforeAccumulation(int totalFlatLen) {
     }
 
     /** The element-wise aggregation operation (e.g. {@code Math.max}, {@code Math.min}, {@code +}). */
     protected abstract double combine(double cur, double val);
 
-    /** Called after each finite value is accumulated. Avg uses this to increment per-position counts. */
-    protected void onAccumulate(int outFlatIndex) {
+    /**
+     * Kahan compensated accumulation. Seeds the position on first value,
+     * otherwise adds with compensation to reduce floating-point error.
+     */
+    protected void kahanAccumulate(int outIndex, double val, DoubleList compensation) {
+        double cur = arrayOut.getDouble(outIndex);
+        if (Numbers.isFinite(cur)) {
+            double c = compensation.getQuick(outIndex);
+            double y = val - c;
+            double t = cur + y;
+            compensation.setQuick(outIndex, (t - cur) - y);
+            arrayOut.putDouble(outIndex, t);
+        } else {
+            arrayOut.putDouble(outIndex, val);
+        }
     }
 
     /** Called after all inputs are accumulated. Avg uses this to divide sums by counts. */
@@ -257,13 +286,7 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
             for (int i = 0; i < len; i++) {
                 double val = arr.getDouble(i);
                 if (Numbers.isFinite(val)) {
-                    double cur = arrayOut.getDouble(i);
-                    if (Numbers.isFinite(cur)) {
-                        arrayOut.putDouble(i, combine(cur, val));
-                    } else {
-                        arrayOut.putDouble(i, val);
-                    }
-                    onAccumulate(i);
+                    accumulate(i, val);
                 }
             }
         }
@@ -295,13 +318,7 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
                 double val = arr.getDouble(inputFi);
                 if (Numbers.isFinite(val)) {
                     int outFi = ArrayView.coordsToFlatIndex(coords, outStrides);
-                    double cur = arrayOut.getDouble(outFi);
-                    if (Numbers.isFinite(cur)) {
-                        arrayOut.putDouble(outFi, combine(cur, val));
-                    } else {
-                        arrayOut.putDouble(outFi, val);
-                    }
-                    onAccumulate(outFi);
+                    accumulate(outFi, val);
                 }
             } while (ArrayView.incrementCoords(coords, inputShape));
         }

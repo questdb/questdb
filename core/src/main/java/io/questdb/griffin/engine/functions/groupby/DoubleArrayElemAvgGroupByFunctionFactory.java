@@ -91,9 +91,12 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
      * <pre>
      * valueIndex + 3 (COUNT_SLOT):     LONG  count (&gt;= 0 = uniform, -1 = variable)
      * valueIndex + 4 (COUNT_PTR_SLOT): LONG  countPtr (variable mode: ptr to long[capacity])
+     * valueIndex + 5 (COMP_SLOT):      LONG  compensationPtr (ptr to double[capacity])
      * </pre>
      */
     private static final class DoubleArrayElemAvgGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
+        /** Offset from valueIndex for the Kahan compensation buffer pointer. */
+        private static final int COMP_SLOT = 5;
         /** Offset from valueIndex for the uniform count / variable-mode sentinel. */
         private static final int COUNT_PTR_SLOT = 4;
         /** Offset from valueIndex for the per-element count array pointer. */
@@ -110,7 +113,8 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
         }
 
         /**
-         * Accumulates input values into the sum buffer and updates per-position counts.
+         * Accumulates input values into the sum buffer with Kahan compensated summation
+         * and updates per-position counts.
          * <p>
          * Before accumulating, checks whether a transition from uniform to variable
          * count mode is needed (shape mismatch or NaN in input). In variable mode,
@@ -123,6 +127,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             int inputFlatLen = array.getFlatViewLength();
             long count = mapValue.getLong(valueIndex + COUNT_SLOT);
             long countPtr = mapValue.getLong(valueIndex + COUNT_PTR_SLOT);
+            long compPtr = mapValue.getLong(valueIndex + COMP_SLOT);
 
             // Transition to variable mode if input shape differs or has NaN
             if (count != VARIABLE_MODE) {
@@ -157,7 +162,16 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                     if (Numbers.isFinite(inputVal)) {
                         long addr = dataPtr + (long) i * Double.BYTES;
                         double accVal = Unsafe.getUnsafe().getDouble(addr);
-                        Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? accVal + inputVal : inputVal);
+                        if (Numbers.isFinite(accVal)) {
+                            long compAddr = compPtr + (long) i * Double.BYTES;
+                            double c = Unsafe.getUnsafe().getDouble(compAddr);
+                            double y = inputVal - c;
+                            double t = accVal + y;
+                            Unsafe.getUnsafe().putDouble(compAddr, (t - accVal) - y);
+                            Unsafe.getUnsafe().putDouble(addr, t);
+                        } else {
+                            Unsafe.getUnsafe().putDouble(addr, inputVal);
+                        }
                         if (count == VARIABLE_MODE) {
                             long countAddr = countPtr + (long) i * Long.BYTES;
                             Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1);
@@ -180,7 +194,16 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                         int accFi = ArrayView.coordsToFlatIndex(coords, accStrides);
                         long addr = dataPtr + (long) accFi * Double.BYTES;
                         double accVal = Unsafe.getUnsafe().getDouble(addr);
-                        Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? accVal + inputVal : inputVal);
+                        if (Numbers.isFinite(accVal)) {
+                            long compAddr = compPtr + (long) accFi * Double.BYTES;
+                            double c = Unsafe.getUnsafe().getDouble(compAddr);
+                            double y = inputVal - c;
+                            double t = accVal + y;
+                            Unsafe.getUnsafe().putDouble(compAddr, (t - accVal) - y);
+                            Unsafe.getUnsafe().putDouble(addr, t);
+                        } else {
+                            Unsafe.getUnsafe().putDouble(addr, inputVal);
+                        }
                         if (count == VARIABLE_MODE) {
                             long countAddr = countPtr + (long) accFi * Long.BYTES;
                             Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1);
@@ -249,6 +272,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
         protected void initExtraValueTypes(ArrayColumnTypes columnTypes) {
             columnTypes.add(ColumnType.LONG); // count (uniform scalar or VARIABLE_MODE)
             columnTypes.add(ColumnType.LONG); // countPtr (variable mode per-element counts)
+            columnTypes.add(ColumnType.LONG); // compensationPtr (Kahan compensation buffer)
         }
 
         /**
@@ -269,6 +293,8 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             long destCountPtr = destValue.getLong(valueIndex + COUNT_PTR_SLOT);
             long srcCount = srcValue.getLong(valueIndex + COUNT_SLOT);
             long srcCountPtr = srcValue.getLong(valueIndex + COUNT_PTR_SLOT);
+            long destCompPtr = destValue.getLong(valueIndex + COMP_SLOT);
+            long srcCompPtr = srcValue.getLong(valueIndex + COMP_SLOT);
 
             boolean needsVariable = destCount == VARIABLE_MODE || srcCount == VARIABLE_MODE;
             if (!needsVariable) {
@@ -291,14 +317,24 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                 ArrayView.computeRowMajorStrides(srcShape, newStrides);
             }
 
-            // Merge sums
+            // Merge sums (Kahan compensated)
             if (flatPath) {
                 for (int i = 0; i < srcFlatLen; i++) {
                     double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
                     if (Numbers.isFinite(srcVal)) {
                         long addr = destDataPtr + (long) i * Double.BYTES;
                         double destVal = Unsafe.getUnsafe().getDouble(addr);
-                        Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(destVal) ? destVal + srcVal : srcVal);
+                        if (Numbers.isFinite(destVal)) {
+                            double srcComp = Unsafe.getUnsafe().getDouble(srcCompPtr + (long) i * Double.BYTES);
+                            double y = srcVal - srcComp;
+                            double t = destVal + y;
+                            Unsafe.getUnsafe().putDouble(destCompPtr + (long) i * Double.BYTES, (t - destVal) - y);
+                            Unsafe.getUnsafe().putDouble(addr, t);
+                        } else {
+                            Unsafe.getUnsafe().putDouble(addr, srcVal);
+                            Unsafe.getUnsafe().putDouble(destCompPtr + (long) i * Double.BYTES,
+                                    Unsafe.getUnsafe().getDouble(srcCompPtr + (long) i * Double.BYTES));
+                        }
                     }
                 }
             } else {
@@ -309,7 +345,17 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                         int destFi = ArrayView.coordsToFlatIndex(coords, accStrides);
                         long addr = destDataPtr + (long) destFi * Double.BYTES;
                         double destVal = Unsafe.getUnsafe().getDouble(addr);
-                        Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(destVal) ? destVal + srcVal : srcVal);
+                        if (Numbers.isFinite(destVal)) {
+                            double srcComp = Unsafe.getUnsafe().getDouble(srcCompPtr + (long) fi * Double.BYTES);
+                            double y = srcVal - srcComp;
+                            double t = destVal + y;
+                            Unsafe.getUnsafe().putDouble(destCompPtr + (long) destFi * Double.BYTES, (t - destVal) - y);
+                            Unsafe.getUnsafe().putDouble(addr, t);
+                        } else {
+                            Unsafe.getUnsafe().putDouble(addr, srcVal);
+                            Unsafe.getUnsafe().putDouble(destCompPtr + (long) destFi * Double.BYTES,
+                                    Unsafe.getUnsafe().getDouble(srcCompPtr + (long) fi * Double.BYTES));
+                        }
                     }
                 }
             }
@@ -362,14 +408,18 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
         }
 
         /**
-         * Initializes count state for a new group.
+         * Initializes count and compensation state for a new group.
          * If all input values are finite, starts in uniform mode (count=1).
          * Otherwise, allocates a per-element count array and marks each position 0 or 1.
+         * Always allocates a zero-filled compensation buffer for Kahan summation.
          */
         @Override
         protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatLen, int capacity) {
             // Read from the accumulator (already linearized by computeFirst) rather than
             // the original array, so non-vanilla inputs are handled correctly.
+            // NaN values in the sum buffer serve as "no data yet" sentinels: computeNext()
+            // replaces them on first finite value, and getArray() skips division when !isFinite.
+            // The count[i]=0 invariant is coupled to this — both must agree on "no data".
             long dataPtr = mapValue.getLong(valueIndex) + headerSize;
             boolean allFinite = true;
             for (int i = 0; i < flatLen; i++) {
@@ -391,16 +441,20 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                 mapValue.putLong(valueIndex + COUNT_SLOT, VARIABLE_MODE);
                 mapValue.putLong(valueIndex + COUNT_PTR_SLOT, countPtr);
             }
+            long compPtr = allocator.malloc((long) capacity * Double.BYTES);
+            zeroFillDoubles(compPtr, 0, capacity);
+            mapValue.putLong(valueIndex + COMP_SLOT, compPtr);
         }
 
-        /** Copies count and countPtr slots from src to dest when dest was empty. */
+        /** Copies count, countPtr, and compensationPtr slots from src to dest when dest was empty. */
         @Override
         protected void onMergeShallowCopy(MapValue destValue, MapValue srcValue) {
             destValue.putLong(valueIndex + COUNT_SLOT, srcValue.getLong(valueIndex + COUNT_SLOT));
             destValue.putLong(valueIndex + COUNT_PTR_SLOT, srcValue.getLong(valueIndex + COUNT_PTR_SLOT));
+            destValue.putLong(valueIndex + COMP_SLOT, srcValue.getLong(valueIndex + COMP_SLOT));
         }
 
-        /** Remaps the count array when shape grows. Always transitions to variable mode. */
+        /** Remaps count and compensation arrays when shape grows. Always transitions to variable count mode. */
         @Override
         protected void onShapeGrow(MapValue mapValue, int oldFlatLen, long newCapacity, boolean needsRemap) {
             long count = mapValue.getLong(valueIndex + COUNT_SLOT);
@@ -408,12 +462,30 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             countPtr = growCounts(countPtr, count, count == VARIABLE_MODE, oldFlatLen, newCapacity, needsRemap);
             mapValue.putLong(valueIndex + COUNT_SLOT, VARIABLE_MODE);
             mapValue.putLong(valueIndex + COUNT_PTR_SLOT, countPtr);
+
+            long oldCompPtr = mapValue.getLong(valueIndex + COMP_SLOT);
+            long newCompPtr = allocator.malloc(newCapacity * Double.BYTES);
+            zeroFillDoubles(newCompPtr, 0, (int) newCapacity);
+            if (!needsRemap) {
+                Unsafe.getUnsafe().copyMemory(oldCompPtr, newCompPtr, (long) oldFlatLen * Double.BYTES);
+            } else {
+                for (int fi = 0; fi < oldFlatLen; fi++) {
+                    ArrayView.flatIndexToCoords(fi, accStrides, coords);
+                    int newFi = ArrayView.coordsToFlatIndex(coords, newStrides);
+                    Unsafe.getUnsafe().putDouble(
+                            newCompPtr + (long) newFi * Double.BYTES,
+                            Unsafe.getUnsafe().getDouble(oldCompPtr + (long) fi * Double.BYTES)
+                    );
+                }
+            }
+            mapValue.putLong(valueIndex + COMP_SLOT, newCompPtr);
         }
 
         @Override
         protected void setNullExtra(MapValue mapValue) {
             mapValue.putLong(valueIndex + COUNT_SLOT, 0);
             mapValue.putLong(valueIndex + COUNT_PTR_SLOT, 0);
+            mapValue.putLong(valueIndex + COMP_SLOT, 0);
         }
 
         /**

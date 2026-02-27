@@ -215,6 +215,15 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
     }
 
     @Test
+    public void testEmptyArraySkipped() throws Exception {
+        assertGroupBy("[2.0,3.0]",
+                "ARRAY[1.0, 2.0]",
+                "ARRAY[]::double[]",
+                "ARRAY[3.0, 4.0]"
+        );
+    }
+
+    @Test
     public void testKeyed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp INT, arr DOUBLE[])");
