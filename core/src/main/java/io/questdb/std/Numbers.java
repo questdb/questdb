@@ -52,7 +52,7 @@ public final class Numbers {
     public static final long LONG_NULL = Long.MIN_VALUE;
     public static final int MAX_DOUBLE_SCALE = 19;
     public static final int MAX_FLOAT_SCALE = 10;
-    public static final long MAX_SAFE_INT_POW_2 = 1L << 31;
+    public static final long MAX_SAFE_INT_POW_2 = 1L << 30;
     public static final int SIGNIFICAND_WIDTH = 53;
     public static final long SIGN_BIT_MASK = 0x8000000000000000L;
     public static final int SIZE_1MB = 1024 * 1024;
