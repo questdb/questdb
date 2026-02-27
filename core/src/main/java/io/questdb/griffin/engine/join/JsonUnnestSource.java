@@ -265,13 +265,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
             return Numbers.LONG_NULL;
         }
         if (result.isTruncated()) {
-            throw CairoException.nonCritical()
-                    .put("JSON UNNEST: value exceeds maximum size of ")
-                    .put(MAX_JSON_VALUE_SIZE)
-                    .put(" bytes for column '")
-                    .put(columnNames.getQuick(sourceCol))
-                    .put("' at array index ")
-                    .put(elementIndex);
+            throw overflowError(sourceCol, elementIndex);
         }
         try {
             return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(sink);
@@ -370,15 +364,19 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
             return null;
         }
         if (result.isTruncated()) {
-            throw CairoException.nonCritical()
-                    .put("JSON UNNEST: value exceeds maximum size of ")
-                    .put(MAX_JSON_VALUE_SIZE)
-                    .put(" bytes for column '")
-                    .put(columnNames.getQuick(sourceCol))
-                    .put("' at array index ")
-                    .put(elementIndex);
+            throw overflowError(sourceCol, elementIndex);
         }
         return sink;
+    }
+
+    private CairoException overflowError(int sourceCol, int elementIndex) {
+        return CairoException.nonCritical()
+                .put("JSON UNNEST: value exceeds maximum size of ")
+                .put(MAX_JSON_VALUE_SIZE)
+                .put(" bytes for column '")
+                .put(columnNames.getQuick(sourceCol))
+                .put("' at array index ")
+                .put(elementIndex);
     }
 
     private void initPaddedJson(Utf8Sequence json) {
