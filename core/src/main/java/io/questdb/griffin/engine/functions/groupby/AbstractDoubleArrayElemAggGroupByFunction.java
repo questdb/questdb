@@ -343,13 +343,6 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         return UnaryFunction.super.supportsParallelism();
     }
 
-    /**
-     * The element-wise aggregation operation.
-     * Called when both the accumulator and the input have a finite value at a position.
-     *
-     * @return the combined value (e.g. {@code Math.max(a, b)}, {@code a + b})
-     */
-    protected abstract double combine(double accVal, double inputVal);
 
     /**
      * Allows subclasses to register additional MapValue slots (e.g. count, countPtr for avg).
@@ -423,14 +416,8 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
 
     /**
      * Accumulates a single finite input value at the given accumulator position.
-     * Default implementation seeds (replaces NaN) or combines via {@link #combine}.
-     * The sum subclass overrides with Kahan compensated summation.
      */
-    protected void accumulateOne(long dataPtr, int accFi, double inputVal) {
-        long addr = dataPtr + (long) accFi * Double.BYTES;
-        double accVal = Unsafe.getUnsafe().getDouble(addr);
-        Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? combine(accVal, inputVal) : inputVal);
-    }
+    protected abstract void accumulateOne(long dataPtr, int accFi, double inputVal);
 
     /**
      * Accumulates values from a single input array into the group's data buffer.
@@ -483,19 +470,13 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
 
     /**
      * Merges a single finite src value into the dest at the given flat indices.
-     * Default implementation seeds (replaces NaN) or combines via {@link #combine}.
-     * The sum subclass overrides with Kahan compensated summation.
      *
      * @param destDataPtr pointer to dest's data section
      * @param destFi      flat index in dest's layout
      * @param srcVal      finite value from src (already checked by caller)
      * @param srcFi       flat index in src's layout (for subclass compensation lookup)
      */
-    protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
-        long destAddr = destDataPtr + (long) destFi * Double.BYTES;
-        double destVal = Unsafe.getUnsafe().getDouble(destAddr);
-        Unsafe.getUnsafe().putDouble(destAddr, Numbers.isFinite(destVal) ? combine(destVal, srcVal) : srcVal);
-    }
+    protected abstract void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi);
 
     /**
      * Merges src's accumulated values into dest during parallel GROUP BY.

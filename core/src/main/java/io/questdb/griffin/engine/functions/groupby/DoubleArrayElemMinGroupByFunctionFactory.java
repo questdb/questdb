@@ -30,8 +30,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class DoubleArrayElemMinGroupByFunctionFactory implements FunctionFactory {
@@ -69,8 +71,17 @@ public class DoubleArrayElemMinGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        protected double combine(double accVal, double inputVal) {
-            return Math.min(accVal, inputVal);
+        protected void accumulateOne(long dataPtr, int accFi, double inputVal) {
+            long addr = dataPtr + (long) accFi * Double.BYTES;
+            double accVal = Unsafe.getUnsafe().getDouble(addr);
+            Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? Math.min(accVal, inputVal) : inputVal);
+        }
+
+        @Override
+        protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
+            long addr = destDataPtr + (long) destFi * Double.BYTES;
+            double destVal = Unsafe.getUnsafe().getDouble(addr);
+            Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(destVal) ? Math.min(destVal, srcVal) : srcVal);
         }
     }
 }

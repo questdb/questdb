@@ -239,8 +239,13 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        protected double combine(double accVal, double inputVal) {
-            return accVal + inputVal;
+        protected void accumulateOne(long dataPtr, int accFi, double inputVal) {
+            throw new UnsupportedOperationException("avg overrides accumulateInput directly");
+        }
+
+        @Override
+        protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
+            throw new UnsupportedOperationException("avg overrides mergeValues directly");
         }
 
         /**

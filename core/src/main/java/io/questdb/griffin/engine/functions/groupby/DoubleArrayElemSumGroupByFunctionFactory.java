@@ -101,11 +101,6 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        protected double combine(double accVal, double inputVal) {
-            return accVal + inputVal;
-        }
-
-        @Override
         public String getName() {
             return "array_elem_sum";
         }
