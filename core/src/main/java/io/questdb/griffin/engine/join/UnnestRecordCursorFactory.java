@@ -40,32 +40,28 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final ObjList<Function> arrayFunctions;
     private final RecordCursorFactory baseFactory;
     private final ObjList<CharSequence> columnNames;
     private final UnnestRecordCursor cursor;
+    private final ObjList<Function> functions;
     private final boolean hasOrdinality;
+    private final UnnestSource[] sources;
 
     public UnnestRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory baseFactory,
-            ObjList<Function> arrayFunctions,
+            ObjList<Function> functions,
+            UnnestSource[] sources,
             int columnSplit,
             boolean hasOrdinality,
             ObjList<CharSequence> columnNames
     ) {
         super(metadata);
         this.baseFactory = baseFactory;
-        this.arrayFunctions = arrayFunctions;
+        this.functions = functions;
+        this.sources = sources;
         this.hasOrdinality = hasOrdinality;
         this.columnNames = columnNames;
-
-        int sourceCount = arrayFunctions.size();
-        UnnestSource[] sources = new UnnestSource[sourceCount];
-        for (int i = 0; i < sourceCount; i++) {
-            sources[i] = new ArrayUnnestSource(arrayFunctions.getQuick(i));
-        }
-
         this.cursor = new UnnestRecordCursor(
                 columnSplit, sources, hasOrdinality
         );
@@ -83,7 +79,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         RecordCursor baseCursor = baseFactory.getCursor(executionContext);
         try {
             Function.init(
-                    arrayFunctions, baseCursor, executionContext, null
+                    functions, baseCursor, executionContext, null
             );
             cursor.of(
                     baseCursor,
@@ -125,7 +121,10 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     protected void _close() {
         Misc.freeIfCloseable(getMetadata());
         Misc.free(baseFactory);
-        Misc.freeObjList(arrayFunctions);
+        Misc.freeObjList(functions);
+        for (int i = 0, n = sources.length; i < n; i++) {
+            Misc.freeIfCloseable(sources[i]);
+        }
     }
 
     private static class UnnestRecordCursor implements RecordCursor {

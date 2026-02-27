@@ -3564,30 +3564,62 @@ public class SqlOptimiser implements Mutable {
         ObjList<ExpressionNode> unnestExprs = model.getUnnestExpressions();
         ObjList<CharSequence> aliases = model.getUnnestColumnAliases();
         int exprCount = unnestExprs.size();
-        int totalColumns = exprCount + (model.isUnnestOrdinality() ? 1 : 0);
+        int totalOutputCols = model.getUnnestOutputColumnCount();
+        int totalColumns = totalOutputCols + (model.isUnnestOrdinality() ? 1 : 0);
 
+        // aliasIdx tracks position across trailing column aliases,
+        // which apply sequentially across all output columns from all sources
+        int aliasIdx = 0;
         for (int i = 0; i < exprCount; i++) {
-            CharSequence columnName;
-            if (i < aliases.size()) {
-                columnName = aliases.getQuick(i);
-            } else if (exprCount == 1) {
-                columnName = "value";
+            if (model.isUnnestJsonSource(i)) {
+                // JSON source: one column per COLUMNS declaration
+                ObjList<CharSequence> jsonColNames =
+                        model.getUnnestJsonColumnNames().getQuick(i);
+                for (int j = 0, jn = jsonColNames.size(); j < jn; j++) {
+                    CharSequence columnName;
+                    if (aliasIdx < aliases.size()) {
+                        columnName = aliases.getQuick(aliasIdx);
+                    } else {
+                        columnName = jsonColNames.getQuick(j);
+                    }
+                    columnName = createColumnAlias(columnName, model, false);
+                    QueryColumn column = queryColumnPool.next().of(
+                            columnName,
+                            expressionNodePool.next().of(
+                                    LITERAL, columnName, 0, 0
+                            ),
+                            true
+                    );
+                    model.addField(column);
+                    aliasIdx++;
+                }
             } else {
-                columnName = "value" + (i + 1);
+                // Array source: one column
+                CharSequence columnName;
+                if (aliasIdx < aliases.size()) {
+                    columnName = aliases.getQuick(aliasIdx);
+                } else if (totalOutputCols == 1) {
+                    columnName = "value";
+                } else {
+                    columnName = "value" + (aliasIdx + 1);
+                }
+                columnName = createColumnAlias(columnName, model, false);
+                QueryColumn column = queryColumnPool.next().of(
+                        columnName,
+                        expressionNodePool.next().of(
+                                LITERAL, columnName, 0, 0
+                        ),
+                        true
+                );
+                model.addField(column);
+                aliasIdx++;
             }
-            columnName = createColumnAlias(columnName, model, false);
-            QueryColumn column = queryColumnPool.next().of(
-                    columnName,
-                    expressionNodePool.next().of(LITERAL, columnName, 0, 0),
-                    true
-            );
-            model.addField(column);
         }
 
         if (model.isUnnestOrdinality()) {
             CharSequence ordColName;
             if (aliases.size() == totalColumns) {
-                ordColName = aliases.getQuick(exprCount);
+                ordColName = aliases.getQuick(totalOutputCols);
             } else {
                 ordColName = "ordinality";
             }

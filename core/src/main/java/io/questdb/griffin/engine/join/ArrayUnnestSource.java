@@ -30,6 +30,7 @@ import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * UnnestSource implementation for typed arrays. Wraps a single array
@@ -102,6 +103,11 @@ public class ArrayUnnestSource implements UnnestSource {
     }
 
     @Override
+    public long getDate(int sourceCol, int elementIndex) {
+        return Numbers.LONG_NULL;
+    }
+
+    @Override
     public double getDouble(int sourceCol, int elementIndex) {
         if (view == null) {
             return Double.NaN;
@@ -152,6 +158,26 @@ public class ArrayUnnestSource implements UnnestSource {
 
     @Override
     public int getStrLen(int sourceCol, int elementIndex) {
+        return -1;
+    }
+
+    @Override
+    public long getTimestamp(int sourceCol, int elementIndex) {
+        return Numbers.LONG_NULL;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int sourceCol, int elementIndex) {
+        return null;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int sourceCol, int elementIndex) {
+        return null;
+    }
+
+    @Override
+    public int getVarcharSize(int sourceCol, int elementIndex) {
         return -1;
     }
 

@@ -164,6 +164,15 @@ public class UnnestRecord implements Record {
         if (col < split) {
             return baseRecord.getDate(col);
         }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return Numbers.LONG_NULL;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getDate(srcCol, arrayIndex);
+        }
         return Numbers.LONG_NULL;
     }
 
@@ -462,6 +471,15 @@ public class UnnestRecord implements Record {
         if (col < split) {
             return baseRecord.getTimestamp(col);
         }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return Numbers.LONG_NULL;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getTimestamp(srcCol, arrayIndex);
+        }
         return Numbers.LONG_NULL;
     }
 
@@ -469,6 +487,15 @@ public class UnnestRecord implements Record {
     public Utf8Sequence getVarcharA(int col) {
         if (col < split) {
             return baseRecord.getVarcharA(col);
+        }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return null;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getVarcharA(srcCol, arrayIndex);
         }
         return null;
     }
@@ -478,6 +505,15 @@ public class UnnestRecord implements Record {
         if (col < split) {
             return baseRecord.getVarcharB(col);
         }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return null;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getVarcharB(srcCol, arrayIndex);
+        }
         return null;
     }
 
@@ -485,6 +521,15 @@ public class UnnestRecord implements Record {
     public int getVarcharSize(int col) {
         if (col < split) {
             return baseRecord.getVarcharSize(col);
+        }
+        int unnestCol = col - split;
+        if (hasOrdinality && unnestCol == unnestColumnCount) {
+            return -1;
+        }
+        if (unnestCol < unnestColumnCount) {
+            int srcIdx = colToSourceIndex[unnestCol];
+            int srcCol = colToSourceCol[unnestCol];
+            return sources[srcIdx].getVarcharSize(srcCol, arrayIndex);
         }
         return -1;
     }
