@@ -405,7 +405,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT arr1[1:1] FROM tango", commonPart1 + "arr1[1:1]" + commonPart2);
             assertPlanNoLeakCheck("SELECT arr3[1:1, 2:3, 4:] FROM tango", commonPart1 + "arr3[1:1,2:3,4:]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango", commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango", commonPart1 + "ARRAY[[1.0,2.0],[3.0,4.0]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango", commonPart1 + "ARRAY[ARRAY[1.0,2.0],ARRAY[3.0,4.0]]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[a, a] FROM tango", commonPart1 + "ARRAY[a,a]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[arr1, arr1] FROM tango", commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[1]] FROM tango", commonPart1 + "ARRAY[arr1[1:2],arr2[1]]" + commonPart2);
@@ -8834,7 +8834,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithJittedFilter22() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1 + 1 ", """
                 Async JIT Filter workers: 1
-                  filter: d=1024.1+1
+                  filter: d=1025.1
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9094,7 +9094,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::short ", """
                 Async Filter workers: 1
-                  filter: l=12::short
+                  filter: l=12
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9105,7 +9105,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter10() throws Exception {
         assertPlan("create table tab ( s short, ts timestamp);", "select * from tab where s = 1::short ", """
                 Async Filter workers: 1
-                  filter: s=1::short
+                  filter: s=1
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9127,7 +9127,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter12() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 1024::long ", """
                 Async Filter workers: 1
-                  filter: l=1024::long
+                  filter: l=1024L
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9220,7 +9220,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter2() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::byte ", """
                 Async Filter workers: 1
-                  filter: l=12::byte
+                  filter: l=12
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
@@ -9287,7 +9287,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithNonJittedFilter9() throws Exception {
         assertPlan("create table tab ( b byte, ts timestamp);", "select * from tab where b = 1::byte ", """
                 Async Filter workers: 1
-                  filter: b=1::byte
+                  filter: b=1
                     PageFrame
                         Row forward scan
                         Frame forward scan on: tab
