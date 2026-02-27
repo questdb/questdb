@@ -1395,7 +1395,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             symbolMapNullFlags.set(i, reader.containsNullValue());
                         }
                         localSymbolIds.set(i, 0);
-                        symbolMapNullFlags.set(i, reader.containsNullValue());
                         symbolMapNullFlagsChanged.set(i, false);
                         symbolMaps.getQuick(i).clear();
                         utf8SymbolMaps.getQuick(i).clear();
