@@ -64,16 +64,29 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * Dense format (genKeyCount >= 0 in directory, used by seal) — stride-indexed:
  * <pre>
  * [stride_index: (strideCount + 1) × 4B — byte offset of each stride block]
- * [stride block 0:
- *   [counts:  ks × 4B — value count per key]
- *   [offsets: (ks + 1) × 4B — prefix-sum data offsets, sentinel at end]
- *   [encoded data for keys 0..DENSE_STRIDE-1]
- * ]
+ * [stride block 0:  (BP mode or Packed mode, chosen per-stride)]
  * [stride block 1: ...]
  * ...
  * [stride block N-1: last stride may have fewer keys]
  * </pre>
  * where strideCount = ceil(keyCount / DENSE_STRIDE), ks = keys in stride.
+ * <p>
+ * Each stride block uses one of two modes:
+ * <pre>
+ * BP mode (mode=0x00):
+ *   [mode: 1B = 0x00]
+ *   [reserved: 1B = 0x00]
+ *   [counts:  ks × 4B — value count per key]
+ *   [offsets: (ks + 1) × 4B — prefix-sum data offsets, sentinel at end]
+ *   [BP-encoded data for each key]
+ *
+ * Packed mode (mode=0x01):
+ *   [mode: 1B = 0x01]
+ *   [bitWidth: 1B]
+ *   [prefixCounts: (ks + 1) × 4B — cumulative value count (prefix sum)]
+ *   [packed data: totalValues × bitWidth bits, contiguous bit-packed absolute row IDs]
+ * </pre>
+ * At seal time, each stride independently chooses the smaller encoding.
  * Sparse format (genKeyCount < 0 in directory, |genKeyCount| = active keys, used by commit):
  * <pre>
  * [keyIds:  activeKeyCount × 4B — sorted ascending, for binary search]
@@ -86,6 +99,11 @@ public final class BPBitmapIndexUtils {
 
     public static final int BLOCK_CAPACITY = 64;
     public static final int DENSE_STRIDE = 256;
+
+    // Stride block mode constants
+    public static final byte STRIDE_MODE_BP = 0;
+    public static final byte STRIDE_MODE_PACKED = 1;
+    public static final int STRIDE_MODE_PREFIX_SIZE = 4; // mode(1B) + bitWidth/reserved(1B) + padding(2B)
 
     // Key file header offsets (64 bytes)
     public static final int KEY_FILE_RESERVED = 64;
@@ -374,10 +392,17 @@ public final class BPBitmapIndexUtils {
     }
 
     /**
-     * Size of a stride block's local header: counts + prefix-sum offsets (with sentinel).
+     * Size of a BP-mode stride block header: mode prefix + counts + prefix-sum offsets.
      */
-    public static int strideLocalHeaderSize(int keysInStride) {
-        return keysInStride * Integer.BYTES + (keysInStride + 1) * Integer.BYTES;
+    public static int strideBPHeaderSize(int keysInStride) {
+        return STRIDE_MODE_PREFIX_SIZE + keysInStride * Integer.BYTES + (keysInStride + 1) * Integer.BYTES;
+    }
+
+    /**
+     * Size of a Packed-mode stride block header: mode prefix + prefixCounts.
+     */
+    public static int stridePackedHeaderSize(int keysInStride) {
+        return STRIDE_MODE_PREFIX_SIZE + (keysInStride + 1) * Integer.BYTES;
     }
 
     /**

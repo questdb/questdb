@@ -354,7 +354,7 @@ public class DeltaBitmapIndexBenchmark {
                 }
             }
 
-            // BP (Delta + FoR64 BitPacking) read
+            // BP (Delta + FoR64 BitPacking) — write in 2 batches so seal() runs
             {
                 String dir = tmpDir + File.separator + "hc_bp_" + System.nanoTime();
                 new File(dir).mkdirs();
@@ -363,7 +363,17 @@ public class DeltaBitmapIndexBenchmark {
                     try (Path path = new Path().of(dir)) {
                         try (BPBitmapIndexWriter writer = new BPBitmapIndexWriter(config)) {
                             writer.of(path, "test", COLUMN_NAME_TXN, false);
-                            writeInterleaved(writer, keyAssignment);
+                            // Write in 2 halves with commit between, so seal() merges them
+                            int half = keyAssignment.length / 2;
+                            for (int rowId = 0; rowId < half; rowId++) {
+                                writer.add(keyAssignment[rowId], rowId);
+                            }
+                            writer.commit();
+                            for (int rowId = half; rowId < keyAssignment.length; rowId++) {
+                                writer.add(keyAssignment[rowId], rowId);
+                            }
+                            writer.commit();
+                            // seal() called by close()
                         }
                     }
 

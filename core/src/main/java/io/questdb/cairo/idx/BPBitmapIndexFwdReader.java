@@ -296,6 +296,12 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
         private long[] minDeltas = new long[4];
         private int[] bitWidths = new int[4];
         private long packedDataAddr;
+        // Packed mode batch state (for count > BLOCK_CAPACITY)
+        private boolean packedMode;
+        private int packedBitWidth;
+        private long packedDataBase;
+        private int packedStartIdx;
+        private int packedRemaining;
         // Sequential scan hint for sparse generations (persists across of() calls)
         private int[] sparseHints;
         private int prevKey;
@@ -321,6 +327,12 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
                 // Try to decode next block in current generation
                 if (currentBlock < encodedBlockCount) {
                     decodeNextBlock();
+                    continue;
+                }
+
+                // Packed mode: decode next batch if remaining
+                if (packedMode && packedRemaining > 0) {
+                    decodeNextPackedBatch();
                     continue;
                 }
 
@@ -360,6 +372,17 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
             this.maxValue = maxValue;
             this.currentGen = 0;
             loadGeneration();
+        }
+
+        private void decodeNextPackedBatch() {
+            int batch = Math.min(packedRemaining, BPBitmapIndexUtils.BLOCK_CAPACITY);
+            for (int i = 0; i < batch; i++) {
+                blockBuffer[i] = FORBitmapIndexUtils.unpackValue(packedDataBase, packedStartIdx + i, packedBitWidth, 0);
+            }
+            packedStartIdx += batch;
+            packedRemaining -= batch;
+            blockBufferPos = 0;
+            blockBufferEnd = batch;
         }
 
         private void decodeNextBlock() {
@@ -423,6 +446,8 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
             valueMem.extend(genFileOffset + genDataSize);
             long genAddr = valueMem.addressOf(genFileOffset);
 
+            this.packedMode = false;
+
             if (genKeyCount < 0) {
                 // Sparse format — use hint-based linear scan for ascending key access
                 int activeKeyCount = -genKeyCount;
@@ -454,7 +479,7 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
                 int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
                 this.encodedAddr = genAddr + headerSize + dataOffset;
             } else {
-                // Dense format — stride-indexed
+                // Dense format — stride-indexed (supports BP and Packed modes)
                 if (requestedKey >= genKeyCount) {
                     this.encodedBlockCount = 0;
                     this.currentBlock = 0;
@@ -469,12 +494,51 @@ public class BPBitmapIndexFwdReader implements BitmapIndexReader {
                 int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);
                 long strideAddr = genAddr + siSize + strideOff;
                 int ks = BPBitmapIndexUtils.keysInStride(genKeyCount, stride);
+                byte mode = Unsafe.getUnsafe().getByte(strideAddr);
 
-                this.totalValueCount = Unsafe.getUnsafe().getInt(strideAddr + (long) localKey * Integer.BYTES);
-                long offsetsBase = strideAddr + (long) ks * Integer.BYTES;
+                if (mode == BPBitmapIndexUtils.STRIDE_MODE_PACKED) {
+                    // Packed mode
+                    int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
+                    long prefixAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                    int startCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
+                    int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startCount;
+
+                    if (count == 0) {
+                        this.encodedBlockCount = 0;
+                        this.currentBlock = 0;
+                        this.blockBufferPos = 0;
+                        this.blockBufferEnd = 0;
+                        return;
+                    }
+
+                    int packedHeaderSize = BPBitmapIndexUtils.stridePackedHeaderSize(ks);
+                    long dataAddr = strideAddr + packedHeaderSize;
+
+                    this.packedMode = true;
+                    this.packedBitWidth = bitWidth;
+                    this.packedDataBase = dataAddr;
+                    this.encodedBlockCount = 0;
+                    this.currentBlock = 0;
+
+                    // Unpack first batch into blockBuffer
+                    int batch = Math.min(count, BPBitmapIndexUtils.BLOCK_CAPACITY);
+                    for (int i = 0; i < batch; i++) {
+                        blockBuffer[i] = FORBitmapIndexUtils.unpackValue(dataAddr, startCount + i, bitWidth, 0);
+                    }
+                    this.blockBufferPos = 0;
+                    this.blockBufferEnd = batch;
+                    this.packedStartIdx = startCount + batch;
+                    this.packedRemaining = count - batch;
+                    return;
+                }
+
+                // BP mode
+                long countsAddr = strideAddr + BPBitmapIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                this.totalValueCount = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
+                long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
                 int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
-                int localHeaderSize = BPBitmapIndexUtils.strideLocalHeaderSize(ks);
-                this.encodedAddr = strideAddr + localHeaderSize + dataOffset;
+                int bpHeaderSize = BPBitmapIndexUtils.strideBPHeaderSize(ks);
+                this.encodedAddr = strideAddr + bpHeaderSize + dataOffset;
             }
 
             if (totalValueCount == 0) {
