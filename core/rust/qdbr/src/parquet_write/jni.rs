@@ -195,9 +195,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     row_count: jlong,
 ) {
-    let orig_row_group_id = row_group_id;
-    let row_group_id = Some(row_group_id);
-
     if parquet_updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.updateRowGroup");
@@ -217,11 +214,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        if let Some(row_group_id) = row_group_id {
-            parquet_updater.replace_row_group(&partition, row_group_id)
-        } else {
-            parquet_updater.append_row_group(&partition)
-        }
+        parquet_updater.replace_row_group(&partition, row_group_id)
     };
 
     match update() {
@@ -232,7 +225,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             let table_name =
                 std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
             err.add_context(format!(
-                "could not update row group {orig_row_group_id} for table {table_name}"
+                "could not update row group {row_group_id} for table {table_name}"
             ));
             err.add_context("error in PartitionUpdater.updateRowGroup");
             err.into_cairo_exception().throw(&mut env)

@@ -268,29 +268,6 @@ impl ParquetUpdater {
         }
     }
 
-    pub fn append_row_group(&mut self, partition: &Partition<'_>) -> ParquetResult<()> {
-        let options = self.row_group_options();
-        let row_group = create_row_group(
-            partition,
-            0,
-            partition.columns[0].row_count,
-            self.parquet_file.schema().fields(),
-            &to_encodings(partition),
-            options,
-            false,
-        )?;
-
-        if self.is_rewrite {
-            self.parquet_file
-                .write(row_group)
-                .context("Failed to write row group in rewrite mode")
-        } else {
-            self.parquet_file
-                .append(row_group)
-                .context("Failed to append row group")
-        }
-    }
-
     pub fn copy_row_group(&mut self, rg_index: i16) -> ParquetResult<()> {
         let rg_idx = rg_index as usize;
         if rg_idx >= self.file_metadata.row_groups.len() {
@@ -587,7 +564,7 @@ mod tests {
             metadata.into_thrift(),
             None,
         );
-        parquet_file.append(row_group)?;
+        parquet_file.replace(row_group, None)?;
         parquet_file.replace(replace_row_group, Some(0))?;
         parquet_file.end(None)?;
 

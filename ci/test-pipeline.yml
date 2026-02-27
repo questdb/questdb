@@ -270,13 +270,6 @@ stages:
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 
           - task: PublishBuildArtifacts@1
-            displayName: "Upload JaCoCo aggregate report"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
-            inputs:
-              pathToPublish: "$(Pipeline.Workspace)/jacoco-aggregate"
-              artifactName: "jacoco-aggregate"
-
-          - task: PublishBuildArtifacts@1
             displayName: "Upload Rust coverage report"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
             inputs:

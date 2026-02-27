@@ -661,13 +661,6 @@ impl<W: Write> ParquetFile<W> {
         }
     }
 
-    pub fn append<E>(&mut self, row_group: RowGroupIter<'_, E>) -> std::result::Result<(), E>
-    where
-        E: std::error::Error + From<Error>,
-    {
-        self.replace(row_group, None)
-    }
-
     /// Ensures the PAR1 file header has been written.
     /// Must be called before computing offsets for raw row group copies.
     pub fn ensure_started(&mut self) -> Result<()> {

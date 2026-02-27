@@ -29,6 +29,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -77,6 +78,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
         int rowGroupSize = 500 + rnd.nextInt(2000);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+
+        int parquetVersion = rnd.nextBoolean() ? ParquetVersion.PARQUET_VERSION_V1 : ParquetVersion.PARQUET_VERSION_V2;
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, parquetVersion);
 
         String compressionCodec = randomCompressionCodec(rnd);
         int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
@@ -136,6 +140,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     .$("starting all-parquet fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
                     .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", parquetVersion=V").$(parquetVersion)
                     .$(", compression=").$(compressionCodec)
                     .$(", compressionLevel=").$(compressionLevel)
                     .$(", rewriteRatio=").$(rewriteRatio)
@@ -232,6 +237,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         int rowGroupSize = 500 + rnd.nextInt(2000);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
 
+        int parquetVersion = rnd.nextBoolean() ? ParquetVersion.PARQUET_VERSION_V1 : ParquetVersion.PARQUET_VERSION_V2;
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, parquetVersion);
+
         String compressionCodec = randomCompressionCodec(rnd);
         int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, compressionCodec);
@@ -301,6 +309,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     .$("starting fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
                     .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", parquetVersion=V").$(parquetVersion)
                     .$(", compression=").$(compressionCodec)
                     .$(", compressionLevel=").$(compressionLevel)
                     .$(", rewriteRatio=").$(rewriteRatio)
@@ -405,6 +414,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         int rowGroupSize = 500 + rnd.nextInt(2000);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
 
+        int parquetVersion = rnd.nextBoolean() ? ParquetVersion.PARQUET_VERSION_V1 : ParquetVersion.PARQUET_VERSION_V2;
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, parquetVersion);
+
         String compressionCodec = randomCompressionCodec(rnd);
         int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, compressionCodec);
@@ -467,6 +479,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     .$("starting in-order fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
                     .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", parquetVersion=V").$(parquetVersion)
                     .$(", compression=").$(compressionCodec)
                     .$(", compressionLevel=").$(compressionLevel)
                     .$(", partitionTs=").$(partitionTs)
