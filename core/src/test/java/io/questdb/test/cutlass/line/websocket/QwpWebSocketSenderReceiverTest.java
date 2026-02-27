@@ -847,6 +847,45 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testColumnTypeMismatchThrowsClientSide() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    // First row: "value" is a long column
+                    sender.table("ws_test_col_type_mismatch")
+                            .longColumn("value", 42)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Second row: same column name but double — must throw immediately
+                    try {
+                        sender.table("ws_test_col_type_mismatch")
+                                .doubleColumn("value", 3.14)
+                                .at(2_000_000L, ChronoUnit.MICROS);
+                        Assert.fail("Expected LineSenderException for column type mismatch");
+                    } catch (LineSenderException e) {
+                        Assert.assertTrue(
+                                "Error should mention type mismatch: " + e.getMessage(),
+                                e.getMessage().contains("Column type mismatch")
+                        );
+                    }
+                }
+
+                // The first row should still be intact on the server
+                serverMain.awaitTable("ws_test_col_type_mismatch");
+                serverMain.assertSql(
+                        "SELECT value FROM ws_test_col_type_mismatch",
+                        "value\n42\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testComplexSchema1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
