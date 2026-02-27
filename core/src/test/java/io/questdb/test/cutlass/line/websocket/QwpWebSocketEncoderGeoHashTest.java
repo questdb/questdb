@@ -34,6 +34,7 @@ import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
+import static io.questdb.test.tools.assertMemoryLeak;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -51,412 +52,472 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 public class QwpWebSocketEncoderGeoHashTest {
 
     @Test
-    public void testAddGeoHashInvalidPrecisionTooLarge() {
-        try (QwpTableBuffer buffer = new QwpTableBuffer("test_table")) {
-            QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-            try {
-                col.addGeoHash(0, 61);
-                Assert.fail("Expected LineSenderException");
-            } catch (LineSenderException e) {
-                Assert.assertTrue(e.getMessage().contains("precision"));
+    public void testAddGeoHashInvalidPrecisionTooLarge() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpTableBuffer buffer = new QwpTableBuffer("test_table")) {
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+                try {
+                    col.addGeoHash(0, 61);
+                    Assert.fail("Expected LineSenderException");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue(e.getMessage().contains("precision"));
+                }
             }
-        }
+        });
     }
 
     @Test
-    public void testAddGeoHashInvalidPrecisionZero() {
-        try (QwpTableBuffer buffer = new QwpTableBuffer("test_table")) {
-            QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-            try {
-                col.addGeoHash(0, 0);
-                Assert.fail("Expected LineSenderException");
-            } catch (LineSenderException e) {
-                Assert.assertTrue(e.getMessage().contains("precision"));
+    public void testAddGeoHashInvalidPrecisionZero() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpTableBuffer buffer = new QwpTableBuffer("test_table")) {
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+                try {
+                    col.addGeoHash(0, 0);
+                    Assert.fail("Expected LineSenderException");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue(e.getMessage().contains("precision"));
+                }
             }
-        }
+        });
     }
 
     @Test
-    public void testAddGeoHashPrecisionMismatch() {
-        try (QwpTableBuffer buffer = new QwpTableBuffer("test_table")) {
-            QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-            col.addGeoHash(0b10110, 5);
-            buffer.nextRow();
-            try {
-                col.addGeoHash(0xFF, 10);
-                Assert.fail("Expected LineSenderException for precision mismatch");
-            } catch (LineSenderException e) {
-                Assert.assertTrue(e.getMessage().contains("mismatch"));
-            }
-        }
-    }
-
-    @Test
-    public void testClientEncoderMatchesServerEncoder() throws QwpParseException {
-        // Encode with client-side encoder, then decode with server-side decoder
-        // and verify byte-level compatibility with the server's own encode/decode
-        int[] precisions = {1, 5, 7, 8, 10, 15, 16, 20, 25, 31, 32, 40, 48, 56, 60};
-
-        for (int precision : precisions) {
-            long maxValue = (1L << precision) - 1;
-            long[] values = {
-                    0,
-                    maxValue,
-                    maxValue / 2,
-                    maxValue / 3
-            };
-            assertGeoHashRoundTrip(values, precision, false);
-        }
-    }
-
-    @Test
-    public void testEncodeDecodeAllPackedSizes() throws QwpParseException {
-        // 3-byte packed (17-24 bits)
-        assertGeoHashRoundTrip(new long[]{0x123456L}, 24, false);
-        assertGeoHashRoundTrip(new long[]{0x123456L}, 24, true);
-
-        // 5-byte packed (33-40 bits)
-        assertGeoHashRoundTrip(new long[]{0x123456789AL}, 40, false);
-        assertGeoHashRoundTrip(new long[]{0x123456789AL}, 40, true);
-
-        // 6-byte packed (41-48 bits)
-        assertGeoHashRoundTrip(new long[]{0x123456789ABCL}, 48, false);
-        assertGeoHashRoundTrip(new long[]{0x123456789ABCL}, 48, true);
-
-        // 7-byte packed (49-56 bits)
-        assertGeoHashRoundTrip(new long[]{0x123456789ABCDEL}, 56, false);
-        assertGeoHashRoundTrip(new long[]{0x123456789ABCDEL}, 56, true);
-    }
-
-    @Test
-    public void testEncodeDecodeGeoByte1Bit() throws QwpParseException {
-        long[] values = {0, 1, 1, 0, 1};
-        assertGeoHashRoundTrip(values, 1, false);
-        assertGeoHashRoundTrip(values, 1, true);
-    }
-
-    @Test
-    public void testEncodeDecodeGeoByte5Bits() throws QwpParseException {
-        long[] values = {0b10110, 0b01001, 0b11111, 0b00000, 0b10101};
-        assertGeoHashRoundTrip(values, 5, false);
-        assertGeoHashRoundTrip(values, 5, true);
-    }
-
-    @Test
-    public void testEncodeDecodeGeoByte7Bits() throws QwpParseException {
-        long[] values = {0b1110110, 0b0100101, 0b1111111, 0b0000000, 0b1010101};
-        assertGeoHashRoundTrip(values, 7, false);
-        assertGeoHashRoundTrip(values, 7, true);
-    }
-
-    @Test
-    public void testEncodeDecodeGeoHashWithOtherColumns() throws QwpParseException {
-        int rowCount = 5;
-        int precision = 20;
-        long[] geoValues = {0xABCDE, 0x12345, 0xFFFFF, 0x00000, 0x55555};
-        long[] longValues = {100, 200, 300, 400, 500};
-        double[] doubleValues = {1.1, 2.2, 3.3, 4.4, 5.5};
-
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            QwpTableBuffer buffer = new QwpTableBuffer("mixed_table");
-
-            QwpTableBuffer.ColumnBuffer geoCol = buffer.getOrCreateColumn("location", TYPE_GEOHASH, false);
-            QwpTableBuffer.ColumnBuffer longCol = buffer.getOrCreateColumn("id", TYPE_LONG, false);
-            QwpTableBuffer.ColumnBuffer dblCol = buffer.getOrCreateColumn("value", TYPE_DOUBLE, false);
-            QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
-
-            for (int i = 0; i < rowCount; i++) {
-                geoCol.addGeoHash(geoValues[i], precision);
-                longCol.addLong(longValues[i]);
-                dblCol.addDouble(doubleValues[i]);
-                tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+    public void testAddGeoHashPrecisionMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpTableBuffer buffer = new QwpTableBuffer("test_table")) {
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+                col.addGeoHash(0b10110, 5);
                 buffer.nextRow();
+                try {
+                    col.addGeoHash(0xFF, 10);
+                    Assert.fail("Expected LineSenderException for precision mismatch");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue(e.getMessage().contains("mismatch"));
+                }
             }
+        });
+    }
 
-            int size = encoder.encode(buffer, false);
-            Assert.assertTrue(size > 12);
+    @Test
+    public void testClientEncoderMatchesServerEncoder() throws Exception {
+        assertMemoryLeak(() -> {
+            // Encode with client-side encoder, then decode with server-side decoder
+            // and verify byte-level compatibility with the server's own encode/decode
+            int[] precisions = {1, 5, 7, 8, 10, 15, 16, 20, 25, 31, 32, 40, 48, 56, 60};
 
-            QwpBufferWriter buf = encoder.getBuffer();
-            long ptr = buf.getBufferPtr();
+            for (int precision : precisions) {
+                long maxValue = (1L << precision) - 1;
+                long[] values = {
+                        0,
+                        maxValue,
+                        maxValue / 2,
+                        maxValue / 3
+                };
+                assertGeoHashRoundTrip(values, precision, false);
+            }
+        });
+    }
 
-            try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
-                QwpMessageCursor msg = decoder.decode(ptr, size);
-                Assert.assertTrue(msg.hasNextTable());
-                QwpTableBlockCursor table = msg.nextTable();
+    @Test
+    public void testEncodeDecodeAllPackedSizes() throws Exception {
+        assertMemoryLeak(() -> {
+            // 3-byte packed (17-24 bits)
+            assertGeoHashRoundTrip(new long[]{0x123456L}, 24, false);
+            assertGeoHashRoundTrip(new long[]{0x123456L}, 24, true);
 
-                Assert.assertEquals("mixed_table", table.getTableName());
-                Assert.assertEquals(rowCount, table.getRowCount());
-                Assert.assertEquals(4, table.getColumnCount());
+            // 5-byte packed (33-40 bits)
+            assertGeoHashRoundTrip(new long[]{0x123456789AL}, 40, false);
+            assertGeoHashRoundTrip(new long[]{0x123456789AL}, 40, true);
 
-                int geoColIdx = findGeoHashColumnIndex(table);
-                Assert.assertNotEquals("GEOHASH column not found", -1, geoColIdx);
+            // 6-byte packed (41-48 bits)
+            assertGeoHashRoundTrip(new long[]{0x123456789ABCL}, 48, false);
+            assertGeoHashRoundTrip(new long[]{0x123456789ABCL}, 48, true);
+
+            // 7-byte packed (49-56 bits)
+            assertGeoHashRoundTrip(new long[]{0x123456789ABCDEL}, 56, false);
+            assertGeoHashRoundTrip(new long[]{0x123456789ABCDEL}, 56, true);
+        });
+    }
+
+    @Test
+    public void testEncodeDecodeGeoByte1Bit() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0, 1, 1, 0, 1};
+            assertGeoHashRoundTrip(values, 1, false);
+            assertGeoHashRoundTrip(values, 1, true);
+        });
+    }
+
+    @Test
+    public void testEncodeDecodeGeoByte5Bits() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0b10110, 0b01001, 0b11111, 0b00000, 0b10101};
+            assertGeoHashRoundTrip(values, 5, false);
+            assertGeoHashRoundTrip(values, 5, true);
+        });
+    }
+
+    @Test
+    public void testEncodeDecodeGeoByte7Bits() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0b1110110, 0b0100101, 0b1111111, 0b0000000, 0b1010101};
+            assertGeoHashRoundTrip(values, 7, false);
+            assertGeoHashRoundTrip(values, 7, true);
+        });
+    }
+
+    @Test
+    public void testEncodeDecodeGeoHashWithOtherColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            int rowCount = 5;
+            int precision = 20;
+            long[] geoValues = {0xABCDE, 0x12345, 0xFFFFF, 0x00000, 0x55555};
+            long[] longValues = {100, 200, 300, 400, 500};
+            double[] doubleValues = {1.1, 2.2, 3.3, 4.4, 5.5};
+
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+                QwpTableBuffer buffer = new QwpTableBuffer("mixed_table");
+
+                QwpTableBuffer.ColumnBuffer geoCol = buffer.getOrCreateColumn("location", TYPE_GEOHASH, false);
+                QwpTableBuffer.ColumnBuffer longCol = buffer.getOrCreateColumn("id", TYPE_LONG, false);
+                QwpTableBuffer.ColumnBuffer dblCol = buffer.getOrCreateColumn("value", TYPE_DOUBLE, false);
+                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateColumn("", TYPE_TIMESTAMP, true);
 
                 for (int i = 0; i < rowCount; i++) {
-                    Assert.assertTrue(table.hasNextRow());
-                    table.nextRow();
-
-                    QwpGeoHashColumnCursor geoCursor = table.getGeoHashColumn(geoColIdx);
-                    Assert.assertFalse(geoCursor.isNull());
-                    Assert.assertEquals(precision, geoCursor.getPrecision());
-                    Assert.assertEquals("Row " + i + " geohash mismatch",
-                            geoValues[i], geoCursor.getGeoHash());
+                    geoCol.addGeoHash(geoValues[i], precision);
+                    longCol.addLong(longValues[i]);
+                    dblCol.addDouble(doubleValues[i]);
+                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+                    buffer.nextRow();
                 }
-                Assert.assertFalse(table.hasNextRow());
+
+                int size = encoder.encode(buffer, false);
+                Assert.assertTrue(size > 12);
+
+                QwpBufferWriter buf = encoder.getBuffer();
+                long ptr = buf.getBufferPtr();
+
+                try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
+                    QwpMessageCursor msg = decoder.decode(ptr, size);
+                    Assert.assertTrue(msg.hasNextTable());
+                    QwpTableBlockCursor table = msg.nextTable();
+
+                    Assert.assertEquals("mixed_table", table.getTableName());
+                    Assert.assertEquals(rowCount, table.getRowCount());
+                    Assert.assertEquals(4, table.getColumnCount());
+
+                    int geoColIdx = findGeoHashColumnIndex(table);
+                    Assert.assertNotEquals("GEOHASH column not found", -1, geoColIdx);
+
+                    for (int i = 0; i < rowCount; i++) {
+                        Assert.assertTrue(table.hasNextRow());
+                        table.nextRow();
+
+                        QwpGeoHashColumnCursor geoCursor = table.getGeoHashColumn(geoColIdx);
+                        Assert.assertFalse(geoCursor.isNull());
+                        Assert.assertEquals(precision, geoCursor.getPrecision());
+                        Assert.assertEquals("Row " + i + " geohash mismatch",
+                                geoValues[i], geoCursor.getGeoHash());
+                    }
+                    Assert.assertFalse(table.hasNextRow());
+                }
             }
-        }
+        });
     }
 
     @Test
-    public void testEncodeDecodeGeoInt20Bits() throws QwpParseException {
-        long[] values = {0xABCDE, 0x12345, 0xFFFFF, 0x00000};
-        assertGeoHashRoundTrip(values, 20, false);
-        assertGeoHashRoundTrip(values, 20, true);
+    public void testEncodeDecodeGeoInt20Bits() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0xABCDE, 0x12345, 0xFFFFF, 0x00000};
+            assertGeoHashRoundTrip(values, 20, false);
+            assertGeoHashRoundTrip(values, 20, true);
+        });
     }
 
     @Test
-    public void testEncodeDecodeGeoInt31Bits() throws QwpParseException {
-        long[] values = {0x7FFFFFFFL, 0x55555555L, 0x2AAAAAABL, 0x00000000L};
-        assertGeoHashRoundTrip(values, 31, false);
-        assertGeoHashRoundTrip(values, 31, true);
+    public void testEncodeDecodeGeoInt31Bits() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0x7FFFFFFFL, 0x55555555L, 0x2AAAAAABL, 0x00000000L};
+            assertGeoHashRoundTrip(values, 31, false);
+            assertGeoHashRoundTrip(values, 31, true);
+        });
     }
 
     @Test
-    public void testEncodeDecodeGeoLong40Bits() throws QwpParseException {
-        long[] values = {0xABCDEF1234L, 0x123456789AL, 0xFFFFFFFFFFL, 0x0000000000L};
-        assertGeoHashRoundTrip(values, 40, false);
-        assertGeoHashRoundTrip(values, 40, true);
+    public void testEncodeDecodeGeoLong40Bits() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0xABCDEF1234L, 0x123456789AL, 0xFFFFFFFFFFL, 0x0000000000L};
+            assertGeoHashRoundTrip(values, 40, false);
+            assertGeoHashRoundTrip(values, 40, true);
+        });
     }
 
     @Test
-    public void testEncodeDecodeGeoLong60Bits() throws QwpParseException {
-        long[] values = {
-                0x0FFFFFFFFFFFFFFFL,
-                0x0555555555555555L,
-                0x0AAAAAAAAAAAAAAAL,
-                0x0000000000000000L
-        };
-        assertGeoHashRoundTrip(values, 60, false);
-        assertGeoHashRoundTrip(values, 60, true);
+    public void testEncodeDecodeGeoLong60Bits() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {
+                    0x0FFFFFFFFFFFFFFFL,
+                    0x0555555555555555L,
+                    0x0AAAAAAAAAAAAAAAL,
+                    0x0000000000000000L
+            };
+            assertGeoHashRoundTrip(values, 60, false);
+            assertGeoHashRoundTrip(values, 60, true);
+        });
     }
 
     @Test
-    public void testEncodeDecodeGeoShort10Bits() throws QwpParseException {
-        long[] values = {0b1011010110, 0b0100101001, 0b1111111111, 0b0000000000};
-        assertGeoHashRoundTrip(values, 10, false);
-        assertGeoHashRoundTrip(values, 10, true);
+    public void testEncodeDecodeGeoShort10Bits() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0b1011010110, 0b0100101001, 0b1111111111, 0b0000000000};
+            assertGeoHashRoundTrip(values, 10, false);
+            assertGeoHashRoundTrip(values, 10, true);
+        });
     }
 
     @Test
-    public void testEncodeDecodeGeoShort15Bits() throws QwpParseException {
-        long[] values = {0b111011010110110, 0b010010100101001, 0b111111111111111};
-        assertGeoHashRoundTrip(values, 15, false);
-        assertGeoHashRoundTrip(values, 15, true);
+    public void testEncodeDecodeGeoShort15Bits() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0b111011010110110, 0b010010100101001, 0b111111111111111};
+            assertGeoHashRoundTrip(values, 15, false);
+            assertGeoHashRoundTrip(values, 15, true);
+        });
     }
 
     @Test
-    public void testEncodeDecodeLargeGeoIntColumn() throws QwpParseException {
-        int rowCount = 10_000;
-        int precision = 25;
-        long[] values = new long[rowCount];
-        for (int i = 0; i < rowCount; i++) {
-            values[i] = (i * 12_345L) & ((1L << precision) - 1);
-        }
-        assertGeoHashRoundTrip(values, precision, false);
-    }
-
-    @Test
-    public void testEncodeDecodeLargeGeoLongColumnWithNulls() throws QwpParseException {
-        int rowCount = 10_000;
-        int precision = 40;
-        long[] values = new long[rowCount];
-        boolean[] nulls = new boolean[rowCount];
-        for (int i = 0; i < rowCount; i++) {
-            values[i] = (i * 12_345L) & ((1L << precision) - 1);
-            nulls[i] = (i % 7 == 0);
-        }
-        assertNullableGeoHashRoundTrip(values, nulls, precision);
-    }
-
-    @Test
-    public void testEncodeDecodeMatchesServerRoundTrip() throws QwpParseException {
-        // Verify that client encoder -> server decoder gives same results as
-        // server encoder -> server decoder
-        int precision = 20;
-        long[] values = {0xABCDE, 0x12345, 0xFFFFF, 0x00000};
-
-        // Server-side round-trip
-        int serverSize = QwpGeoHashDecoder.calculateEncodedSize(values.length, precision, false);
-        long serverBuf = io.questdb.std.Unsafe.malloc(serverSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpGeoHashDecoder.encode(serverBuf, values, precision, null);
-            QwpGeoHashDecoder.ArrayGeoHashSink serverSink = new QwpGeoHashDecoder.ArrayGeoHashSink(values.length);
-            QwpGeoHashDecoder.INSTANCE.decode(serverBuf, serverSize, values.length, false, serverSink);
-
-            // Client-side encode -> server-side decode
-            long[] clientDecoded = encodeAndDecodeGeoHash(values, precision, false);
-
-            // Both paths must give identical results
-            for (int i = 0; i < values.length; i++) {
-                Assert.assertEquals("Server decode value mismatch at row " + i,
-                        values[i], serverSink.getValue(i));
-                Assert.assertEquals("Client-server round-trip mismatch at row " + i,
-                        serverSink.getValue(i), clientDecoded[i]);
+    public void testEncodeDecodeLargeGeoIntColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            int rowCount = 10_000;
+            int precision = 25;
+            long[] values = new long[rowCount];
+            for (int i = 0; i < rowCount; i++) {
+                values[i] = (i * 12_345L) & ((1L << precision) - 1);
             }
-        } finally {
-            io.questdb.std.Unsafe.free(serverBuf, serverSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
-        }
+            assertGeoHashRoundTrip(values, precision, false);
+        });
     }
 
     @Test
-    public void testEncodeDecodeNullableGeoHashAllNulls() throws QwpParseException {
-        long[] values = {0, 0, 0};
-        boolean[] nulls = {true, true, true};
-        assertNullableGeoHashRoundTrip(values, nulls, 10);
+    public void testEncodeDecodeLargeGeoLongColumnWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            int rowCount = 10_000;
+            int precision = 40;
+            long[] values = new long[rowCount];
+            boolean[] nulls = new boolean[rowCount];
+            for (int i = 0; i < rowCount; i++) {
+                values[i] = (i * 12_345L) & ((1L << precision) - 1);
+                nulls[i] = (i % 7 == 0);
+            }
+            assertNullableGeoHashRoundTrip(values, nulls, precision);
+        });
     }
 
     @Test
-    public void testEncodeDecodeNullableGeoHashNoNulls() throws QwpParseException {
-        long[] values = {0xABCDE, 0x12345, 0xFFFFF};
-        boolean[] nulls = {false, false, false};
-        assertNullableGeoHashRoundTrip(values, nulls, 20);
+    public void testEncodeDecodeMatchesServerRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            // Verify that client encoder -> server decoder gives same results as
+            // server encoder -> server decoder
+            int precision = 20;
+            long[] values = {0xABCDE, 0x12345, 0xFFFFF, 0x00000};
+
+            // Server-side round-trip
+            int serverSize = QwpGeoHashDecoder.calculateEncodedSize(values.length, precision, false);
+            long serverBuf = io.questdb.std.Unsafe.malloc(serverSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpGeoHashDecoder.encode(serverBuf, values, precision, null);
+                QwpGeoHashDecoder.ArrayGeoHashSink serverSink = new QwpGeoHashDecoder.ArrayGeoHashSink(values.length);
+                QwpGeoHashDecoder.INSTANCE.decode(serverBuf, serverSize, values.length, false, serverSink);
+
+                // Client-side encode -> server-side decode
+                long[] clientDecoded = encodeAndDecodeGeoHash(values, precision, false);
+
+                // Both paths must give identical results
+                for (int i = 0; i < values.length; i++) {
+                    Assert.assertEquals("Server decode value mismatch at row " + i,
+                            values[i], serverSink.getValue(i));
+                    Assert.assertEquals("Client-server round-trip mismatch at row " + i,
+                            serverSink.getValue(i), clientDecoded[i]);
+                }
+            } finally {
+                io.questdb.std.Unsafe.free(serverBuf, serverSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
-    public void testEncodeDecodeNullableGeoHashWithNulls() throws QwpParseException {
-        // 5-bit precision, rows 1 and 3 are null
-        long[] values = {0b10110, 0, 0b11111, 0, 0b10101};
-        boolean[] nulls = {false, true, false, true, false};
-        assertNullableGeoHashRoundTrip(values, nulls, 5);
+    public void testEncodeDecodeNullableGeoHashAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0, 0, 0};
+            boolean[] nulls = {true, true, true};
+            assertNullableGeoHashRoundTrip(values, nulls, 10);
+        });
     }
 
     @Test
-    public void testEncodeDecodeNullableGeoLongWithNulls() throws QwpParseException {
-        long[] values = {0x0FFFFFFFFFFFFFFFL, 0, 0x0555555555555555L};
-        boolean[] nulls = {false, true, false};
-        assertNullableGeoHashRoundTrip(values, nulls, 60);
+    public void testEncodeDecodeNullableGeoHashNoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0xABCDE, 0x12345, 0xFFFFF};
+            boolean[] nulls = {false, false, false};
+            assertNullableGeoHashRoundTrip(values, nulls, 20);
+        });
     }
 
     @Test
-    public void testEncodeDecodePrecisionBoundaries() throws QwpParseException {
-        // GEOBYTE/GEOSHORT boundary
-        assertGeoHashRoundTrip(new long[]{0x7F}, 7, false);
-        assertGeoHashRoundTrip(new long[]{0xFF}, 8, false);
-        assertGeoHashRoundTrip(new long[]{0x7F}, 7, true);
-        assertGeoHashRoundTrip(new long[]{0xFF}, 8, true);
-
-        // GEOSHORT/GEOINT boundary
-        assertGeoHashRoundTrip(new long[]{0x7FFF}, 15, false);
-        assertGeoHashRoundTrip(new long[]{0xFFFF}, 16, false);
-        assertGeoHashRoundTrip(new long[]{0x7FFF}, 15, true);
-        assertGeoHashRoundTrip(new long[]{0xFFFF}, 16, true);
-
-        // GEOINT/GEOLONG boundary
-        assertGeoHashRoundTrip(new long[]{0x7FFFFFFFL}, 31, false);
-        assertGeoHashRoundTrip(new long[]{0xFFFFFFFFL}, 32, false);
-        assertGeoHashRoundTrip(new long[]{0x7FFFFFFFL}, 31, true);
-        assertGeoHashRoundTrip(new long[]{0xFFFFFFFFL}, 32, true);
+    public void testEncodeDecodeNullableGeoHashWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            // 5-bit precision, rows 1 and 3 are null
+            long[] values = {0b10110, 0, 0b11111, 0, 0b10101};
+            boolean[] nulls = {false, true, false, true, false};
+            assertNullableGeoHashRoundTrip(values, nulls, 5);
+        });
     }
 
     @Test
-    public void testEncodeDecodeSingleNullRow() throws QwpParseException {
-        assertNullableGeoHashRoundTrip(new long[]{0}, new boolean[]{true}, 5);
+    public void testEncodeDecodeNullableGeoLongWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] values = {0x0FFFFFFFFFFFFFFFL, 0, 0x0555555555555555L};
+            boolean[] nulls = {false, true, false};
+            assertNullableGeoHashRoundTrip(values, nulls, 60);
+        });
     }
 
     @Test
-    public void testEncodeDecodeSingleNullableRow() throws QwpParseException {
-        assertNullableGeoHashRoundTrip(new long[]{0b10110}, new boolean[]{false}, 5);
+    public void testEncodeDecodePrecisionBoundaries() throws Exception {
+        assertMemoryLeak(() -> {
+            // GEOBYTE/GEOSHORT boundary
+            assertGeoHashRoundTrip(new long[]{0x7F}, 7, false);
+            assertGeoHashRoundTrip(new long[]{0xFF}, 8, false);
+            assertGeoHashRoundTrip(new long[]{0x7F}, 7, true);
+            assertGeoHashRoundTrip(new long[]{0xFF}, 8, true);
+
+            // GEOSHORT/GEOINT boundary
+            assertGeoHashRoundTrip(new long[]{0x7FFF}, 15, false);
+            assertGeoHashRoundTrip(new long[]{0xFFFF}, 16, false);
+            assertGeoHashRoundTrip(new long[]{0x7FFF}, 15, true);
+            assertGeoHashRoundTrip(new long[]{0xFFFF}, 16, true);
+
+            // GEOINT/GEOLONG boundary
+            assertGeoHashRoundTrip(new long[]{0x7FFFFFFFL}, 31, false);
+            assertGeoHashRoundTrip(new long[]{0xFFFFFFFFL}, 32, false);
+            assertGeoHashRoundTrip(new long[]{0x7FFFFFFFL}, 31, true);
+            assertGeoHashRoundTrip(new long[]{0xFFFFFFFFL}, 32, true);
+        });
     }
 
     @Test
-    public void testEncodeDecodeSingleRow() throws QwpParseException {
-        assertGeoHashRoundTrip(new long[]{0b10110}, 5, false);
+    public void testEncodeDecodeSingleNullRow() throws Exception {
+        assertMemoryLeak(() -> {
+            assertNullableGeoHashRoundTrip(new long[]{0}, new boolean[]{true}, 5);
+        });
     }
 
     @Test
-    public void testEncodeGeoHashProducesValidMessage() {
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-            QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-            col.addGeoHash(0b10110, 5);
-            buffer.nextRow();
-
-            int size = encoder.encode(buffer, false);
-            Assert.assertTrue(size > 12);
-
-            QwpBufferWriter buf = encoder.getBuffer();
-            long ptr = buf.getBufferPtr();
-
-            // Verify ILP v4 header magic
-            Assert.assertEquals((byte) 'I', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr));
-            Assert.assertEquals((byte) 'L', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 1));
-            Assert.assertEquals((byte) 'P', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 2));
-            Assert.assertEquals((byte) '4', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 3));
-
-            // Table count = 1
-            Assert.assertEquals((short) 1, io.questdb.client.std.Unsafe.getUnsafe().getShort(ptr + 6));
-        }
+    public void testEncodeDecodeSingleNullableRow() throws Exception {
+        assertMemoryLeak(() -> {
+            assertNullableGeoHashRoundTrip(new long[]{0b10110}, new boolean[]{false}, 5);
+        });
     }
 
     @Test
-    public void testEncodeMultipleGeoHashRows() {
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+    public void testEncodeDecodeSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            assertGeoHashRoundTrip(new long[]{0b10110}, 5, false);
+        });
+    }
 
-            QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-            for (int i = 0; i < 100; i++) {
-                col.addGeoHash(i & 0x1F, 5);
+    @Test
+    public void testEncodeGeoHashProducesValidMessage() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+                col.addGeoHash(0b10110, 5);
                 buffer.nextRow();
+
+                int size = encoder.encode(buffer, false);
+                Assert.assertTrue(size > 12);
+
+                QwpBufferWriter buf = encoder.getBuffer();
+                long ptr = buf.getBufferPtr();
+
+                // Verify ILP v4 header magic
+                Assert.assertEquals((byte) 'I', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr));
+                Assert.assertEquals((byte) 'L', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 1));
+                Assert.assertEquals((byte) 'P', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 2));
+                Assert.assertEquals((byte) '4', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 3));
+
+                // Table count = 1
+                Assert.assertEquals((short) 1, io.questdb.client.std.Unsafe.getUnsafe().getShort(ptr + 6));
             }
-
-            int size = encoder.encode(buffer, false);
-            Assert.assertTrue(size > 12);
-            Assert.assertEquals(100, buffer.getRowCount());
-        }
+        });
     }
 
     @Test
-    public void testEncodeNullableGeoHash() {
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+    public void testEncodeMultipleGeoHashRows() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
-            QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, true);
-            col.addGeoHash(0b10110, 5);
-            buffer.nextRow();
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+                for (int i = 0; i < 100; i++) {
+                    col.addGeoHash(i & 0x1F, 5);
+                    buffer.nextRow();
+                }
 
-            col.addNull();
-            buffer.nextRow();
-
-            col.addGeoHash(0b11111, 5);
-            buffer.nextRow();
-
-            int size = encoder.encode(buffer, false);
-            Assert.assertTrue(size > 12);
-            Assert.assertEquals(3, buffer.getRowCount());
-        }
+                int size = encoder.encode(buffer, false);
+                Assert.assertTrue(size > 12);
+                Assert.assertEquals(100, buffer.getRowCount());
+            }
+        });
     }
 
     @Test
-    public void testResetAllowsNewPrecision() {
-        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+    public void testEncodeNullableGeoHash() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
-            // First batch: 5-bit precision
-            QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-            col.addGeoHash(0b10110, 5);
-            buffer.nextRow();
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, true);
+                col.addGeoHash(0b10110, 5);
+                buffer.nextRow();
 
-            encoder.encode(buffer, false);
-            buffer.reset();
+                col.addNull();
+                buffer.nextRow();
 
-            // After reset: 20-bit precision works fine
-            col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-            col.addGeoHash(0xABCDE, 20);
-            buffer.nextRow();
+                col.addGeoHash(0b11111, 5);
+                buffer.nextRow();
 
-            int size = encoder.encode(buffer, false);
-            Assert.assertTrue(size > 12);
-        }
+                int size = encoder.encode(buffer, false);
+                Assert.assertTrue(size > 12);
+                Assert.assertEquals(3, buffer.getRowCount());
+            }
+        });
+    }
+
+    @Test
+    public void testResetAllowsNewPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+                // First batch: 5-bit precision
+                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+                col.addGeoHash(0b10110, 5);
+                buffer.nextRow();
+
+                encoder.encode(buffer, false);
+                buffer.reset();
+
+                // After reset: 20-bit precision works fine
+                col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+                col.addGeoHash(0xABCDE, 20);
+                buffer.nextRow();
+
+                int size = encoder.encode(buffer, false);
+                Assert.assertTrue(size > 12);
+            }
+        });
     }
 
     private static int findGeoHashColumnIndex(QwpTableBlockCursor table) {

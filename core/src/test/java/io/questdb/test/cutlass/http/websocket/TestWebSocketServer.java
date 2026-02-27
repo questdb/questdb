@@ -441,6 +441,7 @@ public class TestWebSocketServer implements QuietCloseable {
                         handler.onError(this, e);
                     }
                 } finally {
+                    context.close();
                     handler.onDisconnect(this);
                     clients.remove(this);
                     closeLatch.countDown();

@@ -31,6 +31,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import static io.questdb.test.tools.assertMemoryLeak;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -44,105 +45,134 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
     // ==================== UPGRADE DETECTION TESTS ====================
 
     @Test
-    public void testGetWebSocketKey() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+    public void testGetWebSocketKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
 
-        Utf8Sequence key = QwpWebSocketHttpProcessor.getWebSocketKey(header);
-        Assert.assertNotNull(key);
-        Assert.assertEquals("dGhlIHNhbXBsZSBub25jZQ==", key.toString());
+                Utf8Sequence key = QwpWebSocketHttpProcessor.getWebSocketKey(header);
+                Assert.assertNotNull(key);
+                Assert.assertEquals("dGhlIHNhbXBsZSBub25jZQ==", key.toString());
+            }
+        });
     }
 
     @Test
-    public void testGetWebSocketKeyMissing() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-
-        Utf8Sequence key = QwpWebSocketHttpProcessor.getWebSocketKey(header);
-        Assert.assertNull(key);
+    public void testGetWebSocketKeyMissing() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                Utf8Sequence key = QwpWebSocketHttpProcessor.getWebSocketKey(header);
+                Assert.assertNull(key);
+            }
+        });
     }
 
     @Test
-    public void testIsWebSocketUpgradeWithCaseInsensitiveHeaders() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("upgrade", "WebSocket");
-        header.setHeader("connection", "upgrade");
-        header.setHeader("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("sec-websocket-version", "13");
+    public void testIsWebSocketUpgradeWithCaseInsensitiveHeaders() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("upgrade", "WebSocket");
+                header.setHeader("connection", "upgrade");
+                header.setHeader("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("sec-websocket-version", "13");
 
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     @Test
-    public void testIsWebSocketUpgradeWithInvalidKey() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "short");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testIsWebSocketUpgradeWithInvalidKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "short");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     @Test
-    public void testIsWebSocketUpgradeWithMissingConnectionHeader() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testIsWebSocketUpgradeWithMissingConnectionHeader() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     @Test
-    public void testIsWebSocketUpgradeWithMissingKey() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testIsWebSocketUpgradeWithMissingKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     @Test
-    public void testIsWebSocketUpgradeWithMissingUpgradeHeader() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testIsWebSocketUpgradeWithMissingUpgradeHeader() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     @Test
-    public void testIsWebSocketUpgradeWithMissingVersion() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+    public void testIsWebSocketUpgradeWithMissingVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
 
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     @Test
-    public void testIsWebSocketUpgradeWithMultipleConnectionValues() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "keep-alive, Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testIsWebSocketUpgradeWithMultipleConnectionValues() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "keep-alive, Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     @Test
-    public void testIsWebSocketUpgradeWithValidHeaders() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testIsWebSocketUpgradeWithValidHeaders() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertTrue(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     // ==================== PROCESSOR CREATION TESTS ====================
@@ -152,113 +182,140 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
     // ==================== HANDSHAKE VALIDATION TESTS ====================
 
     @Test
-    public void testIsWebSocketUpgradeWithWrongUpgradeValue() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "http/2");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testIsWebSocketUpgradeWithWrongUpgradeValue() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "http/2");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     @Test
-    public void testIsWebSocketUpgradeWithWrongVersion() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "8");
+    public void testIsWebSocketUpgradeWithWrongVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "8");
 
-        Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+                Assert.assertFalse(QwpWebSocketHttpProcessor.isWebSocketUpgradeRequest(header));
+            }
+        });
     }
 
     @Test
-    public void testValidateHandshakeInvalidKey() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "tooshort");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testValidateHandshakeInvalidKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "tooshort");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        String error = QwpWebSocketHttpProcessor.validateHandshake(header);
-        Assert.assertNotNull(error);
-        Assert.assertTrue(error.contains("key"));
+                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                Assert.assertNotNull(error);
+                Assert.assertTrue(error.contains("key"));
+            }
+        });
     }
 
     @Test
-    public void testValidateHandshakeInvalidVersion() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "12");
+    public void testValidateHandshakeInvalidVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "12");
 
-        String error = QwpWebSocketHttpProcessor.validateHandshake(header);
-        Assert.assertNotNull(error);
-        Assert.assertTrue(error.contains("version"));
+                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                Assert.assertNotNull(error);
+                Assert.assertTrue(error.contains("version"));
+            }
+        });
     }
 
     @Test
-    public void testValidateHandshakeMissingConnection() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testValidateHandshakeMissingConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        String error = QwpWebSocketHttpProcessor.validateHandshake(header);
-        Assert.assertNotNull(error);
-        Assert.assertTrue(error.contains("Connection"));
+                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                Assert.assertNotNull(error);
+                Assert.assertTrue(error.contains("Connection"));
+            }
+        });
     }
 
     @Test
-    public void testValidateHandshakeMissingKey() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testValidateHandshakeMissingKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        String error = QwpWebSocketHttpProcessor.validateHandshake(header);
-        Assert.assertNotNull(error);
-        Assert.assertTrue(error.contains("Sec-WebSocket-Key"));
+                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                Assert.assertNotNull(error);
+                Assert.assertTrue(error.contains("Sec-WebSocket-Key"));
+            }
+        });
     }
 
     @Test
-    public void testValidateHandshakeMissingUpgrade() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testValidateHandshakeMissingUpgrade() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        String error = QwpWebSocketHttpProcessor.validateHandshake(header);
-        Assert.assertNotNull(error);
-        Assert.assertTrue(error.contains("Upgrade"));
+                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                Assert.assertNotNull(error);
+                Assert.assertTrue(error.contains("Upgrade"));
+            }
+        });
     }
 
     // ==================== GET KEY TESTS ====================
 
     @Test
-    public void testValidateHandshakeMissingVersion() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+    public void testValidateHandshakeMissingVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
 
-        String error = QwpWebSocketHttpProcessor.validateHandshake(header);
-        Assert.assertNotNull(error);
-        Assert.assertTrue(error.contains("Sec-WebSocket-Version"));
+                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                Assert.assertNotNull(error);
+                Assert.assertTrue(error.contains("Sec-WebSocket-Version"));
+            }
+        });
     }
 
     @Test
-    public void testValidateHandshakeSuccess() {
-        MockHttpRequestHeader header = new MockHttpRequestHeader();
-        header.setHeader("Upgrade", "websocket");
-        header.setHeader("Connection", "Upgrade");
-        header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-        header.setHeader("Sec-WebSocket-Version", "13");
+    public void testValidateHandshakeSuccess() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
 
-        String error = QwpWebSocketHttpProcessor.validateHandshake(header);
-        Assert.assertNull(error);
+                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                Assert.assertNull(error);
+            }
+        });
     }
 
     // ==================== MOCK HTTP REQUEST HEADER ====================
@@ -267,10 +324,22 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
      * Mock implementation of HttpRequestHeader for testing.
      * Uses native memory allocation for header values to match the real implementation.
      */
-    private static class MockHttpRequestHeader implements HttpRequestHeader {
+    private static class MockHttpRequestHeader implements HttpRequestHeader, AutoCloseable {
         private final ObjList<Long> allocatedMemory = new ObjList<>();
         private final ObjList<Utf8String> headerNames = new ObjList<>();
         private final ObjList<DirectUtf8String> headerValues = new ObjList<>();
+
+        @Override
+        public void close() {
+            for (int i = 0; i < allocatedMemory.size(); i += 2) {
+                long ptr = allocatedMemory.get(i);
+                long len = allocatedMemory.get(i + 1);
+                io.questdb.std.Unsafe.free(ptr, len, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+            }
+            allocatedMemory.clear();
+            headerNames.clear();
+            headerValues.clear();
+        }
 
         @Override
         public DirectUtf8Sequence getBoundary() {
@@ -365,15 +434,6 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
         @Override
         public boolean isPutRequest() {
             return false;
-        }
-
-        void cleanup() {
-            for (int i = 0; i < allocatedMemory.size(); i += 2) {
-                long ptr = allocatedMemory.get(i);
-                long len = allocatedMemory.get(i + 1);
-                io.questdb.std.Unsafe.free(ptr, len, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
-            }
-            allocatedMemory.clear();
         }
 
         void setHeader(String name, String value) {

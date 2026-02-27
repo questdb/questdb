@@ -29,6 +29,7 @@ import io.questdb.cutlass.qwp.server.QwpWebSocketProcessorState;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import static io.questdb.test.tools.assertMemoryLeak;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -44,337 +45,417 @@ import java.util.List;
 public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest {
 
     @Test
-    public void testBytesProcessedNotResetOnClear() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
+    public void testBytesProcessedNotResetOnClear() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
 
-            byte[] data = new byte[100];
-            long ptr = allocateAndWrite(data);
-            try {
-                processor.onBinaryMessage(ptr, data.length);
-                state.processMessage();
-            } finally {
-                freeBuffer(ptr, data.length);
+                byte[] data = new byte[100];
+                long ptr = allocateAndWrite(data);
+                try {
+                    processor.onBinaryMessage(ptr, data.length);
+                    state.processMessage();
+                } finally {
+                    freeBuffer(ptr, data.length);
+                }
+                Assert.assertEquals(100, state.getBytesProcessed());
+
+                // Clear should not reset bytes processed
+                state.clear();
+                Assert.assertEquals(100, state.getBytesProcessed());
             }
-            Assert.assertEquals(100, state.getBytesProcessed());
-
-            // Clear should not reset bytes processed
-            state.clear();
-            Assert.assertEquals(100, state.getBytesProcessed());
-        }
+        });
     }
 
     @Test
-    public void testBytesProcessedTracking() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
+    public void testBytesProcessedTracking() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
 
-            Assert.assertEquals(0, state.getBytesProcessed());
+                Assert.assertEquals(0, state.getBytesProcessed());
 
-            // First batch
-            byte[] data1 = new byte[100];
-            long ptr1 = allocateAndWrite(data1);
-            try {
-                processor.onBinaryMessage(ptr1, data1.length);
-                state.processMessage();
-            } finally {
-                freeBuffer(ptr1, data1.length);
+                // First batch
+                byte[] data1 = new byte[100];
+                long ptr1 = allocateAndWrite(data1);
+                try {
+                    processor.onBinaryMessage(ptr1, data1.length);
+                    state.processMessage();
+                } finally {
+                    freeBuffer(ptr1, data1.length);
+                }
+                Assert.assertEquals(100, state.getBytesProcessed());
+
+                // Second batch
+                byte[] data2 = new byte[150];
+                long ptr2 = allocateAndWrite(data2);
+                try {
+                    processor.onBinaryMessage(ptr2, data2.length);
+                    state.processMessage();
+                } finally {
+                    freeBuffer(ptr2, data2.length);
+                }
+                Assert.assertEquals(250, state.getBytesProcessed());
+
+                // Third batch
+                byte[] data3 = new byte[75];
+                long ptr3 = allocateAndWrite(data3);
+                try {
+                    processor.onBinaryMessage(ptr3, data3.length);
+                    state.processMessage();
+                } finally {
+                    freeBuffer(ptr3, data3.length);
+                }
+                Assert.assertEquals(325, state.getBytesProcessed());
             }
-            Assert.assertEquals(100, state.getBytesProcessed());
-
-            // Second batch
-            byte[] data2 = new byte[150];
-            long ptr2 = allocateAndWrite(data2);
-            try {
-                processor.onBinaryMessage(ptr2, data2.length);
-                state.processMessage();
-            } finally {
-                freeBuffer(ptr2, data2.length);
-            }
-            Assert.assertEquals(250, state.getBytesProcessed());
-
-            // Third batch
-            byte[] data3 = new byte[75];
-            long ptr3 = allocateAndWrite(data3);
-            try {
-                processor.onBinaryMessage(ptr3, data3.length);
-                state.processMessage();
-            } finally {
-                freeBuffer(ptr3, data3.length);
-            }
-            Assert.assertEquals(325, state.getBytesProcessed());
-        }
+        });
     }
 
     @Test
-    public void testCloseCallbackWithState() {
-        try (QwpWebSocketProcessorState ignored = new QwpWebSocketProcessorState(1024)) {
+    public void testCloseCallbackWithState() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState ignored = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                CloseTrackingCallback callback = new CloseTrackingCallback();
+                processor.setCallback(callback);
+
+                processor.onClose(WebSocketCloseCode.NORMAL_CLOSURE, 0, 0);
+
+                Assert.assertTrue(callback.closeCalled);
+                Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, callback.closeCode);
+            }
+        });
+    }
+
+    @Test
+    public void testCloseWithReasonMessage() throws Exception {
+        assertMemoryLeak(() -> {
             QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
             CloseTrackingCallback callback = new CloseTrackingCallback();
             processor.setCallback(callback);
 
-            processor.onClose(WebSocketCloseCode.NORMAL_CLOSURE, 0, 0);
-
-            Assert.assertTrue(callback.closeCalled);
-            Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, callback.closeCode);
-        }
-    }
-
-    @Test
-    public void testCloseWithReasonMessage() {
-        QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-        CloseTrackingCallback callback = new CloseTrackingCallback();
-        processor.setCallback(callback);
-
-        byte[] reason = "Server shutdown".getBytes(StandardCharsets.UTF_8);
-        long ptr = allocateAndWrite(reason);
-        try {
-            processor.onClose(WebSocketCloseCode.GOING_AWAY, ptr, reason.length);
-
-            Assert.assertTrue(callback.closeCalled);
-            Assert.assertEquals(WebSocketCloseCode.GOING_AWAY, callback.closeCode);
-            Assert.assertEquals(reason.length, callback.reasonLength);
-        } finally {
-            freeBuffer(ptr, reason.length);
-        }
-    }
-
-    @Test
-    public void testErrorCallbackSetsState() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new ErrorSettingCallback(state));
-
-            // Trigger error callback
-            processor.onError(WebSocketCloseCode.INVALID_PAYLOAD_DATA, "Invalid ILP format");
-
-            // Verify error was set
-            Assert.assertFalse(state.isOk());
-            Assert.assertEquals("Invalid ILP format", state.getErrorMessage());
-        }
-    }
-
-    @Test
-    public void testErrorResponseFlow() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            // Simulate bad data that triggers error response
-            state.setErrorResponse(WebSocketCloseCode.INVALID_PAYLOAD_DATA, "Invalid line format");
-
-            Assert.assertTrue(state.hasResponse());
-            Assert.assertFalse(state.isResponseSuccess());
-            Assert.assertEquals(WebSocketCloseCode.INVALID_PAYLOAD_DATA, state.getResponseErrorCode());
-            Assert.assertEquals("Invalid line format", state.getResponseErrorMessage());
-        }
-    }
-
-    @Test
-    public void testErrorStateIgnoresData() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
-
-            // Set error state
-            state.setError("Parse error at position 10");
-            Assert.assertFalse(state.isOk());
-
-            // Try to send data
-            byte[] data = "should be ignored".getBytes(StandardCharsets.UTF_8);
-            long ptr = allocateAndWrite(data);
+            byte[] reason = "Server shutdown".getBytes(StandardCharsets.UTF_8);
+            long ptr = allocateAndWrite(reason);
             try {
-                processor.onBinaryMessage(ptr, data.length);
+                processor.onClose(WebSocketCloseCode.GOING_AWAY, ptr, reason.length);
 
-                // Data should be ignored when in error state
-                Assert.assertEquals(0, state.getBufferPosition());
+                Assert.assertTrue(callback.closeCalled);
+                Assert.assertEquals(WebSocketCloseCode.GOING_AWAY, callback.closeCode);
+                Assert.assertEquals(reason.length, callback.reasonLength);
             } finally {
-                freeBuffer(ptr, data.length);
+                freeBuffer(ptr, reason.length);
             }
-        }
+        });
     }
 
     @Test
-    public void testLargeMessageHandling() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
+    public void testErrorCallbackSetsState() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new ErrorSettingCallback(state));
 
-            // Send 1MB of data
-            byte[] data = new byte[1024 * 1024];
-            for (int i = 0; i < data.length; i++) {
-                data[i] = (byte) (i % 256);
+                // Trigger error callback
+                processor.onError(WebSocketCloseCode.INVALID_PAYLOAD_DATA, "Invalid ILP format");
+
+                // Verify error was set
+                Assert.assertFalse(state.isOk());
+                Assert.assertEquals("Invalid ILP format", state.getErrorMessage());
             }
+        });
+    }
 
-            long ptr = allocateAndWrite(data);
-            try {
-                processor.onBinaryMessage(ptr, data.length);
+    @Test
+    public void testErrorResponseFlow() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                // Simulate bad data that triggers error response
+                state.setErrorResponse(WebSocketCloseCode.INVALID_PAYLOAD_DATA, "Invalid line format");
 
-                Assert.assertEquals(data.length, state.getBufferPosition());
-                Assert.assertTrue(state.getBufferCapacity() >= data.length);
+                Assert.assertTrue(state.hasResponse());
+                Assert.assertFalse(state.isResponseSuccess());
+                Assert.assertEquals(WebSocketCloseCode.INVALID_PAYLOAD_DATA, state.getResponseErrorCode());
+                Assert.assertEquals("Invalid line format", state.getResponseErrorMessage());
+            }
+        });
+    }
 
-                // Verify data integrity
-                long bufAddr = state.getBufferAddress();
-                for (int i = 0; i < data.length; i++) {
-                    Assert.assertEquals("Mismatch at index " + i, data[i],
-                            Unsafe.getUnsafe().getByte(bufAddr + i));
+    @Test
+    public void testErrorStateIgnoresData() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
+
+                // Set error state
+                state.setError("Parse error at position 10");
+                Assert.assertFalse(state.isOk());
+
+                // Try to send data
+                byte[] data = "should be ignored".getBytes(StandardCharsets.UTF_8);
+                long ptr = allocateAndWrite(data);
+                try {
+                    processor.onBinaryMessage(ptr, data.length);
+
+                    // Data should be ignored when in error state
+                    Assert.assertEquals(0, state.getBufferPosition());
+                } finally {
+                    freeBuffer(ptr, data.length);
                 }
-            } finally {
-                freeBuffer(ptr, data.length);
             }
-        }
+        });
     }
 
     @Test
-    public void testManySmallMessages() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
+    public void testLargeMessageHandling() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
 
-            int numMessages = 1000;
-            int messageSize = 50;
-            long totalBytes = 0;
-
-            for (int i = 0; i < numMessages; i++) {
-                byte[] data = new byte[messageSize];
-                for (int j = 0; j < messageSize; j++) {
-                    data[j] = (byte) ((i + j) % 256);
+                // Send 1MB of data
+                byte[] data = new byte[1024 * 1024];
+                for (int i = 0; i < data.length; i++) {
+                    data[i] = (byte) (i % 256);
                 }
 
                 long ptr = allocateAndWrite(data);
                 try {
                     processor.onBinaryMessage(ptr, data.length);
+
+                    Assert.assertEquals(data.length, state.getBufferPosition());
+                    Assert.assertTrue(state.getBufferCapacity() >= data.length);
+
+                    // Verify data integrity
+                    long bufAddr = state.getBufferAddress();
+                    for (int i = 0; i < data.length; i++) {
+                        Assert.assertEquals("Mismatch at index " + i, data[i],
+                                Unsafe.getUnsafe().getByte(bufAddr + i));
+                    }
                 } finally {
                     freeBuffer(ptr, data.length);
                 }
+            }
+        });
+    }
 
-                // Process every 10 messages
-                if ((i + 1) % 10 == 0) {
+    @Test
+    public void testManySmallMessages() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
+
+                int numMessages = 1000;
+                int messageSize = 50;
+                long totalBytes = 0;
+
+                for (int i = 0; i < numMessages; i++) {
+                    byte[] data = new byte[messageSize];
+                    for (int j = 0; j < messageSize; j++) {
+                        data[j] = (byte) ((i + j) % 256);
+                    }
+
+                    long ptr = allocateAndWrite(data);
+                    try {
+                        processor.onBinaryMessage(ptr, data.length);
+                    } finally {
+                        freeBuffer(ptr, data.length);
+                    }
+
+                    // Process every 10 messages
+                    if ((i + 1) % 10 == 0) {
+                        state.processMessage();
+                    }
+                    totalBytes += messageSize;
+                }
+
+                // Process remaining
+                state.processMessage();
+
+                Assert.assertEquals(totalBytes, state.getBytesProcessed());
+            }
+        });
+    }
+
+    @Test
+    public void testMultipleMessagesAccumulate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
+
+                // Send multiple messages
+                byte[] msg1 = "cpu,host=server01 usage=95.5 1234567890\n".getBytes(StandardCharsets.UTF_8);
+                byte[] msg2 = "mem,host=server01 free=1024 1234567891\n".getBytes(StandardCharsets.UTF_8);
+                byte[] msg3 = "disk,host=server01 used=50 1234567892\n".getBytes(StandardCharsets.UTF_8);
+
+                long ptr1 = allocateAndWrite(msg1);
+                long ptr2 = allocateAndWrite(msg2);
+                long ptr3 = allocateAndWrite(msg3);
+
+                try {
+                    processor.onBinaryMessage(ptr1, msg1.length);
+                    Assert.assertEquals(msg1.length, state.getBufferPosition());
+
+                    processor.onBinaryMessage(ptr2, msg2.length);
+                    Assert.assertEquals(msg1.length + msg2.length, state.getBufferPosition());
+
+                    processor.onBinaryMessage(ptr3, msg3.length);
+                    int totalLength = msg1.length + msg2.length + msg3.length;
+                    Assert.assertEquals(totalLength, state.getBufferPosition());
+                } finally {
+                    freeBuffer(ptr1, msg1.length);
+                    freeBuffer(ptr2, msg2.length);
+                    freeBuffer(ptr3, msg3.length);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPingPongCallbacks() throws Exception {
+        assertMemoryLeak(() -> {
+            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+            PingPongTrackingCallback callback = new PingPongTrackingCallback();
+            processor.setCallback(callback);
+
+            byte[] pingData = new byte[]{1, 2, 3, 4};
+            long ptr = allocateAndWrite(pingData);
+            try {
+                processor.onPing(ptr, pingData.length);
+                Assert.assertEquals(1, callback.pingCount);
+
+                processor.onPong(ptr, pingData.length);
+                Assert.assertEquals(1, callback.pongCount);
+            } finally {
+                freeBuffer(ptr, pingData.length);
+            }
+        });
+    }
+
+    @Test
+    public void testProcessMessageAfterAccumulation() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
+
+                byte[] data = "cpu,host=server01 usage=95.5 1234567890\n".getBytes(StandardCharsets.UTF_8);
+                long ptr = allocateAndWrite(data);
+
+                try {
+                    processor.onBinaryMessage(ptr, data.length);
+                    Assert.assertEquals(data.length, state.getBufferPosition());
+                    Assert.assertEquals(0, state.getBytesProcessed());
+
+                    // Process the message
                     state.processMessage();
+
+                    // Buffer position should be reset, but bytes processed should be updated
+                    Assert.assertEquals(0, state.getBufferPosition());
+                    Assert.assertEquals(data.length, state.getBytesProcessed());
+                } finally {
+                    freeBuffer(ptr, data.length);
                 }
-                totalBytes += messageSize;
             }
-
-            // Process remaining
-            state.processMessage();
-
-            Assert.assertEquals(totalBytes, state.getBytesProcessed());
-        }
+        });
     }
 
     @Test
-    public void testMultipleMessagesAccumulate() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
+    public void testProcessorWithStateCallback() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
 
-            // Send multiple messages
-            byte[] msg1 = "cpu,host=server01 usage=95.5 1234567890\n".getBytes(StandardCharsets.UTF_8);
-            byte[] msg2 = "mem,host=server01 free=1024 1234567891\n".getBytes(StandardCharsets.UTF_8);
-            byte[] msg3 = "disk,host=server01 used=50 1234567892\n".getBytes(StandardCharsets.UTF_8);
+                // Simulate receiving binary data
+                byte[] data = "cpu,host=server01 usage=95.5 1234567890\n".getBytes(StandardCharsets.UTF_8);
+                long ptr = allocateAndWrite(data);
+                try {
+                    processor.onBinaryMessage(ptr, data.length);
 
-            long ptr1 = allocateAndWrite(msg1);
-            long ptr2 = allocateAndWrite(msg2);
-            long ptr3 = allocateAndWrite(msg3);
+                    // Verify data was accumulated
+                    Assert.assertEquals(data.length, state.getBufferPosition());
 
-            try {
-                processor.onBinaryMessage(ptr1, msg1.length);
-                Assert.assertEquals(msg1.length, state.getBufferPosition());
-
-                processor.onBinaryMessage(ptr2, msg2.length);
-                Assert.assertEquals(msg1.length + msg2.length, state.getBufferPosition());
-
-                processor.onBinaryMessage(ptr3, msg3.length);
-                int totalLength = msg1.length + msg2.length + msg3.length;
-                Assert.assertEquals(totalLength, state.getBufferPosition());
-            } finally {
-                freeBuffer(ptr1, msg1.length);
-                freeBuffer(ptr2, msg2.length);
-                freeBuffer(ptr3, msg3.length);
-            }
-        }
-    }
-
-    @Test
-    public void testPingPongCallbacks() {
-        QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-        PingPongTrackingCallback callback = new PingPongTrackingCallback();
-        processor.setCallback(callback);
-
-        byte[] pingData = new byte[]{1, 2, 3, 4};
-        long ptr = allocateAndWrite(pingData);
-        try {
-            processor.onPing(ptr, pingData.length);
-            Assert.assertEquals(1, callback.pingCount);
-
-            processor.onPong(ptr, pingData.length);
-            Assert.assertEquals(1, callback.pongCount);
-        } finally {
-            freeBuffer(ptr, pingData.length);
-        }
-    }
-
-    @Test
-    public void testProcessMessageAfterAccumulation() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
-
-            byte[] data = "cpu,host=server01 usage=95.5 1234567890\n".getBytes(StandardCharsets.UTF_8);
-            long ptr = allocateAndWrite(data);
-
-            try {
-                processor.onBinaryMessage(ptr, data.length);
-                Assert.assertEquals(data.length, state.getBufferPosition());
-                Assert.assertEquals(0, state.getBytesProcessed());
-
-                // Process the message
-                state.processMessage();
-
-                // Buffer position should be reset, but bytes processed should be updated
-                Assert.assertEquals(0, state.getBufferPosition());
-                Assert.assertEquals(data.length, state.getBytesProcessed());
-            } finally {
-                freeBuffer(ptr, data.length);
-            }
-        }
-    }
-
-    @Test
-    public void testProcessorWithStateCallback() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
-
-            // Simulate receiving binary data
-            byte[] data = "cpu,host=server01 usage=95.5 1234567890\n".getBytes(StandardCharsets.UTF_8);
-            long ptr = allocateAndWrite(data);
-            try {
-                processor.onBinaryMessage(ptr, data.length);
-
-                // Verify data was accumulated
-                Assert.assertEquals(data.length, state.getBufferPosition());
-
-                // Verify data content
-                long bufAddr = state.getBufferAddress();
-                for (int i = 0; i < data.length; i++) {
-                    Assert.assertEquals("Mismatch at index " + i, data[i],
-                            Unsafe.getUnsafe().getByte(bufAddr + i));
+                    // Verify data content
+                    long bufAddr = state.getBufferAddress();
+                    for (int i = 0; i < data.length; i++) {
+                        Assert.assertEquals("Mismatch at index " + i, data[i],
+                                Unsafe.getUnsafe().getByte(bufAddr + i));
+                    }
+                } finally {
+                    freeBuffer(ptr, data.length);
                 }
-            } finally {
-                freeBuffer(ptr, data.length);
             }
-        }
+        });
     }
 
     @Test
-    public void testRapidMessageProcessing() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(256)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
+    public void testRapidMessageProcessing() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(256)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
 
-            // Rapidly accumulate and process
-            for (int round = 0; round < 100; round++) {
-                byte[] data = ("round-" + round + "\n").getBytes(StandardCharsets.UTF_8);
+                // Rapidly accumulate and process
+                for (int round = 0; round < 100; round++) {
+                    byte[] data = ("round-" + round + "\n").getBytes(StandardCharsets.UTF_8);
+                    long ptr = allocateAndWrite(data);
+                    try {
+                        processor.onBinaryMessage(ptr, data.length);
+                    } finally {
+                        freeBuffer(ptr, data.length);
+                    }
+
+                    // Process
+                    state.processMessage();
+                    Assert.assertEquals(0, state.getBufferPosition());
+                    Assert.assertTrue(state.isOk());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecoverFromError() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
+
+                // Set error
+                state.setError("Temporary error");
+                Assert.assertFalse(state.isOk());
+
+                // Clear to recover
+                state.clear();
+                Assert.assertTrue(state.isOk());
+
+                // Should accept data again
+                byte[] data = "new data".getBytes(StandardCharsets.UTF_8);
+                long ptr = allocateAndWrite(data);
+                try {
+                    processor.onBinaryMessage(ptr, data.length);
+                    Assert.assertEquals(data.length, state.getBufferPosition());
+                } finally {
+                    freeBuffer(ptr, data.length);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSuccessResponseFlow() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
+                QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
+                processor.setCallback(new StateAccumulatingCallback(state));
+
+                // Accumulate and process
+                byte[] data = "cpu,host=server01 usage=95.5 1234567890\n".getBytes(StandardCharsets.UTF_8);
                 long ptr = allocateAndWrite(data);
                 try {
                     processor.onBinaryMessage(ptr, data.length);
@@ -382,66 +463,18 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
                     freeBuffer(ptr, data.length);
                 }
 
-                // Process
+                // Process and set success response
                 state.processMessage();
-                Assert.assertEquals(0, state.getBufferPosition());
-                Assert.assertTrue(state.isOk());
+                state.setSuccessResponse();
+
+                Assert.assertTrue(state.hasResponse());
+                Assert.assertTrue(state.isResponseSuccess());
+
+                // Consume response
+                state.consumeResponse();
+                Assert.assertFalse(state.hasResponse());
             }
-        }
-    }
-
-    @Test
-    public void testRecoverFromError() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
-
-            // Set error
-            state.setError("Temporary error");
-            Assert.assertFalse(state.isOk());
-
-            // Clear to recover
-            state.clear();
-            Assert.assertTrue(state.isOk());
-
-            // Should accept data again
-            byte[] data = "new data".getBytes(StandardCharsets.UTF_8);
-            long ptr = allocateAndWrite(data);
-            try {
-                processor.onBinaryMessage(ptr, data.length);
-                Assert.assertEquals(data.length, state.getBufferPosition());
-            } finally {
-                freeBuffer(ptr, data.length);
-            }
-        }
-    }
-
-    @Test
-    public void testSuccessResponseFlow() {
-        try (QwpWebSocketProcessorState state = new QwpWebSocketProcessorState(1024)) {
-            QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
-            processor.setCallback(new StateAccumulatingCallback(state));
-
-            // Accumulate and process
-            byte[] data = "cpu,host=server01 usage=95.5 1234567890\n".getBytes(StandardCharsets.UTF_8);
-            long ptr = allocateAndWrite(data);
-            try {
-                processor.onBinaryMessage(ptr, data.length);
-            } finally {
-                freeBuffer(ptr, data.length);
-            }
-
-            // Process and set success response
-            state.processMessage();
-            state.setSuccessResponse();
-
-            Assert.assertTrue(state.hasResponse());
-            Assert.assertTrue(state.isResponseSuccess());
-
-            // Consume response
-            state.consumeResponse();
-            Assert.assertFalse(state.hasResponse());
-        }
+        });
     }
 
     private long allocateAndWrite(byte[] data) {
