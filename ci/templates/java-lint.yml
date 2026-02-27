@@ -15,9 +15,10 @@ steps:
   - bash: /opt/intellij/idea/bin/idea.sh format -s .idea/codeStyles/Project.xml -m "*.java" -r .
     displayName: "Applying formatting"
   - bash: |
-      if [ -d java-questdb-client/.git ]; then
+      if [ -e java-questdb-client/.git ]; then
         echo "Resetting submodule working tree to discard formatter changes"
         git -C java-questdb-client checkout .
+        git -C java-questdb-client clean -fd
       fi
     displayName: "Reset submodule after formatting"
   - bash: git status -s
