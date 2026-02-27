@@ -219,10 +219,10 @@ stages:
             displayName: "Compile with Maven"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
-              mavenPomFile: "core/pom.xml"
+              mavenPomFile: "pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
               goals: "compile"
-              options: "--batch-mode -DskipTests $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+              options: "--batch-mode -pl core -am -DskipTests $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
 
           - task: Maven@3
