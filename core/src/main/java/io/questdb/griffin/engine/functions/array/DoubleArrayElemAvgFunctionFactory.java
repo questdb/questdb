@@ -84,11 +84,6 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected double combine(double cur, double val) {
-            return cur + val;
-        }
-
-        @Override
         protected void postProcess(int totalFlatLen) {
             for (int i = 0; i < totalFlatLen; i++) {
                 int c = counts.getQuick(i);

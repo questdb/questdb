@@ -74,11 +74,6 @@ public class DoubleArrayElemSumFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected double combine(double cur, double val) {
-            return cur + val;
-        }
-
-        @Override
         public String getName() {
             return "array_elem_sum";
         }

@@ -30,6 +30,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -60,8 +61,9 @@ public class DoubleArrayElemMaxFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected double combine(double cur, double val) {
-            return Math.max(cur, val);
+        protected void accumulate(int outIndex, double val) {
+            double cur = arrayOut.getDouble(outIndex);
+            arrayOut.putDouble(outIndex, Numbers.isFinite(cur) ? Math.max(cur, val) : val);
         }
 
         @Override

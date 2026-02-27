@@ -308,28 +308,15 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
 
     /**
      * Accumulates a single finite value at the given output position.
-     * Seeds the position (replaces NaN) on first value, otherwise combines.
-     * Sum and avg override with Kahan compensated summation.
+     * Called once per finite input element during the accumulation loop.
      */
-    protected void accumulate(int outIndex, double val) {
-        double cur = arrayOut.getDouble(outIndex);
-        if (Numbers.isFinite(cur)) {
-            arrayOut.putDouble(outIndex, combine(cur, val));
-        } else {
-            arrayOut.putDouble(outIndex, val);
-        }
-    }
+    protected abstract void accumulate(int outIndex, double val);
 
     /**
      * Called before the accumulation loop. Subclasses use this to initialize per-position state.
      */
     protected void beforeAccumulation(int totalFlatLen) {
     }
-
-    /**
-     * The element-wise aggregation operation (e.g. {@code Math.max}, {@code Math.min}, {@code +}).
-     */
-    protected abstract double combine(double cur, double val);
 
     /**
      * Kahan compensated accumulation. Seeds the position on first value,
