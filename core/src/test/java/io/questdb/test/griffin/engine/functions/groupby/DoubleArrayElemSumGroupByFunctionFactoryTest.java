@@ -32,6 +32,7 @@ public class DoubleArrayElemSumGroupByFunctionFactoryTest extends AbstractDouble
     protected String funcName() {
         return "array_elem_sum";
     }
+
     @Test
     public void test2dAllSameShape() throws Exception {
         assertGroupByTyped("DOUBLE[][]", "[[15.0,18.0],[21.0,24.0]]",

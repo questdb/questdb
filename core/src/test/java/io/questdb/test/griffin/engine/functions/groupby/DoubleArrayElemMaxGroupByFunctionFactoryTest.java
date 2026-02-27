@@ -32,6 +32,7 @@ public class DoubleArrayElemMaxGroupByFunctionFactoryTest extends AbstractDouble
     protected String funcName() {
         return "array_elem_max";
     }
+
     @Test
     public void test2dAllSameShape() throws Exception {
         assertGroupByTyped("DOUBLE[][]", "[[9.0,10.0],[11.0,12.0]]",

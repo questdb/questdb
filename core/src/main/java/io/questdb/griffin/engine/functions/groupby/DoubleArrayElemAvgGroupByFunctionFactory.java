@@ -95,15 +95,25 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
      * </pre>
      */
     private static final class DoubleArrayElemAvgGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
-        /** Offset from valueIndex for the Kahan compensation buffer pointer. */
+        /**
+         * Offset from valueIndex for the Kahan compensation buffer pointer.
+         */
         private static final int COMP_SLOT = 5;
-        /** Offset from valueIndex for the uniform count / variable-mode sentinel. */
+        /**
+         * Offset from valueIndex for the uniform count / variable-mode sentinel.
+         */
         private static final int COUNT_PTR_SLOT = 4;
-        /** Offset from valueIndex for the per-element count array pointer. */
+        /**
+         * Offset from valueIndex for the per-element count array pointer.
+         */
         private static final int COUNT_SLOT = 3;
-        /** Sentinel stored in COUNT_SLOT to indicate per-element (variable) count mode. */
+        /**
+         * Sentinel stored in COUNT_SLOT to indicate per-element (variable) count mode.
+         */
         private static final long VARIABLE_MODE = -1;
-        /** Output array returned from {@link #getArray}; populated with sum/count per position. */
+        /**
+         * Output array returned from {@link #getArray}; populated with sum/count per position.
+         */
         private final DirectArray arrayOut;
 
         public DoubleArrayElemAvgGroupByFunction(@NotNull Function arg, CairoConfiguration configuration) {
@@ -309,7 +319,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
          */
         @Override
         protected void mergeValues(long destDataPtr, long srcDataPtr, int[] destShape, int[] srcShape,
-                int srcFlatLen, MapValue destValue, MapValue srcValue) {
+                                   int srcFlatLen, MapValue destValue, MapValue srcValue) {
             long destCount = destValue.getLong(valueIndex + COUNT_SLOT);
             long destCountPtr = destValue.getLong(valueIndex + COUNT_PTR_SLOT);
             long srcCount = srcValue.getLong(valueIndex + COUNT_SLOT);
@@ -467,7 +477,9 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             mapValue.putLong(valueIndex + COMP_SLOT, compPtr);
         }
 
-        /** Copies count, countPtr, and compensationPtr slots from src to dest when dest was empty. */
+        /**
+         * Copies count, countPtr, and compensationPtr slots from src to dest when dest was empty.
+         */
         @Override
         protected void onMergeShallowCopy(MapValue destValue, MapValue srcValue) {
             destValue.putLong(valueIndex + COUNT_SLOT, srcValue.getLong(valueIndex + COUNT_SLOT));
@@ -475,7 +487,9 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             destValue.putLong(valueIndex + COMP_SLOT, srcValue.getLong(valueIndex + COMP_SLOT));
         }
 
-        /** Remaps count and compensation arrays when shape grows. Always transitions to variable count mode. */
+        /**
+         * Remaps count and compensation arrays when shape grows. Always transitions to variable count mode.
+         */
         @Override
         protected void onShapeGrow(MapValue mapValue, int oldFlatLen, long newCapacity, boolean needsRemap) {
             long count = mapValue.getLong(valueIndex + COUNT_SLOT);
@@ -526,7 +540,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
          * @return pointer to the new count array
          */
         private long growCounts(long oldCountPtr, long uniformCount, boolean isVariable,
-                int oldFlatLen, long newCapacity, boolean needsRemap) {
+                                int oldFlatLen, long newCapacity, boolean needsRemap) {
             long newCountPtr = allocator.malloc(newCapacity * Long.BYTES);
             zeroFillLongs(newCountPtr, 0, (int) newCapacity);
             if (!needsRemap) {
@@ -567,7 +581,9 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             return countPtr;
         }
 
-        /** Fills long values at positions {@code [from, to)} with zero. */
+        /**
+         * Fills long values at positions {@code [from, to)} with zero.
+         */
         private static void zeroFillLongs(long ptr, int from, int to) {
             for (int i = from; i < to; i++) {
                 Unsafe.getUnsafe().putLong(ptr + (long) i * Long.BYTES, 0);

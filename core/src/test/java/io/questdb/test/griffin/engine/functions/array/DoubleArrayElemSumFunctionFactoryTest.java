@@ -32,6 +32,7 @@ public class DoubleArrayElemSumFunctionFactoryTest extends AbstractDoubleArrayEl
     protected String funcName() {
         return "array_elem_sum";
     }
+
     @Test
     public void test2dBothDimsDiffer() throws Exception {
         assertElemWise(

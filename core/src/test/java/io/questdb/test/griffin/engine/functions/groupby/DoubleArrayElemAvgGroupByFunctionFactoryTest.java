@@ -32,6 +32,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
     protected String funcName() {
         return "array_elem_avg";
     }
+
     @Test
     public void test2dAllSameShape() throws Exception {
         assertGroupByTyped("DOUBLE[][]", "[[5.0,6.0],[7.0,8.0]]",

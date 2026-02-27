@@ -32,6 +32,7 @@ public class DoubleArrayElemAvgFunctionFactoryTest extends AbstractDoubleArrayEl
     protected String funcName() {
         return "array_elem_avg";
     }
+
     @Test
     public void test2dBothDimsDiffer() throws Exception {
         assertElemWise(

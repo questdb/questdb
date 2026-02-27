@@ -32,6 +32,7 @@ public class DoubleArrayElemMaxFunctionFactoryTest extends AbstractDoubleArrayEl
     protected String funcName() {
         return "array_elem_max";
     }
+
     @Test
     public void test2dBothDimsDiffer() throws Exception {
         assertElemWise(

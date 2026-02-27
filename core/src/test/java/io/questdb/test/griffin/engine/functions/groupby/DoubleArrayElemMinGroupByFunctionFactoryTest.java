@@ -32,6 +32,7 @@ public class DoubleArrayElemMinGroupByFunctionFactoryTest extends AbstractDouble
     protected String funcName() {
         return "array_elem_min";
     }
+
     @Test
     public void test2dAllSameShape() throws Exception {
         assertGroupByTyped("DOUBLE[][]", "[[1.0,2.0],[3.0,4.0]]",

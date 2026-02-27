@@ -90,32 +90,58 @@ import org.jetbrains.annotations.NotNull;
  */
 public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
 
-    /** Base for the overallocation factor {@code pow(OVERALLOC_BASE, nDims)}: 1D → 1.5x, 2D → 2.25x, 3D → 3.375x. */
+    /**
+     * Base for the overallocation factor {@code pow(OVERALLOC_BASE, nDims)}: 1D → 1.5x, 2D → 2.25x, 3D → 3.375x.
+     */
     private static final double OVERALLOC_BASE = 1.5;
 
-    /** Scratch: current accumulator shape, read from the compact block header. */
+    /**
+     * Scratch: current accumulator shape, read from the compact block header.
+     */
     protected final int[] accShape;
-    /** Scratch: row-major strides for the current accumulator shape. */
+    /**
+     * Scratch: row-major strides for the current accumulator shape.
+     */
     protected final int[] accStrides;
-    /** The single array-column argument to this aggregate function. */
+    /**
+     * The single array-column argument to this aggregate function.
+     */
     protected final Function arg;
-    /** Scratch: coordinate vector for flat-index ↔ multi-dim conversions. */
+    /**
+     * Scratch: coordinate vector for flat-index ↔ multi-dim conversions.
+     */
     protected final int[] coords;
-    /** Byte size of the compact block header: {@code Integer.BYTES * (1 + nDims)}. */
+    /**
+     * Byte size of the compact block header: {@code Integer.BYTES * (1 + nDims)}.
+     */
     protected final int headerSize;
-    /** Scratch: shape of the current input array. */
+    /**
+     * Scratch: shape of the current input array.
+     */
     protected final int[] inputShape;
-    /** Number of array dimensions (1 for {@code DOUBLE[]}, 2 for {@code DOUBLE[][]}, etc.). */
+    /**
+     * Number of array dimensions (1 for {@code DOUBLE[]}, 2 for {@code DOUBLE[][]}, etc.).
+     */
     protected final int nDims;
-    /** Scratch: the grown shape = per-dimension max of accShape and inputShape. */
+    /**
+     * Scratch: the grown shape = per-dimension max of accShape and inputShape.
+     */
     protected final int[] newShape;
-    /** Scratch: row-major strides for the grown (or input) shape. */
+    /**
+     * Scratch: row-major strides for the grown (or input) shape.
+     */
     protected final int[] newStrides;
-    /** Group-by memory allocator, set before any compute calls. */
+    /**
+     * Group-by memory allocator, set before any compute calls.
+     */
     protected GroupByAllocator allocator;
-    /** Index of this function's first slot in the MapValue. */
+    /**
+     * Index of this function's first slot in the MapValue.
+     */
     protected int valueIndex;
-    /** Reusable view returned from {@link #getArray} — points into the compact block. */
+    /**
+     * Reusable view returned from {@link #getArray} — points into the compact block.
+     */
     private final BorrowedArray borrowedArray = new BorrowedArray();
 
     public AbstractDoubleArrayElemAggGroupByFunction(@NotNull Function arg) {

@@ -32,6 +32,7 @@ public class DoubleArrayElemMinFunctionFactoryTest extends AbstractDoubleArrayEl
     protected String funcName() {
         return "array_elem_min";
     }
+
     @Test
     public void test2dBothDimsDiffer() throws Exception {
         assertElemWise(
