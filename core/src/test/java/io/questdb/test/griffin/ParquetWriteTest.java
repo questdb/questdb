@@ -52,22 +52,22 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (2, '2020-01-01T01:00:00.000Z'),
-                            (3, '2020-01-01T02:00:00.000Z'),
-                            (4, '2020-01-01T03:00:00.000Z'),
-                            (5, '2020-01-01T04:00:00.000Z'),
-                            (6, '2020-01-01T05:00:00.000Z')
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (1, 'a', 'foo', '2020-01-01T00:00:00.000Z'),
+                            (2, 'b', 'bar', '2020-01-01T01:00:00.000Z'),
+                            (3, 'a', 'baz', '2020-01-01T02:00:00.000Z'),
+                            (4, 'c', 'qux', '2020-01-01T03:00:00.000Z'),
+                            (5, 'b', 'abc', '2020-01-01T04:00:00.000Z'),
+                            (6, 'a', 'def', '2020-01-01T05:00:00.000Z')
                             """
             );
-            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            execute("INSERT INTO x(x, s, v, ts) VALUES (100, 'd', 'end', '2020-01-02T00:00:00.000Z')");
             drainWalQueue();
 
             // 6 rows with row group size 3 → 2 row groups.
@@ -78,9 +78,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Replaces one row group, accumulating dead space.
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (7, '2020-01-01T00:30:00.000Z'),
-                            (8, '2020-01-01T01:30:00.000Z')
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (7, 'b', 'ghi', '2020-01-01T00:30:00.000Z'),
+                            (8, 'c', 'jkl', '2020-01-01T01:30:00.000Z')
                             """
             );
             drainWalQueue();
@@ -89,11 +89,13 @@ public class ParquetWriteTest extends AbstractCairoTest {
             long versionAfterUpdate = getPartitionNameTxn("x", partitionTs);
 
             // Second O3: accumulated unused_bytes > 100 → REWRITE.
+            // Rewrite copies unchanged row groups (exercises copy_row_group
+            // with dictionary pages from SYMBOL columns).
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (9, '2020-01-01T03:30:00.000Z'),
-                            (10, '2020-01-01T04:30:00.000Z')
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (9, 'a', 'mno', '2020-01-01T03:30:00.000Z'),
+                            (10, 'c', 'pqr', '2020-01-01T04:30:00.000Z')
                             """
             );
             drainWalQueue();
@@ -103,18 +105,18 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            x\tts
-                            1\t2020-01-01T00:00:00.000000Z
-                            7\t2020-01-01T00:30:00.000000Z
-                            2\t2020-01-01T01:00:00.000000Z
-                            8\t2020-01-01T01:30:00.000000Z
-                            3\t2020-01-01T02:00:00.000000Z
-                            4\t2020-01-01T03:00:00.000000Z
-                            9\t2020-01-01T03:30:00.000000Z
-                            5\t2020-01-01T04:00:00.000000Z
-                            10\t2020-01-01T04:30:00.000000Z
-                            6\t2020-01-01T05:00:00.000000Z
-                            100\t2020-01-02T00:00:00.000000Z
+                            x\ts\tv\tts
+                            1\ta\tfoo\t2020-01-01T00:00:00.000000Z
+                            7\tb\tghi\t2020-01-01T00:30:00.000000Z
+                            2\tb\tbar\t2020-01-01T01:00:00.000000Z
+                            8\tc\tjkl\t2020-01-01T01:30:00.000000Z
+                            3\ta\tbaz\t2020-01-01T02:00:00.000000Z
+                            4\tc\tqux\t2020-01-01T03:00:00.000000Z
+                            9\ta\tmno\t2020-01-01T03:30:00.000000Z
+                            5\tb\tabc\t2020-01-01T04:00:00.000000Z
+                            10\tc\tpqr\t2020-01-01T04:30:00.000000Z
+                            6\ta\tdef\t2020-01-01T05:00:00.000000Z
+                            100\td\tend\t2020-01-02T00:00:00.000000Z
                             """,
                     "SELECT * FROM x"
             );
@@ -126,21 +128,21 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (2, '2020-01-01T06:00:00.000Z'),
-                            (3, '2020-01-01T12:00:00.000Z'),
-                            (4, '2020-01-01T18:00:00.000Z')
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (1, 'a', 'foo', '2020-01-01T00:00:00.000Z'),
+                            (2, 'b', 'bar', '2020-01-01T06:00:00.000Z'),
+                            (3, 'a', 'baz', '2020-01-01T12:00:00.000Z'),
+                            (4, 'c', 'qux', '2020-01-01T18:00:00.000Z')
                             """
             );
             // Insert into the next day so 2020-01-01 is not the last partition.
-            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            execute("INSERT INTO x(x, s, v, ts) VALUES (100, 'd', 'end', '2020-01-02T00:00:00.000Z')");
             drainWalQueue();
 
             // 4 rows with default test row group size (1000) → single row group.
@@ -154,10 +156,10 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Single row group always triggers a full REWRITE.
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (5, '2020-01-01T03:00:00.000Z'),
-                            (6, '2020-01-01T09:00:00.000Z'),
-                            (7, '2020-01-01T15:00:00.000Z')
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (5, 'b', 'abc', '2020-01-01T03:00:00.000Z'),
+                            (6, 'a', 'def', '2020-01-01T09:00:00.000Z'),
+                            (7, 'c', 'ghi', '2020-01-01T15:00:00.000Z')
                             """
             );
             drainWalQueue();
@@ -167,15 +169,15 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            x\tts
-                            1\t2020-01-01T00:00:00.000000Z
-                            5\t2020-01-01T03:00:00.000000Z
-                            2\t2020-01-01T06:00:00.000000Z
-                            6\t2020-01-01T09:00:00.000000Z
-                            3\t2020-01-01T12:00:00.000000Z
-                            7\t2020-01-01T15:00:00.000000Z
-                            4\t2020-01-01T18:00:00.000000Z
-                            100\t2020-01-02T00:00:00.000000Z
+                            x\ts\tv\tts
+                            1\ta\tfoo\t2020-01-01T00:00:00.000000Z
+                            5\tb\tabc\t2020-01-01T03:00:00.000000Z
+                            2\tb\tbar\t2020-01-01T06:00:00.000000Z
+                            6\ta\tdef\t2020-01-01T09:00:00.000000Z
+                            3\ta\tbaz\t2020-01-01T12:00:00.000000Z
+                            7\tc\tghi\t2020-01-01T15:00:00.000000Z
+                            4\tc\tqux\t2020-01-01T18:00:00.000000Z
+                            100\td\tend\t2020-01-02T00:00:00.000000Z
                             """,
                     "SELECT * FROM x"
             );
@@ -193,22 +195,22 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (2, '2020-01-01T01:00:00.000Z'),
-                            (3, '2020-01-01T02:00:00.000Z'),
-                            (4, '2020-01-01T03:00:00.000Z'),
-                            (5, '2020-01-01T04:00:00.000Z'),
-                            (6, '2020-01-01T05:00:00.000Z')
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (1, 'a', 'foo', '2020-01-01T00:00:00.000Z'),
+                            (2, 'b', 'bar', '2020-01-01T01:00:00.000Z'),
+                            (3, 'a', 'baz', '2020-01-01T02:00:00.000Z'),
+                            (4, 'c', 'qux', '2020-01-01T03:00:00.000Z'),
+                            (5, 'b', 'abc', '2020-01-01T04:00:00.000Z'),
+                            (6, 'a', 'def', '2020-01-01T05:00:00.000Z')
                             """
             );
-            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            execute("INSERT INTO x(x, s, v, ts) VALUES (100, 'd', 'end', '2020-01-02T00:00:00.000Z')");
             drainWalQueue();
 
             // 6 rows with row group size 3 → 2 row groups.
@@ -219,9 +221,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Replaces one row group, accumulating dead space > 10% of file.
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (7, '2020-01-01T00:30:00.000Z'),
-                            (8, '2020-01-01T01:30:00.000Z')
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (7, 'b', 'ghi', '2020-01-01T00:30:00.000Z'),
+                            (8, 'c', 'jkl', '2020-01-01T01:30:00.000Z')
                             """
             );
             drainWalQueue();
@@ -232,9 +234,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Second O3: unused_bytes / file_size > 0.1 → REWRITE.
             execute(
                     """
-                            INSERT INTO x(x, ts) VALUES
-                            (9, '2020-01-01T03:30:00.000Z'),
-                            (10, '2020-01-01T04:30:00.000Z')
+                            INSERT INTO x(x, s, v, ts) VALUES
+                            (9, 'a', 'mno', '2020-01-01T03:30:00.000Z'),
+                            (10, 'c', 'pqr', '2020-01-01T04:30:00.000Z')
                             """
             );
             drainWalQueue();
@@ -244,18 +246,18 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            x\tts
-                            1\t2020-01-01T00:00:00.000000Z
-                            7\t2020-01-01T00:30:00.000000Z
-                            2\t2020-01-01T01:00:00.000000Z
-                            8\t2020-01-01T01:30:00.000000Z
-                            3\t2020-01-01T02:00:00.000000Z
-                            4\t2020-01-01T03:00:00.000000Z
-                            9\t2020-01-01T03:30:00.000000Z
-                            5\t2020-01-01T04:00:00.000000Z
-                            10\t2020-01-01T04:30:00.000000Z
-                            6\t2020-01-01T05:00:00.000000Z
-                            100\t2020-01-02T00:00:00.000000Z
+                            x\ts\tv\tts
+                            1\ta\tfoo\t2020-01-01T00:00:00.000000Z
+                            7\tb\tghi\t2020-01-01T00:30:00.000000Z
+                            2\tb\tbar\t2020-01-01T01:00:00.000000Z
+                            8\tc\tjkl\t2020-01-01T01:30:00.000000Z
+                            3\ta\tbaz\t2020-01-01T02:00:00.000000Z
+                            4\tc\tqux\t2020-01-01T03:00:00.000000Z
+                            9\ta\tmno\t2020-01-01T03:30:00.000000Z
+                            5\tb\tabc\t2020-01-01T04:00:00.000000Z
+                            10\tc\tpqr\t2020-01-01T04:30:00.000000Z
+                            6\ta\tdef\t2020-01-01T05:00:00.000000Z
+                            100\td\tend\t2020-01-02T00:00:00.000000Z
                             """,
                     "SELECT * FROM x"
             );

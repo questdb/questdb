@@ -76,15 +76,20 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         );
 
         int rowGroupSize = 500 + rnd.nextInt(2000);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+
+        String compressionCodec = randomCompressionCodec(rnd);
+        int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, compressionLevel);
 
         // Randomize rewrite thresholds so that rewrite mode is exercised with
         // high probability across multiple O3 rounds on small partitions.
         // ratio 0.1-0.5, absolute max 4KB-64KB (reachable with small row groups).
         double rewriteRatio = 0.1 + rnd.nextDouble() * 0.4;
         long rewriteMaxBytes = 4096 + rnd.nextLong(60_000);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(rewriteRatio));
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, rewriteMaxBytes);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(rewriteRatio));
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, rewriteMaxBytes);
 
         int initialRowCount = 2000 + rnd.nextInt(5000);
         fuzzer.setFuzzCounts(
@@ -131,6 +136,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     .$("starting all-parquet fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
                     .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", compression=").$(compressionCodec)
+                    .$(", compressionLevel=").$(compressionLevel)
                     .$(", rewriteRatio=").$(rewriteRatio)
                     .$(", rewriteMaxBytes=").$(rewriteMaxBytes)
                     .$(", partitionTs=").$(partitionTs)
@@ -223,14 +230,19 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         // Randomize the row group size so the test is likely to produce
         // multiple row groups across runs.
         int rowGroupSize = 500 + rnd.nextInt(2000);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+
+        String compressionCodec = randomCompressionCodec(rnd);
+        int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, compressionLevel);
 
         // Randomize rewrite thresholds so that rewrite mode is exercised with
         // high probability across multiple O3 rounds on small partitions.
         double rewriteRatio = 0.1 + rnd.nextDouble() * 0.4;
         long rewriteMaxBytes = 4096 + rnd.nextLong(60_000);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(rewriteRatio));
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, rewriteMaxBytes);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(rewriteRatio));
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, rewriteMaxBytes);
 
         int initialRowCount = 2000 + rnd.nextInt(5000);
         // O3 enabled, single partition, no IO failures.
@@ -289,6 +301,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     .$("starting fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
                     .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", compression=").$(compressionCodec)
+                    .$(", compressionLevel=").$(compressionLevel)
                     .$(", rewriteRatio=").$(rewriteRatio)
                     .$(", rewriteMaxBytes=").$(rewriteMaxBytes)
                     .$(", partitionTs=").$(partitionTs)
@@ -389,7 +403,12 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         );
 
         int rowGroupSize = 500 + rnd.nextInt(2000);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+
+        String compressionCodec = randomCompressionCodec(rnd);
+        int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, compressionLevel);
 
         int initialRowCount = 2000 + rnd.nextInt(5000);
         // Small in-order transactions: low row count per round, no O3 within each batch.
@@ -448,6 +467,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     .$("starting in-order fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
                     .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", compression=").$(compressionCodec)
+                    .$(", compressionLevel=").$(compressionLevel)
                     .$(", partitionTs=").$(partitionTs)
                     .$();
 
@@ -477,6 +498,20 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             assertRowGroupSizes(walTable, rowGroupSize, true);
         });
+    }
+
+    private static String randomCompressionCodec(Rnd rnd) {
+        String[] codecs = {"uncompressed", "snappy", "gzip", "brotli", "zstd", "lz4_raw"};
+        return codecs[rnd.nextInt(codecs.length)];
+    }
+
+    private static int randomCompressionLevel(Rnd rnd, String codec) {
+        return switch (codec) {
+            case "gzip" -> rnd.nextInt(11);       // 0-10
+            case "brotli" -> rnd.nextInt(12);     // 0-11
+            case "zstd" -> 1 + rnd.nextInt(22);   // 1-22
+            default -> 0;
+        };
     }
 
     private void assertRowGroupSizes(String tableName, int rowGroupSize) {
