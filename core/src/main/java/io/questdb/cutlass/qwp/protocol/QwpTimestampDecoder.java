@@ -308,25 +308,30 @@ public final class QwpTimestampDecoder implements QwpColumnDecoder {
      * - '1111' -> write bit 1, bit 1, bit 1, bit 1 (0b1111 as 4-bit value)
      */
     private static void encodeDoD(QwpBitWriter writer, long deltaOfDelta) {
-        if (deltaOfDelta == 0) {
-            // '0' = DoD is 0
-            writer.writeBit(0);
-        } else if (deltaOfDelta >= -63 && deltaOfDelta <= 64) {
-            // '10' prefix: first bit read=1, second bit read=0 -> write as 0b01 (LSB-first)
-            writer.writeBits(0b01, 2);
-            writer.writeSigned(deltaOfDelta, 7);
-        } else if (deltaOfDelta >= -255 && deltaOfDelta <= 256) {
-            // '110' prefix: bits read as 1,1,0 -> write as 0b011 (LSB-first)
-            writer.writeBits(0b011, 3);
-            writer.writeSigned(deltaOfDelta, 9);
-        } else if (deltaOfDelta >= -2047 && deltaOfDelta <= 2048) {
-            // '1110' prefix: bits read as 1,1,1,0 -> write as 0b0111 (LSB-first)
-            writer.writeBits(0b0111, 4);
-            writer.writeSigned(deltaOfDelta, 12);
-        } else {
-            // '1111' prefix: bits read as 1,1,1,1 -> write as 0b1111 (LSB-first)
-            writer.writeBits(0b1111, 4);
-            writer.writeSigned(deltaOfDelta, 32);
+        int bucket = QwpGorillaDecoder.getBucket(deltaOfDelta);
+        switch (bucket) {
+            case 0 -> // '0' = DoD is 0
+                    writer.writeBit(0);
+            case 1 -> {
+                // '10' prefix: first bit read=1, second bit read=0 -> write as 0b01 (LSB-first)
+                writer.writeBits(0b01, 2);
+                writer.writeSigned(deltaOfDelta, 7);
+            }
+            case 2 -> {
+                // '110' prefix: bits read as 1,1,0 -> write as 0b011 (LSB-first)
+                writer.writeBits(0b011, 3);
+                writer.writeSigned(deltaOfDelta, 9);
+            }
+            case 3 -> {
+                // '1110' prefix: bits read as 1,1,1,0 -> write as 0b0111 (LSB-first)
+                writer.writeBits(0b0111, 4);
+                writer.writeSigned(deltaOfDelta, 12);
+            }
+            default -> {
+                // '1111' prefix: bits read as 1,1,1,1 -> write as 0b1111 (LSB-first)
+                writer.writeBits(0b1111, 4);
+                writer.writeSigned(deltaOfDelta, 32);
+            }
         }
     }
 

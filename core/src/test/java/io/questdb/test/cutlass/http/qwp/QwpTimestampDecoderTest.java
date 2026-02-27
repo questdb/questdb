@@ -47,6 +47,33 @@ public class QwpTimestampDecoderTest {
     }
 
     @Test
+    public void testDecodeGorillaBucketBoundaryValues() throws QwpParseException {
+        // Boundary values at the edge of signed two's complement ranges.
+        // 7-bit signed range is [-64, 63], so DoD=64 must NOT use the 7-bit bucket
+        // (64 overflows 7-bit signed to -64). Same for 9-bit (256) and 12-bit (2048).
+        // With the bug, these boundary values get silently corrupted on round-trip.
+
+        // DoD = 64 (just outside 7-bit signed max of 63)
+        // t0=1000, t1=2000 (delta=1000), t2=3064 (delta=1064, DoD=64)
+        testGorillaRoundTrip(new long[]{1000L, 2000L, 3064L}, null);
+
+        // DoD = -64 (at 7-bit signed min, should fit in 7-bit bucket)
+        testGorillaRoundTrip(new long[]{1000L, 2000L, 2936L}, null);
+
+        // DoD = 256 (just outside 9-bit signed max of 255)
+        testGorillaRoundTrip(new long[]{1000L, 2000L, 3256L}, null);
+
+        // DoD = -256 (at 9-bit signed min, should fit in 9-bit bucket)
+        testGorillaRoundTrip(new long[]{1000L, 2000L, 2744L}, null);
+
+        // DoD = 2048 (just outside 12-bit signed max of 2047)
+        testGorillaRoundTrip(new long[]{1000L, 2000L, 5048L}, null);
+
+        // DoD = -2048 (at 12-bit signed min, should fit in 12-bit bucket)
+        testGorillaRoundTrip(new long[]{1000L, 2000L, -48L}, null);
+    }
+
+    @Test
     public void testDecodeGorillaBitAlignment() throws QwpParseException {
         // Test that bit reading works correctly across byte boundaries
         // by using various bit-width encodings that don't align on byte boundaries
