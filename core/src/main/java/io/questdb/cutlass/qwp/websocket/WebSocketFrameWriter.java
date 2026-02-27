@@ -131,6 +131,32 @@ public final class WebSocketFrameWriter {
     }
 
     /**
+     * Writes a complete Close frame to the buffer if it fits.
+     *
+     * @param buf        the buffer to write to
+     * @param bufferSize the buffer capacity in bytes
+     * @param code       the close status code
+     * @param reason     the close reason (may be null)
+     * @return the total number of bytes written, or -1 if the buffer is too small
+     */
+    public static int writeCloseFrame(long buf, int bufferSize, int code, String reason) {
+        int payloadLen = 2; // status code
+        if (reason != null && !reason.isEmpty()) {
+            payloadLen += reason.getBytes(StandardCharsets.UTF_8).length;
+        }
+
+        int frameSize = headerSize(payloadLen, false) + payloadLen;
+        if (frameSize > bufferSize) {
+            return -1;
+        }
+
+        int headerLen = writeHeader(buf, true, WebSocketOpcode.CLOSE, payloadLen, false);
+        int payloadOffset = writeClosePayload(buf + headerLen, code, reason);
+
+        return headerLen + payloadOffset;
+    }
+
+    /**
      * Writes the payload for a Close frame.
      *
      * @param buf    the buffer to write to (after the header)

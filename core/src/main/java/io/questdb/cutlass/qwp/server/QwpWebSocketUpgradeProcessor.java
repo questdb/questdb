@@ -494,8 +494,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             long bufferAddr = rawSocket.getBufferAddress();
             int bufferSize = rawSocket.getBufferSize();
 
-            int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, closeCode, null);
-            if (written <= bufferSize) {
+            int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, closeCode, null);
+            if (written > 0) {
                 rawSocket.send(written);
             }
         } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {

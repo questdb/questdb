@@ -263,6 +263,36 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testWriteCloseFrameRejectsSmallBuffer() {
+        // A close frame with null reason needs 4 bytes (2 header + 2 status code).
+        // Verify that the bounds-checking overload refuses to write and does not
+        // touch memory when the buffer is too small.
+        int totalSize = 16;
+        int bufferSize = 2; // too small for a 4-byte close frame
+        long buf = allocateBuffer(totalSize);
+        try {
+            // Fill entire region with sentinel
+            for (int i = 0; i < totalSize; i++) {
+                Unsafe.getUnsafe().putByte(buf + i, (byte) 0xAA);
+            }
+
+            int written = WebSocketFrameWriter.writeCloseFrame(buf, bufferSize, 1000, null);
+            Assert.assertEquals(-1, written);
+
+            // No bytes should have been touched
+            for (int i = 0; i < totalSize; i++) {
+                Assert.assertEquals(
+                        "writeCloseFrame wrote to buffer at offset " + i,
+                        (byte) 0xAA,
+                        Unsafe.getUnsafe().getByte(buf + i)
+                );
+            }
+        } finally {
+            freeBuffer(buf, totalSize);
+        }
+    }
+
+    @Test
     public void testWriteCloseFrameWithCode() {
         long buf = allocateBuffer(32);
         try {
