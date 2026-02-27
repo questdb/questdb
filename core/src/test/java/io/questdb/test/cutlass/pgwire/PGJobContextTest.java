@@ -4067,7 +4067,7 @@ if __name__ == "__main__":
                                 expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
-                                        "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
+                                        "  filter: (" + i + "L<x and x<" + (i + 1) * 10 + ".0)\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n");
