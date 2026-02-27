@@ -127,15 +127,25 @@ stages:
     variables:
       includeTests: "**/cairo/**"
 
-  - stage: SelfHostedRunOther
-    displayName: "SelfHosted Other tests"
+  - stage: SelfHostedRunOtherRoot
+    displayName: "SelfHosted Other tests (root)"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
       - CheckChanges
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
-      excludeTests: "**/griffin/**,**/cairo/**"
+      includeTests: "**/questdb/test/*"
+
+  - stage: SelfHostedRunOtherSub
+    displayName: "SelfHosted Other tests (sub-packages)"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      excludeTests: "**/griffin/**,**/cairo/**,**/questdb/test/*"
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
