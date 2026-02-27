@@ -59,6 +59,23 @@ public class SimdJsonParser implements QuietCloseable {
         }
     }
 
+    public int queryPointerArrayLength(
+            DirectUtf8Sequence json,
+            DirectUtf8Sequence pointer,
+            SimdJsonResult result
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPointerArrayLength(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                pointer.ptr(),
+                pointer.size(),
+                result.ptr()
+        );
+    }
+
     public boolean queryPointerBoolean(
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
@@ -217,6 +234,16 @@ public class SimdJsonParser implements QuietCloseable {
     private static native void destroy(long impl);
 
     private native static int getSimdJsonPadding();
+
+    private static native int queryPointerArrayLength(
+            long impl,
+            long jsonPtr,
+            long jsonLen,
+            long jsonTailPadding,
+            long pointerPtr,
+            long pointerLen,
+            long resultPtr
+    );
 
     private static native boolean queryPointerBoolean(
             long impl,

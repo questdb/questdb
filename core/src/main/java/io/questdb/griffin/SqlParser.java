@@ -4223,14 +4223,55 @@ public class SqlParser {
         unnestModel.setJoinKeywordPosition(lexer.lastTokenPosition());
 
         expectTok(lexer, '(');
-        // parse comma-separated expressions
+        // parse comma-separated expressions, each optionally followed by
+        // COLUMNS(name TYPE, ...) for JSON UNNEST sources
         do {
             ExpressionNode expression = expr(lexer, parent, sqlParserCallback, decls);
             if (expression == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "expression expected");
             }
             unnestModel.getUnnestExpressions().add(expression);
-            CharSequence tok = tok(lexer, "',' or ')'");
+            CharSequence tok = tok(lexer, "'COLUMNS', ',' or ')'");
+            if (isColumnsKeyword(tok)) {
+                expectTok(lexer, '(');
+                ObjList<CharSequence> colNames = new ObjList<>();
+                IntList colTypes = new IntList();
+                do {
+                    CharSequence colName = GenericLexer.immutableOf(
+                            tok(lexer, "column name")
+                    );
+                    CharSequence typeName = tok(lexer, "column type");
+                    int type = ColumnType.typeOf(typeName);
+                    if (type == -1) {
+                        throw SqlException
+                                .$(lexer.lastTokenPosition(), "unknown type: ")
+                                .put(typeName);
+                    }
+                    colNames.add(colName);
+                    colTypes.add(type);
+                    tok = tok(lexer, "',' or ')'");
+                    if (Chars.equals(tok, ')')) {
+                        break;
+                    }
+                    if (!Chars.equals(tok, ',')) {
+                        throw SqlException
+                                .$(lexer.lastTokenPosition(),
+                                        "',' or ')' expected");
+                    }
+                } while (true);
+                if (colNames.size() == 0) {
+                    throw SqlException
+                            .$(lexer.lastTokenPosition(),
+                                    "COLUMNS requires at least one column");
+                }
+                unnestModel.getUnnestJsonColumnNames().add(colNames);
+                unnestModel.getUnnestJsonColumnTypes().add(colTypes);
+                tok = tok(lexer, "',' or ')'");
+            } else {
+                // array source - null marker
+                unnestModel.getUnnestJsonColumnNames().add(null);
+                unnestModel.getUnnestJsonColumnTypes().add(null);
+            }
             if (Chars.equals(tok, ')')) {
                 break;
             }
@@ -4277,9 +4318,8 @@ public class SqlParser {
             lexer.unparseLast();
         }
 
-        // Validate alias count does not exceed expression count
-        // (+ 1 for ordinality if present).
-        int maxAliases = unnestModel.getUnnestExpressions().size()
+        // Validate alias count: max is total output columns + ordinality.
+        int maxAliases = unnestModel.getUnnestOutputColumnCount()
                 + (unnestModel.isUnnestOrdinality() ? 1 : 0);
         int aliasCount = unnestModel.getUnnestColumnAliases().size();
         if (aliasCount > maxAliases) {

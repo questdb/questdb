@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * Abstraction between UnnestRecord and the data being unnested.
@@ -66,6 +67,8 @@ public interface UnnestSource {
      */
     int getColumnType(int sourceCol);
 
+    long getDate(int sourceCol, int elementIndex);
+
     double getDouble(int sourceCol, int elementIndex);
 
     float getFloat(int sourceCol, int elementIndex);
@@ -81,6 +84,14 @@ public interface UnnestSource {
     CharSequence getStrB(int sourceCol, int elementIndex);
 
     int getStrLen(int sourceCol, int elementIndex);
+
+    long getTimestamp(int sourceCol, int elementIndex);
+
+    Utf8Sequence getVarcharA(int sourceCol, int elementIndex);
+
+    Utf8Sequence getVarcharB(int sourceCol, int elementIndex);
+
+    int getVarcharSize(int sourceCol, int elementIndex);
 
     /**
      * Binds to the current base record. Called when the master cursor

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
@@ -160,6 +161,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
     private final ObjList<CharSequence> unnestColumnAliases = new ObjList<>();
     private final ObjList<ExpressionNode> unnestExpressions = new ObjList<>();
+    private final ObjList<ObjList<CharSequence>> unnestJsonColumnNames = new ObjList<>();
+    private final ObjList<IntList> unnestJsonColumnTypes = new ObjList<>();
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
@@ -541,6 +544,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         standaloneUnnest = false;
         unnestColumnAliases.clear();
         unnestExpressions.clear();
+        unnestJsonColumnNames.clear();
+        unnestJsonColumnTypes.clear();
         unnestOrdinality = false;
         updateTableColumnNames.clear();
         updateTableModel = null;
@@ -1067,6 +1072,36 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<ExpressionNode> getUnnestExpressions() {
         return unnestExpressions;
+    }
+
+    public ObjList<ObjList<CharSequence>> getUnnestJsonColumnNames() {
+        return unnestJsonColumnNames;
+    }
+
+    public ObjList<IntList> getUnnestJsonColumnTypes() {
+        return unnestJsonColumnTypes;
+    }
+
+    /**
+     * Returns the total number of output columns across all UNNEST sources.
+     * Array sources contribute 1 column each; JSON sources contribute N
+     * columns (one per COLUMNS declaration).
+     */
+    public int getUnnestOutputColumnCount() {
+        int total = 0;
+        for (int i = 0, n = unnestExpressions.size(); i < n; i++) {
+            if (isUnnestJsonSource(i)) {
+                total += unnestJsonColumnNames.getQuick(i).size();
+            } else {
+                total++;
+            }
+        }
+        return total;
+    }
+
+    public boolean isUnnestJsonSource(int index) {
+        return index < unnestJsonColumnNames.size()
+                && unnestJsonColumnNames.getQuick(index) != null;
     }
 
     public ObjList<ExpressionNode> getUpdateExpressions() {
@@ -2000,6 +2035,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                         sink.putAscii(", ");
                                     }
                                     model.getUnnestExpressions().getQuick(k).toSink(sink);
+                                    if (model.isUnnestJsonSource(k)) {
+                                        ObjList<CharSequence> colNames =
+                                                model.getUnnestJsonColumnNames().getQuick(k);
+                                        IntList colTypes =
+                                                model.getUnnestJsonColumnTypes().getQuick(k);
+                                        sink.putAscii(" columns(");
+                                        for (int c = 0, cn = colNames.size(); c < cn; c++) {
+                                            if (c > 0) {
+                                                sink.putAscii(", ");
+                                            }
+                                            sink.put(colNames.getQuick(c));
+                                            sink.putAscii(' ');
+                                            sink.put(ColumnType.nameOf(colTypes.getQuick(c)));
+                                        }
+                                        sink.putAscii(')');
+                                    }
                                 }
                                 sink.putAscii(')');
                                 if (model.isUnnestOrdinality()) {

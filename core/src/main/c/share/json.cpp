@@ -664,4 +664,34 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerDouble(
             });
 }
 
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_json_SimdJsonParser_queryPointerArrayLength(
+        JNIEnv * /*env*/,
+        jclass /*cl*/,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
+        size_t json_len,
+        size_t tail_padding,
+        const char *pointer_chars,
+        size_t pointer_len,
+        json_result *result
+) {
+    const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
+    const std::string_view pointer{pointer_chars, pointer_len};
+    auto doc = parser->iterate(json_buf);
+    simdjson_value val;
+    if (pointer.empty()) {
+        val = doc.get_value();
+    } else {
+        val = doc.at_pointer(pointer);
+    }
+    if (!result->set_error(val)) { return 0; }
+    auto arr = val.get_array();
+    if (!result->set_error(arr)) { return 0; }
+    auto count = arr.count_elements();
+    if (!result->set_error(count)) { return 0; }
+    result->error = simdjson::error_code::SUCCESS;
+    return static_cast<jint>(count.value_unsafe());
+}
+
 } // extern "C"
