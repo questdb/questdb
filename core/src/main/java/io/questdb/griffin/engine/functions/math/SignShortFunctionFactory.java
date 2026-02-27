@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -45,7 +45,7 @@ public class SignShortFunctionFactory implements FunctionFactory {
         return new Func(args.get(0));
     }
 
-    static class Func extends ShortFunction implements UnaryFunction {
+    static class Func extends ShortFunction implements ArithmeticUnaryFunction {
 
         private final Function arg;
 

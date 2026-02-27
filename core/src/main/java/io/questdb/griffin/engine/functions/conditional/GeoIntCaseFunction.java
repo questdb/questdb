@@ -27,11 +27,10 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoIntFunction;
-import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.ObjList;
 
 @SuppressWarnings("resource")
-public class GeoIntCaseFunction extends GeoIntFunction implements MultiArgFunction {
+public class GeoIntCaseFunction extends GeoIntFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 

@@ -850,7 +850,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlAsOfJoinLookAhead() {
-        return 100;
+        return 64;
     }
 
     @Override
@@ -963,6 +963,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlHashJoinValuePageSize() {
         return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
+    public int getSqlHorizonJoinMaxOffsets() {
+        return 10_000;
     }
 
     @Override
@@ -1118,6 +1123,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlSmallPageFrameMinRows() {
         return 5;
+    }
+
+    @Override
+    public int getSqlSortKeyMaterializationThreshold() {
+        return 3;
     }
 
     @Override
@@ -1541,6 +1551,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelTopKEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelHorizonJoinEnabled() {
         return true;
     }
 

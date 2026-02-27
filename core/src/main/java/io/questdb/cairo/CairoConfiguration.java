@@ -578,6 +578,25 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    int getSqlHorizonJoinMaxOffsets();
+
+    /**
+     * When the number of intervals exceeds this threshold during bracket expansion,
+     * intervals are merged to prevent unbounded memory growth.
+     */
+    int getSqlIntervalIncrementalMergeThreshold();
+
+    /**
+     * Maximum recursion depth for bracket expansion in interval parsing (one level per bracket group).
+     */
+    int getSqlIntervalMaxBracketDepth();
+
+    /**
+     * Maximum number of intervals allowed after bracket expansion and merging.
+     * This limit prevents memory exhaustion from large non-adjacent interval sets.
+     */
+    int getSqlIntervalMaxIntervalsAfterMerge();
+
     int getSqlJitBindVarsMemoryMaxPages();
 
     int getSqlJitBindVarsMemoryPageSize();
@@ -639,6 +658,8 @@ public interface CairoConfiguration {
 
     int getSqlSmallPageFrameMinRows();
 
+    int getSqlSortKeyMaterializationThreshold();
+
     int getSqlSortKeyMaxPages();
 
     long getSqlSortKeyPageSize();
@@ -668,23 +689,6 @@ public interface CairoConfiguration {
     int getSqlWindowTreeKeyMaxPages();
 
     int getSqlWindowTreeKeyPageSize();
-
-    /**
-     * When the number of intervals exceeds this threshold during bracket expansion,
-     * intervals are merged to prevent unbounded memory growth.
-     */
-    int getSqlIntervalIncrementalMergeThreshold();
-
-    /**
-     * Maximum recursion depth for bracket expansion in interval parsing (one level per bracket group).
-     */
-    int getSqlIntervalMaxBracketDepth();
-
-    /**
-     * Maximum number of intervals allowed after bracket expansion and merging.
-     * This limit prevents memory exhaustion from large non-adjacent interval sets.
-     */
-    int getSqlIntervalMaxIntervalsAfterMerge();
 
     int getStrFunctionMaxBufferLength();
 
@@ -849,6 +853,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelGroupByEnabled();
+
+    boolean isSqlParallelHorizonJoinEnabled();
 
     boolean isSqlParallelReadParquetEnabled();
 

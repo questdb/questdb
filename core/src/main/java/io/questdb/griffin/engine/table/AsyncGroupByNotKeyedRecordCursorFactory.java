@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
-import io.questdb.cairo.sql.PageFrameFilteredNoRandomAccessMemoryRecord;
+import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -183,8 +183,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final AsyncFilterContext fCtx = atom.getFilterContext();
-        final PageFrameMemoryPool frameMemoryPool = fCtx.getMemoryPool(slotId);
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
         final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
         record.init(frameMemory);
 
@@ -241,27 +241,27 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
         final boolean owner = stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final AsyncFilterContext fCtx = atom.getFilterContext();
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-        final boolean useLateMaterialization = fCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
 
-        final PageFrameMemoryPool frameMemoryPool = fCtx.getMemoryPool(slotId);
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
         final PageFrameMemory frameMemory;
         if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, fCtx.getFilterUsedColumnIndexes());
+            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
         } else {
             frameMemory = frameMemoryPool.navigateTo(frameIndex);
         }
         record.init(frameMemory);
 
-        final DirectLongList rows = fCtx.getFilteredRows(slotId);
+        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
-        final CompiledFilter compiledFilter = fCtx.getCompiledFilter();
-        final Function filter = fCtx.getFilter(slotId);
+        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+        final Function filter = filterCtx.getFilter(slotId);
         try {
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
@@ -269,24 +269,24 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             } else {
                 AsyncFilterUtils.applyCompiledFilter(
                         compiledFilter,
-                        fCtx.getBindVarMemory(),
-                        fCtx.getBindVarFunctions(),
+                        filterCtx.getBindVarMemory(),
+                        filterCtx.getBindVarFunctions(),
                         frameMemory,
                         addressCache,
-                        fCtx.getDataAddresses(slotId),
-                        fCtx.getAuxAddresses(slotId),
+                        filterCtx.getDataAddresses(slotId),
+                        filterCtx.getAuxAddresses(slotId),
                         rows,
                         frameRowCount
                 );
             }
 
             if (isParquetFrame) {
-                fCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
+                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
 
-            if (useLateMaterialization && frameMemory.populateRemainingColumns(fCtx.getFilterUsedColumnIndexes(), rows, false)) {
-                PageFrameFilteredNoRandomAccessMemoryRecord filteredMemoryRecord = fCtx.getPageFrameFilteredMemoryRecord(slotId);
-                filteredMemoryRecord.of(frameMemory, record, fCtx.getFilterUsedColumnIndexes());
+            if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {
+                PageFrameFilteredMemoryRecord filteredMemoryRecord = filterCtx.getPageFrameFilteredMemoryRecord(slotId);
+                filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;
             }
             record.setRowIndex(0);
