@@ -3841,6 +3841,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     }
                 }
 
+                serverMain.awaitTable("ws_rapid_flush");
                 TestUtils.drainWalQueue(serverMain.getEngine());
                 serverMain.assertSql("select count() from ws_rapid_flush", "count\n50\n");
                 serverMain.assertSql("select count(distinct env) from ws_rapid_flush", "count_distinct\n4\n");
