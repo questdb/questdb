@@ -336,6 +336,27 @@ public class DoubleArrayElemAvgGroupByFunctionFactoryTest extends AbstractDouble
     }
 
     @Test
+    public void testNonVanillaNanDetection() throws Exception {
+        // NaN detection iterates flat buffer indices, but for a slice the NaN at a
+        // logical position may sit at a buffer offset beyond cardinality.
+        // Slice [1:3, 1:2] on (2,3) selects col 0 with strides [3,1], so logical
+        // [1][0] maps to buffer offset 3 while cardinality is only 2.
+        // Row 1 slice: [[10],[40]] (all finite, uniform count=1)
+        // Row 2 slice: [[1],[NaN]] (NaN at [1][0], should trigger variable mode)
+        // Bug: flat check reads buffer[0..1] = {1,2}, misses NaN → uniform count=2 → 40/2=20
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[][])");
+            execute("INSERT INTO tab VALUES (ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0]])");
+            execute("INSERT INTO tab VALUES (ARRAY[[1.0, 2.0, 3.0], [null, 5.0, 6.0]])");
+            assertQueryNoLeakCheck(
+                    "arr\n[[5.5],[40.0]]\n",
+                    "SELECT array_elem_avg(arr[1:3, 1:2]) arr FROM tab",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testVariableLengthArrays() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");

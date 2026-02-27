@@ -451,11 +451,11 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * @param mapValue        the group's MapValue (for subclass access to extra slots)
      */
     protected void accumulateInput(long dataPtr, ArrayView array, int[] currentAccShape, MapValue mapValue) {
-        int inputFlatLen = array.getCardinality();
+        int inputCardinality = array.getCardinality();
         onBeforeAccumulate(mapValue);
         if (array.isVanilla() && innerDimsMatch(inputShape, currentAccShape)) {
             // Flat path: input is vanilla row-major and inner dimensions match, so flat indices are identical.
-            for (int i = 0; i < inputFlatLen; i++) {
+            for (int i = 0; i < inputCardinality; i++) {
                 double inputVal = array.getDouble(i);
                 if (Numbers.isFinite(inputVal)) {
                     accumulateOne(dataPtr, i, inputVal);

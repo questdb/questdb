@@ -124,7 +124,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
          */
         @Override
         protected void accumulateInput(long dataPtr, ArrayView array, int[] currentAccShape, MapValue mapValue) {
-            int inputFlatLen = array.getCardinality();
+            int inputCardinality = array.getCardinality();
             long count = mapValue.getLong(valueIndex + COUNT_SLOT);
             long countPtr = mapValue.getLong(valueIndex + COUNT_PTR_SLOT);
             long compPtr = mapValue.getLong(valueIndex + COMP_SLOT);
@@ -139,11 +139,27 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
                     }
                 }
                 if (!needsVariable) {
-                    for (int i = 0; i < inputFlatLen; i++) {
-                        if (!Numbers.isFinite(array.getDouble(i))) {
-                            needsVariable = true;
-                            break;
+                    if (array.isVanilla()) {
+                        for (int i = 0; i < inputCardinality; i++) {
+                            if (!Numbers.isFinite(array.getDouble(i))) {
+                                needsVariable = true;
+                                break;
+                            }
                         }
+                    } else {
+                        for (int d = 0; d < nDims; d++) {
+                            coords[d] = 0;
+                        }
+                        do {
+                            int fi = 0;
+                            for (int d = 0; d < nDims; d++) {
+                                fi += coords[d] * array.getStride(d);
+                            }
+                            if (!Numbers.isFinite(array.getDouble(fi))) {
+                                needsVariable = true;
+                                break;
+                            }
+                        } while (ArrayView.incrementCoords(coords, inputShape));
                     }
                 }
                 if (needsVariable) {
@@ -157,7 +173,7 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
 
             if (array.isVanilla() && innerDimsMatch(inputShape, currentAccShape)) {
                 // Flat path: input is vanilla row-major and inner dimensions match, so flat indices are identical.
-                for (int i = 0; i < inputFlatLen; i++) {
+                for (int i = 0; i < inputCardinality; i++) {
                     double inputVal = array.getDouble(i);
                     if (Numbers.isFinite(inputVal)) {
                         long addr = dataPtr + (long) i * Double.BYTES;
