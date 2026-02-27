@@ -1383,7 +1383,8 @@ public class OrderedMapTest extends AbstractCairoTest {
             ColumnTypes types = new SingleColumnType(ColumnType.LONG);
             try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, types, null, 16, 0.5, Integer.MAX_VALUE)) {
                 try {
-                    map.setKeyCapacity(Integer.MAX_VALUE);
+                    // should fail with 0.75 load factor
+                    map.setKeyCapacity(Integer.MAX_VALUE / 4 * 3 + 1);
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "map capacity overflow");
