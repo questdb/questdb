@@ -14,6 +14,12 @@ steps:
     displayName: "Install IntelliJ"
   - bash: /opt/intellij/idea/bin/idea.sh format -s .idea/codeStyles/Project.xml -m "*.java" -r .
     displayName: "Applying formatting"
+  - bash: |
+      if [ -d java-questdb-client/.git ]; then
+        echo "Resetting submodule working tree to discard formatter changes"
+        git -C java-questdb-client checkout .
+      fi
+    displayName: "Reset submodule after formatting"
   - bash: git status -s
     displayName: "List of affected files"
   - bash: git diff --exit-code
