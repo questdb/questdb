@@ -423,10 +423,10 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * are populated and coordinate conversion is required. When false, old flat
      * indices are preserved and data can be bulk-copied.
      *
-     * @param mapValue    the group's MapValue (base slots already updated)
-     * @param oldFlatCardinality  number of elements before growth
-     * @param newCapacity allocated element count after growth
-     * @param needsRemap  true if old and new flat layouts differ (strides changed)
+     * @param mapValue           the group's MapValue (base slots already updated)
+     * @param oldFlatCardinality number of elements before growth
+     * @param newCapacity        allocated element count after growth
+     * @param needsRemap         true if old and new flat layouts differ (strides changed)
      */
     protected void onShapeGrow(MapValue mapValue, int oldFlatCardinality, long newCapacity, boolean needsRemap) {
     }
@@ -518,13 +518,13 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * <p>
      * The avg subclass overrides this to additionally merge per-position counts.
      *
-     * @param destDataPtr pointer to dest's data section
-     * @param srcDataPtr  pointer to src's data section
-     * @param destShape   dest's current shape (after any growth)
-     * @param srcShape    src's shape
-     * @param srcFlatCardinality  number of elements in src's data
-     * @param destValue   dest's MapValue (for subclass access to extra slots)
-     * @param srcValue    src's MapValue (for subclass access to extra slots)
+     * @param destDataPtr        pointer to dest's data section
+     * @param srcDataPtr         pointer to src's data section
+     * @param destShape          dest's current shape (after any growth)
+     * @param srcShape           src's shape
+     * @param srcFlatCardinality number of elements in src's data
+     * @param destValue          dest's MapValue (for subclass access to extra slots)
+     * @param srcValue           src's MapValue (for subclass access to extra slots)
      */
     protected void mergeValues(long destDataPtr, long srcDataPtr, int[] destShape, int[] srcShape, int srcFlatCardinality, MapValue destValue, MapValue srcValue) {
         onBeforeMerge(destValue, srcValue);
