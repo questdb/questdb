@@ -107,6 +107,7 @@ public class QwpTudCache implements QuietCloseable {
         }
         if (distressed) {
             tableUpdateDetails.clear();
+            distressed = false;
         }
     }
 
