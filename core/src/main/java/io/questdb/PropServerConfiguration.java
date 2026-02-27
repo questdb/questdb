@@ -3843,11 +3843,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPartitionEncoderParquetRowGroupSize() {
-            return partitionEncoderParquetRowGroupSize;
-        }
-
-        @Override
         public long getPartitionEncoderParquetO3RewriteUnusedMaxBytes() {
             return partitionEncoderParquetO3RewriteUnusedMaxBytes;
         }
@@ -3855,6 +3850,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getPartitionEncoderParquetO3RewriteUnusedRatio() {
             return partitionEncoderParquetO3RewriteUnusedRatio;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetRowGroupSize() {
+            return partitionEncoderParquetRowGroupSize;
         }
 
         @Override
