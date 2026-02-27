@@ -42,7 +42,6 @@ import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
-import io.questdb.network.IODispatcherLinux;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -102,50 +101,28 @@ public class HttpServer implements Closeable {
         this.activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
         this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, selectCache, activeConnectionTracker);
         this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
+        networkSharedPool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
-        final boolean processIoOnLinuxDispatcherThread = dispatcher instanceof IODispatcherLinux;
-        if (processIoOnLinuxDispatcherThread) {
-            // Linux experiment mode: execute socket readiness handling and HTTP operation
-            // processing on the dispatcher thread to eliminate dispatcher->worker hand-over.
-            final HttpRequestProcessorSelector selector = selectors.getQuick(0);
-            final IORequestProcessor<HttpConnectionContext> processor =
-                    (operation, context, dispatcher)
-                            -> handleClientOperation(context, operation, selector, rescheduleContext, dispatcher);
-            ((IODispatcherLinux<HttpConnectionContext>) dispatcher).setInDispatcherRequestProcessor(processor);
-
-            networkSharedPool.assign(0, dispatcher);
-            networkSharedPool.assign(0, rescheduleContext);
-            networkSharedPool.assign(0, new Job() {
-                @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    return rescheduleContext.runReruns(selector);
-                }
-            });
-        } else {
-            networkSharedPool.assign(dispatcher);
-            networkSharedPool.assign(rescheduleContext);
-
-            for (int i = 0; i < workerCount; i++) {
-                final int index = i;
-
-                networkSharedPool.assign(i, new Job() {
-
-                    private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
-                    private final IORequestProcessor<HttpConnectionContext> processor =
-                            (operation, context, dispatcher)
-                                    -> handleClientOperation(context, operation, selector, rescheduleContext, dispatcher);
-
-                    @Override
-                    public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                        boolean useful = dispatcher.processIOQueue(processor);
-                        useful |= rescheduleContext.runReruns(selector);
-                        return useful;
-                    }
-                });
-            }
-        }
+        networkSharedPool.assign(rescheduleContext);
 
         for (int i = 0; i < workerCount; i++) {
+            final int index = i;
+
+            networkSharedPool.assign(i, new Job() {
+
+                private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
+                private final IORequestProcessor<HttpConnectionContext> processor =
+                        (operation, context, dispatcher)
+                                -> handleClientOperation(context, operation, selector, rescheduleContext, dispatcher);
+
+                @Override
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                    boolean useful = dispatcher.processIOQueue(processor);
+                    useful |= rescheduleContext.runReruns(selector);
+                    return useful;
+                }
+            });
+
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
             networkSharedPool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
