@@ -41,10 +41,10 @@ package io.questdb.cutlass.qwp.protocol;
  * </pre>
  * <p>
  * Formula:
- * <pre>
+ * <pre>{@code
  * encode(n) = (n << 1) ^ (n >> 63)  // for 64-bit
  * decode(n) = (n >>> 1) ^ -(n & 1)
- * </pre>
+ * }</pre>
  * <p>
  * This is useful when combined with varint encoding because small
  * negative numbers like -1 become small positive numbers (1), which

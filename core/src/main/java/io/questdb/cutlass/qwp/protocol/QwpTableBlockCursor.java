@@ -37,7 +37,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * Column cursors are managed internally and reused across table blocks.
  * <p>
  * <b>Usage:</b>
- * <pre>
+ * <pre>{@code
  * while (cursor.hasNextRow()) {
  *     cursor.nextRow();
  *     for (int col = 0; col < cursor.getColumnCount(); col++) {
@@ -48,7 +48,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  *         // read value based on type
  *     }
  * }
- * </pre>
+ * }</pre>
  */
 public class QwpTableBlockCursor implements Mutable {
 

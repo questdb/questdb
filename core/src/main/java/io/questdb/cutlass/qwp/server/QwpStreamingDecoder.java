@@ -48,7 +48,7 @@ import io.questdb.std.QuietCloseable;
  * </ul>
  * <p>
  * <b>Usage:</b>
- * <pre>
+ * <pre>{@code
  * QwpStreamingDecoder decoder = new QwpStreamingDecoder(schemaCache);
  * try {
  *     QwpMessageCursor message = decoder.decode(address, length);
@@ -68,7 +68,7 @@ import io.questdb.std.QuietCloseable;
  * } finally {
  *     decoder.reset(); // Prepare for next message
  * }
- * </pre>
+ * }</pre>
  * <p>
  * <b>Thread Safety:</b> Not thread-safe. Create one decoder per thread/connection.
  *
