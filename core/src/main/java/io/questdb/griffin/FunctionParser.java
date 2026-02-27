@@ -1311,7 +1311,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private Function functionToConstant(Function function) {
-        Function newFunction = functionToConstant0(function);
+        Function newFunction;
+        try {
+            newFunction = functionToConstant0(function);
+        } catch (Throwable th) {
+            function.close();
+            throw th;
+        }
+
         // Sometimes functionToConstant0 returns same instance as passed in parameter
         if (newFunction != function) {
             // and we want to close underlying function only in case it's different form returned newFunction
