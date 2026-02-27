@@ -212,6 +212,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             // Connection is closing anyway, ignore
         }
         state.onDisconnected();
+        // Free native resources (bufferAddress, ddlMem, path, symbolCachePool).
+        // set(null) calls Misc.freeIfCloseable(state) → state.close() and removes
+        // the entry so that localValueMap.disconnect() won't call onDisconnected() again.
+        LV.set(context, null);
     }
 
     @Override
