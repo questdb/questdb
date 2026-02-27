@@ -217,6 +217,12 @@ public class QwpTableHeader {
         }
         QwpVarint.decode(address + offset, limit, decodeResult);
         this.rowCount = decodeResult.value;
+        if (rowCount > Integer.MAX_VALUE) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED,
+                    "row count exceeds maximum: " + rowCount
+            );
+        }
         offset += decodeResult.bytesRead;
 
         // Parse column count

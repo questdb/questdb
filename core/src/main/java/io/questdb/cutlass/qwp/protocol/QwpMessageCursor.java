@@ -149,7 +149,14 @@ public class QwpMessageCursor implements Mutable {
         currentTableIndex++;
         tableBlockCursor.clear();
 
-        int remainingBytes = (int) (payloadEnd - currentTableAddress);
+        long remaining = payloadEnd - currentTableAddress;
+        if (remaining < 0 || remaining > Integer.MAX_VALUE) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "remaining payload size out of range: " + remaining
+            );
+        }
+        int remainingBytes = (int) remaining;
         int consumed = tableBlockCursor.of(
                 currentTableAddress, remainingBytes, gorillaEnabled, schemaCache,
                 connectionSymbolDict, deltaSymbolDictEnabled);

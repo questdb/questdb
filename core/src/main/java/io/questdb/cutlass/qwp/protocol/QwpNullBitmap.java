@@ -304,7 +304,7 @@ public final class QwpNullBitmap {
      * @param rowCount number of rows
      * @return bitmap size in bytes
      */
-    public static int sizeInBytes(long rowCount) {
-        return (int) ((rowCount + 7) / 8);
+    public static int sizeInBytes(int rowCount) {
+        return (rowCount + 7) >>> 3;
     }
 }

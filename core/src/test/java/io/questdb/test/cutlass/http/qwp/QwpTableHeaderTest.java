@@ -246,9 +246,27 @@ public class QwpTableHeaderTest {
     }
 
     @Test
-    public void testRowCountLarge() throws QwpParseException {
-        // Test with very large row count
-        long rowCount = Long.MAX_VALUE >> 1; // Very large but valid
+    public void testRowCountExceedsIntMax() {
+        // Row count just above Integer.MAX_VALUE must be rejected
+        long rowCount = (long) Integer.MAX_VALUE + 1;
+        byte[] buf = encodeTableHeader("test", rowCount, 5);
+
+        long address = copyToDirectMemory(buf);
+        try {
+            QwpTableHeader header = new QwpTableHeader();
+            header.parse(address, buf.length);
+            Assert.fail("Expected exception for row count exceeding int range");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testRowCountIntMaxAllowed() throws QwpParseException {
+        // Integer.MAX_VALUE itself must be accepted
+        long rowCount = Integer.MAX_VALUE;
         byte[] buf = encodeTableHeader("test", rowCount, 5);
 
         long address = copyToDirectMemory(buf);
@@ -257,6 +275,24 @@ public class QwpTableHeaderTest {
             header.parse(address, buf.length);
 
             Assert.assertEquals(rowCount, header.getRowCount());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testRowCountLarge() {
+        // Very large row count must be rejected
+        long rowCount = Long.MAX_VALUE >> 1;
+        byte[] buf = encodeTableHeader("test", rowCount, 5);
+
+        long address = copyToDirectMemory(buf);
+        try {
+            QwpTableHeader header = new QwpTableHeader();
+            header.parse(address, buf.length);
+            Assert.fail("Expected exception for row count exceeding int range");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
         } finally {
             Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
         }
