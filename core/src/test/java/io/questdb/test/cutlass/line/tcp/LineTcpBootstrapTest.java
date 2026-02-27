@@ -142,8 +142,19 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                     for (int i = 0; i < 1_000_000; i++) {
                         sender.table("x").stringColumn("a", "42").atNow();
                     }
-                    Assert.fail();
-                } catch (LineSenderException expected) {
+                    // TCP buffering may allow the loop above to complete before the
+                    // server processes the type mismatch and closes the connection.
+                    // Keep flushing until the disconnect propagates to the client.
+                    assertEventually(() -> {
+                        try {
+                            sender.table("x").stringColumn("a", "42").atNow();
+                            sender.flush();
+                            Assert.fail("Server did not disconnect the client");
+                        } catch (LineSenderException ignored) {
+                        }
+                    });
+                } catch (LineSenderException ignored) {
+                    // Expected: server disconnects the client due to type mismatch
                 }
             }
         });
