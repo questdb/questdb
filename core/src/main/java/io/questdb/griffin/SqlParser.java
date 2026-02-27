@@ -2641,66 +2641,66 @@ public class SqlParser {
 
             final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
             if (tt != null && tt.isView()) {
-            compileViewQuery(model, tt, lexer.lastTokenPosition());
-            tok = setModelAliasAndTimestamp(lexer, model);
-            // expect "(" in case of sub-query
-        } else if (Chars.equals(tok, '(') || proposedNested != null) {
-            if (proposedNested == null) {
-                proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
-            }
+                compileViewQuery(model, tt, lexer.lastTokenPosition());
+                tok = setModelAliasAndTimestamp(lexer, model);
+                // expect "(" in case of sub-query
+            } else if (Chars.equals(tok, '(') || proposedNested != null) {
+                if (proposedNested == null) {
+                    proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
+                }
 
-            tok = optTok(lexer);
+                tok = optTok(lexer);
 
-            // do not collapse aliased sub-queries or those that have timestamp()
-            // select * from (table) x
-            if (tok == null || (tableAliasStop.contains(tok) && !isTimestampKeyword(tok))) {
-                final QueryModel target = proposedNested.getNestedModel();
-                // when * is artificial, there is no union, there is no "where" clause inside sub-query,
-                // e.g. there was no "select * from" we should collapse sub-query to a regular table
-                if (
-                        proposedNested.isArtificialStar()
-                                && proposedNested.getUnionModel() == null
-                                && target.getWhereClause() == null
-                                && target.getOrderBy().size() == 0
-                                && target.getLatestBy().size() == 0
-                                && target.getNestedModel() == null
-                                && target.getSampleBy() == null
-                                && target.getGroupBy().size() == 0
-                                && proposedNested.getLimitLo() == null
-                                && proposedNested.getLimitHi() == null
-                                && target.getPivotForColumns().size() == 0
-                ) {
-                    model.setTableNameExpr(target.getTableNameExpr());
-                    model.setAlias(target.getAlias());
-                    model.setTimestamp(target.getTimestamp());
+                // do not collapse aliased sub-queries or those that have timestamp()
+                // select * from (table) x
+                if (tok == null || (tableAliasStop.contains(tok) && !isTimestampKeyword(tok))) {
+                    final QueryModel target = proposedNested.getNestedModel();
+                    // when * is artificial, there is no union, there is no "where" clause inside sub-query,
+                    // e.g. there was no "select * from" we should collapse sub-query to a regular table
+                    if (
+                            proposedNested.isArtificialStar()
+                                    && proposedNested.getUnionModel() == null
+                                    && target.getWhereClause() == null
+                                    && target.getOrderBy().size() == 0
+                                    && target.getLatestBy().size() == 0
+                                    && target.getNestedModel() == null
+                                    && target.getSampleBy() == null
+                                    && target.getGroupBy().size() == 0
+                                    && proposedNested.getLimitLo() == null
+                                    && proposedNested.getLimitHi() == null
+                                    && target.getPivotForColumns().size() == 0
+                    ) {
+                        model.setTableNameExpr(target.getTableNameExpr());
+                        model.setAlias(target.getAlias());
+                        model.setTimestamp(target.getTimestamp());
 
-                    int n = target.getJoinModels().size();
-                    for (int i = 1; i < n; i++) {
-                        model.addJoinModel(target.getJoinModels().getQuick(i));
+                        int n = target.getJoinModels().size();
+                        for (int i = 1; i < n; i++) {
+                            model.addJoinModel(target.getJoinModels().getQuick(i));
+                        }
+                        proposedNested = null;
+                    } else {
+                        lexer.unparseLast();
                     }
-                    proposedNested = null;
                 } else {
                     lexer.unparseLast();
                 }
+
+                if (proposedNested != null) {
+                    model.setNestedModel(proposedNested);
+                    model.setNestedModelIsSubQuery(true);
+                    tok = setModelAliasAndTimestamp(lexer, model);
+                }
             } else {
                 lexer.unparseLast();
-            }
-
-            if (proposedNested != null) {
-                model.setNestedModel(proposedNested);
-                model.setNestedModelIsSubQuery(true);
+                parseSelectFrom(lexer, model, masterModel.getWithClauses(), sqlParserCallback);
                 tok = setModelAliasAndTimestamp(lexer, model);
-            }
-        } else {
-            lexer.unparseLast();
-            parseSelectFrom(lexer, model, masterModel.getWithClauses(), sqlParserCallback);
-            tok = setModelAliasAndTimestamp(lexer, model);
 
-            // expect [latest by] (deprecated syntax)
-            if (tok != null && isLatestKeyword(tok)) {
-                parseLatestBy(lexer, model);
-                tok = optTok(lexer);
-            }
+                // expect [latest by] (deprecated syntax)
+                if (tok != null && isLatestKeyword(tok)) {
+                    parseLatestBy(lexer, model);
+                    tok = optTok(lexer);
+                }
             }
         }
 
