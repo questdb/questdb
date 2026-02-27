@@ -28,6 +28,11 @@ import io.questdb.griffin.engine.join.JsonUnnestSource;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
+// Most tests use assertQueryNoLeakCheck() which re-executes the query to
+// verify cursor stability and checks factory memory. Tests that combine
+// JSON UNNEST with json_extract() use assertSql() instead, because
+// json_extract() lazily allocates ~2MB internal buffers that trip the
+// factory memory check. See testJsonExtractWithJsonUnnest for details.
 public class JsonUnnestTest extends AbstractCairoTest {
 
     @Test
@@ -580,6 +585,26 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampOverflowThrowsError() throws Exception {
+        // Exercises the overflow check in getTimestamp() - a string value
+        // exceeding MAX_JSON_VALUE_SIZE in a TIMESTAMP column must throw.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            String bigTs = "2024-01-15T10:30:00.000000Z" + "x".repeat(5000);
+            execute("INSERT INTO t VALUES ('[{\"ts\":\"" + bigTs + "\"}]')");
+            assertExceptionNoLeakCheck(
+                    "SELECT u.ts FROM t, UNNEST("
+                            + "t.payload COLUMNS(ts TIMESTAMP)"
+                            + ") u",
+                    0,
+                    "JSON UNNEST: value exceeds maximum size of "
+                            + JsonUnnestSource.MAX_JSON_VALUE_SIZE
+                            + " bytes for column 'ts'"
+            );
+        });
+    }
+
+    @Test
     public void testUnicodeStringsInJson() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -634,10 +659,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (payload VARCHAR)");
             // 1366 CJK characters x 3 bytes each = 4098 bytes > 4096
             int charCount = (JsonUnnestSource.MAX_JSON_VALUE_SIZE / 3) + 2;
-            StringBuilder bigVal = new StringBuilder(charCount);
-            for (int i = 0; i < charCount; i++) {
-                bigVal.append('\u4e16'); // '世' = 3 bytes in UTF-8
-            }
+            String bigVal = "\u4e16".repeat(charCount); // '世' = 3 bytes in UTF-8
             execute("INSERT INTO t VALUES ('[{\"s\":\"" + bigVal + "\"}]')");
             assertExceptionNoLeakCheck(
                     "SELECT u.s FROM t, UNNEST("
@@ -657,10 +679,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         // rather than silently truncating or returning NULL.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
-            StringBuilder bigVal = new StringBuilder(5000);
-            for (int i = 0; i < 5000; i++) {
-                bigVal.append('x');
-            }
+            String bigVal = "x".repeat(5000);
             execute("INSERT INTO t VALUES ('[{\"s\":\"" + bigVal + "\"}]')");
             assertExceptionNoLeakCheck(
                     "SELECT u.s FROM t, UNNEST("
@@ -1077,10 +1096,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             int cap = JsonUnnestSource.MAX_JSON_VALUE_SIZE;
-            StringBuilder exactVal = new StringBuilder(cap);
-            for (int i = 0; i < cap; i++) {
-                exactVal.append('a');
-            }
+            String exactVal = "a".repeat(cap);
             execute("INSERT INTO t VALUES ('[{\"s\":\"" + exactVal + "\"}]')");
             assertSql(
                     "s\n"
