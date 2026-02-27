@@ -85,6 +85,24 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
+    public void testCacheHashCollisionDoesNotReturnWrongTable() {
+        // "AaAa" and "BBBB" have identical String.hashCode() (2031744)
+        String tableA = "AaAa";
+        String tableB = "BBBB";
+        Assert.assertEquals(tableA.hashCode(), tableB.hashCode());
+
+        QwpSchemaCache cache = new QwpSchemaCache();
+        QwpSchema schemaA = createTestSchema("colA", QwpConstants.TYPE_INT);
+
+        cache.put(tableA, schemaA);
+
+        // Same schema hash, colliding table name hash — must NOT return tableA's schema
+        Assert.assertNull(cache.get(tableB, schemaA.getSchemaHash()));
+        // tableA itself must still resolve
+        Assert.assertNotNull(cache.get(tableA, schemaA.getSchemaHash()));
+    }
+
+    @Test
     public void testCacheHit() {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);

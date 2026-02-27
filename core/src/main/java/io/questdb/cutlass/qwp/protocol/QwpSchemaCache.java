@@ -33,10 +33,14 @@ import io.questdb.std.str.Utf8s;
  * <p>
  * Keyed by combined hash of (tableName, schemaHash).
  * Single-threaded, zero-allocation on lookups.
+ * <p>
+ * Each entry stores the table name alongside the schema to guard against
+ * hash collisions: two tables whose name hashes collide will not return
+ * each other's schemas.
  */
 public class QwpSchemaCache {
 
-    private final LongObjHashMap<QwpSchema> cache;
+    private final LongObjHashMap<Entry> cache;
     private long hits;
     private long misses;
 
@@ -56,24 +60,24 @@ public class QwpSchemaCache {
 
     public QwpSchema get(String tableName, long schemaHash) {
         long key = combineKey(tableName.hashCode(), schemaHash);
-        QwpSchema schema = cache.get(key);
-        if (schema != null) {
+        Entry entry = cache.get(key);
+        if (entry != null && entry.tableName.equals(tableName)) {
             hits++;
-        } else {
-            misses++;
+            return entry.schema;
         }
-        return schema;
+        misses++;
+        return null;
     }
 
     public QwpSchema get(DirectUtf8Sequence tableName, long schemaHash) {
         long key = combineKey(Utf8s.hashCode(tableName), schemaHash);
-        QwpSchema schema = cache.get(key);
-        if (schema != null) {
+        Entry entry = cache.get(key);
+        if (entry != null && Utf8s.equalsUtf16(entry.tableName, tableName)) {
             hits++;
-        } else {
-            misses++;
+            return entry.schema;
         }
-        return schema;
+        misses++;
+        return null;
     }
 
     public double getHitRate() {
@@ -91,7 +95,7 @@ public class QwpSchemaCache {
 
     public void put(String tableName, QwpSchema schema) {
         long key = combineKey(tableName.hashCode(), schema.getSchemaHash());
-        cache.put(key, schema);
+        cache.put(key, new Entry(tableName, schema));
     }
 
     public int size() {
@@ -100,5 +104,15 @@ public class QwpSchemaCache {
 
     private static long combineKey(int tableNameHash, long schemaHash) {
         return ((long) tableNameHash << 32) ^ schemaHash;
+    }
+
+    private static class Entry {
+        final QwpSchema schema;
+        final String tableName;
+
+        Entry(String tableName, QwpSchema schema) {
+            this.tableName = tableName;
+            this.schema = schema;
+        }
     }
 }
