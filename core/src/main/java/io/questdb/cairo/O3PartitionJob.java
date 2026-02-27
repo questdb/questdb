@@ -65,8 +65,6 @@ import static io.questdb.cairo.TableWriter.*;
 
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
-    // Must match DEFAULT_ROW_GROUP_SIZE in core/rust/qdbr/src/parquet_write/file.rs.
-    private static final int DEFAULT_ROW_GROUP_SIZE = 100_000;
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
 
     public O3PartitionJob(MessageBus messageBus) {
@@ -122,6 +120,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER
                 );
 
+                // Validate that the Parquet file's column count matches the current table schema.
+                // O3 merge does not support column remapping, so ADD/DROP COLUMN after
+                // converting to Parquet requires reconverting the partition first.
+                final int parquetColumnCount = partitionDecoder.metadata().getColumnCount();
+                final int columnCount = tableWriterMetadata.getColumnCount();
+                int activeColumnCount = 0;
+                for (int i = 0; i < columnCount; i++) {
+                    if (tableWriterMetadata.getColumnType(i) >= 0) {
+                        activeColumnCount++;
+                    }
+                }
+                if (activeColumnCount != parquetColumnCount) {
+                    throw CairoException.critical(0)
+                            .put("O3 merge requires Parquet partition column count to match table schema")
+                            .put(" [table=").put(tableWriter.getTableToken())
+                            .put(", parquetColumns=").put(parquetColumnCount)
+                            .put(", tableColumns=").put(activeColumnCount)
+                            .put(']');
+                }
+
                 final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
                 assert rowGroupCount > 0;
                 // Row group indices are passed as i16 through JNI to Rust. The Parquet
@@ -145,8 +163,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // for API completeness, we'll use the same configuration as the initial partition encoder.
                 final int compressionCodec = cairoConfiguration.getPartitionEncoderParquetCompressionCodec();
                 final int compressionLevel = cairoConfiguration.getPartitionEncoderParquetCompressionLevel();
-                final int configuredRowGroupSize = cairoConfiguration.getPartitionEncoderParquetRowGroupSize();
-                final int rowGroupSize = configuredRowGroupSize > 0 ? configuredRowGroupSize : DEFAULT_ROW_GROUP_SIZE;
+                final int rowGroupSize = cairoConfiguration.getPartitionEncoderParquetRowGroupSize();
+                assert rowGroupSize >= 4;
                 final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
                 final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
@@ -383,7 +401,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // Rewrite mode: original is intact. Remove the new directory.
                     Path newPath = Path.getThreadLocal2(pathToTable);
                     setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
-                    ff.rmdir(newPath.slash());
+                    if (!ff.rmdir(newPath.slash())) {
+                        LOG.error().$("could not remove new partition directory after failed rewrite [path=").$(newPath).I$();
+                    }
                 }
                 throw e;
             } finally {
@@ -1833,12 +1853,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int metadataPosition,
             long[] mergeDstBufs
     ) {
-        // decode column chunks for the row group in advance
         parquetColumns.clear();
         int timestampColumnChunkIndex = -1;
-        // TODO(eugene): Verify Parquet and TableWriter metadata consistency.
-        // Currently assuming metadata is in sync and consistent, as there were no column operations.
-        // After table DDL implementation, this may no longer hold true, so index remapping is required.
         final int columnCount = tableWriterMetadata.getColumnCount();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = tableWriterMetadata.getColumnType(columnIndex);

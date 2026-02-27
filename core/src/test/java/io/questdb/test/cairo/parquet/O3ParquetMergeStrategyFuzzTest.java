@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.fuzz;
+package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
@@ -35,6 +35,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;

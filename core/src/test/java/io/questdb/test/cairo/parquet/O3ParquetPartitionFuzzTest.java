@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo.fuzz;
+package io.questdb.test.cairo.parquet;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;

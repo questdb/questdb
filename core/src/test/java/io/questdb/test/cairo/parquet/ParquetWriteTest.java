@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
@@ -42,11 +42,146 @@ import org.junit.Test;
 public class ParquetWriteTest extends AbstractCairoTest {
 
     @Test
+    public void testO3AfterAddColumnSuspendsTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, s SYMBOL, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, s, ts) VALUES
+                            (1, 'a', '2020-01-01T00:00:00.000Z'),
+                            (2, 'b', '2020-01-01T06:00:00.000Z'),
+                            (3, 'a', '2020-01-01T12:00:00.000Z'),
+                            (4, 'c', '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, s, ts) VALUES (100, 'd', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Add a new column after converting to Parquet.
+            // The Parquet file has 3 columns (x, s, ts), the table now has 4 (x, s, ts, y).
+            execute("ALTER TABLE x ADD COLUMN y DOUBLE");
+            drainWalQueue();
+
+            // O3 insert into the parquet partition that overlaps existing data.
+            // The merge fails because O3 merge does not support column remapping:
+            // the Parquet file has 3 columns but the table schema now has 4.
+            // The partition must be reconverted before O3 merges can succeed.
+            execute(
+                    """
+                            INSERT INTO x(x, s, y, ts) VALUES
+                            (5, 'b', 1.5, '2020-01-01T03:00:00.000Z'),
+                            (6, 'a', 2.5, '2020-01-01T09:00:00.000Z'),
+                            (7, 'c', 3.5, '2020-01-01T15:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // The O3 merge failure suspends the table. The failing WAL transaction
+            // is rolled back, so the O3 rows are not visible. Original data remains intact.
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+        });
+    }
+
+    @Test
+    public void testO3MergeWithVarSizeColumnTop() throws Exception {
+        // Small row group size so the column-top covers entire row groups.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            // Insert 8 rows without the STRING column.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // Add STRING column. column_top = 8 for this partition.
+            execute("ALTER TABLE x ADD COLUMN s STRING");
+            drainWalQueue();
+
+            // Insert 4 more rows with s values.
+            execute(
+                    """
+                            INSERT INTO x(x, s, ts) VALUES
+                            (9, 'abc', '2020-01-01T08:00:00.000Z'),
+                            (10, 'def', '2020-01-01T09:00:00.000Z'),
+                            (11, 'ghi', '2020-01-01T10:00:00.000Z'),
+                            (12, 'jkl', '2020-01-01T11:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // 12 rows with row group size 4 → 3 row groups.
+            // RG0 (rows 0-3): s is entirely topped (column_top=8 ≥ 4)
+            // RG1 (rows 4-7): s is entirely topped (column_top=8 ≥ 8)
+            // RG2 (rows 8-11): s has actual data
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // O3 insert targeting RG0 (timestamp range 00:00-03:00).
+            // The merge decodes RG0 where s has column_top → null aux_ptr.
+            // Exercises the null source buffer allocation for var-size columns
+            // (STRING null markers need a non-zero data buffer).
+            execute(
+                    """
+                            INSERT INTO x(x, s, ts) VALUES
+                            (13, 'new', '2020-01-01T00:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            x\tts\ts
+                            1\t2020-01-01T00:00:00.000000Z\t
+                            13\t2020-01-01T00:30:00.000000Z\tnew
+                            2\t2020-01-01T01:00:00.000000Z\t
+                            3\t2020-01-01T02:00:00.000000Z\t
+                            4\t2020-01-01T03:00:00.000000Z\t
+                            5\t2020-01-01T04:00:00.000000Z\t
+                            6\t2020-01-01T05:00:00.000000Z\t
+                            7\t2020-01-01T06:00:00.000000Z\t
+                            8\t2020-01-01T07:00:00.000000Z\t
+                            9\t2020-01-01T08:00:00.000000Z\tabc
+                            10\t2020-01-01T09:00:00.000000Z\tdef
+                            11\t2020-01-01T10:00:00.000000Z\tghi
+                            12\t2020-01-01T11:00:00.000000Z\tjkl
+                            100\t2020-01-02T00:00:00.000000Z\t
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
     public void testRewriteAbsoluteUnusedBytesThreshold() throws Exception {
         // Use small row group size to get multiple row groups.
         // Disable ratio check (set to 1.0 = impossible to exceed).
         // Set absolute threshold very low so the second O3 triggers a rewrite.
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 3);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 100);
         assertMemoryLeak(() -> {
@@ -64,13 +199,15 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             (3, 'a', 'baz', '2020-01-01T02:00:00.000Z'),
                             (4, 'c', 'qux', '2020-01-01T03:00:00.000Z'),
                             (5, 'b', 'abc', '2020-01-01T04:00:00.000Z'),
-                            (6, 'a', 'def', '2020-01-01T05:00:00.000Z')
+                            (6, 'a', 'def', '2020-01-01T05:00:00.000Z'),
+                            (7, 'c', 'ghi', '2020-01-01T06:00:00.000Z'),
+                            (8, 'b', 'jkl', '2020-01-01T07:00:00.000Z')
                             """
             );
             execute("INSERT INTO x(x, s, v, ts) VALUES (100, 'd', 'end', '2020-01-02T00:00:00.000Z')");
             drainWalQueue();
 
-            // 6 rows with row group size 3 → 2 row groups.
+            // 8 rows with row group size 4 → 2 row groups.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
@@ -79,8 +216,8 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute(
                     """
                             INSERT INTO x(x, s, v, ts) VALUES
-                            (7, 'b', 'ghi', '2020-01-01T00:30:00.000Z'),
-                            (8, 'c', 'jkl', '2020-01-01T01:30:00.000Z')
+                            (9, 'b', 'mno', '2020-01-01T00:30:00.000Z'),
+                            (10, 'c', 'pqr', '2020-01-01T01:30:00.000Z')
                             """
             );
             drainWalQueue();
@@ -94,8 +231,8 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute(
                     """
                             INSERT INTO x(x, s, v, ts) VALUES
-                            (9, 'a', 'mno', '2020-01-01T03:30:00.000Z'),
-                            (10, 'c', 'pqr', '2020-01-01T04:30:00.000Z')
+                            (11, 'a', 'stu', '2020-01-01T04:30:00.000Z'),
+                            (12, 'c', 'vwx', '2020-01-01T05:30:00.000Z')
                             """
             );
             drainWalQueue();
@@ -107,15 +244,17 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     """
                             x\ts\tv\tts
                             1\ta\tfoo\t2020-01-01T00:00:00.000000Z
-                            7\tb\tghi\t2020-01-01T00:30:00.000000Z
+                            9\tb\tmno\t2020-01-01T00:30:00.000000Z
                             2\tb\tbar\t2020-01-01T01:00:00.000000Z
-                            8\tc\tjkl\t2020-01-01T01:30:00.000000Z
+                            10\tc\tpqr\t2020-01-01T01:30:00.000000Z
                             3\ta\tbaz\t2020-01-01T02:00:00.000000Z
                             4\tc\tqux\t2020-01-01T03:00:00.000000Z
-                            9\ta\tmno\t2020-01-01T03:30:00.000000Z
                             5\tb\tabc\t2020-01-01T04:00:00.000000Z
-                            10\tc\tpqr\t2020-01-01T04:30:00.000000Z
+                            11\ta\tstu\t2020-01-01T04:30:00.000000Z
                             6\ta\tdef\t2020-01-01T05:00:00.000000Z
+                            12\tc\tvwx\t2020-01-01T05:30:00.000000Z
+                            7\tc\tghi\t2020-01-01T06:00:00.000000Z
+                            8\tb\tjkl\t2020-01-01T07:00:00.000000Z
                             100\td\tend\t2020-01-02T00:00:00.000000Z
                             """,
                     "SELECT * FROM x"
@@ -189,7 +328,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         // Use small row group size to get multiple row groups.
         // Set ratio to 10% to trigger rewrite after one update round.
         // Disable absolute bytes threshold.
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 3);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.1");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
         assertMemoryLeak(() -> {
@@ -207,13 +346,15 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             (3, 'a', 'baz', '2020-01-01T02:00:00.000Z'),
                             (4, 'c', 'qux', '2020-01-01T03:00:00.000Z'),
                             (5, 'b', 'abc', '2020-01-01T04:00:00.000Z'),
-                            (6, 'a', 'def', '2020-01-01T05:00:00.000Z')
+                            (6, 'a', 'def', '2020-01-01T05:00:00.000Z'),
+                            (7, 'c', 'ghi', '2020-01-01T06:00:00.000Z'),
+                            (8, 'b', 'jkl', '2020-01-01T07:00:00.000Z')
                             """
             );
             execute("INSERT INTO x(x, s, v, ts) VALUES (100, 'd', 'end', '2020-01-02T00:00:00.000Z')");
             drainWalQueue();
 
-            // 6 rows with row group size 3 → 2 row groups.
+            // 8 rows with row group size 4 → 2 row groups.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
@@ -222,8 +363,8 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute(
                     """
                             INSERT INTO x(x, s, v, ts) VALUES
-                            (7, 'b', 'ghi', '2020-01-01T00:30:00.000Z'),
-                            (8, 'c', 'jkl', '2020-01-01T01:30:00.000Z')
+                            (9, 'b', 'mno', '2020-01-01T00:30:00.000Z'),
+                            (10, 'c', 'pqr', '2020-01-01T01:30:00.000Z')
                             """
             );
             drainWalQueue();
@@ -235,8 +376,8 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute(
                     """
                             INSERT INTO x(x, s, v, ts) VALUES
-                            (9, 'a', 'mno', '2020-01-01T03:30:00.000Z'),
-                            (10, 'c', 'pqr', '2020-01-01T04:30:00.000Z')
+                            (11, 'a', 'stu', '2020-01-01T04:30:00.000Z'),
+                            (12, 'c', 'vwx', '2020-01-01T05:30:00.000Z')
                             """
             );
             drainWalQueue();
@@ -248,15 +389,17 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     """
                             x\ts\tv\tts
                             1\ta\tfoo\t2020-01-01T00:00:00.000000Z
-                            7\tb\tghi\t2020-01-01T00:30:00.000000Z
+                            9\tb\tmno\t2020-01-01T00:30:00.000000Z
                             2\tb\tbar\t2020-01-01T01:00:00.000000Z
-                            8\tc\tjkl\t2020-01-01T01:30:00.000000Z
+                            10\tc\tpqr\t2020-01-01T01:30:00.000000Z
                             3\ta\tbaz\t2020-01-01T02:00:00.000000Z
                             4\tc\tqux\t2020-01-01T03:00:00.000000Z
-                            9\ta\tmno\t2020-01-01T03:30:00.000000Z
                             5\tb\tabc\t2020-01-01T04:00:00.000000Z
-                            10\tc\tpqr\t2020-01-01T04:30:00.000000Z
+                            11\ta\tstu\t2020-01-01T04:30:00.000000Z
                             6\ta\tdef\t2020-01-01T05:00:00.000000Z
+                            12\tc\tvwx\t2020-01-01T05:30:00.000000Z
+                            7\tc\tghi\t2020-01-01T06:00:00.000000Z
+                            8\tb\tjkl\t2020-01-01T07:00:00.000000Z
                             100\td\tend\t2020-01-02T00:00:00.000000Z
                             """,
                     "SELECT * FROM x"
