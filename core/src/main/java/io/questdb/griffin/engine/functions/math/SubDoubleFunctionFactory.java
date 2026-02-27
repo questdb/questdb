@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -46,7 +45,7 @@ public class SubDoubleFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends DoubleFunction implements BinaryFunction {
+    private static class Func extends DoubleFunction implements ArithmeticBinaryFunction {
         private final Function left;
         private final Function right;
 

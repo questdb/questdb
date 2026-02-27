@@ -35,7 +35,9 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -48,14 +50,16 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
-import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.log.Log;
@@ -68,9 +72,9 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -92,7 +96,7 @@ import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
-public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable, CopyExportRequestTask.StreamWriteParquetCallBack {
+public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
     static final int QUERY_DONE = 1;
     static final int QUERY_METADATA = 2;
     static final int QUERY_PARQUET_EXPORT_DATA = 14;
@@ -114,7 +118,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<ExportQueryProcessorState> LV = new LocalValue<>();
-    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
     private final Decimal128 decimal128 = new Decimal128();
@@ -124,10 +127,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final byte requiredAuthType;
-    private final HTTPSerialParquetExporter serialParquetExporter;
-    private final SqlExecutionContextImpl sqlExecutionContext;
-    private HttpConnectionContext currentContext;
-    private long timeout;
+    private final int sharedWorkerCount;
 
     public ExportQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -136,9 +136,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        this.serialParquetExporter = new HTTPSerialParquetExporter(engine);
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
+        this.sharedWorkerCount = sharedQueryWorkerCount;
         this.metrics = engine.getMetrics();
         this.engine = engine;
         maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
@@ -147,7 +145,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     @Override
     public void close() {
-        Misc.free(circuitBreaker);
     }
 
     public void execute(
@@ -157,7 +154,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
-            circuitBreaker.setTimeout(timeout);
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+            circuitBreaker.setTimeout(state.timeout);
             circuitBreaker.resetTimer();
             state.recordCursorFactory = context.getSelectCache().poll(state.sqlText);
             sqlExecutionContext.with(
@@ -192,13 +191,33 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             if (state.recordCursorFactory != null) {
                 try {
                     boolean runQuery = true;
-                    boolean canStreamExportParquet = state.getExportModel().isParquetFormat() && CopyExportContext.canStreamExportParquet(state.recordCursorFactory);
+                    boolean isParquet = state.getExportModel().isParquetFormat();
                     final int order = state.recordCursorFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
                     state.descending = order == ORDER_DESC;
+                    if (isParquet) {
+                        state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending);
+                    }
                     for (int retries = 0; runQuery; retries++) {
                         try {
-                            if (canStreamExportParquet) {
-                                state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(sqlExecutionContext, order);
+                            if (isParquet) {
+                                switch (state.parquetExportMode) {
+                                    case DIRECT_PAGE_FRAME ->
+                                            state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(sqlExecutionContext, order);
+                                    case PAGE_FRAME_BACKED -> {
+                                        // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
+                                        // when unwrapped instanceof VirtualRecordCursorFactory.
+                                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
+                                        VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
+                                        state.pageFrameCursor = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                                    }
+                                    case CURSOR_BASED ->
+                                            state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                                    case TEMP_TABLE -> {
+                                        // No cursor needed; createOp will re-execute the query
+                                    }
+                                    default ->
+                                            throw CairoException.nonCritical().put("unsupported parquet export mode: ").put(state.parquetExportMode.name());
+                                }
                             } else {
                                 state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                             }
@@ -219,7 +238,21 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                 }
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
                             }
+                            if (isParquet) {
+                                state.parquetExportMode = ParquetExportMode.determineExportMode(state.recordCursorFactory, state.descending);
+                            }
                         }
+                    }
+                    // Set up materializer for parquet export modes that need it
+                    if (isParquet && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
+                        // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
+                        // when unwrapped instanceof VirtualRecordCursorFactory.
+                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
+                        VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
+                        state.pageFrameCursor.setStreamingMode(true);
+                        state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
+                    } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
+                        state.materializer.setUp(state.recordCursorFactory.getMetadata());
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
@@ -238,6 +271,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
         } catch (SqlException | ImplicitCastException e) {
             syntaxError(context.getChunkedResponse(), state, e);
+            state.clear();
             readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
             internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
@@ -270,7 +304,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
 
         HttpChunkedResponse response = context.getChunkedResponse();
-        if (parseUrl(response, context.getRequestHeader(), state)) {
+        if (parseUrl(response, context.getRequestHeader(), state, context)) {
             execute(context, state);
         } else {
             readyForNextRequest(context);
@@ -278,37 +312,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     @Override
-    public void onWrite(long dataPtr, long dataLen) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (dataLen <= 0) {
-            return;
-        }
-        assert currentContext != null;
-        ExportQueryProcessorState state = LV.get(currentContext);
-        HttpChunkedResponse response = currentContext.getChunkedResponse();
-        if (state.firstParquetWriteCall) {
-            state.firstParquetWriteCall = false;
-            if (!state.getExportModel().isNoDelay()) {
-                header(response, state, 200);
-            }
-        }
-
-        while (state.parquetFileOffset < dataLen) {
-            long remainingSize = dataLen - state.parquetFileOffset;
-            int sendLSize = (int) Math.min(Integer.MAX_VALUE, remainingSize);
-
-            state.parquetFileOffset += response.writeBytes(dataPtr + state.parquetFileOffset, sendLSize);
-            response.bookmark();
-            response.sendChunk(false);
-        }
-
-        state.parquetFileOffset = 0;
-    }
-
-    @Override
     public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
         ExportQueryProcessorState state = LV.get(context);
         if (state != null) {
             state.pausedQuery = pausedQuery;
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.rnd = sqlExecutionContext.getRandom();
         }
     }
@@ -460,6 +468,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         assert state.copyID == -1;
         CopyExportContext.ExportTaskEntry entry = null;
         try {
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             var securityContext = context.getSecurityContext();
             var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
             var copyExportContext = engine.getCopyExportContext();
@@ -473,7 +482,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
             state.copyID = entry.getId();
             state.firstParquetWriteCall = true;
-            if (state.pageFrameCursor == null) { // cannot stream parquet export
+            if (state.parquetExportMode == ParquetExportMode.TEMP_TABLE) {
                 String tableName = getTableName(state.copyID);
                 state.setParquetExportTableName(tableName);
                 var createOp = copyExportContext.validateAndCreateParquetExportTableOp(
@@ -484,7 +493,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         "",
                         0
                 );
-
                 state.setParquetTempTableCreate(createOp);
             }
         } catch (Throwable th) {
@@ -629,19 +637,24 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             CopyExportContext.ExportTaskEntry entry = null;
             boolean cleanup = true;
             try {
+                SqlExecutionContextImpl sqlExecutionContext = state.getHttpConnectionContext().getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
                 var copyExportContext = engine.getCopyExportContext();
                 entry = copyExportContext.getEntry(state.copyID);
+                HTTPSerialParquetExporter exporter = state.getOrCreateSerialParquetExporter(engine);
                 if (state.serialExporterInit) {
-                    serialParquetExporter.of(state.task);
-                    serialParquetExporter.process();
+                    exporter.of(state.task);
+                    exporter.setExportMode(state.parquetExportMode);
+                    exporter.process();
                     return;
                 }
+                state.initWriteCallback(this);
                 int nowTimestampType = sqlExecutionContext.getNowTimestampType();
                 long now = sqlExecutionContext.getNow(nowTimestampType);
+                var exportMode = state.parquetExportMode;
                 state.task.of(
                         entry,
-                        state.getParquetTempTableCreate(),
-                        state.getParquetExportTableName(),
+                        exportMode == ParquetExportMode.TEMP_TABLE ? state.getParquetTempTableCreate() : null,
+                        exportMode == ParquetExportMode.TEMP_TABLE ? state.getParquetExportTableName() : null,
                         state.fileName,
                         state.getExportModel().getCompressionCodec(),
                         state.getExportModel().getCompressionLevel(),
@@ -653,15 +666,42 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         nowTimestampType,
                         now,
                         state.descending,
-                        state.pageFrameCursor,
+                        exportMode == ParquetExportMode.DIRECT_PAGE_FRAME ? state.pageFrameCursor : null,
                         state.metadata,
-                        this
+                        state.getWriteCallback(),
+                        exportMode,
+                        null
                 );
-
-                serialParquetExporter.of(state.task);
-                state.task.setUpStreamPartitionParquetExporter();
+                exporter.of(state.task);
+                exporter.setExportMode(exportMode);
+                switch (exportMode) {
+                    case DIRECT_PAGE_FRAME -> state.task.setUpStreamPartitionParquetExporter();
+                    case PAGE_FRAME_BACKED -> {
+                        PageFrameCursor pfc = state.pageFrameCursor;
+                        HybridColumnMaterializer mat = state.materializer;
+                        DirectLongList matData = state.materializerColumnData;
+                        RecordMetadata adjustedMeta = mat.getAdjustedMetadata();
+                        state.task.getStreamPartitionParquetExporter().setUp(
+                                adjustedMeta, pfc, mat.getBaseColumnMap()
+                        );
+                        exporter.setupPageFrameBackedExport(pfc, mat, matData);
+                        state.pageFrameCursor = null;
+                    }
+                    case CURSOR_BASED -> {
+                        RecordCursor cur = state.cursor;
+                        HybridColumnMaterializer mat = state.materializer;
+                        DirectLongList matData = state.materializerColumnData;
+                        RecordMetadata adjustedMeta = mat.getAdjustedMetadata();
+                        state.task.getStreamPartitionParquetExporter().setUp(adjustedMeta);
+                        exporter.setupCursorBasedExport(cur, mat, matData);
+                        state.cursor = null;
+                    }
+                    case TEMP_TABLE -> {
+                        // Stream partition parquet exporter set up in process() after temp table is created
+                    }
+                }
                 state.serialExporterInit = true;
-                serialParquetExporter.process();
+                exporter.process();
             } catch (PeerIsSlowToReadException e) {
                 cleanup = false;
                 throw e;
@@ -780,9 +820,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (state == null) {
             return;
         }
-        currentContext = context;
 
-        // copy random during query resume
+        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
         sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
@@ -972,7 +1012,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private boolean parseUrl(
             HttpChunkedResponse response,
             HttpRequestHeader request,
-            ExportQueryProcessorState state
+            ExportQueryProcessorState state,
+            HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Query text.
         final DirectUtf8Sequence query = request.getUrlParam(URL_PARAM_QUERY);
@@ -1053,21 +1094,35 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
         }
 
-        if (exportModel.isParquetFormat()) { // parquet use export timeout
-            timeout = configuration.getExportTimeout();
-        } else { // csv use query timeout
-            timeout = circuitBreaker.getDefaultMaxTime();
+        final long defaultTimeout;
+        // Timeout policy:
+        // - Parquet uses the dedicated export timeout.
+        // - CSV uses the circuit breaker default (query timeout). This keeps the
+        //   historical behavior where CSV is bounded by general query limits,
+        //   at the cost of a format-specific difference. If we later decide to
+        //   unify exports under a single timeout, this is the place to change.
+        if (exportModel.isParquetFormat()) {
+            defaultTimeout = configuration.getExportTimeout();
+        } else {
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            defaultTimeout = circuitBreaker.getDefaultMaxTime();
         }
+        state.timeout = defaultTimeout;
 
+        // URL param takes precedence over header
         DirectUtf8Sequence timeoutSeq = request.getUrlParam(URL_PARAM_TIMEOUT);
         if (timeoutSeq != null) {
             try {
-                timeout = Numbers.parseLong(timeoutSeq) * 1000;
-                if (timeout <= 0) {
-                    timeout = configuration.getExportTimeout();
-                }
+                long parsedTimeout = Numbers.parseLong(timeoutSeq) * 1000;
+                state.timeout = parsedTimeout > 0 ? parsedTimeout : defaultTimeout;
             } catch (NumericException ex) {
-                // Skip or stop will have default value.
+                state.timeout = defaultTimeout;
+            }
+        } else {
+            // Check Statement-Timeout header (value is in milliseconds)
+            long statementTimeout = request.getStatementTimeout();
+            if (statementTimeout > 0) {
+                state.timeout = statementTimeout;
             }
         }
 
@@ -1294,5 +1349,31 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         response.status(200, CONTENT_TYPE_CSV);
         response.headers().setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();
+    }
+
+    void writeParquetData(ExportQueryProcessorState state, long dataPtr, long dataLen)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (dataLen <= 0) {
+            return;
+        }
+        HttpConnectionContext context = state.getHttpConnectionContext();
+        HttpChunkedResponse response = context.getChunkedResponse();
+        if (state.firstParquetWriteCall) {
+            state.firstParquetWriteCall = false;
+            if (!state.getExportModel().isNoDelay()) {
+                header(response, state, 200);
+            }
+        }
+
+        while (state.parquetFileOffset < dataLen) {
+            long remainingSize = dataLen - state.parquetFileOffset;
+            int sendLSize = (int) Math.min(Integer.MAX_VALUE, remainingSize);
+
+            state.parquetFileOffset += response.writeBytes(dataPtr + state.parquetFileOffset, sendLSize);
+            response.bookmark();
+            response.sendChunk(false);
+        }
+
+        state.parquetFileOffset = 0;
     }
 }

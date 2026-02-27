@@ -29,9 +29,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -40,10 +42,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_FILTER = 0;
-    public static final byte TYPE_GROUP_BY = 1;
-    public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
-    public static final byte TYPE_TOP_K = 3;
-    public static final byte TYPE_WINDOW_JOIN = 4;
+    public static final byte TYPE_TOP_K = 1;
+    public static final byte TYPE_WINDOW_JOIN = 2;
     private static final String exceptionMessage = "unexpected filter error";
 
     private final DirectLongList auxAddresses;
@@ -77,6 +77,29 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         } catch (Throwable th) {
             close();
             throw th;
+        }
+    }
+
+    public static void populateJitAddresses(
+            @NotNull PageFrameMemory frameMemory,
+            @NotNull PageFrameAddressCache pageAddressCache,
+            @NotNull DirectLongList dataAddresses,
+            @NotNull DirectLongList auxAddresses
+    ) {
+        final int columnCount = pageAddressCache.getColumnCount();
+
+        dataAddresses.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            dataAddresses.add(frameMemory.getPageAddress(columnIndex));
+        }
+
+        auxAddresses.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            auxAddresses.add(
+                    pageAddressCache.isVarSizeColumn(columnIndex)
+                            ? frameMemory.getAuxPageAddress(columnIndex)
+                            : 0
+            );
         }
     }
 
@@ -175,6 +198,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return isOutOfMemory;
     }
 
+    public boolean isParquetFrame() {
+        return frameSequence.getPageFrameAddressCache().getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
+    }
+
     public void of(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
         this.frameSequence = frameSequence;
         final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();
@@ -201,6 +228,12 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameMemory;
     }
 
+    public PageFrameMemory populateFrameMemory(IntHashSet columnIndexes) {
+        assert taskType != TYPE_TOP_K;
+        frameMemory = frameMemoryPool.navigateTo(frameIndex, columnIndexes);
+        return frameMemory;
+    }
+
     // Must be called after populateFrameMemory.
     public void populateJitData() {
         populateJitData(frameMemory);
@@ -209,30 +242,21 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     // Useful when using external frame memory pool.
     public void populateJitData(@NotNull PageFrameMemory frameMemory) {
         assert frameMemory.getFrameIndex() == frameIndex;
-
-        final PageFrameAddressCache pageAddressCache = frameSequence.getPageFrameAddressCache();
-        final long columnCount = pageAddressCache.getColumnCount();
-
-        dataAddresses.clear();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            dataAddresses.add(frameMemory.getPageAddress(columnIndex));
-        }
-
-        auxAddresses.clear();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            auxAddresses.add(
-                    pageAddressCache.isVarSizeColumn(columnIndex)
-                            ? frameMemory.getAuxPageAddress(columnIndex)
-                            : 0
-            );
-        }
-
+        populateJitAddresses(frameMemory, frameSequence.getPageFrameAddressCache(), dataAddresses, auxAddresses);
         if (!isCountOnly) {
             final long rowCount = getFrameRowCount();
             if (filteredRows.getCapacity() < rowCount) {
                 filteredRows.setCapacity(rowCount);
             }
         }
+    }
+
+    public boolean populateRemainingColumns(IntHashSet filterColumnIndexes, DirectLongList filteredRows, boolean fillWithNulls) {
+        assert frameMemory != null;
+        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET) {
+            return frameMemory.populateRemainingColumns(filterColumnIndexes, filteredRows, fillWithNulls);
+        }
+        return false;
     }
 
     public void releaseFrameMemory() {

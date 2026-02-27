@@ -34,6 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
 
 public final class WindowExpression extends QueryColumn {
     public static final int CURRENT = 3;
@@ -57,6 +58,9 @@ public final class WindowExpression extends QueryColumn {
     private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
     private final IntList orderByDirection = new IntList(2);
     private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
+    // For window inheritance: WINDOW w2 AS (w1 ROWS ...) — stores the base window name
+    private CharSequence baseWindowName;
+    private int baseWindowNamePosition;
     private int exclusionKind = EXCLUDE_NO_OTHERS;
     private int exclusionKindPos;
     private int framingMode = FRAMING_RANGE; // default mode is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
@@ -74,6 +78,9 @@ public final class WindowExpression extends QueryColumn {
     private char rowsLoExprTimeUnit;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
+    // For OVER window_name syntax - stores the referenced window name
+    private CharSequence windowName;
+    private int windowNamePosition;
 
     private WindowExpression() {
     }
@@ -86,6 +93,8 @@ public final class WindowExpression extends QueryColumn {
     @Override
     public void clear() {
         super.clear();
+        baseWindowName = null;
+        baseWindowNamePosition = 0;
         partitionBy.clear();
         orderBy.clear();
         orderByDirection.clear();
@@ -106,6 +115,64 @@ public final class WindowExpression extends QueryColumn {
         exclusionKindPos = 0;
         ignoreNulls = false;
         nullsDescPos = 0;
+        windowName = null;
+        windowNamePosition = 0;
+    }
+
+    /**
+     * Copies the window specification (partition by, order by, frame) from another WindowExpression.
+     * Used when resolving named window references in the optimizer.
+     * <p>
+     * ExpressionNode references in partition-by, order-by, and frame bound lists are deep-cloned
+     * so that each referencing window function gets independent copies. This prevents mutation
+     * from one window function's literal rewriting pass (e.g., recursiveReplace) from corrupting
+     * another function that references the same named window.
+     *
+     * @param source the named window definition to copy from
+     * @param pool   the expression node pool used for deep-cloning
+     */
+    public void copySpecFrom(WindowExpression source, ObjectPool<ExpressionNode> pool) {
+        this.partitionBy.clear();
+        for (int i = 0, n = source.partitionBy.size(); i < n; i++) {
+            this.partitionBy.add(ExpressionNode.deepClone(pool, source.partitionBy.getQuick(i)));
+        }
+
+        this.orderBy.clear();
+        for (int i = 0, n = source.orderBy.size(); i < n; i++) {
+            this.orderBy.add(ExpressionNode.deepClone(pool, source.orderBy.getQuick(i)));
+        }
+        this.orderByDirection.clear();
+        this.orderByDirection.addAll(source.orderByDirection);
+
+        this.framingMode = source.framingMode;
+        this.rowsLo = source.rowsLo;
+        this.rowsLoExpr = ExpressionNode.deepClone(pool, source.rowsLoExpr);
+        this.rowsLoExprPos = source.rowsLoExprPos;
+        this.rowsLoExprTimeUnit = source.rowsLoExprTimeUnit;
+        this.rowsLoKind = source.rowsLoKind;
+        this.rowsLoKindPos = source.rowsLoKindPos;
+        this.rowsHi = source.rowsHi;
+        this.rowsHiExpr = ExpressionNode.deepClone(pool, source.rowsHiExpr);
+        this.rowsHiExprPos = source.rowsHiExprPos;
+        this.rowsHiExprTimeUnit = source.rowsHiExprTimeUnit;
+        this.rowsHiKind = source.rowsHiKind;
+        this.rowsHiKindPos = source.rowsHiKindPos;
+
+        this.exclusionKind = source.exclusionKind;
+        this.exclusionKindPos = source.exclusionKindPos;
+
+        // ignoreNulls and nullsDescPos are NOT copied - they are function-specific
+
+        this.windowName = null;
+        this.windowNamePosition = 0;
+    }
+
+    public CharSequence getBaseWindowName() {
+        return baseWindowName;
+    }
+
+    public int getBaseWindowNamePosition() {
+        return baseWindowNamePosition;
     }
 
     public int getExclusionKind() {
@@ -184,8 +251,24 @@ public final class WindowExpression extends QueryColumn {
         return rowsLoKindPos;
     }
 
+    public CharSequence getWindowName() {
+        return windowName;
+    }
+
+    public int getWindowNamePosition() {
+        return windowNamePosition;
+    }
+
+    public boolean hasBaseWindow() {
+        return baseWindowName != null;
+    }
+
     public boolean isIgnoreNulls() {
         return ignoreNulls;
+    }
+
+    public boolean isNamedWindowReference() {
+        return windowName != null;
     }
 
     public boolean isNonDefaultFrame() {
@@ -202,6 +285,11 @@ public final class WindowExpression extends QueryColumn {
     @Override
     public WindowExpression of(CharSequence alias, ExpressionNode ast) {
         return (WindowExpression) super.of(alias, ast);
+    }
+
+    public void setBaseWindowName(CharSequence baseWindowName, int baseWindowNamePosition) {
+        this.baseWindowName = baseWindowName;
+        this.baseWindowNamePosition = baseWindowNamePosition;
     }
 
     public void setExclusionKind(int exclusionKind, int exclusionKindPos) {
@@ -255,6 +343,11 @@ public final class WindowExpression extends QueryColumn {
     public void setRowsLoKind(int rowsLoKind, int rowsLoKindPos) {
         this.rowsLoKind = rowsLoKind;
         this.rowsLoKindPos = rowsLoKindPos;
+    }
+
+    public void setWindowName(CharSequence windowName, int windowNamePosition) {
+        this.windowName = windowName;
+        this.windowNamePosition = windowNamePosition;
     }
 
     public boolean stopOrderByPropagate(ObjList<ExpressionNode> modelOrder, IntList modelOrderDirection) {

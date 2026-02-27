@@ -46,6 +46,22 @@ import java.io.Closeable;
 
 public interface Function extends Closeable, StatefulAtom, Plannable {
 
+    int COMPLEXITY_ARITHMETIC = 2;
+    int COMPLEXITY_CAST = 3;
+    int COMPLEXITY_COLUMN = 1;
+    int COMPLEXITY_GEO = 30;
+    int COMPLEXITY_JSON = 80;
+    int COMPLEXITY_MAX = 10_000;
+    int COMPLEXITY_NONE = 0;
+    int COMPLEXITY_REGEX = 50;
+    int COMPLEXITY_STRING_OP = 10;
+    int COMPLEXITY_SUBQUERY = 1000;
+
+    static int addComplexity(int a, int b) {
+        long sum = (long) a + b;
+        return (int) Math.min(sum, COMPLEXITY_MAX);
+    }
+
     /**
      * Initializes each function in the list of clones. It is assumed by this method that "clones" are copies of
      * the same function.
@@ -117,6 +133,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     default FunctionExtension extendedOps() {
         return null;
+    }
+
+    default int getComplexity() {
+        return COMPLEXITY_COLUMN;
     }
 
     /**

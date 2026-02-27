@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -45,7 +45,7 @@ public class CeilDoubleFunctionFactory implements FunctionFactory {
         return new CeilFunction(args.getQuick(0));
     }
 
-    private static class CeilFunction extends DoubleFunction implements UnaryFunction {
+    private static class CeilFunction extends DoubleFunction implements ArithmeticUnaryFunction {
         private final Function function;
 
         public CeilFunction(Function function) {

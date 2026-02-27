@@ -422,6 +422,17 @@ public class SqlKeywords {
                 && (tok.charAt(7) | 32) == 'e';
     }
 
+    public static boolean isDateaddKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'd'
+                && (tok.charAt(6) | 32) == 'd';
+    }
+
     public static boolean isDateStyleKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'd'
@@ -909,6 +920,17 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'u'
                 && (tok.charAt(3) | 32) == 'r'
                 && (tok.charAt(4) | 32) == 's';
+    }
+
+    public static boolean isHorizonKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'h'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'z'
+                && (tok.charAt(5) | 32) == 'o'
+                && (tok.charAt(6) | 32) == 'n';
     }
 
     public static boolean isIfKeyword(CharSequence tok) {
@@ -2392,9 +2414,9 @@ public class SqlKeywords {
                 && (tok.charAt(0) | 32) == 'w'
                 && (tok.charAt(1) | 32) == 'i'
                 && (tok.charAt(2) | 32) == 'n'
-                && (tok.charAt(4) | 32) == 'd'
-                && (tok.charAt(5) | 32) == 'o'
-                && (tok.charAt(6) | 32) == 'w';
+                && (tok.charAt(3) | 32) == 'd'
+                && (tok.charAt(4) | 32) == 'o'
+                && (tok.charAt(5) | 32) == 'w';
     }
 
     public static boolean isWithKeyword(CharSequence tok) {

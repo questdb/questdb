@@ -430,6 +430,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             synchronized (reloadLock) {
                 // Check that the file has been modified since the last trigger
                 // Then load the config properties
+                changedKeys.clear();
 
                 Properties newProperties = new Properties();
                 try (InputStream is = java.nio.file.Files.newInputStream(confPath)) {

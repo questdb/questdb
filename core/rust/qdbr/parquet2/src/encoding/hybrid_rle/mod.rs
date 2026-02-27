@@ -80,6 +80,7 @@ impl<'a> HybridRleDecoder<'a> {
 impl<'a> Iterator for HybridRleDecoder<'a> {
     type Item = Result<u32, Error>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.remaining == 0 {
             return None;

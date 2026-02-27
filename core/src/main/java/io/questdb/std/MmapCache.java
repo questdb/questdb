@@ -120,7 +120,7 @@ public final class MmapCache {
      */
     public synchronized boolean isSingleUse(long address) {
         var cacheRecord = mmapAddrCache.get(address);
-        return cacheRecord != null && cacheRecord.count == 1;
+        return cacheRecord == null || cacheRecord.count <= 1;
     }
 
     /**

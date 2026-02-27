@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -33,11 +34,16 @@ import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
@@ -46,12 +52,16 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
+
     final StringSink fileName = new StringSink();
+    final HybridColumnMaterializer materializer = new HybridColumnMaterializer();
+    final DirectLongList materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
     final StringSink sqlText = new StringSink();
     private final CopyExportContext copyExportContext;
     private final StringSink errorMessage = new StringSink();
     private final ExportModel exportModel = new ExportModel();
     private final HttpConnectionContext httpConnectionContext;
+    private final ParquetWriteCallback writeCallback = new ParquetWriteCallback();
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
     boolean columnValueFullySent = true;
@@ -66,6 +76,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     RecordMetadata metadata;
     boolean noMeta = false;
     PageFrameCursor pageFrameCursor;
+    ParquetExportMode parquetExportMode;
     long parquetFileOffset = 0;
     boolean pausedQuery = false;
     int queryState;
@@ -76,10 +87,12 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long skip;
     long stop;
     CopyExportRequestTask task = new CopyExportRequestTask();
+    long timeout;
     private CreateTableOperation createParquetOp;
     private int errorPosition;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
+    private HTTPSerialParquetExporter serialParquetExporter;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CopyExportContext copyContext) {
         this.httpConnectionContext = httpConnectionContext;
@@ -93,8 +106,16 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         fileName.clear();
         rnd = null;
         record = null;
+        if (serialParquetExporter != null) {
+            serialParquetExporter.clearExportResources();
+        }
         cursor = Misc.free(cursor);
         pageFrameCursor = Misc.free(pageFrameCursor);
+        // Close the Rust streaming writer before freeing materializer buffers,
+        // since the writer may still reference pinned native buffers.
+        task.clear();
+        materializer.clear();
+        materializerColumnData.clear();
         firstParquetWriteCall = true;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
@@ -120,20 +141,30 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         releaseExportEntry();
         createParquetOp = Misc.free(createParquetOp);
         parquetExportTableName = null;
+        parquetExportMode = null;
         parquetFileOffset = 0;
         exportModel.clear();
         errorMessage.clear();
         errorPosition = 0;
         serialExporterInit = false;
-        task.clear();
+        writeCallback.of(null, null);
     }
 
     @Override
     public void close() {
+        if (serialParquetExporter != null) {
+            serialParquetExporter.clearExportResources();
+            serialParquetExporter = null;
+        }
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
         pageFrameCursor = Misc.free(pageFrameCursor);
+        // Close the Rust streaming writer before freeing materializer buffers.
         task = Misc.free(task);
+        Misc.free(materializer);
+        Misc.free(materializerColumnData);
+        createParquetOp = Misc.free(createParquetOp);
+        writeCallback.of(null, null);
     }
 
     public ExportModel getExportModel() {
@@ -142,6 +173,10 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public long getFd() {
         return httpConnectionContext.getFd();
+    }
+
+    public HttpConnectionContext getHttpConnectionContext() {
+        return httpConnectionContext;
     }
 
     public String getParquetExportTableName() {
@@ -174,6 +209,21 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         }
     }
 
+    HTTPSerialParquetExporter getOrCreateSerialParquetExporter(CairoEngine engine) {
+        if (serialParquetExporter == null) {
+            serialParquetExporter = new HTTPSerialParquetExporter(engine);
+        }
+        return serialParquetExporter;
+    }
+
+    CopyExportRequestTask.StreamWriteParquetCallBack getWriteCallback() {
+        return writeCallback;
+    }
+
+    void initWriteCallback(ExportQueryProcessor processor) {
+        this.writeCallback.of(processor, this);
+    }
+
     void resumeError(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
         response.bookmark();
         response.putAscii('{')
@@ -195,5 +245,22 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         this.errorPosition = errorPosition;
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
+    }
+
+    private static final class ParquetWriteCallback implements CopyExportRequestTask.StreamWriteParquetCallBack {
+        private ExportQueryProcessor processor;
+        private ExportQueryProcessorState state;
+
+        @Override
+        public void onWrite(long dataPtr, long dataLen) throws Exception {
+            if (processor != null && state != null) {
+                processor.writeParquetData(state, dataPtr, dataLen);
+            }
+        }
+
+        void of(ExportQueryProcessor processor, ExportQueryProcessorState state) {
+            this.processor = processor;
+            this.state = state;
+        }
     }
 }
