@@ -722,6 +722,51 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testCancelRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.cancelRow(); // no-op without a table
+
+                    // this row should be inserted
+                    sender.table("ws_cancel_row")
+                            .symbol("tag", "kept")
+                            .longColumn("value", 1)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    // this row is cancelled mid-build
+                    sender.table("ws_cancel_row")
+                            .symbol("tag", "dropped")
+                            .longColumn("value", 2);
+                    sender.cancelRow();
+
+                    // this row should also be inserted
+                    sender.table("ws_cancel_row")
+                            .symbol("tag", "also_kept")
+                            .longColumn("value", 3)
+                            .at(1_000_000_001_000L, ChronoUnit.MICROS);
+
+                    sender.flush();
+                }
+
+                serverMain.awaitTxn("ws_cancel_row", 1);
+                serverMain.assertSql(
+                        "SELECT tag, value FROM ws_cancel_row ORDER BY timestamp",
+                        """
+                                tag\tvalue
+                                kept\t1
+                                also_kept\t3
+                                """
+                );
+            }
+        });
+    }
+
     /**
      * Tests that a STRING value sent via ILP is correctly stored in a pre-created CHAR column.
      * CHAR is stored as a 16-bit UTF-16 code unit; the server must extract the first character
