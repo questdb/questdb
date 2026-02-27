@@ -2864,7 +2864,7 @@ public class ArrayTest extends AbstractCairoTest {
                     "SELECT arr[2,3-1:,2:] x FROM tango",
                     """
                             VirtualRecord
-                              functions: [arr[2,3-1:,2:]]
+                              functions: [arr[2,2:,2:]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tango
