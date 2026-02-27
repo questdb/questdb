@@ -29,13 +29,14 @@ import io.questdb.cutlass.qwp.server.QwpWebSocketProcessorState;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import static io.questdb.test.tools.assertMemoryLeak;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
  * Integration tests for ILP v4 WebSocket processor and state working together.

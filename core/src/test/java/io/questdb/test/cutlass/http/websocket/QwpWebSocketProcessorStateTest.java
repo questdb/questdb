@@ -27,9 +27,10 @@ package io.questdb.test.cutlass.http.websocket;
 import io.questdb.cutlass.qwp.server.QwpWebSocketProcessorState;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import static io.questdb.test.tools.assertMemoryLeak;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
  * Tests for ILP v4 WebSocket processor state management.

@@ -28,7 +28,6 @@ import io.questdb.cutlass.qwp.server.QwpWebSocketProcessor;
 import io.questdb.cutlass.qwp.server.QwpWebSocketProcessorState;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.std.Os;
-import static io.questdb.test.tools.assertMemoryLeak;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -44,6 +43,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
  * Integration tests for ILP v4 WebSocket server functionality.

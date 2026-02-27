@@ -34,11 +34,11 @@ import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
-import static io.questdb.test.tools.assertMemoryLeak;
 import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
  * End-to-end tests for GEOHASH column encoding and decoding.

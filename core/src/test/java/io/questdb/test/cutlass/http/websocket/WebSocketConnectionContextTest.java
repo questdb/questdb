@@ -29,12 +29,13 @@ import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.cutlass.qwp.websocket.WebSocketProcessor;
 import io.questdb.std.Unsafe;
-import static io.questdb.test.tools.assertMemoryLeak;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
  * Comprehensive tests for WebSocket connection context.
