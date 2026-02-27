@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -56,7 +57,10 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     // Max size for JSON field value extraction. JSON field values are
     // typically short, so 4KB is generous. This bounds the per-column
     // DirectUtf8Sink allocation (2 sinks * 4KB per VARCHAR/TIMESTAMP col).
-    private static final int MAX_JSON_VALUE_SIZE = 4096;
+    // The native truncated_utf8_copy() sets result.truncated when the
+    // source exceeds this limit; callers check result.isTruncated() and
+    // throw CairoException for overflowed values.
+    public static final int MAX_JSON_VALUE_SIZE = 4096;
     private final ObjList<CharSequence> columnNames;
     private final IntList columnTypes;
     private final Function function;
@@ -119,7 +123,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
             int elementIndex,
             int columnType
     ) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -137,12 +141,12 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public byte getByte(int sourceCol, int elementIndex) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public char getChar(int sourceCol, int elementIndex) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -157,7 +161,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public long getDate(int sourceCol, int elementIndex) {
-        return Numbers.LONG_NULL;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -175,7 +179,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public float getFloat(int sourceCol, int elementIndex) {
-        return Float.NaN;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -219,17 +223,17 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public CharSequence getStrA(int sourceCol, int elementIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrB(int sourceCol, int elementIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen(int sourceCol, int elementIndex) {
-        return -1;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -259,6 +263,15 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
                 return val;
             }
             return Numbers.LONG_NULL;
+        }
+        if (result.isTruncated()) {
+            throw CairoException.nonCritical()
+                    .put("JSON UNNEST: value exceeds maximum size of ")
+                    .put(MAX_JSON_VALUE_SIZE)
+                    .put(" bytes for column '")
+                    .put(columnNames.getQuick(sourceCol))
+                    .put("' at array index ")
+                    .put(elementIndex);
         }
         try {
             return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(sink);
@@ -306,15 +319,24 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         if (len == 0) {
             return 0;
         }
-        // Detect scalar vs object array by probing element 0
+        // Detect scalar vs object array
         if (columnNames.size() == 1) {
             // Single column: could be scalar or object array.
-            // Probe /0 to check type.
-            pointerSink.clear();
-            pointerSink.putAscii("/0");
-            parser.queryPointerBoolean(jsonSeq, pointerSink, result);
-            isObjectArray = result.getError() == SimdJsonError.SUCCESS
-                    && result.getType() == SimdJsonType.OBJECT;
+            // Scan forward to find the first non-null element and
+            // check its type. Null elements are inconclusive.
+            isObjectArray = false;
+            for (int i = 0; i < len; i++) {
+                pointerSink.clear();
+                pointerSink.putAscii('/');
+                pointerSink.put(i);
+                parser.queryPointerBoolean(jsonSeq, pointerSink, result);
+                if (result.getError() == SimdJsonError.SUCCESS
+                        && result.getType() != SimdJsonType.NULL) {
+                    isObjectArray =
+                            result.getType() == SimdJsonType.OBJECT;
+                    break;
+                }
+            }
         } else {
             // Multiple columns: must be object array
             isObjectArray = true;
@@ -346,6 +368,15 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         );
         if (result.getError() != SimdJsonError.SUCCESS) {
             return null;
+        }
+        if (result.isTruncated()) {
+            throw CairoException.nonCritical()
+                    .put("JSON UNNEST: value exceeds maximum size of ")
+                    .put(MAX_JSON_VALUE_SIZE)
+                    .put(" bytes for column '")
+                    .put(columnNames.getQuick(sourceCol))
+                    .put("' at array index ")
+                    .put(elementIndex);
         }
         return sink;
     }

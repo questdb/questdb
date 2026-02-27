@@ -897,6 +897,17 @@ public class SqlParser {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
     }
 
+    private static boolean isJsonUnnestSupportedType(int type) {
+        int tag = ColumnType.tagOf(type);
+        return tag == ColumnType.BOOLEAN
+                || tag == ColumnType.SHORT
+                || tag == ColumnType.INT
+                || tag == ColumnType.LONG
+                || tag == ColumnType.DOUBLE
+                || tag == ColumnType.VARCHAR
+                || tag == ColumnType.TIMESTAMP;
+    }
+
     private boolean isIncludePrevailing(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (isIncludeKeyword(tok)) {
             tok = tok(lexer, "'prevailing'");
@@ -2656,7 +2667,10 @@ public class SqlParser {
             ExpressionNode variableExpr;
 
             // check for variable as subquery
-            if (tok.charAt(0) == '@' && (variableExpr = model.getDecls().get(tok)) != null && variableExpr.rhs != null && variableExpr.rhs.queryModel != null) {
+            if (tok.charAt(0) == '@'
+                    && (variableExpr = model.getDecls().get(tok)) != null
+                    && variableExpr.rhs != null
+                    && variableExpr.rhs.queryModel != null) {
                 proposedNested = variableExpr.rhs.queryModel;
             }
 
@@ -4280,6 +4294,12 @@ public class SqlParser {
                     if (type == -1) {
                         throw SqlException
                                 .$(lexer.lastTokenPosition(), "unknown type: ")
+                                .put(typeName);
+                    }
+                    if (!isJsonUnnestSupportedType(type)) {
+                        throw SqlException
+                                .$(lexer.lastTokenPosition(),
+                                        "unsupported type for JSON UNNEST: ")
                                 .put(typeName);
                     }
                     colNames.add(colName);

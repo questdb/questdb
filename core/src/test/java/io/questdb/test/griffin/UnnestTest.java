@@ -1254,6 +1254,15 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnnestInSelectListThrowsError() throws Exception {
+        assertException(
+                "SELECT UNNEST(ARRAY[1.0, 2.0])",
+                7,
+                "UNNEST is not supported in SELECT"
+        );
+    }
+
+    @Test
     public void testVeryLargeArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS ("

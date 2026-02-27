@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.engine.join.JsonUnnestSource;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -438,6 +439,23 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinJsonUnnest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"a\":1},{\"a\":2}]')");
+            assertQueryNoLeakCheck(
+                    "a\n"
+                            + "1\n"
+                            + "2\n",
+                    "SELECT u.a FROM t CROSS JOIN UNNEST("
+                            + "t.payload COLUMNS(a INT)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
     public void testCteWithJsonUnnest() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -608,6 +626,55 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeNonAsciiVarcharOverflowThrowsError() throws Exception {
+        // Non-ASCII values exceeding MAX_JSON_VALUE_SIZE trigger UTF-8
+        // backoff in the native layer, producing sink.size() < maxSize.
+        // The native truncated flag detects the overflow and throws.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            // 1366 CJK characters x 3 bytes each = 4098 bytes > 4096
+            int charCount = (JsonUnnestSource.MAX_JSON_VALUE_SIZE / 3) + 2;
+            StringBuilder bigVal = new StringBuilder(charCount);
+            for (int i = 0; i < charCount; i++) {
+                bigVal.append('\u4e16'); // '世' = 3 bytes in UTF-8
+            }
+            execute("INSERT INTO t VALUES ('[{\"s\":\"" + bigVal + "\"}]')");
+            assertExceptionNoLeakCheck(
+                    "SELECT u.s FROM t, UNNEST("
+                            + "t.payload COLUMNS(s VARCHAR)"
+                            + ") u",
+                    0,
+                    "JSON UNNEST: value exceeds maximum size of "
+                            + JsonUnnestSource.MAX_JSON_VALUE_SIZE
+                            + " bytes for column 's'"
+            );
+        });
+    }
+
+    @Test
+    public void testLargeVarcharOverflowThrowsError() throws Exception {
+        // Values exceeding MAX_JSON_VALUE_SIZE (4096) throw an error
+        // rather than silently truncating or returning NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            StringBuilder bigVal = new StringBuilder(5000);
+            for (int i = 0; i < 5000; i++) {
+                bigVal.append('x');
+            }
+            execute("INSERT INTO t VALUES ('[{\"s\":\"" + bigVal + "\"}]')");
+            assertExceptionNoLeakCheck(
+                    "SELECT u.s FROM t, UNNEST("
+                            + "t.payload COLUMNS(s VARCHAR)"
+                            + ") u",
+                    0,
+                    "JSON UNNEST: value exceeds maximum size of "
+                            + JsonUnnestSource.MAX_JSON_VALUE_SIZE
+                            + " bytes for column 's'"
+            );
+        });
+    }
+
+    @Test
     public void testNullElementInArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -617,6 +684,26 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             + "1.5\n"
                             + "null\n"
                             + "3.5\n",
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val DOUBLE)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarArrayWithNullFirstElement() throws Exception {
+        // Verifies scan-forward detection: element 0 is null, but
+        // element 1 is a scalar, so isObjectArray should be false.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, 1.5, 2.5]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n"
+                            + "1.5\n"
+                            + "2.5\n",
                     "SELECT u.val FROM t, UNNEST("
                             + "t.payload COLUMNS(val DOUBLE)"
                             + ") u",
@@ -740,6 +827,56 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             + ") u",
                     50,
                     "unknown type"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsupportedTypeFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val FLOAT)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsupportedTypeSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val SYMBOL)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testObjectArrayWithNullFirstElement() throws Exception {
+        // Verifies scan-forward detection: element 0 is null, but
+        // element 1 is an object, so isObjectArray should be true.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ("
+                    + "'[null, {\"a\":1}, {\"a\":2}]'"
+                    + ")");
+            assertQueryNoLeakCheck(
+                    "a\n"
+                            + "null\n"
+                            + "1\n"
+                            + "2\n",
+                    "SELECT u.a FROM t, UNNEST("
+                            + "t.payload COLUMNS(a LONG)"
+                            + ") u",
+                    (String) null
             );
         });
     }
@@ -928,6 +1065,29 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             + "t.payload COLUMNS(name VARCHAR)"
                             + ") u",
                     (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testVarcharExactlyAtCapDoesNotError() throws Exception {
+        // A value exactly MAX_JSON_VALUE_SIZE bytes must NOT be treated
+        // as overflow. This guards against false positives in the
+        // truncation check.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            int cap = JsonUnnestSource.MAX_JSON_VALUE_SIZE;
+            StringBuilder exactVal = new StringBuilder(cap);
+            for (int i = 0; i < cap; i++) {
+                exactVal.append('a');
+            }
+            execute("INSERT INTO t VALUES ('[{\"s\":\"" + exactVal + "\"}]')");
+            assertSql(
+                    "s\n"
+                            + exactVal + "\n",
+                    "SELECT u.s FROM t, UNNEST("
+                            + "t.payload COLUMNS(s VARCHAR)"
+                            + ") u"
             );
         });
     }
