@@ -860,14 +860,18 @@ public class MapTest extends AbstractCairoTest {
 
     @Test
     public void testSetKeyCapacityOverflow() throws Exception {
+        // Run this test for every map type.
         TestUtils.assertMemoryLeak(() -> {
             try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), 16, 0.75, Integer.MAX_VALUE)) {
                 try {
-                    map.setKeyCapacity(Integer.MAX_VALUE);
+                    // should fail with 0.75 load factor
+                    map.setKeyCapacity(Integer.MAX_VALUE / 4 * 3 + 1);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "map capacity overflow");
                 }
+                // Should be fine, but it's expensive to run on every CI run:
+                // map.setKeyCapacity(Integer.MAX_VALUE / 8 * 3 );
             }
         });
     }
