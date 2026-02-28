@@ -1374,6 +1374,26 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyCapacityOverflow() throws Exception {
+        // Verify that the map throws CairoException when key capacity would overflow int range.
+        // Before the fix, MAX_SAFE_INT_POW_2 was 1L << 31 (which doesn't fit in a signed int),
+        // so rehash() could set keyCapacity = (int)(1L << 31) = Integer.MIN_VALUE, and the
+        // subsequent clear() would pass a negative size to native memset, causing a SIGSEGV.
+        TestUtils.assertMemoryLeak(() -> {
+            ColumnTypes types = new SingleColumnType(ColumnType.LONG);
+            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, types, null, 16, 0.5, Integer.MAX_VALUE)) {
+                try {
+                    // should fail with 0.75 load factor
+                    map.setKeyCapacity(Integer.MAX_VALUE / 4 * 3 + 1);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "map capacity overflow");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testKeyHashCodeFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
