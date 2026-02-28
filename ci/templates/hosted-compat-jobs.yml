@@ -4,8 +4,7 @@ jobs:
     strategy:
       matrix:
         linux-jdk17:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: hetzner-incus
           os: Linux
           jdk: "1.17"
           javadoc_step: "javadoc:javadoc"
