@@ -22,35 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.test.cairo.wal;
 
-public interface IOURingFacade {
+import io.questdb.PropertyKey;
+import io.questdb.std.IOURingFacadeImpl;
+import org.junit.Assume;
+import org.junit.BeforeClass;
 
-    void close(long ptr);
+/**
+ * Runs the full WalWriterTest suite with io_uring enabled.
+ * All tests are inherited from WalWriterTest -- the only difference
+ * is that WAL columns use MemoryPURImpl (io_uring pwrite) instead of
+ * MemoryPMARImpl (mmap).
+ */
+public class WalWriterIOURingTest extends WalWriterTest {
 
-    default long create(int capacity) {
-        return create(capacity, 0);
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        Assume.assumeTrue("io_uring not available", IOURingFacadeImpl.INSTANCE.isAvailable());
+        setProperty(PropertyKey.CAIRO_IO_URING_ENABLED, "true");
+        WalWriterTest.setUpStatic();
     }
-
-    long create(int capacity, int flags);
-
-    int errno();
-
-    boolean isAvailable();
-
-    IOURing newInstance(int capacity);
-
-    int registerBuffers(long ptr, long iovecs, int count);
-
-    int registerFilesSparse(long ptr, int count);
-
-    int submit(long ptr);
-
-    int submitAndWait(long ptr, int waitNr);
-
-    int unregisterBuffers(long ptr);
-
-    int unregisterFiles(long ptr);
-
-    int updateRegisteredFiles(long ptr, int offset, long fdsAddr, int count);
 }

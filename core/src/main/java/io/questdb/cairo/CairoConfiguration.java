@@ -299,6 +299,10 @@ public interface CairoConfiguration {
         return IOURingFacadeImpl.INSTANCE;
     }
 
+    default int getIOURingCapacity() {
+        return 256;
+    }
+
     int getIdGenerateBatchStep();
 
     long getIdleCheckInterval();
@@ -312,6 +316,14 @@ public interface CairoConfiguration {
     long getInactiveWalWriterTTL();
 
     long getInactiveWriterTTL();
+
+    boolean getBitmapIndexReaderPagedEnabled();
+
+    int getBitmapIndexReaderPagedMaxPages();
+
+    long getBitmapIndexReaderPagedPageSize();
+
+    boolean getBitmapIndexWriterValuePagedEnabled();
 
     int getIndexValueBlockSize();
 
@@ -819,6 +831,10 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isWalWriterIOURingEnabled();
+
+    boolean isMadviseRandomMmapCacheEnabled();
 
     boolean isMatViewEnabled();
 

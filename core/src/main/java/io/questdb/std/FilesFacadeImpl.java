@@ -136,6 +136,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean fallocateKeepSize(long fd, long offset, long len) {
+        return Files.fallocateKeepSize(fd, offset, len);
+    }
+
+    @Override
     public long findClose(long findPtr) {
         if (findPtr != 0) {
             Files.findClose(findPtr);

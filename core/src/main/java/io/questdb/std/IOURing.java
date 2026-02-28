@@ -36,7 +36,23 @@ public interface IOURing extends Closeable {
     @TestOnly
     long enqueueNop();
 
+    long enqueueFsync(long fd);
+
+    void enqueueFsync(long fd, long userData);
+
+    void enqueueFsyncFixedFile(int fileSlot, long userData);
+
     long enqueueRead(long fd, long offset, long bufPtr, int len);
+
+    long enqueueWrite(long fd, long offset, long bufPtr, int len);
+
+    void enqueueWrite(long fd, long offset, long bufPtr, int len, long userData);
+
+    void enqueueWriteFixed(long fd, long offset, long bufAddr, int len, int bufIndex, long userData);
+
+    void enqueueWriteFixedFile(int fileSlot, long offset, long bufAddr, int len, long userData);
+
+    void enqueueWriteFixedFileBuf(int fileSlot, long offset, long bufAddr, int len, int bufIndex, long userData);
 
     long getCqeId();
 
@@ -49,6 +65,10 @@ public interface IOURing extends Closeable {
      * @return true - if cqe was read; false - otherwise.
      */
     boolean nextCqe();
+
+    int registerBuffers(long iovsAddr, int count);
+
+    int registerFilesSparse(int count);
 
     /**
      * Submits pending sqes, if any.
@@ -64,4 +84,12 @@ public interface IOURing extends Closeable {
      * @return number of submitted sqes.
      */
     int submitAndWait();
+
+    int submitAndWait(int waitNr);
+
+    int unregisterBuffers();
+
+    int unregisterFiles();
+
+    int updateRegisteredFile(int slot, int osFd);
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -40,8 +41,8 @@ import io.questdb.std.str.Path;
 public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     protected static final Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
-    protected final MemoryMR keyMem = Vm.getCMRInstance();
-    protected final MemoryMR valueMem = Vm.getCMRInstance();
+    protected final MemoryMR keyMem;
+    protected final MemoryMR valueMem;
     protected int blockCapacity;
     protected int blockValueCountMod;
     protected MillisecondClock clock;
@@ -53,6 +54,16 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     private long keyFileSequence = -1;
     private long partitionTxn;
     private long valueMemSize = -1;
+
+    protected AbstractIndexReader() {
+        this.keyMem = Vm.getCMRInstance();
+        this.valueMem = Vm.getCMRInstance();
+    }
+
+    protected AbstractIndexReader(MemoryMR valueMem) {
+        this.keyMem = Vm.getCMRInstance();
+        this.valueMem = valueMem;
+    }
 
     @Override
     public void close() {
@@ -123,6 +134,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
         try {
             FilesFacade ff = configuration.getFilesFacade();
+            int madviseOpts = Files.MADVISE_RANDOM_MMAP_CACHE_ENABLED ? Files.POSIX_MADV_RANDOM : -1;
             LPSZ name = BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             keyMem.of(
                     ff,
@@ -131,7 +143,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     BitmapIndexUtils.getKeyEntryOffset(0),
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
-                    -1
+                    madviseOpts
             );
             this.clock = configuration.getMillisecondClock();
 
@@ -148,7 +160,9 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn),
                     valueMemSize,
                     valueMemSize,
-                    MemoryTag.MMAP_INDEX_READER
+                    MemoryTag.MMAP_INDEX_READER,
+                    CairoConfiguration.O_NONE,
+                    madviseOpts
             );
         } catch (Throwable e) {
             close();

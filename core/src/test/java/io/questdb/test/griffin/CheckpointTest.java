@@ -3226,6 +3226,11 @@ public class CheckpointTest extends AbstractCairoTest {
         }
 
         @Override
+        public WorkerPoolConfiguration getAsyncMunmapPoolConfiguration() {
+            return null;
+        }
+
+        @Override
         public CairoConfiguration getCairoConfiguration() {
             return cairoConfig;
         }

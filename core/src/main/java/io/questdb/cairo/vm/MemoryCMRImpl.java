@@ -153,9 +153,9 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     private void setSize0(long newSize) {
-        // When madvise options are set (e.g., MADV_DONTNEED for streaming), bypass the
-        // MmapCache so each mapping is independent and can release page cache
-        final boolean bypassMmapCache = madviseOpts != -1;
+        // Only MADV_RANDOM can use shared mmap cache entries (behind an experimental switch).
+        // All other madvise hints use independent mappings.
+        final boolean bypassMmapCache = madviseOpts > -1 && !Files.isMadviseMmapCacheable(madviseOpts);
         if (size > 0) {
             if (bypassMmapCache) {
                 pageAddress = TableUtils.mremapNoCache(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
@@ -178,9 +178,8 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         this.size = size;
         if (size > 0) {
             try {
-                // When madvise options are set (e.g., MADV_DONTNEED for streaming), bypass the
-                // MmapCache so each mapping is independent and can release page cache
-                if (madviseOpts != -1) {
+                // Only MADV_RANDOM can use shared mmap cache entries (behind an experimental switch).
+                if (madviseOpts > -1 && !Files.isMadviseMmapCacheable(madviseOpts)) {
                     this.pageAddress = TableUtils.mapRONoCache(ff, fd, size, memoryTag);
                 } else {
                     this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);

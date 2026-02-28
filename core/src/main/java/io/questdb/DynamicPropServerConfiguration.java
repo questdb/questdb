@@ -415,6 +415,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
+    public WorkerPoolConfiguration getAsyncMunmapPoolConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getAsyncMunmapPoolConfiguration();
+    }
+
+    @Override
     public void init(CairoEngine engine, FreeOnExit freeOnExit) {
         serverConfig.get().init(this, engine, freeOnExit);
         if (configReloadEnabled) {

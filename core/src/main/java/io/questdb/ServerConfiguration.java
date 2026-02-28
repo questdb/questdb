@@ -101,6 +101,8 @@ public interface ServerConfiguration {
 
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
+    WorkerPoolConfiguration getAsyncMunmapPoolConfiguration();
+
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
     }
 }

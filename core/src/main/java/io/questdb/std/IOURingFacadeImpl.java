@@ -26,6 +26,7 @@ package io.questdb.std;
 
 public class IOURingFacadeImpl implements IOURingFacade {
 
+    public static final int IORING_SETUP_COOP_TASKRUN = 0x100;
     public static final IOURingFacadeImpl INSTANCE = new IOURingFacadeImpl();
     private static final boolean available;
 
@@ -68,8 +69,8 @@ public class IOURingFacadeImpl implements IOURingFacade {
     }
 
     @Override
-    public long create(int capacity) {
-        return IOUringAccessor.create(capacity);
+    public long create(int capacity, int flags) {
+        return IOUringAccessor.create(capacity, flags);
     }
 
     @Override
@@ -84,7 +85,20 @@ public class IOURingFacadeImpl implements IOURingFacade {
 
     @Override
     public IOURing newInstance(int capacity) {
-        return new IOURingImpl(this, capacity);
+        // SINGLE_ISSUER is intentionally not used because a ring can be
+        // submitted/closed from a different thread than the thread that originally created it
+        // (e.g. pool-driven inactive release). Keep COOP_TASKRUN only.
+        return new IOURingImpl(this, capacity, IORING_SETUP_COOP_TASKRUN);
+    }
+
+    @Override
+    public int registerBuffers(long ptr, long iovecs, int count) {
+        return IOUringAccessor.registerBuffers(ptr, iovecs, count);
+    }
+
+    @Override
+    public int registerFilesSparse(long ptr, int count) {
+        return IOUringAccessor.registerFilesSparse(ptr, count);
     }
 
     @Override
@@ -95,6 +109,21 @@ public class IOURingFacadeImpl implements IOURingFacade {
     @Override
     public int submitAndWait(long ptr, int waitNr) {
         return IOUringAccessor.submitAndWait(ptr, waitNr);
+    }
+
+    @Override
+    public int unregisterBuffers(long ptr) {
+        return IOUringAccessor.unregisterBuffers(ptr);
+    }
+
+    @Override
+    public int unregisterFiles(long ptr) {
+        return IOUringAccessor.unregisterFiles(ptr);
+    }
+
+    @Override
+    public int updateRegisteredFiles(long ptr, int offset, long fdsAddr, int count) {
+        return IOUringAccessor.updateRegisteredFiles(ptr, offset, fdsAddr, count);
     }
 
     static {
@@ -109,7 +138,7 @@ public class IOURingFacadeImpl implements IOURingFacade {
             // or the user may lack necessary permissions, which is common in containerized or restricted environments.
             // The only reliable way to confirm availability is to try to initialize a ring.
             if (usable) {
-                long ioUring = IOUringAccessor.create(8);
+                long ioUring = IOUringAccessor.create(8, 0);
                 if (ioUring <= 0) {
                     usable = false;
                 } else {

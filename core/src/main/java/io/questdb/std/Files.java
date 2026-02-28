@@ -68,11 +68,13 @@ public final class Files {
     public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
+    public static final int WINDOWS_ERROR_USER_MAPPED_FILE = 0x4C8;
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private static final FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = MmapCache.INSTANCE;
     public static boolean ASYNC_MUNMAP_ENABLED = false;
     public static boolean FS_CACHE_ENABLED = true;
+    public static boolean MADVISE_RANDOM_MMAP_CACHE_ENABLED = true;
 
     // Maximum recursion depth when deleting the database directory.
     // Recursion starts at depth 0 for the root directory (e.g., "db").
@@ -153,6 +155,10 @@ public final class Files {
         if (Os.isLinux()) {
             fadvise0(toOsFd(fd), offset, len, advise);
         }
+    }
+
+    public static boolean fallocateKeepSize(long fd, long offset, long len) {
+        return fallocateKeepSize(toOsFd(fd), offset, len);
     }
 
     public native static void findClose(long findPtr);
@@ -328,9 +334,16 @@ public final class Files {
         return lock(toOsFd(fd));
     }
 
+    public static boolean isMadviseMmapCacheable(int advise) {
+        return advise == POSIX_MADV_RANDOM && MADVISE_RANDOM_MMAP_CACHE_ENABLED;
+    }
+
     public static void madvise(long address, long len, int advise) {
-        if (Os.isLinux() && mmapCache.isSingleUse(address)) {
-            madvise0(address, len, advise);
+        if (Os.isLinux() && advise > -1) {
+            // Shared mappings can only use MADV_RANDOM. Other hints need single-use mappings.
+            if (mmapCache.isSingleUse(address) || isMadviseMmapCacheable(advise)) {
+                madvise0(address, len, advise);
+            }
         }
     }
 
@@ -629,6 +642,8 @@ public final class Files {
     private static native boolean exists0(long lpsz);
 
     private static native void fadvise0(int fd, long offset, long len, int advise);
+
+    private native static boolean fallocateKeepSize(int fd, long offset, long len);
 
     // caller must call findClose to free allocated struct
     private native static long findFirst(long lpszName);

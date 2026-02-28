@@ -457,6 +457,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getBitmapIndexReaderPagedEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getBitmapIndexReaderPagedMaxPages() {
+        return 64;
+    }
+
+    @Override
+    public long getBitmapIndexReaderPagedPageSize() {
+        return 128L * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public boolean getBitmapIndexWriterValuePagedEnabled() {
+        return true;
+    }
+
+    @Override
     public int getIndexValueBlockSize() {
         return 256;
     }
@@ -1456,6 +1476,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isIOURingEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isWalWriterIOURingEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isMadviseRandomMmapCacheEnabled() {
         return true;
     }
 

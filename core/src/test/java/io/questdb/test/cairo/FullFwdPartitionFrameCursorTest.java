@@ -1361,8 +1361,13 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             // ft table is empty constructor should only attempt to recover non-partitioned ones
             if (empty && partitionBy == PartitionBy.NONE) {
                 try {
-                    newOffPoolWriter(configuration, "ABC");
-                    Assert.fail();
+                    TableWriter w = newOffPoolWriter(configuration, "ABC");
+                    // Paged value memory lazily maps pages, so when the .v file is empty
+                    // no mmap occurs and the fault injection doesn't fire. That's OK.
+                    if (!fileUnderAttack.endsWith(".v")) {
+                        Assert.fail();
+                    }
+                    Misc.free(w);
                 } catch (CairoException ignore) {
                 }
             }
@@ -1465,8 +1470,13 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             }
 
             try {
-                newOffPoolWriter(configuration, "ABC");
-                Assert.fail();
+                TableWriter w = newOffPoolWriter(configuration, "ABC");
+                // Paged value memory lazily maps pages, so when the .v file is empty
+                // no mmap occurs and the fault injection doesn't fire. That's OK.
+                if (!(empty && fileUnderAttack.endsWith(".v"))) {
+                    Assert.fail();
+                }
+                Misc.free(w);
             } catch (CairoException ignore) {
             }
 
@@ -1707,8 +1717,13 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 // constructor must attempt to recover non-partitioned empty table
                 if (empty && partitionBy == PartitionBy.NONE) {
                     try {
-                        newOffPoolWriter(configuration, "ABC");
-                        Assert.fail();
+                        TableWriter w = newOffPoolWriter(configuration, "ABC");
+                        // Paged value memory lazily maps pages, so when the .v file is empty
+                        // no mmap occurs and the fault injection doesn't fire. That's OK.
+                        if (!fileUnderAttack.endsWith(".v")) {
+                            Assert.fail();
+                        }
+                        Misc.free(w);
                     } catch (CairoException ignore) {
                     }
                 }

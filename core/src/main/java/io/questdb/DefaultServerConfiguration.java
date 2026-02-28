@@ -163,6 +163,27 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         return walApplyPoolConfiguration;
     }
 
+    @Override
+    public WorkerPoolConfiguration getAsyncMunmapPoolConfiguration() {
+        // Returns a simple configuration with worker count = 1
+        return new WorkerPoolConfiguration() {
+            @Override
+            public String getPoolName() {
+                return "async-munmap";
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return false;
+            }
+        };
+    }
+
     private record DefaultWorkerPoolConfiguration(String name) implements WorkerPoolConfiguration {
 
         @Override

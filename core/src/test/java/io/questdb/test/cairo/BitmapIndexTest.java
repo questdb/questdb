@@ -24,9 +24,11 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractIndexReader;
 import io.questdb.cairo.BitmapIndexBwdReader;
 import io.questdb.cairo.BitmapIndexFwdReader;
+import io.questdb.cairo.BitmapIndexFwdReaderPaged;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.BitmapIndexWriter;
@@ -35,6 +37,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ConcurrentBitmapIndexFwdReader;
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.IndexFrame;
+import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
@@ -51,6 +55,7 @@ import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.BitmapIndexUtilsNative;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
@@ -61,6 +66,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1231,6 +1237,90 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPagedForwardReaderFrameCursorCapsFramesToPageBoundary() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            enablePagedBitmapIndexReader();
+
+            final int valueBlockCapacity = 1024;
+            final int rowCount = 1024;
+            create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
+
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < rowCount; i++) {
+                    writer.add(0, i);
+                }
+            }
+
+            final LongList values = new LongList();
+            try (BitmapIndexFwdReaderPaged reader = new BitmapIndexFwdReaderPaged(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                final IndexFrameCursor frameCursor = reader.getFrameCursor(0, 0, Long.MAX_VALUE);
+                while (true) {
+                    final IndexFrame frame = frameCursor.nextIndexFrame();
+                    if (frame.getSize() == 0) {
+                        break;
+                    }
+
+                    final long frameBytes = frame.getSize() * Long.BYTES;
+                    Assert.assertTrue(frameBytes <= Files.PAGE_SIZE);
+                    Assert.assertTrue((frame.getAddress() & (Files.PAGE_SIZE - 1L)) + frameBytes <= Files.PAGE_SIZE);
+                    for (long i = 0; i < frame.getSize(); i++) {
+                        values.add(Unsafe.getUnsafe().getLong(frame.getAddress() + i * Long.BYTES));
+                    }
+                }
+            }
+
+            Assert.assertEquals(rowCount, values.size());
+            for (int i = 0; i < rowCount; i++) {
+                Assert.assertEquals(i, values.getQuick(i));
+            }
+        });
+    }
+
+    @Test
+    public void testPagedForwardReaderFrameCursorAbandonDoesNotPinPagesForever() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            enablePagedBitmapIndexReader();
+
+            final int rowCount = 8_192;
+            create(configuration, path.trimTo(plen), "x", 1_024);
+
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
+                for (int i = 0; i < rowCount; i++) {
+                    writer.add(0, i);
+                }
+            }
+
+            try (BitmapIndexFwdReaderPaged reader = new BitmapIndexFwdReaderPaged(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                for (long minRowId = 0; minRowId < rowCount; minRowId += 256) {
+                    final IndexFrameCursor frameCursor = reader.getFrameCursor(0, minRowId, Long.MAX_VALUE);
+                    final IndexFrame frame = frameCursor.nextIndexFrame();
+                    Assert.assertTrue("minRowId=" + minRowId, frame.getSize() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPagedForwardReaderRejectsContiguousValueBaseAddressAccess() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            enablePagedBitmapIndexReader();
+            create(configuration, path.trimTo(plen), "x", 64);
+
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(0, 42);
+            }
+
+            try (BitmapIndexFwdReaderPaged reader = new BitmapIndexFwdReaderPaged(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                try {
+                    reader.getValueBaseAddress();
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignored) {
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSimpleRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd modelRnd = new Rnd();
@@ -1379,6 +1469,53 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testRollbackValuesOnEmptyIndexKeepsValueMemSizeZero() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.rollbackValues(42);
+                Assert.assertEquals(0, writer.getValueMemSize());
+            }
+
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                Assert.assertEquals(0, reader.getKeyCount());
+            }
+        });
+    }
+
+    @Test
+    public void testTableReaderUsesContiguousForwardReaderWhenPagedDisabled() {
+        disablePagedBitmapIndexReader();
+        createIndexedSymbolTableForReaderModeTest();
+
+        try (TableReader tableReader = newOffPoolReader(configuration, "x")) {
+            tableReader.openPartition(0);
+            final int columnIndex = tableReader.getMetadata().getColumnIndex("s");
+            final BitmapIndexReader forwardReader = tableReader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD);
+            Assert.assertTrue(forwardReader instanceof BitmapIndexFwdReader);
+            Assert.assertFalse(forwardReader instanceof BitmapIndexFwdReaderPaged);
+        }
+    }
+
+    @Test
+    public void testTableReaderUsesPagedForwardReaderWhenPagedEnabled() {
+        enablePagedBitmapIndexReader();
+        createIndexedSymbolTableForReaderModeTest();
+
+        try (TableReader tableReader = newOffPoolReader(configuration, "x")) {
+            tableReader.openPartition(0);
+            final int columnIndex = tableReader.getMetadata().getColumnIndex("s");
+            final BitmapIndexReader forwardReader = tableReader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD);
+            Assert.assertTrue(forwardReader instanceof BitmapIndexFwdReaderPaged);
+
+            // Backward reader remains contiguous in phase 1.
+            final BitmapIndexReader backwardReader = tableReader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            Assert.assertTrue(backwardReader instanceof BitmapIndexBwdReader);
+        }
     }
 
     @Test
@@ -1534,7 +1671,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     private void assertForwardCursorLimit(AbstractIndexReader reader, int min, int N, LongList tmp, int nExpectedResults, int nExpectedNulls, boolean cached) {
-        Assert.assertTrue(reader instanceof BitmapIndexFwdReader || reader instanceof ConcurrentBitmapIndexFwdReader);
+        Assert.assertTrue(reader instanceof BitmapIndexFwdReader || reader instanceof BitmapIndexFwdReaderPaged || reader instanceof ConcurrentBitmapIndexFwdReader);
         tmp.clear();
         RowCursor cursor = reader.getCursor(cached, 0, min, N - 1);
         while (cursor.hasNext()) {
@@ -1616,6 +1753,32 @@ public class BitmapIndexTest extends AbstractCairoTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), contains);
         }
+    }
+
+    private void createIndexedSymbolTableForReaderModeTest() {
+        final TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("s", ColumnType.SYMBOL).indexed(true, 64)
+                .timestamp();
+        create(model);
+
+        try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+            for (int i = 0; i < 2_000; i++) {
+                final TableWriter.Row row = writer.newRow(i);
+                row.putSym(0, i % 3 == 0 ? "a" : "b");
+                row.append();
+            }
+            writer.commit();
+        }
+    }
+
+    private void disablePagedBitmapIndexReader() {
+        setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_ENABLED, "false");
+    }
+
+    private void enablePagedBitmapIndexReader() {
+        setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE, Long.toString(Files.PAGE_SIZE));
+        setProperty(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES, "2");
     }
 
     private MemoryA openKey() {

@@ -228,6 +228,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
                 final long keyBaseAddress = indexReader.getKeyBaseAddress();
                 final long keysMemorySize = indexReader.getKeyMemorySize();
+                // This native path assumes DIR_BACKWARD returns a contiguous reader.
+                // If backward reader mode becomes paged, this call site must be adapted.
                 final long valueBaseAddress = indexReader.getValueBaseAddress();
                 final long valuesMemorySize = indexReader.getValueMemorySize();
                 final int valueBlockCapacity = indexReader.getValueBlockCapacity();

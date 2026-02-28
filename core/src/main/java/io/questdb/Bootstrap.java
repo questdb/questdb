@@ -211,6 +211,7 @@ public class Bootstrap {
             }
 
             Files.FS_CACHE_ENABLED = config.getCairoConfiguration().getFileDescriptorCacheEnabled();
+            Files.MADVISE_RANDOM_MMAP_CACHE_ENABLED = config.getCairoConfiguration().isMadviseRandomMmapCacheEnabled();
             Files.RMDIR_MAX_DEPTH = config.getCairoConfiguration().getRmdirMaxDepth();
             LogLevel.init(config.getCairoConfiguration());
             if (LogLevel.TIMESTAMP_TIMEZONE != null) {

@@ -437,6 +437,26 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getBitmapIndexReaderPagedEnabled() {
+        return getDelegate().getBitmapIndexReaderPagedEnabled();
+    }
+
+    @Override
+    public int getBitmapIndexReaderPagedMaxPages() {
+        return getDelegate().getBitmapIndexReaderPagedMaxPages();
+    }
+
+    @Override
+    public long getBitmapIndexReaderPagedPageSize() {
+        return getDelegate().getBitmapIndexReaderPagedPageSize();
+    }
+
+    @Override
+    public boolean getBitmapIndexWriterValuePagedEnabled() {
+        return getDelegate().getBitmapIndexWriterValuePagedEnabled();
+    }
+
+    @Override
     public int getIndexValueBlockSize() {
         return getDelegate().getIndexValueBlockSize();
     }
@@ -1439,6 +1459,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
+    }
+
+    @Override
+    public boolean isWalWriterIOURingEnabled() {
+        return getDelegate().isWalWriterIOURingEnabled();
+    }
+
+    @Override
+    public boolean isMadviseRandomMmapCacheEnabled() {
+        return getDelegate().isMadviseRandomMmapCacheEnabled();
     }
 
     @Override

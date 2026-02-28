@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.vm.MemoryPMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -49,7 +50,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private final Cursor cursor = new Cursor();
     private final FilesFacade ff;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
-    private final MemoryMARW valueMem = Vm.getCMARWInstance();
+    private final MemoryMARW valueMem;
     private int blockCapacity;
     private int blockValueCountMod;
     private int keyCount = -1;
@@ -67,6 +68,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     public BitmapIndexWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+        this.valueMem = configuration.getBitmapIndexWriterValuePagedEnabled() ? new MemoryPMARWImpl() : Vm.getCMARWInstance();
     }
 
     public static void initKeyMemory(MemoryMA keyMem, int blockValueCount) {
@@ -143,15 +145,23 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     @Override
     public void close() {
         if (keyMem.isOpen()) {
-            if (keyCount > -1) {
-                keyMem.setSize(keyMemSize());
+            try {
+                if (keyCount > -1) {
+                    keyMem.setSize(keyMemSize());
+                }
+            } catch (CairoException e) {
+                LOG.error().$("could not truncate key memory on close").$((Throwable) e).$();
             }
             Misc.free(keyMem);
         }
 
         if (valueMem.isOpen()) {
-            if (valueMemSize > -1) {
-                valueMem.setSize(valueMemSize);
+            try {
+                if (valueMemSize > -1) {
+                    valueMem.setSize(valueMemSize);
+                }
+            } catch (CairoException e) {
+                LOG.error().$("could not truncate value memory on close").$((Throwable) e).$();
             }
             Misc.free(valueMem);
         }
@@ -377,6 +387,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     public void rollbackValues(long maxValue) {
 
         long maxValueBlockOffset = 0;
+        boolean hasValues = false;
         for (int k = 0; k < keyCount; k++) {
             long offset = BitmapIndexUtils.getKeyEntryOffset(k);
             long valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
@@ -398,12 +409,15 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                     keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK, seekValueCount);
                 }
 
-                if (seekValueBlockOffset > maxValueBlockOffset) {
-                    maxValueBlockOffset = seekValueBlockOffset;
+                if (seekValueCount > 0) {
+                    hasValues = true;
+                    if (seekValueBlockOffset > maxValueBlockOffset) {
+                        maxValueBlockOffset = seekValueBlockOffset;
+                    }
                 }
             }
         }
-        valueMemSize = maxValueBlockOffset + blockCapacity;
+        valueMemSize = hasValues ? maxValueBlockOffset + blockCapacity : 0;
         updateValueMemSize();
         setMaxValue(maxValue);
     }

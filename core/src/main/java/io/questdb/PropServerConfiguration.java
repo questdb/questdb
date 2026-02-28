@@ -150,6 +150,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
     private final boolean asyncMunmapEnabled;
+    private final WorkerPoolConfiguration asyncMunmapPoolConfiguration = new PropAsyncMunmapPoolConfiguration();
+    private final int[] asyncMunmapWorkerAffinity;
+    private final boolean asyncMunmapWorkerHaltOnError;
+    private final long asyncMunmapWorkerNapThreshold;
+    private final int asyncMunmapWorkerPriority;
+    private final long asyncMunmapWorkerSleepThreshold;
+    private final long asyncMunmapWorkerSleepTimeout;
+    private final long asyncMunmapWorkerYieldThreshold;
     private final int binaryEncodingMaxLength;
     private final BuildInformation buildInformation;
     private final boolean cairoAttachPartitionCopy;
@@ -274,6 +282,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveViewWalWriterTTL;
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
+    private final boolean bitmapIndexReaderPagedEnabled;
+    private final int bitmapIndexReaderPagedMaxPages;
+    private final long bitmapIndexReaderPagedPageSize;
+    private final boolean bitmapIndexWriterValuePagedEnabled;
     private final int indexValueBlockSize;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final String installRoot;
@@ -281,6 +293,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
+    private final boolean walWriterIOURingEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
@@ -316,6 +329,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale logTimestampLocale;
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
+    private final boolean madviseRandomMmapCacheEnabled;
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshIntervals;
@@ -1466,6 +1480,22 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inactiveWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_WAL_INACTIVE_WRITER_TTL, 120_000);
             this.inactiveViewWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_VIEW_WAL_INACTIVE_WRITER_TTL, 60_000);
             this.ttlUseWallClock = getBoolean(properties, env, PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, true);
+            this.bitmapIndexReaderPagedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_ENABLED, false);
+            this.bitmapIndexReaderPagedPageSize = getLongSize(properties, env, PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE, 128L * Numbers.SIZE_1MB);
+            if (bitmapIndexReaderPagedPageSize <= 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath() + " must be > 0");
+            }
+            if (!Numbers.isPow2(bitmapIndexReaderPagedPageSize)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath() + " must be a power of two");
+            }
+            if (bitmapIndexReaderPagedPageSize % Files.PAGE_SIZE != 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_PAGE_SIZE.getPropertyPath() + " must be a multiple of " + Files.PAGE_SIZE);
+            }
+            this.bitmapIndexReaderPagedMaxPages = getInt(properties, env, PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES, 64);
+            if (bitmapIndexReaderPagedMaxPages < 2) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_BITMAP_INDEX_READER_PAGED_MAX_PAGES.getPropertyPath() + " must be >= 2");
+            }
+            this.bitmapIndexWriterValuePagedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_BITMAP_INDEX_WRITER_VALUE_PAGED_ENABLED, false);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
@@ -1604,6 +1634,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (asyncMunmapEnabled && Os.isWindows()) {
                 throw new ServerConfigurationException("Async munmap is not supported on Windows");
             }
+
+            // Async munmap pool configuration (single-thread dedicated pool)
+            this.asyncMunmapWorkerAffinity = getAffinity(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_AFFINITY, 1);
+            this.asyncMunmapWorkerHaltOnError = getBoolean(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_HALT_ON_ERROR, false);
+            this.asyncMunmapWorkerNapThreshold = getLong(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_NAP_THRESHOLD, 7_000);
+            final int asyncMunmapWorkerPriorityRaw = getInt(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_PRIORITY, Thread.MAX_PRIORITY);
+            this.asyncMunmapWorkerPriority = Math.min(Thread.MAX_PRIORITY, Math.max(Thread.MIN_PRIORITY, asyncMunmapWorkerPriorityRaw));
+            this.asyncMunmapWorkerSleepThreshold = getLong(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.asyncMunmapWorkerSleepTimeout = getMillis(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_SLEEP_TIMEOUT, 10);
+            this.asyncMunmapWorkerYieldThreshold = getLong(properties, env, PropertyKey.ASYNC_MUNMAP_WORKER_YIELD_THRESHOLD, 10);
+
             this.rmdirMaxDepth = getInt(properties, env, PropertyKey.CAIRO_RMDIR_MAX_DEPTH, 5);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
@@ -1695,6 +1736,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
+            this.walWriterIOURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_WRITER_IO_URING_ENABLED, false);
+            this.madviseRandomMmapCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MADVISE_RANDOM_MMAP_CACHE_ENABLED, false);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
@@ -2026,6 +2069,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             return sink.put(subdir).toString();
         }
         return null;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getAsyncMunmapPoolConfiguration() {
+        return asyncMunmapPoolConfiguration;
     }
 
     @Override
@@ -3157,6 +3205,64 @@ public class PropServerConfiguration implements ServerConfiguration {
     public record ValidationResult(boolean isError, String message) {
     }
 
+    private class PropAsyncMunmapPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return asyncMunmapWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "async-munmap";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return asyncMunmapWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return asyncMunmapWorkerSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return asyncMunmapWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            // Always a single-thread pool
+            return 1;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return asyncMunmapWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return asyncMunmapWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return asyncMunmapEnabled;
+        }
+
+        @Override
+        public int workerPoolPriority() {
+            return asyncMunmapWorkerPriority;
+        }
+    }
+
     class PropCairoConfiguration implements CairoConfiguration {
         private final LongSupplier randomIDSupplier = () -> getRandom().nextPositiveLong();
         private final LongSupplier sequentialIDSupplier = new LongSupplier() {
@@ -3551,6 +3657,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getInactiveWriterTTL() {
             return inactiveWriterTTL;
+        }
+
+        @Override
+        public boolean getBitmapIndexReaderPagedEnabled() {
+            return bitmapIndexReaderPagedEnabled;
+        }
+
+        @Override
+        public int getBitmapIndexReaderPagedMaxPages() {
+            return bitmapIndexReaderPagedMaxPages;
+        }
+
+        @Override
+        public long getBitmapIndexReaderPagedPageSize() {
+            return bitmapIndexReaderPagedPageSize;
+        }
+
+        @Override
+        public boolean getBitmapIndexWriterValuePagedEnabled() {
+            return bitmapIndexWriterValuePagedEnabled;
         }
 
         @Override
@@ -4551,6 +4677,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isWalWriterIOURingEnabled() {
+            return walWriterIOURingEnabled;
+        }
+
+        @Override
+        public boolean isMadviseRandomMmapCacheEnabled() {
+            return madviseRandomMmapCacheEnabled;
         }
 
         @Override
