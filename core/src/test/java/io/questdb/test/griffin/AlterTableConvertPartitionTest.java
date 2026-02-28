@@ -249,7 +249,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertException(
                     "alter table x convert partition to parquet list '2024-06-10' with (bloom_filter_columns = 'nonexistent')",
                     90,
-                    "bloom filter column not found [column=nonexistent]"
+                    "bloom_filter_columns contains non-existent column: nonexistent"
             );
 
             // bad delimiter (missing ',' or ')')
