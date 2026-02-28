@@ -22,15 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.arr.ArrayView;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface WindowSPI {
-    long getAddress(long recordAddress, int columnIndex);
+public class PercentileDiscLongGroupByFunctionFactory implements FunctionFactory {
 
-    Record getRecordAt(long recordOffset);
+    @Override
+    public String getSignature() {
+        return "percentile_disc(LD)";
+    }
 
-    void putArray(long recordOffset, int columnIndex, @NotNull ArrayView value);
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new PercentileDiscLongGroupByFunction(configuration, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
+    }
 }

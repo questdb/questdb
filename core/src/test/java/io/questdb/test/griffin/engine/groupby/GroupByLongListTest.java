@@ -38,7 +38,7 @@ public class GroupByLongListTest extends AbstractCairoTest {
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
-                GroupByLongList list = new GroupByLongList(16);
+                GroupByLongList list = new GroupByLongList(16, 0L);
                 list.setAllocator(allocator);
                 list.of(0);
 
