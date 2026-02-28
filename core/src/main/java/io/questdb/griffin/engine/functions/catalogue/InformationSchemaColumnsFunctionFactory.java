@@ -44,7 +44,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
@@ -87,7 +87,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
     static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
         private final ColumnRecordCursor cursor;
-        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private final CharSequenceObjSortedHashMap<CairoTable> tableCache = new CharSequenceObjSortedHashMap<>();
         private long tableCacheVersion = -1;
 
         ColumnsCursorFactory(IntFunction<String> typeToName) {
@@ -117,13 +117,13 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
             private final ColumnsRecord record = new ColumnsRecord();
-            private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private final CharSequenceObjSortedHashMap<CairoTable> tableCache;
             private final IntFunction<String> typeToName;
             private int columnIdx;
             private int iteratorIdx;
             private CairoTable table;
 
-            private ColumnRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache, IntFunction<String> typeToName) {
+            private ColumnRecordCursor(CharSequenceObjSortedHashMap<CairoTable> tableCache, IntFunction<String> typeToName) {
                 this.tableCache = tableCache;
                 this.typeToName = typeToName;
             }

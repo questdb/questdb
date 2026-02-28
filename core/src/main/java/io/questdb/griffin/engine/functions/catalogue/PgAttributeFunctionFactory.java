@@ -44,7 +44,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -94,7 +94,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
         private final AttributeClassCatalogueCursor cursor;
-        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private final CharSequenceObjSortedHashMap<CairoTable> tableCache = new CharSequenceObjSortedHashMap<>();
         private long tableCacheVersion = -1;
 
         public AttributeCatalogueCursorFactory() {
@@ -126,13 +126,13 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
         private final PgAttributeRecord record = new PgAttributeRecord();
-        private final CharSequenceObjHashMap<CairoTable> tableCache;
+        private final CharSequenceObjSortedHashMap<CairoTable> tableCache;
         private int columnIdx = -1;
         private int iteratorIdx = -1;
         private CairoTable table;
         private int tableId;
 
-        public AttributeClassCatalogueCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+        public AttributeClassCatalogueCursor(CharSequenceObjSortedHashMap<CairoTable> tableCache) {
             super();
             this.tableCache = tableCache;
         }

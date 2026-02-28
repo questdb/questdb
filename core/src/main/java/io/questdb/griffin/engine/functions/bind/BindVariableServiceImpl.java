@@ -46,6 +46,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -237,7 +238,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public ObjList<CharSequence> getNamedVariables() {
+    public ReadOnlyObjList<CharSequence> getNamedVariables() {
         return namedVariables.keys();
     }
 

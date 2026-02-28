@@ -48,7 +48,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -164,7 +164,7 @@ public class TablesFunctionFactory implements FunctionFactory {
     public static class TablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
         private final TablesRecordCursor cursor;
-        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private final CharSequenceObjSortedHashMap<CairoTable> tableCache = new CharSequenceObjSortedHashMap<>();
         private long tableCacheVersion = -1;
 
         public TablesCursorFactory() {
@@ -200,13 +200,13 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private final CharSequenceObjSortedHashMap<CairoTable> tableCache;
             private int iteratorIdx = -1;
             private int iteratorLim;
             private RecentWriteTracker recentWriteTracker;
             private TableSequencerAPI tableSequencerAPI;
 
-            public TablesRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+            public TablesRecordCursor(CharSequenceObjSortedHashMap<CairoTable> tableCache) {
                 this.tableCache = tableCache;
                 this.iteratorLim = tableCache.size() - 1;
             }

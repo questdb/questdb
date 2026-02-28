@@ -206,6 +206,56 @@ public class ShowTablesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowTablesReturnsOrderedList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "SHOW TABLES");
+        });
+    }
+
+    @Test
+    public void testShowTablesWithFunctionReturnsOrderedList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
+    public void testTablesOrderedAfterDropAndCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            execute("drop table balances");
+            execute("create table businesses(name symbol)");
+            execute("create table balances2(account_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
+    public void testTablesOrderedAfterRename() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            execute("rename table balances to statement_balances");
+            execute("create table businesses(name symbol)");
+            execute("create table balances2(account_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\nstatement_balances\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
     public void testShowTimeZone() throws Exception {
         assertMemoryLeak(() -> assertQuery(
                 "TimeZone\nUTC\n",
