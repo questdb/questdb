@@ -1518,7 +1518,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                             final long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
-                            final long auxVectorAddr = mapRO(ff, iFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
+                            final long auxVectorAddr = mapRONoCache(ff, iFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
+                            ff.madvise(auxVectorAddr, auxVectorSize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setSecondaryColumnAddr(auxVectorAddr, auxVectorSize);
 
                             final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
@@ -1542,7 +1543,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             partitionDescriptor.setColumnAddr(dataAddr, dataSize);
                         } else {
                             final long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
-                            final long fixedAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
+                            final long fixedAddr = mapRONoCache(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
+                            ff.madvise(fixedAddr, mapBytes, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.addColumn(
                                     columnName,
                                     columnType,
@@ -1583,7 +1585,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try {
                     if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
                         bloomFilterIndexes.reopen();
-                        parseBloomFilterColumnIndexes(bloomFilterColumns, partitionDescriptor, bloomFilterIndexes);
+                        parseBloomFilterColumnIndexes(bloomFilterColumns, bloomFilterIndexes);
                         bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
                         bloomFilterColumnCount = (int) bloomFilterIndexes.size();
                     }
@@ -7086,7 +7088,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void parseBloomFilterColumnIndexes(CharSequence bloomFilterColumns, PartitionDescriptor descriptor, DirectIntList indexes) {
+    private void parseBloomFilterColumnIndexes(CharSequence bloomFilterColumns, DirectIntList indexes) {
         int start = 0;
         int len = bloomFilterColumns.length();
         for (int i = 0; i <= len; i++) {

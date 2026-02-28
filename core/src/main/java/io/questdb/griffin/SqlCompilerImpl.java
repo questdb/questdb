@@ -73,6 +73,7 @@ import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -4701,7 +4702,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "column names");
                 int bloomFilterColumnsPosition = lexer.lastTokenPosition();
                 bloomFilterColumns = unquote(tok);
-                validateBloomFilterColumns(bloomFilterColumns, tableMetadata, bloomFilterColumnsPosition);
+                CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, tableMetadata, bloomFilterColumnsPosition);
             } else if (isFppKeyword(tok)) {
                 if (!Double.isNaN(fpp)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "duplicate fpp option");
@@ -4834,33 +4835,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
         }
         model.setQueryModel(queryModel);
-    }
-
-    private void validateBloomFilterColumns(CharSequence bloomFilterColumns, RecordMetadata metadata, int position) throws SqlException {
-        if (bloomFilterColumns == null || bloomFilterColumns.isEmpty()) {
-            return;
-        }
-        int start = 0;
-        int len = bloomFilterColumns.length();
-        for (int i = 0; i <= len; i++) {
-            if (i == len || bloomFilterColumns.charAt(i) == ',') {
-                int lo = start;
-                while (lo < i && Character.isWhitespace(bloomFilterColumns.charAt(lo))) {
-                    lo++;
-                }
-                int hi = i;
-                while (hi > lo && Character.isWhitespace(bloomFilterColumns.charAt(hi - 1))) {
-                    hi--;
-                }
-                if (hi <= lo) {
-                    throw SqlException.$(position + start, "empty column name in bloom_filter_columns");
-                }
-                if (metadata.getColumnIndexQuiet(bloomFilterColumns, lo, hi) < 0) {
-                    throw SqlException.$(position + lo, "bloom filter column not found [column=").put(bloomFilterColumns, lo, hi).put(']');
-                }
-                start = i + 1;
-            }
-        }
     }
 
     private TableToken viewExistsOrFail(CharSequence viewName, SqlExecutionContext executionContext, SqlException notExistException) throws SqlException {

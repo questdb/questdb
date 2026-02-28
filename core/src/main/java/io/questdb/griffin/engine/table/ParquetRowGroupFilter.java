@@ -50,7 +50,7 @@ import org.jetbrains.annotations.TestOnly;
  * row groups can be skipped based on bloom filter conditions.
  */
 public final class ParquetRowGroupFilter {
-    public static final int FILTER_BUFFER_MAX_PAGES = Integer.MAX_VALUE;
+    public static final int FILTER_BUFFER_MAX_PAGES = 1_048_576; // 128MB with 128-byte pages
     public static final long FILTER_BUFFER_PAGE_SIZE = 128;
     public static final int LONGS_PER_FILTER = 2;
     private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
@@ -80,7 +80,7 @@ public final class ParquetRowGroupFilter {
             }
             filterList.clear();
             filterList.reopen();
-            filterValues.clear();
+            filterValues.jumpTo(0);
             PartitionDecoder.Metadata metadata = decoder.metadata();
 
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
@@ -349,7 +349,7 @@ public final class ParquetRowGroupFilter {
         } catch (CairoException e) {
             LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
             return false;
-        } catch (Throwable e) {
+        } catch (Exception e) {
             LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e).$(']').$();
             return false;
         }

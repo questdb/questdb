@@ -3182,6 +3182,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             condition.addValueFunction(f);
                             if (!f.isConstantOrRuntimeConstant()) {
                                 allConstant = false;
+                                break;
                             }
                         }
                         if (allConstant) {

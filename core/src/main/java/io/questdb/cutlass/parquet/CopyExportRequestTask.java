@@ -98,12 +98,13 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
                     nameEnd--;
                 }
-                if (nameStart < nameEnd) {
-                    CharSequence columnName = columns.subSequence(nameStart, nameEnd);
-                    if (meta.getColumnIndexQuiet(columnName) < 0) {
-                        throw SqlException.$(position > 0 ? position + start : 0,
-                                "bloom_filter_columns contains non-existent column: ").put(columnName);
-                    }
+                if (nameEnd <= nameStart) {
+                    throw SqlException.$(position > 0 ? position + start : 0, "empty column name in bloom_filter_columns");
+                }
+                CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                if (meta.getColumnIndexQuiet(columnName) < 0) {
+                    throw SqlException.$(position > 0 ? position + start : 0,
+                            "bloom_filter_columns contains non-existent column: ").put(columnName);
                 }
                 start = i + 1;
             }
