@@ -42,6 +42,7 @@ where
     V: Converter<T, U>,
 {
     values: *const T,
+    values_len: usize,
     values_offset: usize,
     buffers: &'a mut ColumnChunkBuffers,
     buffers_ptr: *mut U,
@@ -143,6 +144,7 @@ where
         );
         Self {
             values: values.as_ptr().cast(),
+            values_len: values.len() / size_of::<T>(),
             values_offset: 0,
             buffers_ptr: buffers.data_vec.as_mut_ptr().cast(),
             buffers,
@@ -175,8 +177,15 @@ where
     V: Converter<T, U>,
 {
     fn push(&mut self) -> ParquetResult<()> {
+        if self.values_offset >= self.values_len {
+            return Err(fmt_err!(
+                Layout,
+                "not enough plain values: offset {} >= length {}",
+                self.values_offset,
+                self.values_len
+            ));
+        }
         // SAFETY: destination pointer stays in-bounds because decode paths reserve output upfront.
-        // We rely on trusted parquet metadata/level streams to keep `values_offset` in-bounds.
         unsafe {
             *self.buffers_ptr.add(self.buffers_offset) = self
                 .converter
@@ -210,6 +219,16 @@ where
     }
 
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
+        if self.values_offset + count > self.values_len {
+            return Err(fmt_err!(
+                Layout,
+                "not enough plain values for slice: offset {} + count {} > length {}",
+                self.values_offset,
+                count,
+                self.values_len
+            ));
+        }
+
         if size_of::<T>() == size_of::<U>() && TypeId::of::<T>() == TypeId::of::<U>() && V::IDENTITY
         {
             // Same type, same layout: bulk copy (also handles unaligned source)

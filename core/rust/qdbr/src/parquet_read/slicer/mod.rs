@@ -452,11 +452,16 @@ pub struct PlainVarSlicer<'a> {
     data: &'a [u8],
     pos: usize,
     sliced_row_count: usize,
+    result: ParquetResult<()>,
 }
 
 impl DataPageSlicer for PlainVarSlicer<'_> {
     #[inline]
     fn next(&mut self) -> &[u8] {
+        if self.pos + size_of::<u32>() > self.data.len() {
+            self.result = Err(fmt_err!(Layout, "not enough data to read length prefix"));
+            return &[];
+        }
         let len =
             unsafe { ptr::read_unaligned(self.data.as_ptr().add(self.pos) as *const u32) } as usize;
         self.pos += size_of::<u32>();
@@ -503,12 +508,12 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
     }
 
     fn result(&self) -> ParquetResult<()> {
-        Ok(())
+        self.result.clone()
     }
 }
 
 impl<'a> PlainVarSlicer<'a> {
     pub fn new(data: &'a [u8], sliced_row_count: usize) -> Self {
-        Self { data, pos: 0, sliced_row_count }
+        Self { data, pos: 0, sliced_row_count, result: Ok(()) }
     }
 }
