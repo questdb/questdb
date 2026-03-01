@@ -1802,6 +1802,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             // Set all bits to 1 (all rows are null for this newly added column)
             Vect.memset(bitmapAddr, bitmapByteCount, 0xFF);
+            // Clear trailing bits beyond rowCount in the last byte to avoid
+            // corrupting reads that scan past the row count boundary.
+            int trailingBits = (int) (rowCount & 7);
+            if (trailingBits != 0) {
+                long lastAddr = bitmapAddr + bitmapByteCount - 1;
+                byte lastByte = Unsafe.getUnsafe().getByte(lastAddr);
+                Unsafe.getUnsafe().putByte(lastAddr, (byte) (lastByte & ((1 << trailingBits) - 1)));
+            }
             if (commitMode != CommitMode.NOSYNC) {
                 ff.msync(bitmapAddr, bitmapByteCount, commitMode == CommitMode.ASYNC);
             }

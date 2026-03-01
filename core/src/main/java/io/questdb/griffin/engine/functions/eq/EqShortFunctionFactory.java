@@ -66,7 +66,10 @@ public class EqShortFunctionFactory implements FunctionFactory {
             final boolean leftNull = left.isNull(rec);
             final boolean rightNull = right.isNull(rec);
             if (leftNull || rightNull) {
-                return negated != (leftNull && rightNull);
+                if (negated) {
+                    return false;
+                }
+                return leftNull && rightNull;
             }
             return negated != (left.getShort(rec) == right.getShort(rec));
         }

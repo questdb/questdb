@@ -30,11 +30,13 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.jit.JitUtil;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 public class NullBitmapTest extends AbstractCairoTest {
@@ -2051,6 +2053,259 @@ public class NullBitmapTest extends AbstractCairoTest {
                     "total\tsh_nn\tby_nn\tb_nn\n6\t3\t3\t3\n",
                     "SELECT COUNT(*) AS total, COUNT(sh) AS sh_nn, COUNT(by) AS by_nn, COUNT(b) AS b_nn FROM o3_move"
             );
+        });
+    }
+
+    @Test
+    public void testO3AppendCrossPartitionPreservesBitmapNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create table with 3 partitions, each having 1 row.
+            // Partition 02 has a NULL short value.
+            execute("CREATE TABLE o3_cross (ts TIMESTAMP, sh SHORT) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+            execute("""
+                    INSERT INTO o3_cross VALUES
+                    ('2024-01-01T01:00:00.000000Z', 10),
+                    ('2024-01-01T02:00:00.000000Z', NULL),
+                    ('2024-01-01T03:00:00.000000Z', 30)
+                    """);
+
+            // Insert O3 rows that APPEND to existing partitions 01 and 02
+            // (timestamps after existing rows in those partitions).
+            // This triggers OPEN_MID_PARTITION_FOR_APPEND, not MERGE.
+            execute("""
+                    INSERT INTO o3_cross VALUES
+                    ('2024-01-01T01:30:00.000000Z', NULL),
+                    ('2024-01-01T02:30:00.000000Z', 25)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsh
+                            2024-01-01T01:00:00.000000Z\t10
+                            2024-01-01T01:30:00.000000Z\t
+                            2024-01-01T02:00:00.000000Z\t
+                            2024-01-01T02:30:00.000000Z\t25
+                            2024-01-01T03:00:00.000000Z\t30
+                            """,
+                    "SELECT * FROM o3_cross", "ts", true, true
+            );
+
+            // 5 total rows, 3 non-null (10, 25, 30)
+            assertSql(
+                    "total\tsh_nn\n5\t3\n",
+                    "SELECT COUNT(*) AS total, COUNT(sh) AS sh_nn FROM o3_cross"
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleSuccessiveO3MergesPreserveBitmapNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create 3 partitions with 1 row each
+            execute("CREATE TABLE multi_o3 (ts TIMESTAMP, sh SHORT) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+            execute("""
+                    INSERT INTO multi_o3 VALUES
+                    ('2024-01-01T01:00:00.000000Z', 10),
+                    ('2024-01-01T02:00:00.000000Z', NULL),
+                    ('2024-01-01T03:00:00.000000Z', 30)
+                    """);
+
+            // O3 append to partition 01 (01:30 > 01:00)
+            execute("INSERT INTO multi_o3 VALUES ('2024-01-01T01:30:00.000000Z', NULL)");
+
+            // O3 append to partition 02 (02:30 > 02:00)
+            // This tests stale bit cleanup: the previous O3 commit wrote a null
+            // bit for the 01:30 row into the last partition's bitmap. After commit,
+            // setBitmapAppendPosition must clear that stale bit. Otherwise, the
+            // non-null row (25) gets misread as null.
+            execute("INSERT INTO multi_o3 VALUES ('2024-01-01T02:30:00.000000Z', 25)");
+
+            // O3 merge into partitions 01 and 02 (interleaving with existing data)
+            execute("""
+                    INSERT INTO multi_o3 VALUES
+                    ('2024-01-01T01:15:00.000000Z', NULL),
+                    ('2024-01-01T02:15:00.000000Z', NULL)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsh
+                            2024-01-01T01:00:00.000000Z\t10
+                            2024-01-01T01:15:00.000000Z\t
+                            2024-01-01T01:30:00.000000Z\t
+                            2024-01-01T02:00:00.000000Z\t
+                            2024-01-01T02:15:00.000000Z\t
+                            2024-01-01T02:30:00.000000Z\t25
+                            2024-01-01T03:00:00.000000Z\t30
+                            """,
+                    "SELECT * FROM multi_o3", "ts", true, true
+            );
+
+            // 7 total, 3 non-null (10, 25, 30)
+            assertSql(
+                    "total\tsh_nn\n7\t3\n",
+                    "SELECT COUNT(*) AS total, COUNT(sh) AS sh_nn FROM multi_o3"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereEqualsDoesNotMatchNullByte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_eq_byte (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_eq_byte VALUES ('2024-01-01', 42), ('2024-01-02', null), ('2024-01-03', 0)");
+
+            // WHERE val = 0 should return only the 0 row, not the null row
+            assertSql(
+                    "ts\tval\n2024-01-03T00:00:00.000000Z\t0\n",
+                    "SELECT * FROM t_eq_byte WHERE val = 0"
+            );
+
+            // Note: WHERE val != 42 includes null rows in JIT mode (pre-existing
+            // limitation for all types including INT/LONG). JIT NE does not check
+            // for null sentinels.
+
+            // count check
+            assertSql(
+                    "total\tnn\n3\t2\n",
+                    "SELECT COUNT(*) AS total, COUNT(val) AS nn FROM t_eq_byte"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereEqualsDoesNotMatchNullBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_eq_bool (ts TIMESTAMP, val BOOLEAN) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_eq_bool VALUES ('2024-01-01', true), ('2024-01-02', null), ('2024-01-03', false)");
+
+            // WHERE val = false should return only the false row, not the null row
+            assertSql(
+                    "ts\tval\n2024-01-03T00:00:00.000000Z\tfalse\n",
+                    "SELECT * FROM t_eq_bool WHERE val = false"
+            );
+
+            // WHERE NOT val should return only the false row
+            assertSql(
+                    "ts\tval\n2024-01-03T00:00:00.000000Z\tfalse\n",
+                    "SELECT * FROM t_eq_bool WHERE NOT val"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereEqualsDoesNotMatchNullShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_eq_short (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_eq_short VALUES ('2024-01-01', 1000), ('2024-01-02', null), ('2024-01-03', 0)");
+
+            // WHERE val = 0 should return only the 0 row, not the null row
+            assertSql(
+                    "ts\tval\n2024-01-03T00:00:00.000000Z\t0\n",
+                    "SELECT * FROM t_eq_short WHERE val = 0"
+            );
+
+            // Note: WHERE val != 1000 includes null rows in JIT mode (pre-existing
+            // limitation for all types including INT/LONG). JIT NE does not check
+            // for null sentinels.
+
+            // WHERE val > -1 should NOT return the null row
+            assertSql(
+                    "ts\tval\n2024-01-01T00:00:00.000000Z\t1000\n2024-01-03T00:00:00.000000Z\t0\n",
+                    "SELECT * FROM t_eq_short WHERE val > -1"
+            );
+
+            // WHERE val < 500 should NOT return the null row
+            assertSql(
+                    "ts\tval\n2024-01-03T00:00:00.000000Z\t0\n",
+                    "SELECT * FROM t_eq_short WHERE val < 500"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereInDoesNotMatchNullShort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_in_short (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_in_short VALUES ('2024-01-01', 42), ('2024-01-02', null), ('2024-01-03', 0)");
+
+            // IN (0, 42) should NOT return the null row
+            assertSql(
+                    "ts\tval\n2024-01-01T00:00:00.000000Z\t42\n2024-01-03T00:00:00.000000Z\t0\n",
+                    "SELECT * FROM t_in_short WHERE val IN (0, 42)"
+            );
+        });
+    }
+
+    // ========================
+    // JIT bitmap-null filter tests
+    // ========================
+
+    @Test
+    public void testJitFilterByteEqZeroExcludesNull() throws Exception {
+        // JIT must not return null rows when filtering val = 0 on BYTE columns
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_jit_byte (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_jit_byte VALUES ('2024-01-01', 0), ('2024-01-02', NULL), ('2024-01-03', 42)");
+
+            String query = "SELECT * FROM t_jit_byte WHERE val = 0";
+            assertSql(
+                    "ts\tval\n2024-01-01T00:00:00.000000Z\t0\n",
+                    query
+            );
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testJitFilterShortEqZeroExcludesNull() throws Exception {
+        // JIT must not return null rows when filtering val = 0 on SHORT columns
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_jit_short (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_jit_short VALUES ('2024-01-01', 0), ('2024-01-02', NULL), ('2024-01-03', 100)");
+
+            String query = "SELECT * FROM t_jit_short WHERE val = 0";
+            assertSql(
+                    "ts\tval\n2024-01-01T00:00:00.000000Z\t0\n",
+                    query
+            );
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testJitFilterShortGtExcludesNull() throws Exception {
+        // JIT must not return null rows for val > 10
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_jit_short_gt (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_jit_short_gt VALUES ('2024-01-01', 100), ('2024-01-02', NULL), ('2024-01-03', 5)");
+
+            String query = "SELECT * FROM t_jit_short_gt WHERE val > 10";
+            assertSql(
+                    "ts\tval\n2024-01-01T00:00:00.000000Z\t100\n",
+                    query
+            );
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testJitFilterBooleanEqTrueExcludesNull() throws Exception {
+        // JIT must not return null rows for val = true
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_jit_bool (ts TIMESTAMP, val BOOLEAN) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_jit_bool VALUES ('2024-01-01', true), ('2024-01-02', NULL), ('2024-01-03', false)");
+
+            String query = "SELECT * FROM t_jit_bool WHERE val = true";
+            assertSql(
+                    "ts\tval\n2024-01-01T00:00:00.000000Z\ttrue\n",
+                    query
+            );
+            assertSqlRunWithJit(query);
         });
     }
 }

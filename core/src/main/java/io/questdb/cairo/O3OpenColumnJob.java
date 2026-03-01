@@ -2103,6 +2103,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 throw e;
             }
+            // Write .n null bitmap for bitmap-null types during O3 append.
+            writeNullBitmapForAppend(
+                    pathToNewPartition, pNewLen, columnName, columnNameTxn,
+                    columnType, srcOooLo, srcOooHi, srcDataMax, tableWriter, ff
+            );
+
             appendFixColumn(
                     pathToNewPartition,
                     pNewLen,
@@ -2291,7 +2297,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
         long rowCount = srcOooHi - srcOooLo + 1;
         long bitmapByteSize = (rowCount + 7) >> 3;
-        long nFd = 0;
+        long nFd = -1;
         long nAddr = 0;
         try {
             nFd = openRW(ff, nFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
@@ -2334,7 +2340,76 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (nAddr != 0) {
                 ff.munmap(nAddr, bitmapByteSize, MemoryTag.MMAP_O3);
             }
-            if (nFd > 0) {
+            if (nFd > -1) {
+                ff.close(nFd);
+            }
+        }
+    }
+
+    /**
+     * Writes null bitmap (.n file) for O3 rows appended to an existing partition.
+     * The existing partition bitmap covers srcDataMax rows. This method extends it
+     * to include the O3 rows at positions srcDataMax to srcDataMax+oooRowCount-1,
+     * reading null status from the O3 null bitmap.
+     */
+    private static void writeNullBitmapForAppend(
+            Path pathToNewPartition,
+            int pNewLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            int columnType,
+            long srcOooLo,
+            long srcOooHi,
+            long srcDataMax,
+            TableWriter tableWriter,
+            FilesFacade ff
+    ) {
+        if (!ColumnType.needsNullBitmap(columnType)) {
+            return;
+        }
+
+        int colIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
+        if (colIndex < 0) {
+            return;
+        }
+
+        long o3BitmapAddr = tableWriter.getO3NullBitmapAddr(colIndex);
+        long oooRowCount = srcOooHi - srcOooLo + 1;
+        long totalRows = srcDataMax + oooRowCount;
+        long totalBitmapByteSize = (totalRows + 7) >> 3;
+
+        long nFd = -1;
+        long nAddr = 0;
+        try {
+            nFd = openRW(ff, nFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            nAddr = mapRW(ff, nFd, totalBitmapByteSize, MemoryTag.MMAP_O3);
+
+            // Write O3 rows' null bits at positions srcDataMax onwards.
+            // Existing bits (0 to srcDataMax-1) are preserved from the file.
+            if (o3BitmapAddr != 0) {
+                for (long i = 0; i < oooRowCount; i++) {
+                    if (isNullBitmapBitSet(o3BitmapAddr, srcOooLo + i)) {
+                        setNullBitmapBit(nAddr, srcDataMax + i);
+                    }
+                }
+            }
+
+            // Mask trailing bits in the last byte
+            int trailingBits = (int) (totalRows & 7);
+            if (trailingBits > 0 && totalBitmapByteSize > 0) {
+                byte lastByte = Unsafe.getUnsafe().getByte(nAddr + totalBitmapByteSize - 1);
+                Unsafe.getUnsafe().putByte(nAddr + totalBitmapByteSize - 1, (byte) (lastByte & ((1 << trailingBits) - 1)));
+            }
+        } catch (Throwable e) {
+            LOG.error().$("failed to write null bitmap for append [table=").$(tableWriter.getTableToken())
+                    .$(", column=").$(columnName)
+                    .$(", e=").$(e)
+                    .I$();
+        } finally {
+            if (nAddr != 0) {
+                ff.munmap(nAddr, totalBitmapByteSize, MemoryTag.MMAP_O3);
+            }
+            if (nFd > -1) {
                 ff.close(nFd);
             }
         }
@@ -2381,7 +2456,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long o3BitmapAddr = colIndex >= 0 ? tableWriter.getO3NullBitmapAddr(colIndex) : 0;
 
         long bitmapByteSize = (rowCount + 7) >> 3;
-        long nFd = 0;
+        long nFd = -1;
         long nAddr = 0;
         try {
             nFd = openRW(ff, nFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
@@ -2483,7 +2558,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (nAddr != 0) {
                 ff.munmap(nAddr, bitmapByteSize, MemoryTag.MMAP_O3);
             }
-            if (nFd > 0) {
+            if (nFd > -1) {
                 ff.close(nFd);
             }
         }

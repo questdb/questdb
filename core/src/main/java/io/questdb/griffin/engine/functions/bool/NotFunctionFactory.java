@@ -60,7 +60,7 @@ public class NotFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return !arg.getBool(rec);
+            return !arg.isNull(rec) && !arg.getBool(rec);
         }
 
         @Override

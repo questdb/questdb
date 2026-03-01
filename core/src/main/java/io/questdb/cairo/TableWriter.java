@@ -4609,24 +4609,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Both byte-aligned: simple memcpy
             Vect.memcpy(dstBitmapMem.addressOf(dstByteStart), srcAddr + srcByteStart, copyByteCount);
         } else if (srcBitOff == dstBitOff) {
-            // Same bit offset: copy with first/last byte masking
-            long srcBitmapByteCount = (srcRowOffset + rowCount + 7) >> 3;
-            for (long i = 0; i < copyByteCount; i++) {
-                long srcByteIdx = srcByteStart + i;
-                int lo = Unsafe.getUnsafe().getByte(srcAddr + srcByteIdx) & 0xFF;
-                int hi = (srcByteIdx + 1 < srcBitmapByteCount)
-                        ? Unsafe.getUnsafe().getByte(srcAddr + srcByteIdx + 1) & 0xFF
-                        : 0;
-                byte shifted = (byte) ((lo >>> srcBitOff) | (hi << (8 - srcBitOff)));
-
-                long dstByteIdx = dstByteStart + i;
-                if (i == 0 && dstBitOff != 0) {
-                    // Preserve low bits of first destination byte
-                    byte existing = Unsafe.getUnsafe().getByte(dstBitmapMem.addressOf(dstByteIdx));
+            // Same bit offset: bits are already aligned within each byte.
+            // Merge first and last bytes with existing data, memcpy middle bytes.
+            if (copyByteCount == 1) {
+                // All bits fit in one byte — merge with existing
+                byte srcByte = Unsafe.getUnsafe().getByte(srcAddr + srcByteStart);
+                long dstAddr = dstBitmapMem.addressOf(dstByteStart);
+                byte existing = Unsafe.getUnsafe().getByte(dstAddr);
+                int lowMask = (1 << dstBitOff) - 1;
+                int endBit = (int) ((dstRowOffset + rowCount) & 7);
+                int highMask = endBit == 0 ? 0 : ~((1 << endBit) - 1) & 0xFF;
+                int preserveMask = lowMask | highMask;
+                Unsafe.getUnsafe().putByte(dstAddr, (byte) ((existing & preserveMask) | (srcByte & ~preserveMask)));
+            } else {
+                // First byte: preserve low bits, overwrite high bits
+                if (dstBitOff != 0) {
+                    byte srcByte = Unsafe.getUnsafe().getByte(srcAddr + srcByteStart);
+                    long dstAddr = dstBitmapMem.addressOf(dstByteStart);
+                    byte existing = Unsafe.getUnsafe().getByte(dstAddr);
                     int mask = (1 << dstBitOff) - 1;
-                    shifted = (byte) ((existing & mask) | (shifted << dstBitOff));
+                    Unsafe.getUnsafe().putByte(dstAddr, (byte) ((existing & mask) | (srcByte & ~mask)));
                 }
-                Unsafe.getUnsafe().putByte(dstBitmapMem.addressOf(dstByteIdx), shifted);
+                // Middle bytes: direct copy
+                if (copyByteCount > 2) {
+                    Vect.memcpy(dstBitmapMem.addressOf(dstByteStart + 1), srcAddr + srcByteStart + 1, copyByteCount - 2);
+                }
+                // Last byte: copy source byte (trailing bits are masked below)
+                long lastSrcByteIdx = srcByteStart + copyByteCount - 1;
+                long lastDstByteIdx = dstByteStart + copyByteCount - 1;
+                Unsafe.getUnsafe().putByte(
+                        dstBitmapMem.addressOf(lastDstByteIdx),
+                        Unsafe.getUnsafe().getByte(srcAddr + lastSrcByteIdx)
+                );
             }
         } else {
             // General case: per-bit copy
@@ -4893,6 +4907,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void cthMergeBitmapWithLag(int columnIndex, long mergeIndex, long mergeCount, long lagRows) {
         if (o3ErrorCount.get() > 0 || mergeCount == 0) {
+            return;
+        }
+        int columnType = metadata.getColumnType(columnIndex);
+        if (!ColumnType.needsNullBitmap(columnType)) {
             return;
         }
         try {
@@ -10250,6 +10268,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMA bitmapMem = getNullBitmapColumn(i);
             if (bitmapMem != null && bitmapMem.isOpen() && metadata.getColumnType(i) > 0) {
                 bitmapMem.jumpTo(bitmapByteCount);
+                // Clear any stale bits beyond the valid row count in the last byte.
+                // O3 row appends write bits beyond the committed row count, and
+                // those bits persist after O3 commit. Without clearing them,
+                // appendBitmapNotNull() assumes the bit is 0 but it may be 1.
+                if (bitmapBitCount > 0 && bitmapByteCount > 0) {
+                    long addr = bitmapMem.addressOf(bitmapByteCount - 1);
+                    byte existing = Unsafe.getUnsafe().getByte(addr);
+                    Unsafe.getUnsafe().putByte(addr, (byte) (existing & ((1 << bitmapBitCount) - 1)));
+                }
             }
         }
     }

@@ -94,12 +94,19 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
 
         auxAddresses.clear();
+        final DirectLongList nullBitmapAddresses = frameMemory.getNullBitmapAddresses();
+        final int columnOffset = frameMemory.getColumnOffset();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            auxAddresses.add(
-                    pageAddressCache.isVarSizeColumn(columnIndex)
-                            ? frameMemory.getAuxPageAddress(columnIndex)
-                            : 0
-            );
+            if (pageAddressCache.isVarSizeColumn(columnIndex)) {
+                auxAddresses.add(frameMemory.getAuxPageAddress(columnIndex));
+            } else if (nullBitmapAddresses != null) {
+                // Pass bitmap address for fixed-size columns so JIT can test
+                // null bits for bitmap-null types. Address is 0 for columns
+                // without a null bitmap (sentinel-null types like INT/LONG).
+                auxAddresses.add(nullBitmapAddresses.get(columnOffset + columnIndex));
+            } else {
+                auxAddresses.add(0);
+            }
         }
     }
 
