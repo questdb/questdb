@@ -5,6 +5,7 @@
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
+use crate::parquet_read::decoders::plain::BOOLEAN_BITMAP_LUT;
 use crate::parquet_read::ColumnChunkBuffers;
 use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder as HybridRunDecoder, HybridEncoded as HybridRun};
@@ -85,27 +86,6 @@ impl RleIterator<'_> {
         }
     }
 }
-
-/// Lookup table: maps each encoded byte to 8 unpacked boolean bytes (LSB-first).
-const BOOLEAN_BITMAP_LUT: [[u8; 8]; 256] = {
-    let mut lut = [[0u8; 8]; 256];
-    let mut i = 0u16;
-    while i < 256 {
-        let b = i as u8;
-        lut[i as usize] = [
-            b & 1,
-            (b >> 1) & 1,
-            (b >> 2) & 1,
-            (b >> 3) & 1,
-            (b >> 4) & 1,
-            (b >> 5) & 1,
-            (b >> 6) & 1,
-            (b >> 7) & 1,
-        ];
-        i += 1;
-    }
-    lut
-};
 
 // Active run state for the current hybrid-RLE chunk.
 // We keep this explicit state to avoid calling a per-value decoder API.

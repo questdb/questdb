@@ -14,7 +14,7 @@ use std::mem::size_of;
 use std::ptr;
 
 /// Lookup table: maps each source byte to 8 unpacked boolean bytes (LSB-first).
-const BOOLEAN_BITMAP_LUT: [[u8; 8]; 256] = {
+pub(crate) const BOOLEAN_BITMAP_LUT: [[u8; 8]; 256] = {
     let mut lut = [[0u8; 8]; 256];
     let mut i = 0u16;
     while i < 256 {
