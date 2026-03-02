@@ -210,6 +210,7 @@ public class TxnTest extends AbstractCairoTest {
         try (Path p = new Path()) {
             try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
                 loadTxnWriter(tw, p, "/txn/sys.acl_entities~1/_txn");
+                //noinspection StatementWithEmptyBody
                 while (tw.incrementPartitionSquashCounter(0)) {
                 }
 
@@ -442,8 +443,8 @@ public class TxnTest extends AbstractCairoTest {
                         Assert.assertEquals(partitionCountCheck.get(), txReader.getPartitionCount() - 1);
 
                     } catch (Throwable e) {
-                        exceptions.add(e);
                         LOG.error().$(e).$();
+                        exceptions.add(e);
                     }
                 });
                 readers[th] = readerThread;

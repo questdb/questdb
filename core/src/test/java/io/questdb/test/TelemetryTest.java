@@ -399,7 +399,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     ") TIMESTAMP(created) PARTITION BY MONTH BYPASS WAL");
 
             String showCreateTable = "SHOW CREATE TABLE '" + tableName + "'";
-            String start = "ddl\n" +
+            String header = "ddl\n" +
                     "CREATE TABLE '" + tableName + "' ( \n" +
                     "\tcreated TIMESTAMP,\n" +
                     "\tevent SHORT,\n" +
@@ -408,15 +408,15 @@ public class TelemetryTest extends AbstractCairoTest {
                     "\tseqTxn LONG,\n" +
                     "\trowCount LONG,\n" +
                     "\tphysicalRowCount LONG,\n" +
-                    "\tlatency FLOAT\n" +
-                    ") timestamp(created)";
-            String midOld = " PARTITION BY MONTH";
-            String midNew = " PARTITION BY DAY TTL 1 WEEK";
+                    "\tlatency FLOAT\n";
             String end = " BYPASS WAL;\n";
 
-            assertSql(start + midOld + end, showCreateTable);
+            assertSql(header + ") timestamp(created) PARTITION BY MONTH" + end, showCreateTable);
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
-                assertSql(start + midNew + end, showCreateTable);
+                assertSql(header.replace("\tlatency FLOAT\n", "\tlatency FLOAT,\n") +
+                        "\tminTimestamp TIMESTAMP,\n" +
+                        "\tmaxTimestamp TIMESTAMP\n" +
+                        ") timestamp(created) PARTITION BY DAY TTL 1 WEEK" + end, showCreateTable);
             }
         });
     }

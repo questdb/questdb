@@ -117,25 +117,45 @@ stages:
     variables:
       includeTests: "**/griffin/**"
 
-  - stage: SelfHostedRunCairo
-    displayName: "SelfHosted Cairo tests"
+  - stage: SelfHostedRunCairoA
+    displayName: "SelfHosted Cairo tests (A)"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
       - CheckChanges
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
-      includeTests: "**/cairo/**"
+      includeTests: "**/cairo/*,**/cairo/fuzz/**"
 
-  - stage: SelfHostedRunOther
-    displayName: "SelfHosted Other tests"
+  - stage: SelfHostedRunCairoB
+    displayName: "SelfHosted Cairo tests (B)"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
       - CheckChanges
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
-      excludeTests: "**/griffin/**,**/cairo/**"
+      includeTests: "**/cairo/o3/**,**/cairo/wal/**,**/cairo/mv/**,**/cairo/map/**,**/cairo/pool/**,**/cairo/view/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
+
+  - stage: SelfHostedRunOtherA
+    displayName: "SelfHosted Other tests (A)"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      includeTests: "**/cutlass/pgwire/**,**/cutlass/http/**,**/std/*,**/std/str/**,**/std/datetime/microtime/**,**/std/fastdouble/**,**/std/bytes/**,**/log/**,**/sqllogictest/*,**/network/**"
+
+  - stage: SelfHostedRunOtherB
+    displayName: "SelfHosted Other tests (B)"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      excludeTests: "**/griffin/**,**/cairo/**,**/cutlass/pgwire/**,**/cutlass/http/**,**/std/*,**/std/str/**,**/std/datetime/microtime/**,**/std/fastdouble/**,**/std/bytes/**,**/log/**,**/sqllogictest/*,**/network/**"
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
