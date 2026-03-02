@@ -743,22 +743,29 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testOptionsMixedSizes() throws Exception {
         Map<String, Integer> filterToOptions = new HashMap<>();
-        // 2B
-        filterToOptions.put("aboolean or ashort = 0", 2);
-        filterToOptions.put("abyte = 0 or ashort = 0", 2);
-        // 4B
-        filterToOptions.put("anint = 0 or abyte = 0", 4);
-        filterToOptions.put("afloat = 0 or abyte = 0", 4);
-        filterToOptions.put("afloat / abyte = 0", 4);
         // 8B
-        filterToOptions.put("along = 0 or ashort = 0", 8);
-        filterToOptions.put("adouble = 0 or ashort = 0", 8);
         filterToOptions.put("afloat = 0 or adouble = 0", 8);
         filterToOptions.put("anint * along = 0", 8);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
             assertOptionsHint(entry.getKey(), options, OptionsHint.MIXED_SIZES);
+            assertOptionsSize(entry.getKey(), options, entry.getValue());
+        }
+
+        // Bitmap-null columns (boolean, byte, short) force scalar mode
+        Map<String, Integer> bitmapNullFilters = new HashMap<>();
+        bitmapNullFilters.put("aboolean or ashort = 0", 2);
+        bitmapNullFilters.put("abyte = 0 or ashort = 0", 2);
+        bitmapNullFilters.put("anint = 0 or abyte = 0", 4);
+        bitmapNullFilters.put("afloat = 0 or abyte = 0", 4);
+        bitmapNullFilters.put("afloat / abyte = 0", 4);
+        bitmapNullFilters.put("along = 0 or ashort = 0", 8);
+        bitmapNullFilters.put("adouble = 0 or ashort = 0", 8);
+
+        for (Map.Entry<String, Integer> entry : bitmapNullFilters.entrySet()) {
+            int options = serialize(entry.getKey(), false, false, false);
+            assertOptionsHint(entry.getKey(), options, OptionsHint.SCALAR);
             assertOptionsSize(entry.getKey(), options, entry.getValue());
         }
     }
@@ -782,11 +789,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testOptionsSingleSize() throws Exception {
         Map<String, Integer> filterToOptions = new HashMap<>();
         // 1B
-        filterToOptions.put("not aboolean", 1);
-        filterToOptions.put("abyte = 0", 1);
         filterToOptions.put("ageobyte <> null", 1);
         // 2B
-        filterToOptions.put("ashort = 0", 2);
         filterToOptions.put("ageoshort <> null", 2);
         filterToOptions.put("achar = 'a'", 2);
         // 4B
@@ -814,6 +818,18 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
             assertOptionsHint(entry.getKey(), options, OptionsHint.SINGLE_SIZE);
+            assertOptionsSize(entry.getKey(), options, entry.getValue());
+        }
+
+        // Bitmap-null columns (boolean, byte, short) force scalar mode
+        Map<String, Integer> bitmapNullFilters = new HashMap<>();
+        bitmapNullFilters.put("not aboolean", 1);
+        bitmapNullFilters.put("abyte = 0", 1);
+        bitmapNullFilters.put("ashort = 0", 2);
+
+        for (Map.Entry<String, Integer> entry : bitmapNullFilters.entrySet()) {
+            int options = serialize(entry.getKey(), false, false, false);
+            assertOptionsHint(entry.getKey(), options, OptionsHint.SCALAR);
             assertOptionsSize(entry.getKey(), options, entry.getValue());
         }
     }
@@ -899,7 +915,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testSingleBooleanColumn() throws Exception {
         serialize("aboolean or not aboolean");
-        assertIR("(i8 1L)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
+        assertIR("(i8 0L)(i8 aboolean)(=)(i8 1L)(i8 aboolean)(=)(||)(ret)");
     }
 
     @Test

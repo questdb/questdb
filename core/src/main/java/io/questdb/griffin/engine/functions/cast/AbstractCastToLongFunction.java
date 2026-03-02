@@ -34,10 +34,6 @@ import io.questdb.griffin.engine.functions.LongFunction;
  */
 public abstract class AbstractCastToLongFunction extends LongFunction implements CastFunction {
 
-    @Override
-    public boolean isNull(Record rec) {
-        return arg.isNull(rec);
-    }
     /**
      * The function argument to cast.
      */
@@ -55,6 +51,11 @@ public abstract class AbstractCastToLongFunction extends LongFunction implements
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return arg.isNull(rec);
     }
 
     @Override

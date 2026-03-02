@@ -2420,7 +2420,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
      * have been materialized. Column-top rows (rows that existed before the column
      * was added) must be marked as null in the bitmap. O3 data rows are checked
      * against the O3 null bitmap.
-     *
+     * <p>
      * The output row order follows the merge structure:
      * 1. Prefix block (O3_BLOCK_DATA or O3_BLOCK_O3)
      * 2. Merge block (interleaved via merge index)
