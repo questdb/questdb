@@ -29,7 +29,6 @@ import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.cutlass.qwp.websocket.WebSocketProcessor;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -58,7 +57,6 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     public static final int STATE_OPEN = 0;
     // Default values
     private static final int DEFAULT_MAX_MESSAGE_SIZE = 16 * 1024 * 1024;  // 16MB
-    private static final int MAX_CONTROL_FRAME_PAYLOAD = 125;
     private final WebSocketBuffer fragmentBuffer;  // For assembling fragmented messages
     // Frame parsing
     private final WebSocketFrameParser parser;
@@ -68,12 +66,8 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     private boolean closeFrameReceived = false;
     private boolean closeFrameSent = false;
     private int fragmentOpcode = -1;  // Original opcode of fragmented message
-    private boolean hasPendingPong = false;
     // Configuration
     private long maxMessageSize = DEFAULT_MAX_MESSAGE_SIZE;
-    private int pendingPongLength = 0;
-    // Pending pong
-    private long pendingPongPayload = 0;
     // Connection state
     private int state = STATE_OPEN;
 
@@ -90,8 +84,6 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
         closeFrameSent = false;
         closeFrameReceived = false;
         fragmentOpcode = -1;
-        hasPendingPong = false;
-        pendingPongLength = 0;
         recvBuffer.clear();
         sendBuffer.clear();
         fragmentBuffer.clear();
@@ -103,10 +95,6 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
         recvBuffer.close();
         sendBuffer.close();
         fragmentBuffer.close();
-        if (pendingPongPayload != 0) {
-            Unsafe.free(pendingPongPayload, MAX_CONTROL_FRAME_PAYLOAD, MemoryTag.NATIVE_DEFAULT);
-            pendingPongPayload = 0;
-        }
     }
 
     /**
@@ -200,13 +188,6 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     }
 
     /**
-     * Returns true if there's a pending pong frame to send.
-     */
-    public boolean hasPendingPong() {
-        return hasPendingPong;
-    }
-
-    /**
      * Returns true if there's data pending in the send buffer.
      */
     public boolean hasPendingSend() {
@@ -288,29 +269,6 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
         long writePtr = sendBuffer.writeAddress();
         int written = WebSocketFrameWriter.writeCloseFrame(writePtr, code, reason);
         sendBuffer.advanceWrite(written);
-    }
-
-    /**
-     * Sends the pending pong response.
-     */
-    public void sendPendingPong() {
-        if (!hasPendingPong) {
-            return;
-        }
-
-        int frameSize = WebSocketFrameWriter.headerSize(pendingPongLength, false) + pendingPongLength;
-        sendBuffer.ensureCapacity(frameSize);
-
-        long writePtr = sendBuffer.writeAddress();
-        int written;
-        if (pendingPongLength > 0) {
-            written = WebSocketFrameWriter.writePongFrame(writePtr, pendingPongPayload, pendingPongLength);
-        } else {
-            written = WebSocketFrameWriter.writeHeader(writePtr, true, WebSocketOpcode.PONG, 0, false);
-        }
-        sendBuffer.advanceWrite(written);
-
-        hasPendingPong = false;
     }
 
     /**
@@ -536,21 +494,5 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
             written = WebSocketFrameWriter.writeHeader(writePtr, true, WebSocketOpcode.PONG, 0, false);
         }
         sendBuffer.advanceWrite(written);
-    }
-
-    /**
-     * Stores the ping payload for later pong response.
-     */
-    private void storePendingPong(long payloadPtr, int payloadLength) {
-        // Allocate or reuse pong payload buffer
-        if (pendingPongPayload == 0 && payloadLength > 0) {
-            pendingPongPayload = Unsafe.malloc(MAX_CONTROL_FRAME_PAYLOAD, MemoryTag.NATIVE_DEFAULT);
-        }
-
-        if (payloadLength > 0 && pendingPongPayload != 0) {
-            Unsafe.getUnsafe().copyMemory(payloadPtr, pendingPongPayload, payloadLength);
-        }
-        pendingPongLength = payloadLength;
-        hasPendingPong = true;
     }
 }
