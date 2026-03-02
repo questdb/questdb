@@ -96,7 +96,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             LineHttpProcessorConfiguration configuration
     ) {
         assert initBufferSize > 0;
-        this.maxBufferSize = configuration.getMaxRecvBufferSize();
+        this.maxBufferSize = Math.min(configuration.getMaxRecvBufferSize(), Integer.MAX_VALUE);
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
         this.schemaCache = new QwpSchemaCache();
         this.streamingDecoder = new QwpStreamingDecoder(schemaCache);
