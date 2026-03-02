@@ -37,6 +37,7 @@ import java.nio.charset.StandardCharsets;
  * <p>Thread safety: This class is thread-safe as it contains no mutable state.
  */
 public final class WebSocketFrameWriter {
+    private static final byte[] EMPTY_BYTES = new byte[0];
     // Frame header bits
     private static final int FIN_BIT = 0x80;
     private static final int MASK_BIT = 0x80;
@@ -119,13 +120,11 @@ public final class WebSocketFrameWriter {
      * @return the total number of bytes written (header + payload)
      */
     public static int writeCloseFrame(long buf, int code, String reason) {
-        int payloadLen = 2; // status code
-        if (reason != null && !reason.isEmpty()) {
-            payloadLen += reason.getBytes(StandardCharsets.UTF_8).length;
-        }
+        byte[] reasonBytes = encodeReason(reason);
+        int payloadLen = 2 + reasonBytes.length;
 
         int headerLen = writeHeader(buf, true, WebSocketOpcode.CLOSE, payloadLen, false);
-        int payloadOffset = writeClosePayload(buf + headerLen, code, reason);
+        int payloadOffset = writeClosePayload(buf + headerLen, code, reasonBytes);
 
         return headerLen + payloadOffset;
     }
@@ -140,10 +139,8 @@ public final class WebSocketFrameWriter {
      * @return the total number of bytes written, or -1 if the buffer is too small
      */
     public static int writeCloseFrame(long buf, int bufferSize, int code, String reason) {
-        int payloadLen = 2; // status code
-        if (reason != null && !reason.isEmpty()) {
-            payloadLen += reason.getBytes(StandardCharsets.UTF_8).length;
-        }
+        byte[] reasonBytes = encodeReason(reason);
+        int payloadLen = 2 + reasonBytes.length;
 
         int frameSize = headerSize(payloadLen, false) + payloadLen;
         if (frameSize > bufferSize) {
@@ -151,7 +148,7 @@ public final class WebSocketFrameWriter {
         }
 
         int headerLen = writeHeader(buf, true, WebSocketOpcode.CLOSE, payloadLen, false);
-        int payloadOffset = writeClosePayload(buf + headerLen, code, reason);
+        int payloadOffset = writeClosePayload(buf + headerLen, code, reasonBytes);
 
         return headerLen + payloadOffset;
     }
@@ -165,19 +162,7 @@ public final class WebSocketFrameWriter {
      * @return the number of bytes written
      */
     public static int writeClosePayload(long buf, int code, String reason) {
-        // Write status code in network byte order (big-endian)
-        Unsafe.getUnsafe().putShort(buf, Short.reverseBytes((short) code));
-        int offset = 2;
-
-        // Write reason if provided
-        if (reason != null && !reason.isEmpty()) {
-            byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
-            for (byte reasonByte : reasonBytes) {
-                Unsafe.getUnsafe().putByte(buf + offset++, reasonByte);
-            }
-        }
-
-        return offset;
+        return writeClosePayload(buf, code, encodeReason(reason));
     }
 
     /**
@@ -286,5 +271,17 @@ public final class WebSocketFrameWriter {
         Unsafe.getUnsafe().copyMemory(payloadPtr, buf + headerLen, payloadLen);
 
         return headerLen + payloadLen;
+    }
+
+    private static byte[] encodeReason(String reason) {
+        return (reason != null && !reason.isEmpty()) ? reason.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
+    }
+
+    private static int writeClosePayload(long buf, int code, byte[] reasonBytes) {
+        Unsafe.getUnsafe().putShort(buf, Short.reverseBytes((short) code));
+        if (reasonBytes.length > 0) {
+            Unsafe.getUnsafe().copyMemory(reasonBytes, Unsafe.BYTE_OFFSET, null, buf + 2, reasonBytes.length);
+        }
+        return 2 + reasonBytes.length;
     }
 }
