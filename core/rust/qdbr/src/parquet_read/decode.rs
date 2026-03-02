@@ -795,6 +795,9 @@ impl ParquetDecoder {
             })?;
 
             let column_chunk_size = column_chunk_meta.num_values as usize;
+            if column_chunk_size == 0 {
+                continue;
+            }
             if row_hi + 1 < row_count {
                 break;
             }
@@ -946,8 +949,15 @@ impl ParquetDecoder {
             timestamp_column_index,
             col_info,
         )?;
-        let ptr = bufs.data_vec.as_ptr() as *const i64;
-        Ok(unsafe { *ptr })
+        let data = &bufs.data_vec;
+        if data.len() < std::mem::size_of::<i64>() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "decoded timestamp buffer too short: expected at least 8 bytes, got {}",
+                data.len()
+            ));
+        }
+        Ok(i64::from_le_bytes(data[..8].try_into().unwrap()))
     }
 
     pub fn row_group_min_timestamp(
@@ -1020,6 +1030,14 @@ impl ParquetDecoder {
 
         self.validate_timestamp_sorting_key(ts)?;
         let row_group_size = self.row_group_sizes[rg] as usize;
+        if row_group_size == 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group {} has zero rows for timestamp column {}",
+                row_group_index,
+                timestamp_column_index
+            ));
+        }
         self.decode_single_timestamp(
             file_ptr,
             file_size,
