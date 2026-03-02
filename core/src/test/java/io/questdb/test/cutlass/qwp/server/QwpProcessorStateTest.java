@@ -31,13 +31,53 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class QwpProcessorStateTest extends AbstractCairoTest {
+
+    @Test
+    public void testAddDataRejectsWhenExceedingMaxBufferSize() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                        @Override
+                        public long getMaxRecvBufferSize() {
+                            return 256;
+                        }
+                    };
+            QwpProcessorState state = new QwpProcessorState(64, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Add 200 bytes — should succeed (200 <= 256)
+                long ptr = Unsafe.malloc(200, MemoryTag.NATIVE_HTTP_CONN);
+                try {
+                    state.addData(ptr, ptr + 200);
+                    Assert.assertTrue("first addData should succeed", state.isOk());
+                } finally {
+                    Unsafe.free(ptr, 200, MemoryTag.NATIVE_HTTP_CONN);
+                }
+
+                // Add 100 more bytes — total 300 > 256, should reject
+                ptr = Unsafe.malloc(100, MemoryTag.NATIVE_HTTP_CONN);
+                try {
+                    state.addData(ptr, ptr + 100);
+                    Assert.assertFalse("should reject when exceeding max buffer size", state.isOk());
+                } finally {
+                    Unsafe.free(ptr, 100, MemoryTag.NATIVE_HTTP_CONN);
+                }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
 
     @Test
     public void testCloseAfterDisconnectFreesNativeMemory() throws Exception {

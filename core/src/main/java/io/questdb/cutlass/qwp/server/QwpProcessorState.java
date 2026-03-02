@@ -62,6 +62,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     // Per-connection accumulated symbol dictionary for delta encoding
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
     private final StringSink error = new StringSink();
+    private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
     private final QwpSchemaCache schemaCache;
     private final QwpStreamingDecoder streamingDecoder;
@@ -95,6 +96,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             LineHttpProcessorConfiguration configuration
     ) {
         assert initBufferSize > 0;
+        this.maxBufferSize = configuration.getMaxRecvBufferSize();
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
         this.schemaCache = new QwpSchemaCache();
         this.streamingDecoder = new QwpStreamingDecoder(schemaCache);
@@ -120,7 +122,15 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void addData(long lo, long hi) {
         int len = (int) (hi - lo);
-        ensureCapacity(bufferPosition + len);
+        if (len <= 0) {
+            return;
+        }
+        long required = (long) bufferPosition + len;
+        if (required > maxBufferSize) {
+            reject(Status.PARSE_ERROR, "message size exceeds maximum buffer size of " + maxBufferSize + " bytes", fd);
+            return;
+        }
+        ensureCapacity((int) required);
         Unsafe.getUnsafe().copyMemory(lo, bufferAddress + bufferPosition, len);
         bufferPosition += len;
     }
