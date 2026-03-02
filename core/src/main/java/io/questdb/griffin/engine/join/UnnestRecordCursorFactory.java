@@ -180,6 +180,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             while (true) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (isMasterPending) {
                     if (!baseCursor.hasNext()) {
                         return false;
@@ -193,8 +194,6 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 }
                 if (arrayIndex < maxArrayLen) {
-                    circuitBreaker
-                            .statefulThrowExceptionIfTripped();
                     record.setArrayIndex(arrayIndex);
                     arrayIndex++;
                     return true;

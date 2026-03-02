@@ -457,6 +457,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getJsonUnnestMaxValueSize() {
+        return getDelegate().getJsonUnnestMaxValueSize();
+    }
+
+    @Override
     public int getLatestByQueueCapacity() {
         return getDelegate().getLatestByQueueCapacity();
     }

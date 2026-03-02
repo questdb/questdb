@@ -24,9 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.griffin.engine.join.JsonUnnestSource;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -44,6 +47,114 @@ public class JsonUnnestFuzzTest extends AbstractCairoTest {
     public void setUp() {
         rnd = TestUtils.generateRandom(LOG);
         super.setUp();
+    }
+
+    @Test
+    public void testRandomTypesNoCrash() throws Exception {
+        // Generate JSON objects with random field types and verify UNNEST
+        // does not crash. Also verify re-running produces the same
+        // result (printSql creates a fresh cursor factory each call).
+        assertMemoryLeak(() -> {
+            for (int iter = 0; iter < ITERATIONS; iter++) {
+                int rows = rnd.nextInt(5) + 1;
+                execute("DROP TABLE IF EXISTS t");
+                execute("CREATE TABLE t (payload VARCHAR)");
+
+                StringBuilder insertSql = new StringBuilder(
+                        "INSERT INTO t VALUES "
+                );
+                for (int r = 0; r < rows; r++) {
+                    if (r > 0) {
+                        insertSql.append(", ");
+                    }
+                    int arrLen = rnd.nextInt(10);
+                    StringBuilder json = new StringBuilder("[");
+                    for (int j = 0; j < arrLen; j++) {
+                        if (j > 0) {
+                            json.append(',');
+                        }
+                        json.append("{\"d\":")
+                                .append(rnd.nextInt(10_000) / 100.0)
+                                .append(",\"n\":")
+                                .append(rnd.nextLong(1_000_000))
+                                .append(",\"s\":\"")
+                                .append("str").append(rnd.nextInt(100))
+                                .append("\",\"b\":")
+                                .append(rnd.nextBoolean())
+                                .append('}');
+                    }
+                    json.append(']');
+                    insertSql.append("('")
+                            .append(json)
+                            .append("')");
+                }
+                execute(insertSql.toString());
+
+                String query = "SELECT u.d, u.n, u.s, u.b "
+                        + "FROM t, UNNEST("
+                        + "t.payload COLUMNS("
+                        + "d DOUBLE, n LONG, s VARCHAR, b BOOLEAN)"
+                        + ") u";
+
+                // First run
+                printSql(query);
+                String first = sink.toString();
+
+                // Second run verifies deterministic output
+                printSql(query);
+                String second = sink.toString();
+
+                TestUtils.assertEquals(
+                        "consistency iteration=" + iter,
+                        first,
+                        second
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRandomTypesNoCrashErrorPaths() throws Exception {
+        // Generate iterations with oversized JSON values to exercise
+        // the overflow error path, and type mismatches to verify NULL
+        // output (no crash).
+        assertMemoryLeak(() -> {
+            // Oversized JSON values (>4KB per field)
+            for (int iter = 0; iter < 2; iter++) {
+                execute("DROP TABLE IF EXISTS t");
+                execute("CREATE TABLE t (payload VARCHAR)");
+
+                StringBuilder bigVal = new StringBuilder();
+                for (int i = 0; i < JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE + 100; i++) {
+                    bigVal.append('x');
+                }
+                String json = "[{\"s\":\"" + bigVal + "\"}]";
+                execute("INSERT INTO t VALUES ('" + json + "')");
+
+                try {
+                    printSql("SELECT u.s FROM t, UNNEST("
+                            + "t.payload COLUMNS(s VARCHAR)) u");
+                    Assert.fail("expected CairoException for oversized value");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "exceeds maximum size");
+                }
+            }
+
+            // Type mismatch: string where DOUBLE expected -> NULL (no crash)
+            for (int iter = 0; iter < 2; iter++) {
+                execute("DROP TABLE IF EXISTS t");
+                execute("CREATE TABLE t (payload VARCHAR)");
+
+                execute("INSERT INTO t VALUES ('[{\"d\":\"not_a_number\"}]')");
+
+                printSql("SELECT u.d FROM t, UNNEST("
+                        + "t.payload COLUMNS(d DOUBLE)) u");
+                String result = sink.toString();
+                // simdjson returns error for string->double, so
+                // getDouble returns NaN which prints as "null"
+                TestUtils.assertContains(result, "null");
+            }
+        });
     }
 
     @Test
@@ -107,70 +218,6 @@ public class JsonUnnestFuzzTest extends AbstractCairoTest {
                                 + " rows=" + rows,
                         viaArray,
                         viaJson
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testRandomTypesNoCrash() throws Exception {
-        // Generate JSON objects with random field types and verify UNNEST
-        // does not crash. Also verify re-running (toTop) produces the same
-        // result.
-        assertMemoryLeak(() -> {
-            for (int iter = 0; iter < ITERATIONS; iter++) {
-                int rows = rnd.nextInt(5) + 1;
-                execute("DROP TABLE IF EXISTS t");
-                execute("CREATE TABLE t (payload VARCHAR)");
-
-                StringBuilder insertSql = new StringBuilder(
-                        "INSERT INTO t VALUES "
-                );
-                for (int r = 0; r < rows; r++) {
-                    if (r > 0) {
-                        insertSql.append(", ");
-                    }
-                    int arrLen = rnd.nextInt(10);
-                    StringBuilder json = new StringBuilder("[");
-                    for (int j = 0; j < arrLen; j++) {
-                        if (j > 0) {
-                            json.append(',');
-                        }
-                        json.append("{\"d\":")
-                                .append(rnd.nextInt(10_000) / 100.0)
-                                .append(",\"n\":")
-                                .append(rnd.nextLong(1_000_000))
-                                .append(",\"s\":\"")
-                                .append("str").append(rnd.nextInt(100))
-                                .append("\",\"b\":")
-                                .append(rnd.nextBoolean())
-                                .append('}');
-                    }
-                    json.append(']');
-                    insertSql.append("('")
-                            .append(json)
-                            .append("')");
-                }
-                execute(insertSql.toString());
-
-                String query = "SELECT u.d, u.n, u.s, u.b "
-                        + "FROM t, UNNEST("
-                        + "t.payload COLUMNS("
-                        + "d DOUBLE, n LONG, s VARCHAR, b BOOLEAN)"
-                        + ") u";
-
-                // First run
-                printSql(query);
-                String first = sink.toString();
-
-                // Second run (same cursor factory, verifies toTop)
-                printSql(query);
-                String second = sink.toString();
-
-                TestUtils.assertEquals(
-                        "consistency iteration=" + iter,
-                        first,
-                        second
                 );
             }
         });

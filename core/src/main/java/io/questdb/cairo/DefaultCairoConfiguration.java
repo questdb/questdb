@@ -472,6 +472,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getJsonUnnestMaxValueSize() {
+        return 4096;
+    }
+
+    @Override
     public @NotNull String getInstallRoot() {
         if (installRoot == null) {
             throw new UnsupportedOperationException("installRoot was required in this test, but not set");

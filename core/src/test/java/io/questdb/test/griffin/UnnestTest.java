@@ -261,7 +261,7 @@ public class UnnestTest extends AbstractCairoTest {
                     + "SELECT ARRAY[1.0, 2.0, 1.0, 3.0, 1.0] arr FROM long_sequence(1)"
                     + ")");
             // QuestDB doesn't support HAVING - use WHERE on aggregated subquery
-            // instead. Since UNNEST can't be in subqueries, test GROUP BY + count
+            // instead. Test GROUP BY + count directly
             assertQueryNoLeakCheck(
                     "val\tcnt\n"
                             + "1.0\t3\n"
@@ -533,7 +533,7 @@ public class UnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (arr DOUBLE[])");
             assertException(
                     "SELECT * FROM t, UNNEST(t.arr) u(x, y, z)",
-                    17,
+                    36,
                     "too many column aliases for UNNEST"
             );
         });
@@ -547,7 +547,7 @@ public class UnnestTest extends AbstractCairoTest {
             execute("CREATE TABLE t (arr DOUBLE[])");
             assertException(
                     "SELECT * FROM t, UNNEST(t.arr) WITH ORDINALITY u(x, ord, z)",
-                    17,
+                    57,
                     "too many column aliases for UNNEST"
             );
         });
@@ -1255,18 +1255,18 @@ public class UnnestTest extends AbstractCairoTest {
 
     @Test
     public void testUnnestInSelectListThrowsError() throws Exception {
-        assertException(
+        assertMemoryLeak(() -> assertException(
                 "SELECT UNNEST(ARRAY[1.0, 2.0])",
                 7,
                 "UNNEST is not supported in SELECT"
-        );
+        ));
     }
 
     @Test
     public void testVeryLargeArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS ("
-                    + "SELECT rnd_double_array(1, 0, 0, 100000) arr FROM long_sequence(1)"
+                    + "SELECT rnd_double_array(1, 0, 0, 100_000) arr FROM long_sequence(1)"
                     + ")");
             assertQueryNoLeakCheck(
                     "cnt\n"

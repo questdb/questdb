@@ -116,7 +116,7 @@ public class ArrayUnnestSource implements UnnestSource {
         if (elementIndex >= len) {
             return Double.NaN;
         }
-        return view.getDouble(view.getFlatViewOffset() + elementIndex);
+        return view.getDouble(elementIndex);
     }
 
     @Override
@@ -138,7 +138,7 @@ public class ArrayUnnestSource implements UnnestSource {
         if (elementIndex >= len) {
             return Numbers.LONG_NULL;
         }
-        return view.getLong(view.getFlatViewOffset() + elementIndex);
+        return view.getLong(elementIndex);
     }
 
     @Override

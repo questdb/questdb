@@ -3260,10 +3260,6 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        QueryModel joinModel = queryModelPool.next();
-
-        joinModel.copyDeclsFrom(decls, false);
-
         int errorPos = lexer.lastTokenPosition();
 
         if (isNotJoinKeyword(tok) && !Chars.equals(tok, ',')) {
@@ -3301,15 +3297,17 @@ public class SqlParser {
             }
         }
 
-        joinModel.setJoinType(joinType);
-        joinModel.setJoinKeywordPosition(errorPos);
-
         tok = expectTableNameOrSubQuery(lexer);
 
         // UNNEST in comma position: FROM t, UNNEST(...)
         if (isUnnestKeyword(tok) && joinType == QueryModel.JOIN_CROSS) {
             return parseUnnest(lexer, model, decls, sqlParserCallback);
         }
+
+        QueryModel joinModel = queryModelPool.next();
+        joinModel.copyDeclsFrom(decls, false);
+        joinModel.setJoinType(joinType);
+        joinModel.setJoinKeywordPosition(errorPos);
 
         final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
         if (tt != null && tt.isView()) {
@@ -4251,9 +4249,9 @@ public class SqlParser {
                 ObjList<CharSequence> colNames = new ObjList<>();
                 IntList colTypes = new IntList();
                 do {
-                    CharSequence colName = GenericLexer.immutableOf(
-                            tok(lexer, "column name")
-                    );
+                    CharSequence colNameTok = tok(lexer, "column name");
+                    assertNameIsQuotedOrNotAKeyword(colNameTok, lexer.lastTokenPosition());
+                    CharSequence colName = GenericLexer.immutableOf(colNameTok);
                     CharSequence typeName = tok(lexer, "column type");
                     int type = ColumnType.typeOf(typeName);
                     if (type == -1) {
@@ -4322,10 +4320,19 @@ public class SqlParser {
         }
 
         // optional column aliases: (col1, col2, ...)
+        int firstExcessAliasPos = -1;
         if (tok != null && Chars.equals(tok, '(')) {
+            int maxAliases = unnestModel.getUnnestOutputColumnCount()
+                    + (unnestModel.isUnnestOrdinality() ? 1 : 0);
             do {
                 tok = tok(lexer, "column alias");
+                int aliasPos = lexer.lastTokenPosition();
+                assertNameIsQuotedOrNotAKeyword(tok, aliasPos);
                 unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(tok));
+                if (firstExcessAliasPos == -1
+                        && unnestModel.getUnnestColumnAliases().size() > maxAliases) {
+                    firstExcessAliasPos = aliasPos;
+                }
                 tok = tok(lexer, "',' or ')'");
                 if (Chars.equals(tok, ')')) {
                     break;
@@ -4338,13 +4345,9 @@ public class SqlParser {
             lexer.unparseLast();
         }
 
-        // Validate alias count: max is total output columns + ordinality.
-        int maxAliases = unnestModel.getUnnestOutputColumnCount()
-                + (unnestModel.isUnnestOrdinality() ? 1 : 0);
-        int aliasCount = unnestModel.getUnnestColumnAliases().size();
-        if (aliasCount > maxAliases) {
+        if (firstExcessAliasPos != -1) {
             throw SqlException.$(
-                    unnestModel.getJoinKeywordPosition(),
+                    firstExcessAliasPos,
                     "too many column aliases for UNNEST"
             );
         }
