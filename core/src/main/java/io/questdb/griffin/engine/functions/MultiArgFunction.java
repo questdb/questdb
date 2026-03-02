@@ -35,6 +35,7 @@ import io.questdb.std.ObjList;
 
 public interface MultiArgFunction extends Function {
 
+    /** {@inheritDoc} */
     ObjList<Function> args();
 
     @Override

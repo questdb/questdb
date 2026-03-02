@@ -35,16 +35,26 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
+/** {@inheritDoc} */
 public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCursor {
+    /** {@inheritDoc} */
     protected final Map joinKeyMap;
+    /** {@inheritDoc} */
     protected final RecordChain slaveChain;
+    /** {@inheritDoc} */
     protected SqlExecutionCircuitBreaker circuitBreaker;
+    /** {@inheritDoc} */
     protected boolean isMapBuilt;
+    /** {@inheritDoc} */
     protected boolean isOpen;
+    /** {@inheritDoc} */
     protected Record masterRecord;
+    /** {@inheritDoc} */
     protected Record slaveRecord;
+    /** {@inheritDoc} */
     protected boolean useSlaveCursor;
 
+    /** {@inheritDoc} */
     public AbstractHashOuterJoinRecordCursor(
             int columnSplit,
             Map joinKeyMap,
@@ -87,6 +97,7 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
         }
     }
 
+    /** {@inheritDoc} */
     protected static void populateRecordHashMap(
             SqlExecutionCircuitBreaker circuitBreaker,
             RecordCursor cursor,
@@ -113,6 +124,7 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
         }
     }
 
+    /** {@inheritDoc} */
     protected static void populateRecordHashMapWithMatchFlag(
             SqlExecutionCircuitBreaker circuitBreaker,
             RecordCursor cursor,
@@ -140,6 +152,7 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
         }
     }
 
+    /** {@inheritDoc} */
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;

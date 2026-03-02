@@ -351,6 +351,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
     // Construction:
     //
 
+    /** {@inheritDoc} */
     public int countsArrayIndex(final long value) {
         if (value < 0) {
             throw CairoException.nonCritical().put("Histogram recorded value cannot be negative.");
@@ -528,6 +529,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
     //
 
     /**
+     * @param value the value for which to determine the bucket index
      * @return the lowest (and therefore highest precision) bucket index that can represent the value
      */
     public int getBucketIndex(final long value) {
@@ -537,6 +539,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return leadingZeroCountBase - Long.numberOfLeadingZeros(value | subBucketMask);
     }
 
+    /** {@inheritDoc} */
     public abstract long getCountAtIndex(int index);
 
     /**
@@ -786,6 +789,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return Math.sqrt(geometric_deviation_total / getTotalCount());
     }
 
+    /** {@inheritDoc} */
     public int getSubBucketIndex(final long value, final int bucketIndex) {
         // For bucketIndex 0, this is just value, so it may be anywhere in 0 to subBucketCount.
         // For other bucketIndex, this will always end up in the top half of subBucketCount: assume that for some bucket
@@ -907,6 +911,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return autoResize;
     }
 
+    /** {@inheritDoc} */
     public int leadingZeroCountBase() {
         return leadingZeroCountBase;
     }
@@ -995,7 +1000,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * five (5) percentile reporting tick points.
      *
      * @param printStream                 Stream into which the distribution will be output
-     *                                    <p>
+     *
      * @param outputValueUnitScalingRatio The scaling factor by which to divide histogram recorded values units in
      *                                    output
      */
@@ -1029,9 +1034,9 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * <i>dumpTicksPerHalf</i> percentile reporting tick points.
      *
      * @param printStream                    Stream into which the distribution will be output
-     *                                       <p>
+     *
      * @param percentileTicksPerHalfDistance The number of reporting points per exponentially decreasing half-distance
-     *                                       <p>
+     *
      * @param outputValueUnitScalingRatio    The scaling factor by which to divide histogram recorded values units in
      *                                       output
      */
@@ -1047,9 +1052,9 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * <i>dumpTicksPerHalf</i> percentile reporting tick points.
      *
      * @param printStream                    Stream into which the distribution will be output
-     *                                       <p>
+     *
      * @param percentileTicksPerHalfDistance The number of reporting points per exponentially decreasing half-distance
-     *                                       <p>
+     *
      * @param outputValueUnitScalingRatio    The scaling factor by which to divide histogram recorded values units in
      *                                       output
      * @param useCsvFormat                   Output in CSV format if true. Otherwise use plain text form.
@@ -1126,7 +1131,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * performed in steps that start at 0% and reduce their distance to 100% according to the
      * <i>percentileTicksPerHalfDistance</i> parameter, ultimately reaching 100% when all recorded histogram
      * values are exhausted.
-     * <p>
      *
      * @param percentileTicksPerHalfDistance The number of iteration steps per half-distance to 100%.
      * @return An {@link java.lang.Iterable}{@literal <}{@link HistogramIterationValue}{@literal >}
@@ -1137,6 +1141,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return new Percentiles(this, percentileTicksPerHalfDistance);
     }
 
+    /** {@inheritDoc} */
     public void recordConvertedDoubleValueWithCount(final double value, final long count) throws CairoException {
         long integerValue = (long) (value * doubleToIntegerValueConversionRatio);
         recordCountAtValue(count, integerValue);
@@ -1386,10 +1391,12 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return output;
     }
 
+    /** {@inheritDoc} */
     public int unitMagnitude() {
         return unitMagnitude;
     }
 
+    /** {@inheritDoc} */
     public final long valueFromIndex(final int index) {
         int bucketIndex = (index >> subBucketHalfCountMagnitude) - 1;
         int subBucketIndex = (index & (subBucketHalfCount - 1)) + subBucketHalfCount;
@@ -2464,14 +2471,17 @@ abstract class AbstractHistogramBase extends EncodableHistogram {
     String tag = null;
     int wordSizeInBytes;
 
+    /** {@inheritDoc} */
     public int bucketCount() {
         return bucketCount;
     }
 
+    /** {@inheritDoc} */
     public int countsArrayLength() {
         return countsArrayLength;
     }
 
+    /** {@inheritDoc} */
     public int subBucketCount() {
         return subBucketCount;
     }

@@ -144,6 +144,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      */
     protected int valueIndex;
 
+    /** {@inheritDoc} */
     public AbstractDoubleArrayElemAggGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.type = arg.getType();
@@ -504,7 +505,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * different shapes and therefore different flat layouts.
      * <p>
      * NaN input values are skipped. If the accumulator position holds NaN (no prior finite value),
-     * the input value replaces it outright; otherwise {@link #combine} is called.
+     * the input value replaces it outright; otherwise {@link #accumulateOne} is called.
      * <p>
      * The avg subclass overrides this to additionally track per-position counts.
      *

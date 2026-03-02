@@ -37,9 +37,12 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
+/** {@inheritDoc} */
 public abstract class AbstractGeoHashFunction implements Function {
+    /** {@inheritDoc} */
     protected int type; // +number bits
 
+    /** {@inheritDoc} */
     protected AbstractGeoHashFunction(int type) {
         this.type = type;
     }
