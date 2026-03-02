@@ -74,7 +74,7 @@ public class QwpTudCache implements QuietCloseable {
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
-    private boolean distressed = false;
+    private boolean isDistressed = false;
 
     public QwpTudCache(
             CairoEngine engine,
@@ -100,15 +100,15 @@ public class QwpTudCache implements QuietCloseable {
         for (int i = 0, n = keys.size(); i < n; i++) {
             Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
             WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            if (distressed) {
+            if (isDistressed) {
                 Misc.free(tud);
             } else {
                 tud.rollback();
             }
         }
-        if (distressed) {
+        if (isDistressed) {
             tableUpdateDetails.clear();
-            distressed = false;
+            isDistressed = false;
         }
     }
 
@@ -217,7 +217,7 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     public void setDistressed() {
-        this.distressed = true;
+        this.isDistressed = true;
     }
 
     private TableToken getOrCreateTable(SecurityContext securityContext, StringSink tableNameUtf16,

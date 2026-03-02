@@ -44,7 +44,7 @@ public class QwpWebSocketProcessorState implements Mutable, QuietCloseable {
     private String errorMessage;
     // Response state
     private boolean hasResponse = false;
-    private boolean ok = true;
+    private boolean isOk = true;
     private int responseErrorCode = 0;
     private String responseErrorMessage = null;
     private boolean responseSuccess = false;
@@ -62,7 +62,7 @@ public class QwpWebSocketProcessorState implements Mutable, QuietCloseable {
      * @param hi end address of data (exclusive)
      */
     public void addData(long lo, long hi) {
-        if (!ok) {
+        if (!isOk) {
             return; // Ignore data when in error state
         }
 
@@ -80,7 +80,7 @@ public class QwpWebSocketProcessorState implements Mutable, QuietCloseable {
     public void clear() {
         bufferPosition = 0;
         errorMessage = null;
-        ok = true;
+        isOk = true;
         // Reset response state
         hasResponse = false;
         responseSuccess = false;
@@ -169,7 +169,7 @@ public class QwpWebSocketProcessorState implements Mutable, QuietCloseable {
      * Returns true if the state is OK (no error).
      */
     public boolean isOk() {
-        return ok;
+        return isOk;
     }
 
     /**
@@ -184,7 +184,7 @@ public class QwpWebSocketProcessorState implements Mutable, QuietCloseable {
      * After processing, the buffer position is reset but bytesProcessed is incremented.
      */
     public void processMessage() {
-        if (!ok) {
+        if (!isOk) {
             return; // Don't process when in error state
         }
 
@@ -200,7 +200,7 @@ public class QwpWebSocketProcessorState implements Mutable, QuietCloseable {
      */
     public void setError(String message) {
         this.errorMessage = message;
-        this.ok = false;
+        this.isOk = false;
     }
 
     /**
