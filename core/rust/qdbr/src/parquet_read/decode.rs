@@ -1303,21 +1303,7 @@ fn compare_signed_be(a: &[u8], b: &[u8]) -> cmp::Ordering {
     }
 }
 
-fn sign_extend_be(bytes: &[u8], target_len: usize) -> Vec<u8> {
-    if bytes.len() >= target_len {
-        return bytes.to_vec();
-    }
-    let sign_byte = if (bytes.first().copied().unwrap_or(0) as i8).is_negative() {
-        0xFF
-    } else {
-        0x00
-    };
-    let mut result = vec![sign_byte; target_len];
-    result[target_len - bytes.len()..].copy_from_slice(bytes);
-    result
-}
-
-/// Compare two bi-endian signed integers of potentially different lengths.
+/// Compare two big-endian signed integers of potentially different lengths.
 fn compare_signed_be_varlen(a: &[u8], b: &[u8]) -> cmp::Ordering {
     let a_sign = (a.first().copied().unwrap_or(0) as i8).is_negative();
     let b_sign = (b.first().copied().unwrap_or(0) as i8).is_negative();
@@ -1330,14 +1316,27 @@ fn compare_signed_be_varlen(a: &[u8], b: &[u8]) -> cmp::Ordering {
         };
     }
 
-    // Sign-extend shorter operand and compare as equal-length signed BE.
+    // Compare with virtual sign-extension: the shorter operand is logically
+    // prefixed with sign bytes (0xFF for negative, 0x00 for non-negative).
     let max_len = a.len().max(b.len());
-    if max_len == 0 {
-        return cmp::Ordering::Equal;
+    let a_pad = max_len - a.len();
+    let b_pad = max_len - b.len();
+    let a_fill: u8 = if a_sign { 0xFF } else { 0x00 };
+    let b_fill: u8 = if b_sign { 0xFF } else { 0x00 };
+
+    for i in 0..max_len {
+        let a_byte = if i < a_pad { a_fill } else { a[i - a_pad] };
+        let b_byte = if i < b_pad { b_fill } else { b[i - b_pad] };
+        let ord = if i == 0 {
+            (a_byte as i8).cmp(&(b_byte as i8))
+        } else {
+            a_byte.cmp(&b_byte)
+        };
+        if ord != cmp::Ordering::Equal {
+            return ord;
+        }
     }
-    let a_ext = sign_extend_be(a, max_len);
-    let b_ext = sign_extend_be(b, max_len);
-    compare_signed_be(&a_ext, &b_ext)
+    cmp::Ordering::Equal
 }
 
 /// Decode a filtered data page.
