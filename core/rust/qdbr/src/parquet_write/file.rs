@@ -11,6 +11,7 @@ use parquet2::encoding::Encoding;
 use parquet2::metadata::{KeyValue, SchemaDescriptor, SortingColumn};
 use parquet2::page::{CompressedPage, Page};
 use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
+use parquet2::schema::Repetition;
 use parquet2::write::{
     compress, Compressor, DynIter, DynStreamingIterator, FileWriter, RowGroupIter, Version,
     WriteOptions as FileWriteOptions,
@@ -334,8 +335,8 @@ pub fn create_row_group<'a>(
             (&Column<'a>, &ParquetType),
             &Encoding,
         )|
-                           -> ParquetResult<
-                               DynStreamingIterator<'a, CompressedPage, ParquetError>,
+         -> ParquetResult<
+            DynStreamingIterator<'a, CompressedPage, ParquetError>,
         > {
             let encoded_column = column_chunk_to_pages(
                 *column,
@@ -906,6 +907,12 @@ fn column_chunk_to_primitive_pages<'a>(
         } else {
             chunk_offset + chunk_length - orig_column_top
         };
+        // Derive the required flag from the schema's ParquetType, not from
+        // Column.required. When a target schema is set (ADD COLUMN), the
+        // file-level schema may differ from the Column's required flag.
+        // The page format must match the schema's repetition so the reader
+        // can correctly decode definition levels.
+        let required = primitive_type.field_info.repetition == Repetition::Required;
         return symbol::symbol_to_pages(
             &keys[lower_bound..upper_bound],
             offsets,
@@ -913,7 +920,7 @@ fn column_chunk_to_primitive_pages<'a>(
             adjusted_column_top,
             options,
             primitive_type,
-            column.required,
+            required,
         );
     }
 

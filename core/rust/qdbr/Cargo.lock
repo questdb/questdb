@@ -1248,6 +1248,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "parquet",
+ "parquet-format-safe",
  "parquet2",
  "qdb-core",
  "rand",

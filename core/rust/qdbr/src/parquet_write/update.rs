@@ -21,21 +21,32 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read as _, Seek, SeekFrom};
+
+use parquet2::compression::CompressionOptions;
+use parquet2::encoding::uleb128;
+use parquet2::metadata::{FileMetaData, KeyValue, SortingColumn};
+use parquet2::read::{read_metadata_with_footer_bytes, read_metadata_with_size};
+use parquet2::schema::types::ParquetType;
+use parquet2::write;
+use parquet2::write::footer_cache::FooterCache;
+use parquet2::write::{ParquetFile, Version};
+use parquet_format_safe::thrift::protocol::TCompactOutputProtocol;
+use parquet_format_safe::{
+    ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, Encoding as ThriftEncoding,
+    PageHeader, PageType, RowGroup, Type,
+};
+
 use crate::allocator::QdbAllocator;
 use crate::parquet::error::{
     fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult,
 };
-use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
+use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
-use crate::parquet_write::schema::{to_encodings, Partition};
-use parquet2::compression::CompressionOptions;
-use parquet2::metadata::{FileMetaData, KeyValue, SortingColumn};
-use parquet2::read::{read_metadata_with_footer_bytes, read_metadata_with_size};
-use parquet2::write;
-use parquet2::write::footer_cache::FooterCache;
-use parquet2::write::{ParquetFile, Version};
-use std::fs::File;
-use std::io::{Read as _, Seek, SeekFrom};
+use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Partition};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
 #[repr(C)]
 pub struct ParquetUpdater {
@@ -53,6 +64,7 @@ pub struct ParquetUpdater {
     is_rewrite: bool,
     result_file_size: u64,
     result_unused_bytes: u64,
+    target_qdb_meta: Option<QdbMeta>,
 }
 
 impl ParquetUpdater {
@@ -102,14 +114,11 @@ impl ParquetUpdater {
         // O3 merge relies on QuestDB-specific metadata (column types, symbol tables,
         // unused_bytes tracking) that external Parquet writers don't produce.
         let num_parquet_cols = metadata.schema_descr.columns().len();
-        let qdb_meta = metadata
-            .key_value_metadata
-            .as_ref()
-            .and_then(|kvs| {
-                kvs.iter()
-                    .find(|kv| kv.key == QDB_META_KEY)
-                    .and_then(|kv| kv.value.as_ref())
-            });
+        let qdb_meta = metadata.key_value_metadata.as_ref().and_then(|kvs| {
+            kvs.iter()
+                .find(|kv| kv.key == QDB_META_KEY)
+                .and_then(|kv| kv.value.as_ref())
+        });
         match qdb_meta {
             None => {
                 return Err(fmt_err!(
@@ -196,6 +205,7 @@ impl ParquetUpdater {
             is_rewrite,
             result_file_size: 0,
             result_unused_bytes: 0,
+            target_qdb_meta: None,
         })
     }
 
@@ -355,9 +365,27 @@ impl ParquetUpdater {
             })
     }
 
-    pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
-        // Build updated QDB metadata with unused_bytes and pass it as KV metadata.
-        let mut qdb_meta = self
+    /// Sets the target schema for the output file, replacing the schema read
+    /// from the input file. Use this when the table schema has changed (ADD/DROP
+    /// COLUMN) since the parquet file was written. The target schema defines
+    /// the column layout in the output footer.
+    ///
+    /// Also builds a target QdbMeta that `end()` uses instead of the old file's
+    /// metadata. Format hints (e.g. `LocalKeyIsGlobal` for SYMBOL columns)
+    /// are preserved from the old schema for columns that still exist.
+    pub fn set_target_schema(&mut self, partition: &Partition<'_>) -> ParquetResult<()> {
+        let (schema, _kv) = to_parquet_schema(partition, self.raw_array_encoding)?;
+        self.parquet_file.set_schema(schema);
+
+        // Build column_id → old schema index from the old file's parquet field_ids.
+        let old_fields = self.file_metadata.schema_descr.fields();
+        let old_col_id_to_idx: HashMap<i32, usize> = old_fields
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| f.get_field_info().id.map(|id| (id, i)))
+            .collect();
+
+        let old_qdb_meta = self
             .file_metadata
             .key_value_metadata
             .as_ref()
@@ -365,9 +393,255 @@ impl ParquetUpdater {
                 kvs.iter()
                     .find(|kv| kv.key == QDB_META_KEY)
                     .and_then(|kv| kv.value.as_ref())
-                    .and_then(|v| QdbMeta::deserialize(v).ok())
             })
-            .unwrap_or_else(|| QdbMeta::new(0));
+            .and_then(|v| QdbMeta::deserialize(v).ok());
+
+        let mut qdb_meta = QdbMeta::new(partition.columns.len());
+        for col in &partition.columns {
+            // Preserve format hint from old schema for existing columns.
+            let format = old_col_id_to_idx
+                .get(&col.id)
+                .and_then(|&old_idx| {
+                    old_qdb_meta
+                        .as_ref()
+                        .and_then(|m| m.schema.get(old_idx))
+                        .and_then(|c| c.format)
+                })
+                .or_else(|| {
+                    // New column: set format based on type.
+                    if col.data_type.tag() == ColumnTypeTag::Symbol {
+                        Some(QdbMetaColFormat::LocalKeyIsGlobal)
+                    } else {
+                        None
+                    }
+                });
+
+            let column_type = if col.designated_timestamp {
+                col.data_type
+                    .into_designated_with_order(col.designated_timestamp_ascending)?
+            } else {
+                col.data_type
+            };
+
+            qdb_meta
+                .schema
+                .push(QdbMetaCol { column_type, column_top: 0, format });
+        }
+
+        self.target_qdb_meta = Some(qdb_meta);
+        Ok(())
+    }
+
+    /// Copies an existing row group from the input file and appends null column
+    /// chunks for columns that are missing from the old schema but present in
+    /// the target schema. `null_columns` contains `(target_schema_position,
+    /// column_type)` pairs for each column that needs a null chunk.
+    pub fn copy_row_group_with_null_columns(
+        &mut self,
+        rg_index: i16,
+        null_columns: &[(usize, ColumnType)],
+    ) -> ParquetResult<()> {
+        let rg_idx = rg_index as usize;
+        if rg_idx >= self.file_metadata.row_groups.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "copy_row_group_with_null_columns: row group index {} out of range [0,{})",
+                rg_idx,
+                self.file_metadata.row_groups.len()
+            ));
+        }
+
+        let old_rg = &self.file_metadata.row_groups[rg_idx];
+        let row_count = old_rg.num_rows();
+        let old_columns_meta = old_rg.columns();
+
+        // Determine byte range of existing column chunk data.
+        let mut rg_start = u64::MAX;
+        let mut rg_end = 0u64;
+        for col in old_columns_meta {
+            let (start, len) = col.byte_range();
+            rg_start = rg_start.min(start);
+            rg_end = rg_end.max(start + len);
+        }
+        if rg_start >= rg_end {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "copy_row_group_with_null_columns: empty byte range for row group {}",
+                rg_idx
+            ));
+        }
+
+        // Read existing raw bytes.
+        let raw_len = (rg_end - rg_start) as usize;
+        let mut raw_bytes = vec![0u8; raw_len];
+        self.reader.seek(SeekFrom::Start(rg_start))?;
+        self.reader.read_exact(&mut raw_bytes)?;
+
+        self.parquet_file.ensure_started().map_err(|s| {
+            ParquetError::with_descr(
+                ParquetErrorReason::Parquet2(s),
+                "Failed to write file header before raw copy with null columns",
+            )
+        })?;
+
+        let new_offset = self.parquet_file.current_offset();
+        let offset_delta = new_offset as i64 - rg_start as i64;
+
+        // Build adjusted thrift metadata for existing columns.
+        let mut existing_thrift_cols: Vec<ColumnChunk> = old_rg.clone().into_thrift().columns;
+        for col_chunk in &mut existing_thrift_cols {
+            if let Some(ref mut meta) = col_chunk.meta_data {
+                meta.data_page_offset += offset_delta;
+                if let Some(ref mut dict_offset) = meta.dictionary_page_offset {
+                    *dict_offset += offset_delta;
+                }
+                if let Some(ref mut idx_offset) = meta.index_page_offset {
+                    *idx_offset += offset_delta;
+                }
+            }
+            col_chunk.column_index_offset = None;
+            col_chunk.column_index_length = None;
+            col_chunk.offset_index_offset = None;
+            col_chunk.offset_index_length = None;
+        }
+
+        // Generate null column chunk bytes for missing columns.
+        // Null column bytes are appended after the existing raw data.
+        let null_chunk_offset_base = new_offset + raw_bytes.len() as u64;
+        let mut null_bytes_buf: Vec<u8> = Vec::new();
+        let mut null_thrift_cols: Vec<(usize, ColumnChunk)> = Vec::new();
+
+        let target_fields = self.parquet_file.schema().fields();
+        for &(target_pos, col_type) in null_columns {
+            let field = target_fields.get(target_pos).ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "null column target position {} out of target schema range {}",
+                    target_pos,
+                    target_fields.len()
+                )
+            })?;
+
+            let col_offset = null_chunk_offset_base + null_bytes_buf.len() as u64;
+            let (chunk_bytes, thrift_col) =
+                generate_null_column_chunk_bytes(field, col_type, row_count, col_offset)?;
+            null_bytes_buf.extend_from_slice(&chunk_bytes);
+            null_thrift_cols.push((target_pos, thrift_col));
+        }
+
+        // Build column_id → target schema position map.
+        let old_fields = self.file_metadata.schema_descr.fields();
+        let target_col_id_to_target_pos: HashMap<i32, usize> = target_fields
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f): (usize, &ParquetType)| f.get_field_info().id.map(|id| (id, i)))
+            .collect();
+
+        // Merge existing and null column chunks in target schema order.
+        let target_col_count = target_fields.len();
+        let mut merged_cols: Vec<Option<ColumnChunk>> = vec![None; target_col_count];
+
+        // Place existing columns at their target positions.
+        for (old_pos, thrift_col) in existing_thrift_cols.into_iter().enumerate() {
+            if let Some(id) = old_fields
+                .get(old_pos)
+                .and_then(|f: &ParquetType| f.get_field_info().id)
+            {
+                if let Some(&target_pos) = target_col_id_to_target_pos.get(&id) {
+                    merged_cols[target_pos] = Some(thrift_col);
+                }
+                // else: dropped column — skip (dead bytes in raw copy)
+            }
+        }
+
+        // Place null columns.
+        for (target_pos, thrift_col) in null_thrift_cols {
+            merged_cols[target_pos] = Some(thrift_col);
+        }
+
+        // Collect into final column list, skipping any gaps (shouldn't happen
+        // if the caller provided correct null_columns).
+        let all_columns: Vec<ColumnChunk> = merged_cols.into_iter().flatten().collect();
+
+        let total_byte_size: i64 = all_columns
+            .iter()
+            .filter_map(|c| c.meta_data.as_ref())
+            .map(|m| m.total_uncompressed_size)
+            .sum();
+        let total_compressed_size: i64 = all_columns
+            .iter()
+            .filter_map(|c| c.meta_data.as_ref())
+            .map(|m| m.total_compressed_size)
+            .sum();
+
+        let file_offset = all_columns
+            .first()
+            .and_then(|c| c.meta_data.as_ref())
+            .map(|m| m.data_page_offset);
+
+        let thrift_rg = RowGroup {
+            columns: all_columns,
+            total_byte_size,
+            num_rows: row_count as i64,
+            sorting_columns: None,
+            file_offset,
+            total_compressed_size: Some(total_compressed_size),
+            ordinal: None,
+        };
+
+        // Concatenate existing + null bytes and write as one raw row group.
+        let mut combined_bytes = raw_bytes;
+        combined_bytes.extend_from_slice(&null_bytes_buf);
+
+        self.parquet_file
+            .write_raw_row_group(&combined_bytes, thrift_rg)
+            .map_err(|s| {
+                ParquetError::with_descr(
+                    ParquetErrorReason::Parquet2(s),
+                    format!("Failed to raw-copy row group {rg_idx} with null columns"),
+                )
+            })
+    }
+
+    pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
+        // Build updated QDB metadata with unused_bytes and pass it as KV metadata.
+        // When a target schema was set (ADD/DROP COLUMN), use the pre-built
+        // target_qdb_meta which already has the correct column list with
+        // column_top=0. Otherwise fall back to the old file's QDB metadata.
+        let mut qdb_meta = if let Some(target) = self.target_qdb_meta.take() {
+            target
+        } else {
+            let mut meta = self
+                .file_metadata
+                .key_value_metadata
+                .as_ref()
+                .and_then(|kvs| {
+                    kvs.iter()
+                        .find(|kv| kv.key == QDB_META_KEY)
+                        .and_then(|kv| kv.value.as_ref())
+                        .and_then(|v| QdbMeta::deserialize(v).ok())
+                })
+                .unwrap_or_else(|| QdbMeta::new(0));
+
+            // After an O3 merge, row group sizes change but the file-level
+            // column_top values remain stale from the original file. The
+            // decoder uses column_top together with the *new* accumulated row
+            // group sizes to decide whether a row group is entirely before the
+            // column top and can be skipped (returning null ptr). Stale
+            // column_top values may cause the decoder to incorrectly skip row
+            // groups that now contain actual data (from merged O3 rows).
+            //
+            // All merged/inserted row groups already embed null sentinels in
+            // their data with column_top=0, and copied row groups preserve
+            // their original null definitions in the page data. Zeroing the
+            // file-level column_top is therefore safe: the decoder will read
+            // the (null) pages instead of skipping them, which is correct
+            // albeit slightly less optimal.
+            for col in &mut meta.schema {
+                col.column_top = 0;
+            }
+            meta
+        };
 
         if self.is_rewrite {
             qdb_meta.unused_bytes = 0;
@@ -375,23 +649,6 @@ impl ParquetUpdater {
             // The old footer is now dead space.
             self.accumulated_unused_bytes += self.old_footer_size;
             qdb_meta.unused_bytes = self.accumulated_unused_bytes;
-        }
-
-        // After an O3 merge, row group sizes change but the file-level
-        // column_top values remain stale from the original file.  The decoder
-        // uses column_top together with the *new* accumulated row group sizes
-        // to decide whether a row group is entirely before the column top and
-        // can be skipped (returning null ptr).  Stale column_top values may
-        // cause the decoder to incorrectly skip row groups that now contain
-        // actual data (from merged O3 rows).
-        //
-        // All merged/inserted row groups already embed null sentinels in their
-        // data with column_top=0, and copied row groups preserve their original
-        // null definitions in the page data.  Zeroing the file-level column_top
-        // is therefore safe: the decoder will read the (null) pages instead of
-        // skipping them, which is correct albeit slightly less optimal.
-        for col in &mut qdb_meta.schema {
-            col.column_top = 0;
         }
 
         let qdb_meta_json = qdb_meta.serialize()?;
@@ -429,6 +686,158 @@ impl ParquetUpdater {
             raw_array_encoding: self.raw_array_encoding,
         }
     }
+}
+
+/// Generates the raw bytes and thrift `ColumnChunk` for an all-NULL (or
+/// all-zero for Required types) column chunk. The output is a single
+/// uncompressed DataPageV1 containing RLE-encoded definition levels
+/// (all zeros for Optional) or zero-filled values (for Required).
+///
+/// Returns `(raw_page_bytes, thrift_column_chunk)` where `raw_page_bytes`
+/// must be written at `file_offset` in the output file, and the thrift
+/// metadata references that offset.
+fn generate_null_column_chunk_bytes(
+    parquet_field: &ParquetType,
+    column_type: ColumnType,
+    row_count: usize,
+    file_offset: u64,
+) -> ParquetResult<(Vec<u8>, ColumnChunk)> {
+    let field_info = parquet_field.get_field_info();
+    let is_required = field_info.repetition == parquet2::schema::Repetition::Required;
+
+    // Build page data.
+    let page_data = if is_required {
+        // Required column: no definition levels, all-zero values.
+        generate_required_zero_page(parquet_field, column_type, row_count)?
+    } else {
+        // Optional column: RLE def levels = all zeros, no values.
+        generate_optional_null_page(row_count)
+    };
+
+    // Serialize the page header.
+    let page_header = PageHeader {
+        type_: PageType::DATA_PAGE,
+        uncompressed_page_size: page_data.len() as i32,
+        compressed_page_size: page_data.len() as i32,
+        crc: None,
+        data_page_header: Some(DataPageHeader {
+            num_values: row_count as i32,
+            encoding: ThriftEncoding::PLAIN,
+            definition_level_encoding: ThriftEncoding::RLE,
+            repetition_level_encoding: ThriftEncoding::RLE,
+            statistics: None,
+        }),
+        index_page_header: None,
+        dictionary_page_header: None,
+        data_page_header_v2: None,
+    };
+
+    let mut header_bytes = Vec::new();
+    {
+        let mut protocol = TCompactOutputProtocol::new(&mut header_bytes);
+        page_header
+            .write_to_out_protocol(&mut protocol)
+            .map_err(|e| {
+                ParquetError::with_descr(
+                    ParquetErrorReason::Parquet2(parquet2::error::Error::oos(e.to_string())),
+                    "Failed to serialize null column page header",
+                )
+            })?;
+    }
+
+    let header_size = header_bytes.len() as i64;
+    let data_size = page_data.len() as i64;
+    let total_size = header_size + data_size;
+
+    let mut chunk_bytes = header_bytes;
+    chunk_bytes.extend_from_slice(&page_data);
+
+    // Build column path_in_schema.
+    let path = vec![field_info.name.clone()];
+
+    // Determine the parquet physical type.
+    let (thrift_type, _type_length) = match parquet_field {
+        ParquetType::PrimitiveType(pt) => pt.physical_type.into(),
+        ParquetType::GroupType { .. } => {
+            // Group types (arrays) use BYTE_ARRAY as the leaf physical type.
+            (Type::BYTE_ARRAY, None)
+        }
+    };
+
+    let metadata = ColumnMetaData {
+        type_: thrift_type,
+        encodings: vec![ThriftEncoding::PLAIN, ThriftEncoding::RLE],
+        path_in_schema: path,
+        codec: CompressionCodec::UNCOMPRESSED,
+        num_values: row_count as i64,
+        total_uncompressed_size: total_size,
+        total_compressed_size: total_size,
+        key_value_metadata: None,
+        data_page_offset: file_offset as i64,
+        index_page_offset: None,
+        dictionary_page_offset: None,
+        statistics: None,
+        encoding_stats: None,
+        bloom_filter_offset: None,
+    };
+
+    let column_chunk = ColumnChunk {
+        file_path: None,
+        file_offset: file_offset as i64 + total_size,
+        meta_data: Some(metadata),
+        offset_index_offset: None,
+        offset_index_length: None,
+        column_index_offset: None,
+        column_index_length: None,
+        crypto_metadata: None,
+        encrypted_column_metadata: None,
+    };
+
+    Ok((chunk_bytes, column_chunk))
+}
+
+/// Generates page data for an Optional column where all rows are NULL.
+/// Format: 4-byte LE length prefix + RLE-encoded def levels (all zeros).
+fn generate_optional_null_page(row_count: usize) -> Vec<u8> {
+    // RLE encoding of `row_count` zeros with bit_width=1:
+    // header = (count << 1) as varint, value = 0x00
+    let mut rle_data = Vec::with_capacity(8);
+    let mut varint_buf = [0u8; 10];
+    let varint_len = uleb128::encode((row_count << 1) as u64, &mut varint_buf);
+    rle_data.extend_from_slice(&varint_buf[..varint_len]);
+    rle_data.push(0x00); // value byte: all zeros
+
+    // DataPageV1 def level encoding: 4-byte LE length prefix + RLE data.
+    let rle_len = rle_data.len() as u32;
+    let mut page_data = Vec::with_capacity(4 + rle_data.len());
+    page_data.extend_from_slice(&rle_len.to_le_bytes());
+    page_data.extend_from_slice(&rle_data);
+    page_data
+}
+
+/// Generates page data for a Required column where all values are zero/default.
+/// No definition levels for Required columns — just the value bytes.
+fn generate_required_zero_page(
+    _parquet_field: &ParquetType,
+    column_type: ColumnType,
+    row_count: usize,
+) -> ParquetResult<Vec<u8>> {
+    let value_size = match column_type.tag() {
+        ColumnTypeTag::Boolean => {
+            // Boolean: packed bits, ceil(row_count / 8) bytes.
+            return Ok(vec![0u8; (row_count + 7) / 8]);
+        }
+        ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char => {
+            // Stored as Int32 in Parquet.
+            4
+        }
+        _ => {
+            // Unexpected Required column type for a null chunk. Fall back to
+            // Optional encoding to be safe.
+            return Ok(generate_optional_null_page(row_count));
+        }
+    };
+    Ok(vec![0u8; row_count * value_size])
 }
 
 #[cfg(test)]
