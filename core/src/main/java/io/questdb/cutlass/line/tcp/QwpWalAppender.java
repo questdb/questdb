@@ -31,6 +31,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
@@ -845,9 +846,13 @@ public class QwpWalAppender implements QuietCloseable {
      * The designated timestamp uses 128-bit format: (timestamp, rowId) pairs.
      * Each row gets a fresh timestamp from getTicks() to match row-by-row behavior.
      */
-    private void putServerAssignedTimestamp(WalWriter walWriter, int columnIndex,
-                                            TableUpdateDetails tud, int rowCount) {
-        io.questdb.cairo.vm.api.MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+    private void putServerAssignedTimestamp(
+            WalWriter walWriter,
+            int columnIndex,
+            TableUpdateDetails tud,
+            int rowCount
+    ) {
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         long startRowId = walWriter.getSegmentRowCount();
 
         for (int row = 0; row < rowCount; row++) {
