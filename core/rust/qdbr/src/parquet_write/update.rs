@@ -24,6 +24,7 @@
 use crate::allocator::QdbAllocator;
 use crate::parquet::error::{ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
+use crate::parquet_write::schema::to_compressions;
 use crate::parquet_write::schema::{to_encodings, Partition};
 use parquet2::compression::CompressionOptions;
 use parquet2::metadata::{KeyValue, SortingColumn};
@@ -40,6 +41,7 @@ pub struct ParquetUpdater {
     row_group_size: Option<usize>,
     data_page_size: Option<usize>,
     raw_array_encoding: bool,
+    min_compression_ratio: f64,
 }
 
 impl ParquetUpdater {
@@ -54,6 +56,7 @@ impl ParquetUpdater {
         compression_options: CompressionOptions,
         row_group_size: Option<usize>,
         data_page_size: Option<usize>,
+        min_compression_ratio: f64,
     ) -> ParquetResult<Self> {
         fn from(value: i32) -> Version {
             match value {
@@ -85,6 +88,7 @@ impl ParquetUpdater {
             raw_array_encoding,
             row_group_size,
             data_page_size,
+            min_compression_ratio,
         })
     }
 
@@ -101,6 +105,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &to_compressions(partition),
             false,
         )?;
 
@@ -118,6 +123,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &to_compressions(partition),
             false,
         )?;
 
@@ -143,6 +149,7 @@ impl ParquetUpdater {
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
             raw_array_encoding: self.raw_array_encoding,
+            min_compression_ratio: self.min_compression_ratio,
         }
     }
 }
@@ -162,7 +169,7 @@ mod tests {
     use std::ptr::null;
 
     use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
-    use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
+    use crate::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Column, Partition};
 
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;
@@ -193,6 +200,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -242,6 +250,7 @@ mod tests {
             row_group_size: None,
             data_page_size: None,
             raw_array_encoding: false,
+            min_compression_ratio: 0.0,
         };
 
         let options = write::WriteOptions { write_statistics: true, version: Version::V1 };
@@ -253,6 +262,7 @@ mod tests {
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
             foptions,
+            &to_compressions(&new_partition),
             false,
         )?;
 
@@ -263,6 +273,7 @@ mod tests {
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
             foptions,
+            &to_compressions(&new_partition),
             false,
         )?;
 

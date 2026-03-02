@@ -480,7 +480,8 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         false,
                         1000,
                         0,
-                        ParquetVersion.PARQUET_VERSION_V1
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
                 );
                 Assert.assertTrue(Files.exists(path.$()));
                 sink.clear();

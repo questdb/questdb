@@ -31,6 +31,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -371,6 +373,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     if (ColumnType.isSymbol(model.getColumnType())) {
                         symbolClauseToSink(sink, model);
                     }
+                    parquetClauseToSink(sink, model);
                 }
             }
             sink.putAscii(')');
@@ -389,6 +392,28 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         ttlToSink(ttlHoursOrMonths, sink);
         if (volumeAlias != null) {
             sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
+        }
+    }
+
+    private static void parquetClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
+        int encoding = model.getParquetEncoding();
+        int compression = model.getParquetCompression();
+        if (encoding < 0 && compression < 0) {
+            return;
+        }
+        sink.putAscii(" parquet");
+        if (encoding >= 0) {
+            sink.putAscii(" encoding ");
+            sink.put(ParquetEncoding.getEncodingName(encoding));
+        }
+        if (compression >= 0) {
+            sink.putAscii(" compression ");
+            sink.put(ParquetCompression.getCompressionName(compression));
+            int level = model.getParquetCompressionLevel();
+            if (level > 0) {
+                sink.putAscii(' ');
+                sink.put(level);
+            }
         }
     }
 

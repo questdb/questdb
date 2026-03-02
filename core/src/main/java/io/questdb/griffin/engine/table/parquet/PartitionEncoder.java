@@ -55,7 +55,8 @@ public class PartitionEncoder {
             boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            int version
+            int version,
+            double minCompressionRatio
     ) throws CairoException;
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
@@ -67,7 +68,8 @@ public class PartitionEncoder {
                 false,
                 0, // DEFAULT_ROW_GROUP_SIZE (512 * 512) rows
                 0, // DEFAULT_DATA_PAGE_SIZE (1024 * 1024) bytes
-                ParquetVersion.PARQUET_VERSION_V1
+                ParquetVersion.PARQUET_VERSION_V1,
+                0.0
         );
     }
 
@@ -79,7 +81,8 @@ public class PartitionEncoder {
             boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            int version
+            int version,
+            double minCompressionRatio
     ) {
         final Utf8Sequence tableName = descriptor.getTableName();
         final int columnCount = descriptor.getColumnCount();
@@ -103,7 +106,8 @@ public class PartitionEncoder {
                     rawArrayEncoding,
                     rowGroupSize,
                     dataPageSize,
-                    version
+                    version,
+                    minCompressionRatio
             );
         } finally {
             descriptor.clear();
@@ -123,6 +127,7 @@ public class PartitionEncoder {
                         metadata.getColumnName(i),
                         columnType,
                         metadata.getColumnMetadata(i).getWriterIndex(),
+                        0,
                         0,
                         0,
                         0,
@@ -161,6 +166,7 @@ public class PartitionEncoder {
                             .put(']');
                 }
 
+                final int parquetEncodingConfig = metadata.getColumnMetadata(i).getParquetEncodingConfig();
                 if (ColumnType.isSymbol(columnType)) {
                     SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
                     final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
@@ -179,7 +185,8 @@ public class PartitionEncoder {
                             symbolValuesMem.addressOf(0),
                             symbolValuesMem.size(),
                             symbolOffsetsMem.addressOf(HEADER_SIZE),
-                            symbolMapReader.getSymbolCount()
+                            symbolMapReader.getSymbolCount(),
+                            parquetEncodingConfig
                     );
                 } else if (ColumnType.isVarSize(columnType)) {
                     final MemoryR secondaryMem = tableReader.getColumn(primaryIndex + 1);
@@ -193,7 +200,8 @@ public class PartitionEncoder {
                             secondaryMem.addressOf(0),
                             secondaryMem.size(),
                             0,
-                            0
+                            0,
+                            parquetEncodingConfig
                     );
                 } else {
                     descriptor.addColumn(
@@ -206,7 +214,8 @@ public class PartitionEncoder {
                             0,
                             0,
                             0,
-                            0
+                            0,
+                            parquetEncodingConfig
                     );
                 }
             }
@@ -247,7 +256,8 @@ public class PartitionEncoder {
             boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            int version
+            int version,
+            double minCompressionRatio
     ) throws CairoException;
 
     static {

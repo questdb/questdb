@@ -367,7 +367,8 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         RAW_ARRAY_ENCODING,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,
-                        PARQUET_VERSION
+                        PARQUET_VERSION,
+                        0.0
                 );
 
                 try {

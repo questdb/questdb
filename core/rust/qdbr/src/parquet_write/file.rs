@@ -18,7 +18,7 @@ use parquet2::write::{
 use parquet2::FallibleStreamingIterator;
 use qdb_core::error::CoreResult;
 
-use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
+use crate::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Column, Partition};
 use crate::parquet_write::{
     array, binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar,
 };
@@ -32,7 +32,19 @@ use rayon::prelude::*;
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 pub const DEFAULT_ROW_GROUP_SIZE: usize = 100_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Returns the compression for a given column, using per-column override if available.
+fn column_compression(
+    per_column_compressions: &[Option<CompressionOptions>],
+    global_compression: CompressionOptions,
+    col_idx: usize,
+) -> CompressionOptions {
+    per_column_compressions
+        .get(col_idx)
+        .and_then(|opt| *opt)
+        .unwrap_or(global_compression)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WriteOptions {
     /// Whether to write statistics
     pub write_statistics: bool,
@@ -46,6 +58,9 @@ pub struct WriteOptions {
     pub data_page_size: Option<usize>,
     /// If true array columns will be encoded in native QDB format instead of nested lists
     pub raw_array_encoding: bool,
+    /// Minimum compression ratio (uncompressed/compressed) to keep compressed output.
+    /// A value of 0.0 (or <= 1.0) means always keep compressed output.
+    pub min_compression_ratio: f64,
 }
 
 pub struct ParquetWriter<W: Write> {
@@ -65,6 +80,8 @@ pub struct ParquetWriter<W: Write> {
     sorting_columns: Option<Vec<SortingColumn>>,
     /// Encode columns in parallel
     parallel: bool,
+    /// Minimum compression ratio to keep compressed output
+    min_compression_ratio: f64,
 }
 
 impl<W: Write> ParquetWriter<W> {
@@ -83,6 +100,7 @@ impl<W: Write> ParquetWriter<W> {
             sorting_columns: None,
             version: Version::V1,
             parallel: false,
+            min_compression_ratio: 0.0,
         }
     }
 
@@ -136,6 +154,13 @@ impl<W: Write> ParquetWriter<W> {
         self
     }
 
+    /// Set the minimum compression ratio to keep compressed output.
+    /// A value of 0.0 means always keep compressed output.
+    pub fn with_min_compression_ratio(mut self, min_compression_ratio: f64) -> Self {
+        self.min_compression_ratio = min_compression_ratio;
+        self
+    }
+
     fn write_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.statistics,
@@ -144,6 +169,7 @@ impl<W: Write> ParquetWriter<W> {
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
             raw_array_encoding: self.raw_array_encoding,
+            min_compression_ratio: self.min_compression_ratio,
         }
     }
 
@@ -151,6 +177,15 @@ impl<W: Write> ParquetWriter<W> {
         self,
         parquet_schema: SchemaDescriptor,
         encodings: Vec<Encoding>,
+    ) -> ParquetResult<ChunkedWriter<W>> {
+        self.chunked_with_compressions(parquet_schema, encodings, vec![])
+    }
+
+    pub fn chunked_with_compressions(
+        self,
+        parquet_schema: SchemaDescriptor,
+        encodings: Vec<Encoding>,
+        per_column_compressions: Vec<Option<CompressionOptions>>,
     ) -> ParquetResult<ChunkedWriter<W>> {
         let options = self.write_options();
         let parallel = self.parallel;
@@ -172,6 +207,7 @@ impl<W: Write> ParquetWriter<W> {
             parquet_schema,
             encodings,
             options,
+            per_column_compressions,
             parallel,
         })
     }
@@ -180,7 +216,8 @@ impl<W: Write> ParquetWriter<W> {
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
         let (schema, additional_meta) = to_parquet_schema(&partition, self.raw_array_encoding)?;
         let encodings = to_encodings(&partition);
-        let mut chunked = self.chunked(schema, encodings)?;
+        let compressions = to_compressions(&partition);
+        let mut chunked = self.chunked_with_compressions(schema, encodings, compressions)?;
         chunked.write_chunk(&partition)?;
         chunked.finish(additional_meta)
     }
@@ -191,6 +228,7 @@ pub struct ChunkedWriter<W: Write> {
     parquet_schema: SchemaDescriptor,
     encodings: Vec<Encoding>,
     options: WriteOptions,
+    per_column_compressions: Vec<Option<CompressionOptions>>,
     parallel: bool,
 }
 
@@ -221,6 +259,7 @@ impl<W: Write> ChunkedWriter<W> {
                 schema.fields(),
                 &self.encodings,
                 self.options,
+                &self.per_column_compressions,
                 self.parallel,
             );
             self.writer.write(row_group?)?;
@@ -242,6 +281,7 @@ impl<W: Write> ChunkedWriter<W> {
             schema.fields(),
             &self.encodings,
             self.options,
+            &self.per_column_compressions,
             self.parallel,
         );
         self.writer.write(row_group?)?;
@@ -287,30 +327,33 @@ pub fn create_row_group(
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
+    per_column_compressions: &[Option<CompressionOptions>],
     parallel: bool,
 ) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
     let columns = if parallel {
-        let col_to_iter = move |((column, column_type), encoding): (
-            (&Column, &ParquetType),
-            &Encoding,
-        )|
-              -> ParquetResult<
+        let col_to_iter = |col_idx: usize| -> ParquetResult<
             DynStreamingIterator<CompressedPage, ParquetError>,
         > {
+            let column = &partition.columns[col_idx];
+            let column_type = &column_types[col_idx];
+            let col_encoding = encoding[col_idx];
+            let col_compression =
+                column_compression(per_column_compressions, options.compression, col_idx);
             let encoded_column = column_chunk_to_pages(
                 *column,
                 column_type.clone(),
                 offset,
                 length,
                 options,
-                *encoding,
+                col_encoding,
             )
             .expect("encoded_column");
+            let min_ratio = options.min_compression_ratio;
             let compressed_pages = encoded_column
                 .into_iter()
                 .map(|page| {
                     let page = page?;
-                    let page = compress(page, vec![], options.compression)?;
+                    let page = compress(page, vec![], col_compression, min_ratio)?;
                     Ok(Ok(page))
                 })
                 .collect::<ParquetResult<VecDeque<_>>>()?;
@@ -321,40 +364,35 @@ pub fn create_row_group(
         };
 
         POOL.install(|| {
-            partition
-                .columns
-                .par_iter()
-                .zip(column_types)
-                .zip(encoding)
+            (0..partition.columns.len())
+                .into_par_iter()
                 .flat_map(col_to_iter)
                 .collect::<Vec<_>>()
         })
     } else {
-        let col_to_iter = move |((column, column_type), encoding): (
-            (&Column, &ParquetType),
-            &Encoding,
-        )|
-              -> ParquetResult<
+        let col_to_iter = |col_idx: usize| -> ParquetResult<
             DynStreamingIterator<CompressedPage, ParquetError>,
         > {
+            let column = &partition.columns[col_idx];
+            let column_type = &column_types[col_idx];
+            let col_encoding = encoding[col_idx];
+            let col_compression =
+                column_compression(per_column_compressions, options.compression, col_idx);
             let encoded_column = column_chunk_to_pages(
                 *column,
                 column_type.clone(),
                 offset,
                 length,
                 options,
-                *encoding,
+                col_encoding,
             )
             .expect("encoded_column");
-            let compression_iter = Compressor::new(encoded_column, options.compression, vec![]);
+            let compression_iter =
+                Compressor::new(encoded_column, col_compression, vec![], options.min_compression_ratio);
             Ok(DynStreamingIterator::new(compression_iter))
         };
 
-        partition
-            .columns
-            .iter()
-            .zip(column_types)
-            .zip(encoding)
+        (0..partition.columns.len())
             .flat_map(col_to_iter)
             .collect::<Vec<_>>()
     };
@@ -383,6 +421,7 @@ pub fn create_row_group_from_partitions(
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
+    per_column_compressions: &[Option<CompressionOptions>],
     parallel: bool,
 ) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
     assert!(!partitions.is_empty(), "partitions cannot be empty");
@@ -395,6 +434,8 @@ pub fn create_row_group_from_partitions(
                 let column_type = &column_types[col_idx];
                 let col_encoding = encoding[col_idx];
                 let first_partition_column = partitions[0].columns[col_idx];
+                let col_compression =
+                    column_compression(per_column_compressions, options.compression, col_idx);
 
                 if num_partitions > 1 && first_partition_column.data_type.is_symbol() {
                     let partition_ranges: Vec<(Column, usize, usize)> = partitions
@@ -429,9 +470,10 @@ pub fn create_row_group_from_partitions(
                         options,
                     )?;
 
+                    let min_ratio = options.min_compression_ratio;
                     let mut all_compressed_pages = VecDeque::new();
                     for page in pages.into_iter() {
-                        let compressed = compress(page, vec![], options.compression)?;
+                        let compressed = compress(page, vec![], col_compression, min_ratio)?;
                         all_compressed_pages.push_back(Ok(compressed));
                     }
 
@@ -440,6 +482,7 @@ pub fn create_row_group_from_partitions(
                     )));
                 }
 
+                let min_ratio = options.min_compression_ratio;
                 let mut all_compressed_pages = VecDeque::new();
                 for (part_idx, partition) in partitions.iter().enumerate() {
                     let column = partition.columns[col_idx];
@@ -462,7 +505,7 @@ pub fn create_row_group_from_partitions(
 
                     for page in encoded_column {
                         let page = page?;
-                        let compressed = compress(page, vec![], options.compression)?;
+                        let compressed = compress(page, vec![], col_compression, min_ratio)?;
                         all_compressed_pages.push_back(Ok(compressed));
                     }
                 }
@@ -484,6 +527,8 @@ pub fn create_row_group_from_partitions(
                 let column_type = &column_types[col_idx];
                 let col_encoding = encoding[col_idx];
                 let first_partition_column = partitions[0].columns[col_idx];
+                let col_compression =
+                    column_compression(per_column_compressions, options.compression, col_idx);
 
                 let partition_ranges: Vec<(Column, usize, usize)> = partitions
                     .iter()
@@ -519,8 +564,9 @@ pub fn create_row_group_from_partitions(
                     )?;
                     let compression_iter = Compressor::new(
                         DynIter::new(pages.into_iter().map(Ok)),
-                        options.compression,
+                        col_compression,
                         vec![],
+                        options.min_compression_ratio,
                     );
 
                     return Ok(DynStreamingIterator::new(compression_iter));
@@ -533,8 +579,12 @@ pub fn create_row_group_from_partitions(
                     col_encoding,
                 );
 
-                let compression_iter =
-                    Compressor::new(DynIter::new(pages_iter), options.compression, vec![]);
+                let compression_iter = Compressor::new(
+                    DynIter::new(pages_iter),
+                    col_compression,
+                    vec![],
+                    options.min_compression_ratio,
+                );
 
                 Ok(DynStreamingIterator::new(compression_iter))
             };
@@ -936,13 +986,26 @@ fn column_chunk_to_primitive_pages(
             chunk_offset + chunk_length - orig_column_top
         };
 
-        return varchar::varchar_to_dict_pages(
-            &aux[lower_bound..upper_bound],
-            data,
-            adjusted_column_top,
-            options,
-            primitive_type,
-        );
+        return match encoding {
+            Encoding::DeltaLengthByteArray | Encoding::Plain => {
+                let page = varchar::varchar_to_page(
+                    &aux[lower_bound..upper_bound],
+                    data,
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                    encoding,
+                )?;
+                Ok(DynIter::new(std::iter::once(Ok(page))))
+            }
+            _ => varchar::varchar_to_dict_pages(
+                &aux[lower_bound..upper_bound],
+                data,
+                adjusted_column_top,
+                options,
+                primitive_type,
+            ),
+        };
     }
 
     let number_of_rows = chunk_length;

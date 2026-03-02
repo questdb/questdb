@@ -11,7 +11,7 @@ use std::slice;
 use crate::allocator::QdbAllocator;
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
-use jni::sys::{jboolean, jint, jlong, jshort};
+use jni::sys::{jboolean, jdouble, jint, jlong, jshort};
 use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
@@ -32,6 +32,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     raw_array_encoding: jboolean,
     row_group_size: jlong,
     data_page_size: jlong,
+    min_compression_ratio: jdouble,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
         let compression_options =
@@ -69,6 +70,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             compression_options,
             row_group_size,
             data_page_size,
+            min_compression_ratio,
         )
     };
 
@@ -202,6 +204,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
+    min_compression_ratio: jdouble,
 ) {
     let encode = || -> ParquetResult<()> {
         let partition = create_partition_descriptor(
@@ -262,6 +265,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_row_group_size(row_group_size)
             .with_data_page_size(data_page_size)
             .with_sorting_columns(sorting_columns)
+            .with_min_compression_ratio(min_compression_ratio)
             .finish(partition)
             .map(|_| ())
             .context("ParquetWriter::finish failed")
@@ -301,7 +305,7 @@ fn create_partition_descriptor(
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
     let col_data_len = col_data_len as usize;
-    const COL_DATA_ENTRY_SIZE: usize = 9;
+    const COL_DATA_ENTRY_SIZE: usize = 10;
     assert_eq!(col_data_len % COL_DATA_ENTRY_SIZE, 0);
 
     let mut col_names = unsafe {
@@ -333,6 +337,8 @@ fn create_partition_descriptor(
         let symbol_offsets_addr = col_data[raw_idx + 7];
         let symbol_offsets_size = col_data[raw_idx + 8];
 
+        let parquet_encoding_config = col_data[raw_idx + 9] as i32;
+
         let designated_timestamp = col_id == timestamp_index;
 
         let column = Column::from_raw_data(
@@ -349,6 +355,7 @@ fn create_partition_descriptor(
             symbol_offsets_size as usize,
             designated_timestamp,
             true,
+            parquet_encoding_config,
         )?;
 
         columns.push(column);
@@ -484,6 +491,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
+    min_compression_ratio: jdouble,
 ) -> *mut StreamingParquetWriter {
     let create = || -> ParquetResult<StreamingParquetWriter> {
         let partition_template = create_partition_template(
@@ -527,6 +535,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         )?;
         let allocator = unsafe { &*allocator_ptr };
         let encodings = crate::parquet_write::schema::to_encodings(&partition_template);
+        let per_column_compressions =
+            crate::parquet_write::schema::to_compressions(&partition_template);
         let mut current_buffer = Box::new(Vec::with_capacity_in(8192, allocator.clone()));
         // Reserve 16 bytes for header: [8 bytes data_len][8 bytes rows_written_to_row_groups]
         let buffer_writer = unsafe {
@@ -539,8 +549,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_raw_array_encoding(raw_array_encoding != 0)
             .with_row_group_size(row_group_size_opt)
             .with_data_page_size(data_page_size_opt)
-            .with_sorting_columns(sorting_columns.clone());
-        let chunked_writer = parquet_writer.chunked(parquet_schema, encodings)?;
+            .with_sorting_columns(sorting_columns.clone())
+            .with_min_compression_ratio(min_compression_ratio);
+        let chunked_writer = parquet_writer.chunked_with_compressions(
+            parquet_schema,
+            encodings,
+            per_column_compressions,
+        )?;
 
         let effective_row_group_size = row_group_size_opt.unwrap_or(DEFAULT_ROW_GROUP_SIZE);
 
@@ -770,6 +785,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     let _ = unsafe { Box::from_raw(encoder) };
 }
 
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetEncoding_isEncodingValid0(
+    _env: JNIEnv,
+    _class: JClass,
+    encoding_id: jint,
+    col_type_tag: jint,
+) -> jboolean {
+    if crate::parquet_write::schema::is_encoding_valid_for_column_tag(encoding_id, col_type_tag) {
+        1
+    } else {
+        0
+    }
+}
+
 fn create_partition_template(
     col_count: jint,
     col_names_ptr: *const u8,
@@ -811,6 +840,7 @@ fn create_partition_template(
             0,
             designated_timestamp,
             timestamp_descending == 0,
+            0,
         )?;
 
         columns.push(column);

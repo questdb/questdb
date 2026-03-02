@@ -759,6 +759,62 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
+    /**
+     * Reads the packed Parquet encoding config for a column from table metadata memory.
+     * See {@link #packParquetConfig(int, int, int)} for the bit layout.
+     */
+    public static int getParquetEncodingConfig(MemoryR metaMem, int columnIndex) {
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 4);
+    }
+
+    /**
+     * Extracts the compression codec id (bits 8-15) from a packed Parquet config.
+     */
+    public static int getParquetConfigCompression(int packed) {
+        return (packed >> 8) & 0xFF;
+    }
+
+    /**
+     * Extracts the compression level (bits 16-23) from a packed Parquet config.
+     */
+    public static int getParquetConfigCompressionLevel(int packed) {
+        return (packed >> 16) & 0xFF;
+    }
+
+    /**
+     * Extracts the encoding id (bits 0-7) from a packed Parquet config.
+     * The id corresponds to a {@code ParquetEncoding.ENCODING_*} constant.
+     */
+    public static int getParquetConfigEncoding(int packed) {
+        return packed & 0xFF;
+    }
+
+    /**
+     * Returns true when bit 24 (the explicit flag) is set, meaning the user
+     * explicitly configured encoding/compression for this column via ALTER TABLE.
+     */
+    public static boolean isParquetConfigExplicit(int packed) {
+        return (packed & (1 << 24)) != 0;
+    }
+
+    /**
+     * Packs per-column Parquet encoding, compression codec, and compression level
+     * into a single 32-bit integer. Layout:
+     * <ul>
+     *   <li>bits 0-7: encoding id ({@code ParquetEncoding.ENCODING_*})</li>
+     *   <li>bits 8-15: compression codec id ({@code ParquetCompression} constants)</li>
+     *   <li>bits 16-23: compression level (codec-specific)</li>
+     *   <li>bit 24: explicit flag (always set by this method)</li>
+     * </ul>
+     * A packed value of 0 means "use defaults for everything".
+     */
+    public static int packParquetConfig(int encoding, int compression, int level) {
+        return (encoding & 0xFF)
+                | ((compression & 0xFF) << 8)
+                | ((level & 0xFF) << 16)
+                | (1 << 24);
+    }
+
     public static int getColumnType(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
@@ -2054,8 +2110,9 @@ public final class TableUtils {
             mem.putLong(flags);
             mem.putInt(tableStruct.getIndexBlockCapacity(i));
             mem.putInt(tableStruct.getSymbolCapacity(i));
+            mem.putInt(tableStruct.getParquetEncodingConfig(i));
             // reserved
-            mem.skip(12);
+            mem.skip(8);
         }
 
         for (int i = 0; i < count; i++) {
