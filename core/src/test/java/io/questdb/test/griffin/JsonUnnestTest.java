@@ -218,6 +218,38 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTypeMismatchIntReturnsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"val\":\"not_a_number\"}]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n",
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testTypeMismatchLongReturnsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"val\":\"not_a_number\"}]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n",
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val LONG)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
     public void testNullPayloadReturnsNoRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
