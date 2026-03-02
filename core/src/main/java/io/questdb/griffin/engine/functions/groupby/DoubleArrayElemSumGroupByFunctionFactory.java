@@ -115,10 +115,12 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
             long destAddr = destDataPtr + (long) destFi * Double.BYTES;
             double destVal = Unsafe.getUnsafe().getDouble(destAddr);
             if (Numbers.isFinite(destVal)) {
+                long destCompAddr = compensationPtr + (long) destFi * Double.BYTES;
+                double destComp = Unsafe.getUnsafe().getDouble(destCompAddr);
                 double srcComp = Unsafe.getUnsafe().getDouble(srcCompensationPtr + (long) srcFi * Double.BYTES);
-                double y = srcVal - srcComp;
+                double y = (srcVal - srcComp) - destComp;
                 double t = destVal + y;
-                Unsafe.getUnsafe().putDouble(compensationPtr + (long) destFi * Double.BYTES, (t - destVal) - y);
+                Unsafe.getUnsafe().putDouble(destCompAddr, (t - destVal) - y);
                 Unsafe.getUnsafe().putDouble(destAddr, t);
             } else {
                 Unsafe.getUnsafe().putDouble(destAddr, srcVal);
@@ -156,7 +158,7 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
         protected void onShapeGrow(MapValue mapValue, int oldFlatCardinality, long newCapacity, boolean needsRemap) {
             long oldCompPtr = mapValue.getLong(valueIndex + COMP_SLOT);
             long newCompPtr = allocator.malloc(newCapacity * Double.BYTES);
-            zeroFillDoubles(newCompPtr, 0, (int) newCapacity);
+            zeroFillDoubles(newCompPtr, 0, newCapacity);
             if (!needsRemap) {
                 Unsafe.getUnsafe().copyMemory(oldCompPtr, newCompPtr, (long) oldFlatCardinality * Double.BYTES);
             } else {

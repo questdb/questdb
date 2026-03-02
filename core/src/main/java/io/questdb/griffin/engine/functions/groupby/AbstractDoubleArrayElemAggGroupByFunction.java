@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -132,6 +133,10 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      */
     protected final int[] newStrides;
     /**
+     * Precomputed overallocation factor: {@code pow(OVERALLOC_BASE, nDims)}.
+     */
+    private final double overallocFactor;
+    /**
      * Reusable view returned from {@link #getArray} — points into the compact block.
      */
     private final BorrowedArray borrowedArray = new BorrowedArray();
@@ -144,9 +149,6 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      */
     protected int valueIndex;
 
-    /**
-     * {@inheritDoc}
-     */
     public AbstractDoubleArrayElemAggGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.type = arg.getType();
@@ -162,6 +164,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         this.accStrides = new int[nDims];
         this.newStrides = new int[nDims];
         this.coords = new int[nDims];
+        this.overallocFactor = Math.pow(OVERALLOC_BASE, nDims);
     }
 
     @Override
@@ -182,7 +185,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
             return;
         }
         int flatCardinality = array.getCardinality();
-        int capacity = Math.max(flatCardinality, (int) (flatCardinality * Math.pow(OVERALLOC_BASE, nDims)));
+        int capacity = (int) Math.min(Integer.MAX_VALUE, Math.max(flatCardinality, (long) (flatCardinality * overallocFactor)));
         long blockSize = headerSize + (long) capacity * Double.BYTES;
         long ptr = allocator.malloc(blockSize);
 
@@ -421,19 +424,19 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
             mapValue.putLong(valueIndex + 1, newFlatCardinality);
             onShapeGrow(mapValue, accFlatCardinality, capacity, needsRemap);
         } else {
-            long newCapacity = Math.max(newFlatCardinality, (long) (newFlatCardinality * Math.pow(OVERALLOC_BASE, nDims)));
+            long newCapacity = Math.max(newFlatCardinality, (long) (newFlatCardinality * overallocFactor));
             long newBlockSize = headerSize + newCapacity * Double.BYTES;
             long newPtr = allocator.malloc(newBlockSize);
             writeHeader(newPtr, newShape, newFlatCardinality);
             long newDataPtr = newPtr + headerSize;
 
             if (needsRemap) {
-                nanFill(newDataPtr, 0, (int) newCapacity);
+                nanFill(newDataPtr, 0, newCapacity);
                 remapData(ptr + headerSize, accFlatCardinality, accStrides, newDataPtr, newStrides);
             } else {
                 // Flat layout preserved: bulk copy + NaN-fill tail.
                 Unsafe.getUnsafe().copyMemory(ptr + headerSize, newDataPtr, (long) accFlatCardinality * Double.BYTES);
-                nanFill(newDataPtr, accFlatCardinality, (int) newCapacity);
+                nanFill(newDataPtr, accFlatCardinality, newCapacity);
             }
 
             mapValue.putLong(valueIndex, newPtr);
@@ -483,18 +486,18 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     /**
      * Fills data positions {@code [from, to)} with {@code Double.NaN}.
      */
-    static void nanFill(long dataPtr, int from, int to) {
-        for (int i = from; i < to; i++) {
-            Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, Double.NaN);
+    static void nanFill(long dataPtr, long from, long to) {
+        if (to > from) {
+            Vect.setMemoryDouble(dataPtr + from * Double.BYTES, Double.NaN, to - from);
         }
     }
 
     /**
      * Fills double positions {@code [from, to)} with {@code 0.0}.
      */
-    static void zeroFillDoubles(long ptr, int from, int to) {
-        for (int i = from; i < to; i++) {
-            Unsafe.getUnsafe().putDouble(ptr + (long) i * Double.BYTES, 0.0);
+    static void zeroFillDoubles(long ptr, long from, long to) {
+        if (to > from) {
+            Vect.setMemoryDouble(ptr + from * Double.BYTES, 0.0, to - from);
         }
     }
 
