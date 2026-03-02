@@ -973,6 +973,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(denseSymbolMapWriters);
 
+            if (isParquet) {
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.setHasParquetPartitions(tableToken, true);
+                }
+            }
+
             LOG.info().$("partition attached [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, timestamp).I$();
 
@@ -1991,6 +1997,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 txWriter.setColumnVersion(columnVersionWriter.getVersion());
                 txWriter.commit(denseSymbolMapWriters);
+
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+                }
                 // return at the end of the method after removing partition directory
             } else {
                 // rollback detached copy
@@ -2702,6 +2712,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         closeActivePartition(false);
         processPartitionRemoveCandidates();
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.setHasParquetPartitions(tableToken, false);
+        }
 
         LOG.info().$("removed all partitions (soft truncated) [name=").$(tableToken).I$();
     }
@@ -4150,6 +4164,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(denseSymbolMapWriters);
         processPartitionRemoveCandidates();
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+        }
     }
 
     private void configureAppendPosition() {

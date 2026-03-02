@@ -65,6 +65,7 @@ public class MetadataCache implements QuietCloseable {
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMR metaMem = Vm.getCMRInstance();
+    private TxReader txReader;
     private long version;
 
     public MetadataCache(CairoEngine engine) {
@@ -74,6 +75,7 @@ public class MetadataCache implements QuietCloseable {
     @Override
     public void close() {
         metaMem = Misc.free(metaMem);
+        txReader = Misc.free(txReader);
         tableMap.clear();
     }
 
@@ -272,7 +274,10 @@ public class MetadataCache implements QuietCloseable {
             }
 
             if (PartitionBy.isPartitioned(partitionBy)) {
-                try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+                try {
+                    if (txReader == null) {
+                        txReader = new TxReader(engine.getConfiguration().getFilesFacade());
+                    }
                     Path txnPath = Path.getThreadLocal2(engine.getConfiguration().getDbRoot());
                     txReader.ofRO(txnPath.concat(token.getDirName()).concat(TableUtils.TXN_FILE_NAME).$(), table.getTimestampType(), partitionBy);
                     txReader.unsafeLoadAll();
@@ -307,6 +312,7 @@ public class MetadataCache implements QuietCloseable {
             }
         } finally {
             Misc.free(metaMem);
+            Misc.free(txReader);
         }
     }
 
@@ -638,14 +644,6 @@ public class MetadataCache implements QuietCloseable {
         }
 
         @Override
-        public void setHasParquetPartitions(@NotNull TableToken tableToken, boolean hasParquetPartitions) {
-            CairoTable table = tableMap.get(tableToken.getTableName());
-            if (table != null) {
-                table.setHasParquetPartitions(hasParquetPartitions);
-            }
-        }
-
-        @Override
         public void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken) {
             String tableName = fromTableToken.getTableName();
             final int index = tableMap.keyIndex(tableName);
@@ -655,6 +653,14 @@ public class MetadataCache implements QuietCloseable {
                 CairoTable fromTab = tableMap.valueAt(index);
                 tableMap.removeAt(index);
                 tableMap.put(toTableToken.getTableName(), new CairoTable(toTableToken, fromTab));
+            }
+        }
+
+        @Override
+        public void setHasParquetPartitions(@NotNull TableToken tableToken, boolean hasParquetPartitions) {
+            CairoTable table = tableMap.get(tableToken.getTableName());
+            if (table != null) {
+                table.setHasParquetPartitions(hasParquetPartitions);
             }
         }
     }

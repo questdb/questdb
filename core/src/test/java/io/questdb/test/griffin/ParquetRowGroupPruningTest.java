@@ -25,6 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -1251,6 +1254,105 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT id, val FROM x WHERE val = null",
                     null, true, false
             );
+        });
+    }
+
+    @Test
+    public void testHasParquetPartitionsFlagAfterConvertBackToNative() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+            assertHasParquetPartitions("x", false);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            assertHasParquetPartitions("x", true);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE WHERE ts >= 0");
+            assertHasParquetPartitions("x", false);
+        });
+    }
+
+    @Test
+    public void testHasParquetPartitionsFlagAfterDetachPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts = '2024-01-01'");
+            assertHasParquetPartitions("x", true);
+
+            execute("ALTER TABLE x DETACH PARTITION WHERE ts = '2024-01-01'");
+            assertHasParquetPartitions("x", false);
+        });
+    }
+
+    @Test
+    public void testHasParquetPartitionsFlagAfterDropPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts = '2024-01-01'");
+            assertHasParquetPartitions("x", true);
+
+            execute("ALTER TABLE x DROP PARTITION WHERE ts = '2024-01-01'");
+            assertHasParquetPartitions("x", false);
+        });
+    }
+
+    @Test
+    public void testHasParquetPartitionsFlagAfterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts = '2024-01-01'");
+            assertHasParquetPartitions("x", true);
+
+            execute("TRUNCATE TABLE x");
+            assertHasParquetPartitions("x", false);
+        });
+    }
+
+    @Test
+    public void testHasParquetPartitionsFlagMixedPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts = '2024-01-01'");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts = '2024-01-02'");
+            assertHasParquetPartitions("x", true);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE WHERE ts = '2024-01-01'");
+            assertHasParquetPartitions("x", true);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE WHERE ts = '2024-01-02'");
+            assertHasParquetPartitions("x", false);
         });
     }
 
@@ -2626,5 +2728,14 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
+    }
+
+    private void assertHasParquetPartitions(String tableName, boolean expected) {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        try (MetadataCacheReader reader = engine.getMetadataCache().readLock()) {
+            CairoTable table = reader.getTable(tableToken);
+            Assert.assertNotNull(table);
+            Assert.assertEquals(expected, table.hasParquetPartitions());
+        }
     }
 }
