@@ -132,6 +132,10 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      */
     protected final int[] newStrides;
     /**
+     * Reusable view returned from {@link #getArray} — points into the compact block.
+     */
+    private final BorrowedArray borrowedArray = new BorrowedArray();
+    /**
      * Group-by memory allocator, set before any compute calls.
      */
     protected GroupByAllocator allocator;
@@ -139,10 +143,6 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * Index of this function's first slot in the MapValue.
      */
     protected int valueIndex;
-    /**
-     * Reusable view returned from {@link #getArray} — points into the compact block.
-     */
-    private final BorrowedArray borrowedArray = new BorrowedArray();
 
     public AbstractDoubleArrayElemAggGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -159,24 +159,6 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         this.accStrides = new int[nDims];
         this.newStrides = new int[nDims];
         this.coords = new int[nDims];
-    }
-
-    /**
-     * Fills data positions {@code [from, to)} with {@code Double.NaN}.
-     */
-    static void nanFill(long dataPtr, int from, int to) {
-        for (int i = from; i < to; i++) {
-            Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, Double.NaN);
-        }
-    }
-
-    /**
-     * Fills double positions {@code [from, to)} with {@code 0.0}.
-     */
-    static void zeroFillDoubles(long ptr, int from, int to) {
-        for (int i = from; i < to; i++) {
-            Unsafe.getUnsafe().putDouble(ptr + (long) i * Double.BYTES, 0.0);
-        }
     }
 
     @Override
@@ -369,223 +351,6 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         return UnaryFunction.super.supportsParallelism();
     }
 
-
-    /**
-     * Allows subclasses to register additional MapValue slots (e.g. count, countPtr for avg).
-     *
-     * @param columnTypes the column types to append additional slots to
-     */
-    protected void initExtraValueTypes(ArrayColumnTypes columnTypes) {
-    }
-
-    /**
-     * Hook called before the accumulation loop in {@link #accumulateInput}.
-     * Subclasses can cache MapValue slot values into instance fields for use in
-     * {@link #accumulateOne}.
-     *
-     * @param mapValue the map value for the current group
-     */
-    protected void onBeforeAccumulate(MapValue mapValue) {
-    }
-
-    /**
-     * Hook called before the merge loop in {@link #mergeValues}.
-     * Subclasses can cache MapValue slot values into instance fields for use in
-     * {@link #mergeOne}.
-     *
-     * @param destValue the destination map value to merge into
-     * @param srcValue  the source map value to merge from
-     */
-    protected void onBeforeMerge(MapValue destValue, MapValue srcValue) {
-    }
-
-    /**
-     * Called after the first non-null array is stored in a new group.
-     * Base slots (ptr, accFlatCardinality, capacity) have already been written.
-     * Subclasses can use this to initialize auxiliary state (e.g. per-element counts).
-     */
-    protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatCardinality, int capacity) {
-    }
-
-    /**
-     * Called when merge shallow-copies src into an empty dest.
-     * Subclasses should copy their extra MapValue slots from src to dest.
-     */
-    protected void onMergeShallowCopy(MapValue destValue, MapValue srcValue) {
-    }
-
-    /**
-     * Called when the accumulator shape grows (from either computeNext or merge).
-     * The base class has already remapped its double[] data and updated its 3 base
-     * MapValue slots; subclasses should remap their auxiliary arrays (e.g. counts).
-     * <p>
-     * When {@code needsRemap} is true, {@link #accStrides} and {@link #newStrides}
-     * are populated and coordinate conversion is required. When false, old flat
-     * indices are preserved and data can be bulk-copied.
-     *
-     * @param mapValue           the group's MapValue (base slots already updated)
-     * @param oldFlatCardinality number of elements before growth
-     * @param newCapacity        allocated element count after growth
-     * @param needsRemap         true if old and new flat layouts differ (strides changed)
-     */
-    protected void onShapeGrow(MapValue mapValue, int oldFlatCardinality, long newCapacity, boolean needsRemap) {
-    }
-
-    /**
-     * Reads the nDims shape integers from a compact block header into the given array.
-     */
-    protected void readShapeFromHeader(long ptr, int[] shape) {
-        long shapePtr = ptr + Integer.BYTES;
-        for (int d = 0; d < nDims; d++) {
-            shape[d] = Unsafe.getUnsafe().getInt(shapePtr + (long) d * Integer.BYTES);
-        }
-    }
-
-    /**
-     * Allows subclasses to zero their extra MapValue slots when a group is set to null.
-     */
-    protected void setNullExtra(MapValue mapValue) {
-    }
-
-    /**
-     * Accumulates a single finite input value at the given accumulator position.
-     */
-    protected abstract void accumulateOne(long dataPtr, int accFi, double inputVal);
-
-    /**
-     * Accumulates values from a single input array into the group's data buffer.
-     * <p>
-     * For 1D, flat indices match between input and accumulator so values are combined directly.
-     * For nD, each input flat index is converted to coordinates (via input strides), then mapped
-     * to the accumulator's flat index (via accumulator strides), because the two may have
-     * different shapes and therefore different flat layouts.
-     * <p>
-     * NaN input values are skipped. If the accumulator position holds NaN (no prior finite value),
-     * the input value replaces it outright; otherwise {@link #combine} is called.
-     * <p>
-     * The avg subclass overrides this to additionally track per-position counts.
-     *
-     * @param dataPtr         pointer to the accumulator's data section (past the header)
-     * @param array           the input array for this row
-     * @param currentAccShape the accumulator's current shape (after any growth)
-     * @param mapValue        the group's MapValue (for subclass access to extra slots)
-     */
-    protected void accumulateInput(long dataPtr, ArrayView array, int[] currentAccShape, MapValue mapValue) {
-        int inputCardinality = array.getCardinality();
-        onBeforeAccumulate(mapValue);
-        if (array.isVanilla() && innerDimsMatch(inputShape, currentAccShape)) {
-            // Flat path: input is vanilla row-major and inner dimensions match, so flat indices are identical.
-            for (int i = 0; i < inputCardinality; i++) {
-                double inputVal = array.getDouble(i);
-                if (Numbers.isFinite(inputVal)) {
-                    accumulateOne(dataPtr, i, inputVal);
-                }
-            }
-        } else {
-            // Coordinate path: iterate input coordinates, use array strides for non-vanilla support.
-            ArrayView.computeRowMajorStrides(currentAccShape, accStrides);
-            for (int d = 0; d < nDims; d++) {
-                coords[d] = 0;
-            }
-            do {
-                int inputFi = 0;
-                for (int d = 0; d < nDims; d++) {
-                    inputFi += coords[d] * array.getStride(d);
-                }
-                double inputVal = array.getDouble(inputFi);
-                if (Numbers.isFinite(inputVal)) {
-                    int accFi = ArrayView.coordsToFlatIndex(coords, accStrides);
-                    accumulateOne(dataPtr, accFi, inputVal);
-                }
-            } while (ArrayView.incrementCoords(coords, inputShape));
-        }
-    }
-
-    /**
-     * Merges a single finite src value into the dest at the given flat indices.
-     *
-     * @param destDataPtr pointer to dest's data section
-     * @param destFi      flat index in dest's layout
-     * @param srcVal      finite value from src (already checked by caller)
-     * @param srcFi       flat index in src's layout (for subclass compensation lookup)
-     */
-    protected abstract void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi);
-
-    /**
-     * Merges src's accumulated values into dest during parallel GROUP BY.
-     * Same coordinate-mapping logic as {@link #accumulateInput} but reads from
-     * off-heap src data instead of an {@link ArrayView}.
-     * <p>
-     * The avg subclass overrides this to additionally merge per-position counts.
-     *
-     * @param destDataPtr        pointer to dest's data section
-     * @param srcDataPtr         pointer to src's data section
-     * @param destShape          dest's current shape (after any growth)
-     * @param srcShape           src's shape
-     * @param srcFlatCardinality number of elements in src's data
-     * @param destValue          dest's MapValue (for subclass access to extra slots)
-     * @param srcValue           src's MapValue (for subclass access to extra slots)
-     */
-    protected void mergeValues(long destDataPtr, long srcDataPtr, int[] destShape, int[] srcShape, int srcFlatCardinality, MapValue destValue, MapValue srcValue) {
-        onBeforeMerge(destValue, srcValue);
-        if (innerDimsMatch(srcShape, destShape)) {
-            // Flat path: inner dimensions match, so flat indices are identical.
-            for (int i = 0; i < srcFlatCardinality; i++) {
-                double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
-                if (Numbers.isFinite(srcVal)) {
-                    mergeOne(destDataPtr, i, srcVal, i);
-                }
-            }
-        } else {
-            ArrayView.computeRowMajorStrides(destShape, accStrides);
-            ArrayView.computeRowMajorStrides(srcShape, newStrides);
-            for (int fi = 0; fi < srcFlatCardinality; fi++) {
-                double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) fi * Double.BYTES);
-                if (Numbers.isFinite(srcVal)) {
-                    ArrayView.flatIndexToCoords(fi, newStrides, coords);
-                    int destFi = ArrayView.coordsToFlatIndex(coords, accStrides);
-                    mergeOne(destDataPtr, destFi, srcVal, fi);
-                }
-            }
-        }
-    }
-
-    /**
-     * Computes {@link #newShape} as the per-dimension max of {@link #accShape} and
-     * {@link #inputShape}. Both must be populated before calling.
-     *
-     * @return true if any dimension of newShape exceeds accShape
-     */
-    private boolean computeMaxShape() {
-        boolean changed = false;
-        for (int d = 0; d < nDims; d++) {
-            newShape[d] = Math.max(accShape[d], inputShape[d]);
-            if (newShape[d] != accShape[d]) {
-                changed = true;
-            }
-        }
-        return changed;
-    }
-
-    /**
-     * Returns true when inner dimensions (d &ge; 1) match between two shapes.
-     * When they match, row-major strides agree and flat indices are identical
-     * between the two layouts — only dimension 0 (the outermost) may differ,
-     * meaning one array may simply be shorter. This allows a flat linear scan
-     * without coordinate conversion.
-     * <p>
-     * For {@code nDims <= 1} the loop body never executes, returning true — which
-     * is correct since 1D always uses the flat path.
-     */
-    protected boolean innerDimsMatch(int[] shape1, int[] shape2) {
-        for (int d = 1; d < nDims; d++) {
-            if (shape1[d] != shape2[d]) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     /**
      * Checks whether growing from {@link #accShape} to {@link #newShape} requires a
      * coordinate remap of existing data.
@@ -608,6 +373,23 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
             }
         }
         return false;
+    }
+
+    /**
+     * Computes {@link #newShape} as the per-dimension max of {@link #accShape} and
+     * {@link #inputShape}. Both must be populated before calling.
+     *
+     * @return true if any dimension of newShape exceeds accShape
+     */
+    private boolean computeMaxShape() {
+        boolean changed = false;
+        for (int d = 0; d < nDims; d++) {
+            newShape[d] = Math.max(accShape[d], inputShape[d]);
+            if (newShape[d] != accShape[d]) {
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     /**
@@ -693,5 +475,243 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         for (int d = 0; d < nDims; d++) {
             Unsafe.getUnsafe().putInt(shapePtr + (long) d * Integer.BYTES, array.getDimLen(d));
         }
+    }
+
+    /**
+     * Fills data positions {@code [from, to)} with {@code Double.NaN}.
+     */
+    static void nanFill(long dataPtr, int from, int to) {
+        for (int i = from; i < to; i++) {
+            Unsafe.getUnsafe().putDouble(dataPtr + (long) i * Double.BYTES, Double.NaN);
+        }
+    }
+
+    /**
+     * Fills double positions {@code [from, to)} with {@code 0.0}.
+     */
+    static void zeroFillDoubles(long ptr, int from, int to) {
+        for (int i = from; i < to; i++) {
+            Unsafe.getUnsafe().putDouble(ptr + (long) i * Double.BYTES, 0.0);
+        }
+    }
+
+    /**
+     * Accumulates values from a single input array into the group's data buffer.
+     * <p>
+     * For 1D, flat indices match between input and accumulator so values are combined directly.
+     * For nD, each input flat index is converted to coordinates (via input strides), then mapped
+     * to the accumulator's flat index (via accumulator strides), because the two may have
+     * different shapes and therefore different flat layouts.
+     * <p>
+     * NaN input values are skipped. If the accumulator position holds NaN (no prior finite value),
+     * the input value replaces it outright; otherwise {@link #combine} is called.
+     * <p>
+     * The avg subclass overrides this to additionally track per-position counts.
+     *
+     * @param dataPtr         pointer to the accumulator's data section (past the header)
+     * @param array           the input array for this row
+     * @param currentAccShape the accumulator's current shape (after any growth)
+     * @param mapValue        the group's MapValue (for subclass access to extra slots)
+     */
+    protected void accumulateInput(long dataPtr, ArrayView array, int[] currentAccShape, MapValue mapValue) {
+        int inputCardinality = array.getCardinality();
+        onBeforeAccumulate(mapValue);
+        if (array.isVanilla() && innerDimsMatch(inputShape, currentAccShape)) {
+            // Flat path: input is vanilla row-major and inner dimensions match, so flat indices are identical.
+            for (int i = 0; i < inputCardinality; i++) {
+                double inputVal = array.getDouble(i);
+                if (Numbers.isFinite(inputVal)) {
+                    accumulateOne(dataPtr, i, inputVal);
+                }
+            }
+        } else {
+            // Coordinate path: iterate input coordinates, use array strides for non-vanilla support.
+            ArrayView.computeRowMajorStrides(currentAccShape, accStrides);
+            for (int d = 0; d < nDims; d++) {
+                coords[d] = 0;
+            }
+            do {
+                int inputFi = 0;
+                for (int d = 0; d < nDims; d++) {
+                    inputFi += coords[d] * array.getStride(d);
+                }
+                double inputVal = array.getDouble(inputFi);
+                if (Numbers.isFinite(inputVal)) {
+                    int accFi = ArrayView.coordsToFlatIndex(coords, accStrides);
+                    accumulateOne(dataPtr, accFi, inputVal);
+                }
+            } while (ArrayView.incrementCoords(coords, inputShape));
+        }
+    }
+
+    /**
+     * Accumulates a single finite input value at the given accumulator position.
+     *
+     * @param dataPtr  pointer to the accumulator's data section
+     * @param accFi    flat index in the accumulator
+     * @param inputVal the finite input value to accumulate
+     */
+    protected abstract void accumulateOne(long dataPtr, int accFi, double inputVal);
+
+    /**
+     * Allows subclasses to register additional MapValue slots (e.g. count, countPtr for avg).
+     *
+     * @param columnTypes the column types to append additional slots to
+     */
+    protected void initExtraValueTypes(ArrayColumnTypes columnTypes) {
+    }
+
+    /**
+     * Returns true when inner dimensions (d &ge; 1) match between two shapes.
+     * When they match, row-major strides agree and flat indices are identical
+     * between the two layouts — only dimension 0 (the outermost) may differ,
+     * meaning one array may simply be shorter. This allows a flat linear scan
+     * without coordinate conversion.
+     * <p>
+     * For {@code nDims <= 1} the loop body never executes, returning true — which
+     * is correct since 1D always uses the flat path.
+     *
+     * @param shape1 first shape array
+     * @param shape2 second shape array
+     * @return true if inner dimensions match
+     */
+    protected boolean innerDimsMatch(int[] shape1, int[] shape2) {
+        for (int d = 1; d < nDims; d++) {
+            if (shape1[d] != shape2[d]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Merges a single finite src value into the dest at the given flat indices.
+     *
+     * @param destDataPtr pointer to dest's data section
+     * @param destFi      flat index in dest's layout
+     * @param srcVal      finite value from src (already checked by caller)
+     * @param srcFi       flat index in src's layout (for subclass compensation lookup)
+     */
+    protected abstract void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi);
+
+    /**
+     * Merges src's accumulated values into dest during parallel GROUP BY.
+     * Same coordinate-mapping logic as {@link #accumulateInput} but reads from
+     * off-heap src data instead of an {@link ArrayView}.
+     * <p>
+     * The avg subclass overrides this to additionally merge per-position counts.
+     *
+     * @param destDataPtr        pointer to dest's data section
+     * @param srcDataPtr         pointer to src's data section
+     * @param destShape          dest's current shape (after any growth)
+     * @param srcShape           src's shape
+     * @param srcFlatCardinality number of elements in src's data
+     * @param destValue          dest's MapValue (for subclass access to extra slots)
+     * @param srcValue           src's MapValue (for subclass access to extra slots)
+     */
+    protected void mergeValues(long destDataPtr, long srcDataPtr, int[] destShape, int[] srcShape, int srcFlatCardinality, MapValue destValue, MapValue srcValue) {
+        onBeforeMerge(destValue, srcValue);
+        if (innerDimsMatch(srcShape, destShape)) {
+            // Flat path: inner dimensions match, so flat indices are identical.
+            for (int i = 0; i < srcFlatCardinality; i++) {
+                double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) i * Double.BYTES);
+                if (Numbers.isFinite(srcVal)) {
+                    mergeOne(destDataPtr, i, srcVal, i);
+                }
+            }
+        } else {
+            ArrayView.computeRowMajorStrides(destShape, accStrides);
+            ArrayView.computeRowMajorStrides(srcShape, newStrides);
+            for (int fi = 0; fi < srcFlatCardinality; fi++) {
+                double srcVal = Unsafe.getUnsafe().getDouble(srcDataPtr + (long) fi * Double.BYTES);
+                if (Numbers.isFinite(srcVal)) {
+                    ArrayView.flatIndexToCoords(fi, newStrides, coords);
+                    int destFi = ArrayView.coordsToFlatIndex(coords, accStrides);
+                    mergeOne(destDataPtr, destFi, srcVal, fi);
+                }
+            }
+        }
+    }
+
+    /**
+     * Hook called before the accumulation loop in {@link #accumulateInput}.
+     * Subclasses can cache MapValue slot values into instance fields for use in
+     * {@link #accumulateOne}.
+     *
+     * @param mapValue the map value for the current group
+     */
+    protected void onBeforeAccumulate(MapValue mapValue) {
+    }
+
+    /**
+     * Hook called before the merge loop in {@link #mergeValues}.
+     * Subclasses can cache MapValue slot values into instance fields for use in
+     * {@link #mergeOne}.
+     *
+     * @param destValue the destination map value to merge into
+     * @param srcValue  the source map value to merge from
+     */
+    protected void onBeforeMerge(MapValue destValue, MapValue srcValue) {
+    }
+
+    /**
+     * Called after the first non-null array is stored in a new group.
+     * Base slots (ptr, accFlatCardinality, capacity) have already been written.
+     * Subclasses can use this to initialize auxiliary state (e.g. per-element counts).
+     *
+     * @param mapValue        the group's MapValue
+     * @param array           the first non-null input array
+     * @param flatCardinality flat element count of the array
+     * @param capacity        allocated element count
+     */
+    protected void onComputeFirst(MapValue mapValue, ArrayView array, int flatCardinality, int capacity) {
+    }
+
+    /**
+     * Called when merge shallow-copies src into an empty dest.
+     * Subclasses should copy their extra MapValue slots from src to dest.
+     *
+     * @param destValue the destination map value
+     * @param srcValue  the source map value
+     */
+    protected void onMergeShallowCopy(MapValue destValue, MapValue srcValue) {
+    }
+
+    /**
+     * Called when the accumulator shape grows (from either computeNext or merge).
+     * The base class has already remapped its double[] data and updated its 3 base
+     * MapValue slots; subclasses should remap their auxiliary arrays (e.g. counts).
+     * <p>
+     * When {@code needsRemap} is true, {@link #accStrides} and {@link #newStrides}
+     * are populated and coordinate conversion is required. When false, old flat
+     * indices are preserved and data can be bulk-copied.
+     *
+     * @param mapValue           the group's MapValue (base slots already updated)
+     * @param oldFlatCardinality number of elements before growth
+     * @param newCapacity        allocated element count after growth
+     * @param needsRemap         true if old and new flat layouts differ (strides changed)
+     */
+    protected void onShapeGrow(MapValue mapValue, int oldFlatCardinality, long newCapacity, boolean needsRemap) {
+    }
+
+    /**
+     * Reads the nDims shape integers from a compact block header into the given array.
+     *
+     * @param ptr   pointer to the start of the compact block header
+     * @param shape array to receive the shape dimensions
+     */
+    protected void readShapeFromHeader(long ptr, int[] shape) {
+        long shapePtr = ptr + Integer.BYTES;
+        for (int d = 0; d < nDims; d++) {
+            shape[d] = Unsafe.getUnsafe().getInt(shapePtr + (long) d * Integer.BYTES);
+        }
+    }
+
+    /**
+     * Allows subclasses to zero their extra MapValue slots when a group is set to null.
+     *
+     * @param mapValue the group's MapValue to reset
+     */
+    protected void setNullExtra(MapValue mapValue) {
     }
 }

@@ -309,11 +309,16 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
     /**
      * Accumulates a single finite value at the given output position.
      * Called once per finite input element during the accumulation loop.
+     *
+     * @param outIndex flat index in the output array
+     * @param val      the finite input value to accumulate
      */
     protected abstract void accumulate(int outIndex, double val);
 
     /**
      * Called before the accumulation loop. Subclasses use this to initialize per-position state.
+     *
+     * @param totalFlatLen total number of flat positions in the output
      */
     protected void beforeAccumulation(int totalFlatLen) {
     }
@@ -321,6 +326,10 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
     /**
      * Kahan compensated accumulation. Seeds the position on first value,
      * otherwise adds with compensation to reduce floating-point error.
+     *
+     * @param outIndex     flat index in the output array
+     * @param val          the finite input value to accumulate
+     * @param compensation list holding per-position Kahan compensation values
      */
     protected void kahanAccumulate(int outIndex, double val, DoubleList compensation) {
         double cur = arrayOut.getDouble(outIndex);
@@ -337,6 +346,8 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
 
     /**
      * Called after all inputs are accumulated. Avg uses this to divide sums by counts.
+     *
+     * @param totalFlatLen total number of flat positions in the output
      */
     protected void postProcess(int totalFlatLen) {
     }
