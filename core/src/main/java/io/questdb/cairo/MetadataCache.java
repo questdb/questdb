@@ -283,6 +283,8 @@ public class MetadataCache implements QuietCloseable {
                     txReader.unsafeLoadAll();
                     table.setHasParquetPartitions(txReader.hasParquetPartitions());
                 } catch (CairoException e) {
+                    LOG.error().$("could not read partition format, assuming parquet [table=").$(token)
+                            .$(", error=").$((Throwable) e).I$();
                     table.setHasParquetPartitions(true);
                 }
             }
