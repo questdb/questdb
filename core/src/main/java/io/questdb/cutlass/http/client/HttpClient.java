@@ -464,12 +464,6 @@ public abstract class HttpClient implements QuietCloseable {
             ptr += Long.BYTES;
         }
 
-        public void putShort(short value) {
-            checkCapacity(Short.BYTES);
-            Unsafe.getUnsafe().putShort(ptr, value);
-            ptr += Short.BYTES;
-        }
-
         @Override
         public Request putNonAscii(long lo, long hi) {
             final long size = hi - lo;
@@ -483,6 +477,12 @@ public abstract class HttpClient implements QuietCloseable {
         public Request putQuoted(@NotNull CharSequence cs) {
             putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
             return this;
+        }
+
+        public void putShort(short value) {
+            checkCapacity(Short.BYTES);
+            Unsafe.getUnsafe().putShort(ptr, value);
+            ptr += Short.BYTES;
         }
 
         public Request query(CharSequence name, CharSequence value) {
