@@ -279,12 +279,12 @@ public final class QwpFixedWidthDecoder implements QwpColumnDecoder {
     }
 
     @Override
-    public int expectedSize(int rowCount, boolean nullable) {
+    public int expectedSize(int rowCount, boolean nullable, int nullCount) {
         int size = 0;
         if (nullable) {
             size += QwpNullBitmap.sizeInBytes(rowCount);
         }
-        size += rowCount * valueSize;
+        size += (rowCount - nullCount) * valueSize;
         return size;
     }
 

@@ -305,13 +305,13 @@ public final class QwpStringDecoder implements QwpColumnDecoder {
     }
 
     @Override
-    public int expectedSize(int rowCount, boolean nullable) {
+    public int expectedSize(int rowCount, boolean nullable, int nullCount) {
         // Variable size - this is just the minimum (no string data)
         int size = 0;
         if (nullable) {
             size += QwpNullBitmap.sizeInBytes(rowCount);
         }
-        size += (rowCount + 1) * 4; // offset array
+        size += (rowCount - nullCount + 1) * 4; // offset array (non-null entries only)
         return size;
     }
 

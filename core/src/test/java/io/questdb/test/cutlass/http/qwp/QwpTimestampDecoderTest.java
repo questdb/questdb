@@ -431,12 +431,12 @@ public class QwpTimestampDecoderTest {
         // expectedSize returns worst case (uncompressed)
         int rowCount = 10;
         int expected = 1 + rowCount * 8; // encoding flag + values
-        Assert.assertEquals(expected, QwpTimestampDecoder.INSTANCE.expectedSize(rowCount, false));
+        Assert.assertEquals(expected, QwpTimestampDecoder.INSTANCE.expectedSize(rowCount, false, 0));
 
         // With nullable
         int bitmapSize = (rowCount + 7) / 8;
         expected = bitmapSize + 1 + rowCount * 8;
-        Assert.assertEquals(expected, QwpTimestampDecoder.INSTANCE.expectedSize(rowCount, true));
+        Assert.assertEquals(expected, QwpTimestampDecoder.INSTANCE.expectedSize(rowCount, true, 0));
     }
 
     private void testGorillaRoundTrip(long[] timestamps, boolean[] nulls) throws QwpParseException {

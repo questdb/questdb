@@ -628,20 +628,62 @@ public class QwpFixedWidthDecoderTest {
     @Test
     public void testExpectedSize() {
         QwpFixedWidthDecoder byteDecoder = new QwpFixedWidthDecoder(TYPE_BYTE);
-        Assert.assertEquals(10, byteDecoder.expectedSize(10, false));
-        Assert.assertEquals(12, byteDecoder.expectedSize(10, true)); // 2 byte bitmap + 10
+        Assert.assertEquals(10, byteDecoder.expectedSize(10, false, 0));
+        Assert.assertEquals(12, byteDecoder.expectedSize(10, true, 0)); // 2 byte bitmap + 10
 
         QwpFixedWidthDecoder longDecoder = new QwpFixedWidthDecoder(TYPE_LONG);
-        Assert.assertEquals(80, longDecoder.expectedSize(10, false));
-        Assert.assertEquals(82, longDecoder.expectedSize(10, true)); // 2 byte bitmap + 80
+        Assert.assertEquals(80, longDecoder.expectedSize(10, false, 0));
+        Assert.assertEquals(82, longDecoder.expectedSize(10, true, 0)); // 2 byte bitmap + 80
 
         QwpFixedWidthDecoder uuidDecoder = new QwpFixedWidthDecoder(TYPE_UUID);
-        Assert.assertEquals(160, uuidDecoder.expectedSize(10, false));
-        Assert.assertEquals(162, uuidDecoder.expectedSize(10, true));
+        Assert.assertEquals(160, uuidDecoder.expectedSize(10, false, 0));
+        Assert.assertEquals(162, uuidDecoder.expectedSize(10, true, 0));
 
         QwpFixedWidthDecoder long256Decoder = new QwpFixedWidthDecoder(TYPE_LONG256);
-        Assert.assertEquals(320, long256Decoder.expectedSize(10, false));
-        Assert.assertEquals(322, long256Decoder.expectedSize(10, true));
+        Assert.assertEquals(320, long256Decoder.expectedSize(10, false, 0));
+        Assert.assertEquals(322, long256Decoder.expectedSize(10, true, 0));
+    }
+
+    @Test
+    public void testExpectedSizeAccountsForNulls() throws QwpParseException {
+        // Encode 5 longs with 2 nulls
+        long[] values = {1L, 0L, 3L, 0L, 5L};
+        boolean[] nulls = {false, true, false, true, false};
+        int rowCount = values.length;
+        int nullCount = 2;
+
+        int bufferSize = 1 + rowCount * 8; // bitmap + max values
+        long address = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long end = QwpFixedWidthDecoder.encode(address, values, nulls, TYPE_LONG);
+            int actualEncodedSize = (int) (end - address);
+
+            QwpFixedWidthDecoder decoder = new QwpFixedWidthDecoder(TYPE_LONG);
+
+            // Verify decode consumes exactly what encode produced
+            QwpColumnDecoder.ArrayColumnSink sink = new QwpColumnDecoder.ArrayColumnSink(rowCount);
+            int consumed = decoder.decode(address, actualEncodedSize, rowCount, true, sink);
+            Assert.assertEquals(actualEncodedSize, consumed);
+
+            // expectedSize must match actual encoded size when nullCount is provided
+            Assert.assertEquals(
+                    "expectedSize must account for null packing",
+                    actualEncodedSize,
+                    decoder.expectedSize(rowCount, true, nullCount)
+            );
+        } finally {
+            Unsafe.free(address, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        }
+
+        // Byte decoder: 10 rows, 5 nulls
+        QwpFixedWidthDecoder byteDecoder = new QwpFixedWidthDecoder(TYPE_BYTE);
+        // bitmap (2 bytes) + 5 non-null bytes = 7
+        Assert.assertEquals(7, byteDecoder.expectedSize(10, true, 5));
+
+        // UUID decoder: 10 rows, 3 nulls
+        QwpFixedWidthDecoder uuidDecoder = new QwpFixedWidthDecoder(TYPE_UUID);
+        // bitmap (2 bytes) + 7 non-null UUIDs (7 * 16 = 112) = 114
+        Assert.assertEquals(114, uuidDecoder.expectedSize(10, true, 3));
     }
 
     @Test(expected = IllegalArgumentException.class)

@@ -53,11 +53,12 @@ public interface QwpColumnDecoder {
     /**
      * Calculates the expected size in bytes for encoding this column type.
      *
-     * @param rowCount number of rows
-     * @param nullable whether column is nullable
+     * @param rowCount  number of rows
+     * @param nullable  whether column is nullable
+     * @param nullCount number of null rows (only meaningful when nullable is true)
      * @return expected byte size
      */
-    int expectedSize(int rowCount, boolean nullable);
+    int expectedSize(int rowCount, boolean nullable, int nullCount);
 
     /**
      * Sink interface for decoded column values.

@@ -287,13 +287,13 @@ public final class QwpTimestampDecoder implements QwpColumnDecoder {
     }
 
     @Override
-    public int expectedSize(int rowCount, boolean nullable) {
+    public int expectedSize(int rowCount, boolean nullable, int nullCount) {
         // Minimum size: just encoding flag + uncompressed timestamps
         int size = 1; // encoding flag
         if (nullable) {
             size += QwpNullBitmap.sizeInBytes(rowCount);
         }
-        size += rowCount * 8; // worst case: uncompressed
+        size += (rowCount - nullCount) * 8; // worst case: uncompressed
         return size;
     }
 

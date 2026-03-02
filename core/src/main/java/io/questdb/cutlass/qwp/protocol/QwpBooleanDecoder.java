@@ -212,11 +212,10 @@ public final class QwpBooleanDecoder implements QwpColumnDecoder {
     }
 
     @Override
-    public int expectedSize(int rowCount, boolean nullable) {
-        int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
-        int size = bitmapSize; // value bits
+    public int expectedSize(int rowCount, boolean nullable, int nullCount) {
+        int size = QwpNullBitmap.sizeInBytes(rowCount - nullCount); // value bits (non-null only)
         if (nullable) {
-            size += bitmapSize; // null bitmap
+            size += QwpNullBitmap.sizeInBytes(rowCount); // null bitmap
         }
         return size;
     }

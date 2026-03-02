@@ -228,13 +228,13 @@ public final class QwpGeoHashDecoder implements QwpColumnDecoder {
     }
 
     @Override
-    public int expectedSize(int rowCount, boolean nullable) {
+    public int expectedSize(int rowCount, boolean nullable, int nullCount) {
         // Minimum size: 1-byte precision + 1 byte per value
         int size = 1; // precision varint (minimum 1 byte)
         if (nullable) {
             size += QwpNullBitmap.sizeInBytes(rowCount);
         }
-        size += rowCount; // minimum 1 byte per value
+        size += rowCount - nullCount; // minimum 1 byte per non-null value
         return size;
     }
 

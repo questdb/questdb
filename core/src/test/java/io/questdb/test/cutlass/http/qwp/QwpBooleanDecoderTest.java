@@ -393,17 +393,17 @@ public class QwpBooleanDecoderTest {
     @Test
     public void testExpectedSize() {
         // Non-nullable: just value bitmap
-        Assert.assertEquals(1, QwpBooleanDecoder.INSTANCE.expectedSize(1, false));
-        Assert.assertEquals(1, QwpBooleanDecoder.INSTANCE.expectedSize(8, false));
-        Assert.assertEquals(2, QwpBooleanDecoder.INSTANCE.expectedSize(9, false));
-        Assert.assertEquals(2, QwpBooleanDecoder.INSTANCE.expectedSize(16, false));
-        Assert.assertEquals(125, QwpBooleanDecoder.INSTANCE.expectedSize(1000, false));
+        Assert.assertEquals(1, QwpBooleanDecoder.INSTANCE.expectedSize(1, false, 0));
+        Assert.assertEquals(1, QwpBooleanDecoder.INSTANCE.expectedSize(8, false, 0));
+        Assert.assertEquals(2, QwpBooleanDecoder.INSTANCE.expectedSize(9, false, 0));
+        Assert.assertEquals(2, QwpBooleanDecoder.INSTANCE.expectedSize(16, false, 0));
+        Assert.assertEquals(125, QwpBooleanDecoder.INSTANCE.expectedSize(1000, false, 0));
 
         // Nullable: null bitmap + value bitmap
-        Assert.assertEquals(2, QwpBooleanDecoder.INSTANCE.expectedSize(1, true));
-        Assert.assertEquals(2, QwpBooleanDecoder.INSTANCE.expectedSize(8, true));
-        Assert.assertEquals(4, QwpBooleanDecoder.INSTANCE.expectedSize(9, true));
-        Assert.assertEquals(4, QwpBooleanDecoder.INSTANCE.expectedSize(16, true));
-        Assert.assertEquals(250, QwpBooleanDecoder.INSTANCE.expectedSize(1000, true));
+        Assert.assertEquals(2, QwpBooleanDecoder.INSTANCE.expectedSize(1, true, 0));
+        Assert.assertEquals(2, QwpBooleanDecoder.INSTANCE.expectedSize(8, true, 0));
+        Assert.assertEquals(4, QwpBooleanDecoder.INSTANCE.expectedSize(9, true, 0));
+        Assert.assertEquals(4, QwpBooleanDecoder.INSTANCE.expectedSize(16, true, 0));
+        Assert.assertEquals(250, QwpBooleanDecoder.INSTANCE.expectedSize(1000, true, 0));
     }
 }

@@ -331,14 +331,14 @@ public final class QwpSymbolDecoder implements QwpColumnDecoder {
     }
 
     @Override
-    public int expectedSize(int rowCount, boolean nullable) {
+    public int expectedSize(int rowCount, boolean nullable, int nullCount) {
         // Variable size - this is minimum (empty dictionary, 1-byte indices)
         int size = 0;
         if (nullable) {
             size += QwpNullBitmap.sizeInBytes(rowCount);
         }
         size += 1; // dictionary size (varint, at least 1 byte)
-        size += rowCount; // indices (varint, at least 1 byte each)
+        size += rowCount - nullCount; // indices (varint, at least 1 byte each, non-null only)
         return size;
     }
 
