@@ -377,8 +377,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 Function arg = functionStack.poll();
                 final int pos = positionStack.pop();
 
-                if (arg != null && arg.isConstant() && arg.extendedOps() == null && !(arg instanceof TypeConstant)) {
-                    arg = functionToConstant(arg);
+                try {
+                    if (arg != null && arg.isConstant() && arg.extendedOps() == null && !(arg instanceof TypeConstant)) {
+                        arg = functionToConstant(arg);
+                    }
+                } catch (Throwable th) {
+                    // these args were already popped from functionStack
+                    Misc.freeObjList(mutableArgs);
+                    throw th;
                 }
 
                 mutableArgs.setQuick(n, arg);
