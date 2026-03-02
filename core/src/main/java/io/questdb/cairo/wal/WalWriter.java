@@ -398,7 +398,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * Returns the data memory for a column. Used by columnar appender.
      */
-    public MemoryMA getDataColumn(int column) {
+    MemoryMA getDataColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getDataColumnOffset(column));
     }
