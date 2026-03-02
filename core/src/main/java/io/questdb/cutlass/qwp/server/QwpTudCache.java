@@ -36,6 +36,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
@@ -183,20 +184,26 @@ public class QwpTudCache implements QuietCloseable {
         // Copy table name to heap - needed for WalTableUpdateDetails and cache key
         Utf8String tableNameCopy = Utf8String.newInstance(tableNameUtf8);
 
-        WalTableUpdateDetails tud = new WalTableUpdateDetails(
-                engine,
-                securityContext,
-                engine.getWalWriter(tableToken),
-                defaultColumnTypes,
-                tableNameCopy,
-                symbolCachePool,
-                -1,
-                false,
-                Long.MAX_VALUE
-        );
+        TableWriterAPI walWriter = engine.getWalWriter(tableToken);
+        try {
+            WalTableUpdateDetails tud = new WalTableUpdateDetails(
+                    engine,
+                    securityContext,
+                    walWriter,
+                    defaultColumnTypes,
+                    tableNameCopy,
+                    symbolCachePool,
+                    -1,
+                    false,
+                    Long.MAX_VALUE
+            );
 
-        tableUpdateDetails.putAt(key, tableNameCopy, tud);
-        return tud;
+            tableUpdateDetails.putAt(key, tableNameCopy, tud);
+            return tud;
+        } catch (Throwable th) {
+            Misc.free(walWriter);
+            throw th;
+        }
     }
 
     public void reset() {

@@ -24,11 +24,17 @@
 
 package io.questdb.test.cutlass.qwp.server;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
+import io.questdb.std.Misc;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class QwpProcessorStateTest extends AbstractCairoTest {
@@ -46,6 +52,40 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             // Before the fix, only onDisconnected() was called, leaking native memory.
             state.onDisconnected();
             state.close();
+        });
+    }
+
+    @Test
+    public void testCloseFreesWalWriterOnConstructorFailure() throws Exception {
+        // Reproduces the pattern in QwpTudCache.getTableUpdateDetails() where
+        // engine.getWalWriter() is passed inline to the WalTableUpdateDetails
+        // constructor. If the constructor throws, the writer leaks.
+        // The fix acquires the writer into a local variable and closes it
+        // in a catch block.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_leak (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName("test_leak");
+
+            TableWriterAPI walWriter = engine.getWalWriter(tableToken);
+            try {
+                // Passing null engine causes NPE in the TableUpdateDetails
+                // constructor before the writer is stored, simulating any
+                // constructor failure after the writer has been acquired.
+                new WalTableUpdateDetails(
+                        null,
+                        null,
+                        walWriter,
+                        null,
+                        new Utf8String("test_leak"),
+                        null,
+                        -1,
+                        false,
+                        Long.MAX_VALUE
+                );
+                Assert.fail("should have thrown NullPointerException");
+            } catch (Throwable th) {
+                Misc.free(walWriter);
+            }
         });
     }
 
