@@ -144,7 +144,9 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      */
     protected int valueIndex;
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public AbstractDoubleArrayElemAggGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.type = arg.getType();

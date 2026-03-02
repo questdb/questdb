@@ -132,7 +132,9 @@ public abstract class AbstractGenerateSeriesRecordCursorFactory extends Abstract
         public void close() {
         }
 
-        /** {@inheritDoc} */
+        /**
+         * {@inheritDoc}
+         */
         public void of(SqlExecutionContext executionContext) throws SqlException {
             startFunc.init(null, executionContext);
             endFunc.init(null, executionContext);

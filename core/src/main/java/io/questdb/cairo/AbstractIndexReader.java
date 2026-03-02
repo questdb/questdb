@@ -37,17 +37,25 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-/** {@inheritDoc} */
+/**
+ * {@inheritDoc}
+ */
 public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     protected static final Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected int blockCapacity;
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected int blockValueCountMod;
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected MillisecondClock clock;
     protected long columnTop;
     protected int keyCount;

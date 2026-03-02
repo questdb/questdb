@@ -34,26 +34,46 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
-/** {@inheritDoc} */
+/**
+ * {@inheritDoc}
+ */
 public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoinCursor {
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected final Map joinKeyMap;
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected final LongChain slaveChain;
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected SqlExecutionCircuitBreaker circuitBreaker;
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected boolean isMapBuilt;
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected boolean isOpen;
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected Record masterRecord;
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected LongChain.Cursor slaveChainCursor;
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected Record slaveRecord;
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public AbstractHashOuterJoinLightRecordCursor(
             int columnSplit,
             Map joinKeyMap,
@@ -96,7 +116,9 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected static void populateRowIDHashMap(
             SqlExecutionCircuitBreaker circuitBreaker,
             RecordCursor cursor,
@@ -119,7 +141,9 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected static void populateRowIDHashMapWithMatchedFlag(
             SqlExecutionCircuitBreaker circuitBreaker,
             RecordCursor cursor,
@@ -143,7 +167,9 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
         }
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;

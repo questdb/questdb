@@ -224,7 +224,9 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     default boolean isScalar() {
         return true;
     }

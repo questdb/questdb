@@ -351,7 +351,9 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
     // Construction:
     //
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public int countsArrayIndex(final long value) {
         if (value < 0) {
             throw CairoException.nonCritical().put("Histogram recorded value cannot be negative.");
@@ -539,7 +541,9 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return leadingZeroCountBase - Long.numberOfLeadingZeros(value | subBucketMask);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public abstract long getCountAtIndex(int index);
 
     /**
@@ -789,7 +793,9 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return Math.sqrt(geometric_deviation_total / getTotalCount());
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public int getSubBucketIndex(final long value, final int bucketIndex) {
         // For bucketIndex 0, this is just value, so it may be anywhere in 0 to subBucketCount.
         // For other bucketIndex, this will always end up in the top half of subBucketCount: assume that for some bucket
@@ -911,7 +917,9 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return autoResize;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public int leadingZeroCountBase() {
         return leadingZeroCountBase;
     }
@@ -1000,7 +1008,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * five (5) percentile reporting tick points.
      *
      * @param printStream                 Stream into which the distribution will be output
-     *
      * @param outputValueUnitScalingRatio The scaling factor by which to divide histogram recorded values units in
      *                                    output
      */
@@ -1034,9 +1041,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * <i>dumpTicksPerHalf</i> percentile reporting tick points.
      *
      * @param printStream                    Stream into which the distribution will be output
-     *
      * @param percentileTicksPerHalfDistance The number of reporting points per exponentially decreasing half-distance
-     *
      * @param outputValueUnitScalingRatio    The scaling factor by which to divide histogram recorded values units in
      *                                       output
      */
@@ -1052,9 +1057,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * <i>dumpTicksPerHalf</i> percentile reporting tick points.
      *
      * @param printStream                    Stream into which the distribution will be output
-     *
      * @param percentileTicksPerHalfDistance The number of reporting points per exponentially decreasing half-distance
-     *
      * @param outputValueUnitScalingRatio    The scaling factor by which to divide histogram recorded values units in
      *                                       output
      * @param useCsvFormat                   Output in CSV format if true. Otherwise use plain text form.
@@ -1141,7 +1144,9 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return new Percentiles(this, percentileTicksPerHalfDistance);
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public void recordConvertedDoubleValueWithCount(final double value, final long count) throws CairoException {
         long integerValue = (long) (value * doubleToIntegerValueConversionRatio);
         recordCountAtValue(count, integerValue);
@@ -1391,12 +1396,16 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return output;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public int unitMagnitude() {
         return unitMagnitude;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public final long valueFromIndex(final int index) {
         int bucketIndex = (index >> subBucketHalfCountMagnitude) - 1;
         int subBucketIndex = (index & (subBucketHalfCount - 1)) + subBucketHalfCount;
@@ -2471,17 +2480,23 @@ abstract class AbstractHistogramBase extends EncodableHistogram {
     String tag = null;
     int wordSizeInBytes;
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public int bucketCount() {
         return bucketCount;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public int countsArrayLength() {
         return countsArrayLength;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     public int subBucketCount() {
         return subBucketCount;
     }

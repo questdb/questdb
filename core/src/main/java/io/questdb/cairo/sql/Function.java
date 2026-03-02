@@ -147,22 +147,34 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     ArrayView getArray(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     BinarySequence getBin(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     long getBinLen(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     boolean getBool(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     byte getByte(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     char getChar(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     long getDate(Record rec);
 
     /**
@@ -173,7 +185,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     void getDecimal128(Record rec, Decimal128 sink);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     short getDecimal16(Record rec);
 
     /**
@@ -184,19 +198,29 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     void getDecimal256(Record rec, Decimal256 sink);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     int getDecimal32(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     long getDecimal64(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     byte getDecimal8(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     double getDouble(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     float getFloat(Record rec);
 
     /**
@@ -231,10 +255,14 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     short getGeoShort(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     int getIPv4(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     int getInt(Record rec);
 
     /**
@@ -254,10 +282,14 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     long getLong(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     long getLong128Hi(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     long getLong128Lo(Record rec);
 
     /**
@@ -268,10 +300,14 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     void getLong256(Record rec, CharSink<?> sink);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     Long256 getLong256A(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     Long256 getLong256B(Record rec);
 
     default RecordMetadata getMetadata() {
@@ -286,22 +322,34 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getClass().getName();
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     RecordCursorFactory getRecordCursorFactory();
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     short getShort(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     CharSequence getStrA(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     CharSequence getStrB(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     int getStrLen(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     CharSequence getSymbol(Record rec);
 
     /**
@@ -312,17 +360,25 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     CharSequence getSymbolB(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     long getTimestamp(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     int getType();
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Nullable
     Utf8Sequence getVarcharA(Record rec);
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     */
     @Nullable
     Utf8Sequence getVarcharB(Record rec);
 
