@@ -445,7 +445,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         ", timestamp_sequence('1970-01-05T02:30', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
-                        " from long_sequence(10),"
+                        " from long_sequence(10)"
         );
         execute(
                 "insert into " + tableName + " " +
@@ -472,7 +472,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         ", timestamp_sequence('1970-01-05T04:25', " + Micros.HOUR_MICROS + "L) ts" +
                         ", rnd_symbol('a', 'b', 'c', null)" +
                         ", rnd_str()" +
-                        " from long_sequence(10),"
+                        " from long_sequence(10)"
         );
         execute(
                 "insert into " + tableName + " " +
@@ -1681,7 +1681,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 "create table t_none_nts as (" +
                         "select" +
                         commonColumns() +
-                        " from long_sequence(30)," +
+                        " from long_sequence(30)" +
                         "), index(m)"
         );
 
@@ -1690,7 +1690,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(100, 200000000L) ts" +
-                        " from long_sequence(30)," +
+                        " from long_sequence(30)" +
                         "), index(m) timestamp(ts) partition by NONE"
         );
 
@@ -1699,7 +1699,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 2000000000000L) ts" +
-                        " from long_sequence(30)," +
+                        " from long_sequence(30)" +
                         "), index(m) timestamp(ts) partition by DAY"
         );
 
@@ -1708,7 +1708,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 20000000000000L) ts" +
-                        " from long_sequence(30)," +
+                        " from long_sequence(30)" +
                         "), index(m) timestamp(ts) partition by MONTH"
         );
 
@@ -1717,7 +1717,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 200000000000000L) ts" +
-                        " from long_sequence(30)," +
+                        " from long_sequence(30)" +
                         "), index(m) timestamp(ts) partition by YEAR"
         );
 
@@ -1758,7 +1758,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         "select" +
                         commonColumns() +
                         ", timestamp_sequence(200000000L, 20000000000000L) ts" +
-                        " from long_sequence(15)," +
+                        " from long_sequence(15)" +
                         "), index(m) timestamp(ts) partition by YEAR"
         );
 
@@ -1810,7 +1810,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
                         ", timestamp_sequence(200000000L, 20000000000000L) ts" +
-                        " from long_sequence(15)," +
+                        " from long_sequence(15)" +
                         "), index(m) timestamp(ts) partition by YEAR"
         );
 
@@ -1842,7 +1842,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
                         ", timestamp_sequence(2000000000L, 20000000000L) ts" +
-                        " from long_sequence(15)," +
+                        " from long_sequence(15)" +
                         "), index(m) timestamp(ts) partition by DAY"
         );
 
@@ -1861,7 +1861,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 " x" +
                 ", rnd_symbol('a', 'b', 'c', null) m" +
                 ", timestamp_sequence('1970-01-01T01', " + Micros.HOUR_MICROS + "L) ts" +
-                " from long_sequence(96)," +
+                " from long_sequence(96)" +
                 "), index(m) timestamp(ts) partition by DAY", "t_col_top_ooo_day");
 
         createTableWithColumnTops(
@@ -1870,7 +1870,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                         " x" +
                         ", rnd_symbol('a', 'b', 'c', null) m" +
                         ", timestamp_sequence('1970-01-01T01', " + Micros.HOUR_MICROS + "L) ts" +
-                        " from long_sequence(96)," +
+                        " from long_sequence(96)" +
                         "), index(m) timestamp(ts) partition by DAY WAL",
                 "t_col_top_ooo_day_wal"
         );
