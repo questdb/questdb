@@ -375,9 +375,7 @@ public class ServerMain implements Closeable {
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine);
                         freeOnExit(telemetryJob);
-                        if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
-                            sharedPoolWrite.assign(telemetryJob);
-                        }
+                        sharedPoolWrite.assign(telemetryJob);
                     }
 
                 } catch (Throwable thr) {
