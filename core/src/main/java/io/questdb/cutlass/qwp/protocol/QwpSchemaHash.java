@@ -46,8 +46,6 @@ public final class QwpSchemaHash {
     // XXHash64 constants
     private static final long PRIME64_1 = 0x9E3779B185EBCA87L;
     private static final long PRIME64_2 = 0xC2B2AE3D27D4EB4FL;
-    // Thread-local Hasher to avoid allocation on every computeSchemaHash call
-    private static final ThreadLocal<Hasher> HASHER_POOL = ThreadLocal.withInitial(Hasher::new);
     private static final long PRIME64_3 = 0x165667B19E3779F9L;
     private static final long PRIME64_4 = 0x85EBCA77C2B2AE63L;
     private static final long PRIME64_5 = 0x27D4EB2F165667C5L;
@@ -65,9 +63,7 @@ public final class QwpSchemaHash {
      * @return the schema hash
      */
     public static long computeSchemaHash(String[] columnNames, byte[] columnTypes) {
-        // Use pooled hasher to avoid allocation
-        Hasher hasher = HASHER_POOL.get();
-        hasher.reset(DEFAULT_SEED);
+        Hasher hasher = new Hasher();
 
         for (int i = 0; i < columnNames.length; i++) {
             String name = columnNames[i];
@@ -117,9 +113,7 @@ public final class QwpSchemaHash {
      * @return the schema hash
      */
     public static long computeSchemaHashDirect(io.questdb.std.ObjList<QwpColumnDef> columns) {
-        // Use pooled hasher to avoid allocation
-        Hasher hasher = HASHER_POOL.get();
-        hasher.reset(DEFAULT_SEED);
+        Hasher hasher = new Hasher();
 
         for (int i = 0, n = columns.size(); i < n; i++) {
             QwpColumnDef col = columns.get(i);
