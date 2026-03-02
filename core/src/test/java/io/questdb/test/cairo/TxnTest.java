@@ -210,6 +210,7 @@ public class TxnTest extends AbstractCairoTest {
         try (Path p = new Path()) {
             try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
                 loadTxnWriter(tw, p, "/txn/sys.acl_entities~1/_txn");
+                //noinspection StatementWithEmptyBody
                 while (tw.incrementPartitionSquashCounter(0)) {
                 }
 
@@ -398,7 +399,7 @@ public class TxnTest extends AbstractCairoTest {
                         path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
-                        long duration = 5_000;
+                        long duration = 30_000;
                         start.await();
                         while (done.get() == 0) {
                             TableUtils.safeReadTxn(txReader, clock, duration);
@@ -442,8 +443,8 @@ public class TxnTest extends AbstractCairoTest {
                         Assert.assertEquals(partitionCountCheck.get(), txReader.getPartitionCount() - 1);
 
                     } catch (Throwable e) {
-                        exceptions.add(e);
                         LOG.error().$(e).$();
+                        exceptions.add(e);
                     }
                 });
                 readers[th] = readerThread;

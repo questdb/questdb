@@ -52,6 +52,8 @@ import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
+
 /**
  * UnorderedVarcharMap is an off-heap hash table with single varchar key used
  * to store intermediate data of group by, sample by queries. It provides {@link MapKey} and
@@ -95,7 +97,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     static final long PTR_MASK = ~PTR_UNSTABLE_MASK;
     static final int SIZE_IS_NULL = 1 << 30;
     private static final int KEY_SINK_INITIAL_CAPACITY = 16;
-    private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
     private final GroupByAllocator allocator;
     private final UnorderedVarcharMapCursor cursor;
