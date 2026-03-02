@@ -34,6 +34,11 @@ NULL value.
 When choosing a name for a boolean variable, field or method, always use the
 is... or has... prefix, as appropriate.
 
+**Log messages must use strictly ASCII characters.** QuestDB's log infrastructure
+does not reliably render non-ASCII (e.g., em dashes, curly quotes, Unicode
+symbols). Use only plain ASCII punctuation in all `LOG.info()`, `LOG.error()`,
+etc. calls.
+
 ### Tests
 
 - write all tests using assertMemoryLeak(). This isn't needed for narrow unit

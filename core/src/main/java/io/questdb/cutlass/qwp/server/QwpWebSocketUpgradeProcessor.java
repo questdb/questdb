@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
 import io.questdb.cutlass.qwp.websocket.WebSocketHandshake;
@@ -536,15 +537,23 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    // Note: WebSocket fragmentation (FIN=0, CONTINUATION frames) is not supported.
-    // ILP v4 clients are expected to send each message as a single unfragmented frame.
-    // The parser accepts fragmented data frames but we don't track continuation state here;
-    // continuation frames (opcode 0x00) fall through to the default branch and are ignored.
-    // This is acceptable per RFC 6455 Section 5.4 since we control both client and server.
-    private void handleWebSocketFrame(HttpConnectionContext context, QwpProcessorState state, int opcode, long payload, int length)
+    private void handleWebSocketFrame(HttpConnectionContext context, QwpProcessorState state, int opcode, boolean fin, long payload, int length)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         switch (opcode) {
-            case WebSocketOpcode.BINARY -> handleBinaryMessage(context, state, payload, length);
+            case WebSocketOpcode.BINARY -> {
+                if (!fin) {
+                    // A BINARY frame with FIN=0 is the start of a fragmented message.
+                    // We don't support reassembly — reject immediately so the client
+                    // (or intermediary proxy/load balancer) knows data was not ingested.
+                    rejectFragmentedFrame(context, state, opcode);
+                    return;
+                }
+                handleBinaryMessage(context, state, payload, length);
+            }
+            case WebSocketOpcode.CONTINUATION ->
+                    // Continuation frames are part of a fragmented message we never started
+                    // tracking. Reject so the sender knows data was not ingested.
+                    rejectFragmentedFrame(context, state, opcode);
             case WebSocketOpcode.TEXT ->
                     LOG.debug().$("WebSocket text message ignored [fd=").$(context.getFd()).$(", len=").$(length).I$();
             case WebSocketOpcode.PING -> handlePing(context, state, payload, length);
@@ -593,7 +602,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 // throws (e.g. ACK backpressure), the committed frame won't be replayed.
                 pos += consumed;
 
-                handleWebSocketFrame(context, state, opcode, payloadPtr, payloadLen);
+                handleWebSocketFrame(context, state, opcode, frameParser.isFin(), payloadPtr, payloadLen);
             }
 
             if (result == FrameProcessResult.COMPLETE) {
@@ -617,6 +626,38 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     private enum FrameProcessResult {
         COMPLETE,
         NEED_MORE_DATA
+    }
+
+    private void rejectFragmentedFrame(HttpConnectionContext context, QwpProcessorState state, int opcode)
+            throws ServerDisconnectException {
+        LOG.error()
+                .$("WebSocket fragmented frame rejected, QWP requires unfragmented messages [fd=").$(context.getFd())
+                .$(", opcode=").$(WebSocketOpcode.name(opcode))
+                .$("] a WebSocket intermediary (proxy, load balancer) may be fragmenting frames; ")
+                .$("configure it to pass WebSocket frames through without fragmentation, ")
+                .$("or connect the QWP client directly to QuestDB")
+                .I$();
+
+        // Best-effort CLOSE with protocol error — the client or intermediary
+        // receives a clear reason instead of a silent connection drop.
+        if (state.isSendReady()) {
+            try {
+                HttpRawSocket rawSocket = context.getRawResponseSocket();
+                long bufferAddr = rawSocket.getBufferAddress();
+                int bufferSize = rawSocket.getBufferSize();
+                int written = WebSocketFrameWriter.writeCloseFrame(
+                        bufferAddr, bufferSize,
+                        WebSocketCloseCode.PROTOCOL_ERROR,
+                        "fragmented WebSocket frames are not supported"
+                );
+                if (written > 0) {
+                    rawSocket.send(written);
+                }
+            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+                // Best effort — we're disconnecting anyway.
+            }
+        }
+        throw ServerDisconnectException.INSTANCE;
     }
 
     /**
