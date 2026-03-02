@@ -802,7 +802,11 @@ impl ParquetDecoder {
                 break;
             }
             if row_lo < row_count + column_chunk_size {
-                let min_value = match self.row_group_timestamp_stat::<false>(row_group_idx, ts)? {
+                let min_value = match self.row_group_timestamp_stat::<false>(
+                    row_group_idx,
+                    ts,
+                    Some(column_metadata),
+                )? {
                     Some(val) => val,
                     None => {
                         if !sorting_key_validated {
@@ -828,7 +832,11 @@ impl ParquetDecoder {
                     return Ok((2 * row_group_idx + 1) as u64);
                 }
 
-                let max_value = match self.row_group_timestamp_stat::<true>(row_group_idx, ts)? {
+                let max_value = match self.row_group_timestamp_stat::<true>(
+                    row_group_idx,
+                    ts,
+                    Some(column_metadata),
+                )? {
                     Some(val) => val,
                     None => {
                         if !sorting_key_validated {
@@ -846,7 +854,7 @@ impl ParquetDecoder {
                     }
                 };
 
-                if timestamp >= min_value && timestamp < max_value {
+                if timestamp < max_value {
                     return Ok(2 * (row_group_idx + 1) as u64);
                 }
             }
@@ -861,10 +869,18 @@ impl ParquetDecoder {
         &self,
         row_group_index: usize,
         timestamp_column_index: usize,
+        column_chunk_meta: Option<&parquet2::metadata::ColumnChunkMetaData>,
     ) -> ParquetResult<Option<i64>> {
-        let columns_meta = self.metadata.row_groups[row_group_index].columns();
-        let column_chunk = columns_meta[timestamp_column_index].column_chunk();
-        let meta_data = match &column_chunk.meta_data {
+        let owned;
+        let chunk_meta = match column_chunk_meta {
+            Some(m) => m,
+            None => {
+                let columns_meta = self.metadata.row_groups[row_group_index].columns();
+                owned = &columns_meta[timestamp_column_index];
+                owned
+            }
+        };
+        let meta_data = match &chunk_meta.column_chunk().meta_data {
             Some(m) => m,
             None => return Ok(None),
         };
@@ -989,7 +1005,7 @@ impl ParquetDecoder {
         self.validate_timestamp_column(ts)?;
 
         // Try statistics first
-        if let Some(val) = self.row_group_timestamp_stat::<false>(rg, ts)? {
+        if let Some(val) = self.row_group_timestamp_stat::<false>(rg, ts, None)? {
             return Ok(val);
         }
 
@@ -1024,7 +1040,7 @@ impl ParquetDecoder {
         let rg = row_group_index as usize;
         let ts = timestamp_column_index as usize;
         self.validate_timestamp_column(ts)?;
-        if let Some(val) = self.row_group_timestamp_stat::<true>(rg, ts)? {
+        if let Some(val) = self.row_group_timestamp_stat::<true>(rg, ts, None)? {
             return Ok(val);
         }
 
