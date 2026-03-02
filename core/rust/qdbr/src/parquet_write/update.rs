@@ -825,7 +825,7 @@ fn generate_required_zero_page(
     let value_size = match column_type.tag() {
         ColumnTypeTag::Boolean => {
             // Boolean: packed bits, ceil(row_count / 8) bytes.
-            return Ok(vec![0u8; (row_count + 7) / 8]);
+            return Ok(vec![0u8; row_count.div_ceil(8)]);
         }
         ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char => {
             // Stored as Int32 in Parquet.
