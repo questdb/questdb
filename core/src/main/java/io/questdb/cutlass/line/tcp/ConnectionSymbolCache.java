@@ -53,6 +53,8 @@ public class ConnectionSymbolCache {
     private static final int DEFAULT_TABLE_CAPACITY = 8;
     private static final int DEFAULT_COLUMN_CAPACITY = 8;
 
+    private static final ClearConsumer CLEAR_CONSUMER = new ClearConsumer();
+
     // Map: tableToken → list of caches (indexed by columnIndex)
     private final LongObjHashMap<ObjList<ClientSymbolCache>> tableColumnCaches;
 
@@ -126,17 +128,7 @@ public class ConnectionSymbolCache {
      * This should be called when the connection is closed.
      */
     public void clear() {
-        tableColumnCaches.forEach((tableToken, columnCaches) -> {
-            if (columnCaches != null) {
-                for (int i = 0, n = columnCaches.size(); i < n; i++) {
-                    ClientSymbolCache cache = columnCaches.getQuick(i);
-                    if (cache != null) {
-                        cache.clear();
-                    }
-                }
-                columnCaches.clear();
-            }
-        });
+        tableColumnCaches.forEach(CLEAR_CONSUMER);
         tableColumnCaches.clear();
         cacheHits = 0;
         cacheMisses = 0;
@@ -207,5 +199,20 @@ public class ConnectionSymbolCache {
             }
         }
         return count;
+    }
+
+    private static class ClearConsumer implements LongObjHashMap.LongObjConsumer<ObjList<ClientSymbolCache>> {
+        @Override
+        public void accept(long tableToken, ObjList<ClientSymbolCache> columnCaches) {
+            if (columnCaches != null) {
+                for (int i = 0, n = columnCaches.size(); i < n; i++) {
+                    ClientSymbolCache cache = columnCaches.getQuick(i);
+                    if (cache != null) {
+                        cache.clear();
+                    }
+                }
+                columnCaches.clear();
+            }
+        }
     }
 }
