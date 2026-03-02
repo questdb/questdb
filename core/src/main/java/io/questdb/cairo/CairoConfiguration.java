@@ -317,8 +317,6 @@ public interface CairoConfiguration {
 
     long getInsertModelBatchSize();
 
-    int getJsonUnnestMaxValueSize();
-
     int getInsertModelPoolCapacity();
 
     /**
@@ -326,6 +324,8 @@ public interface CairoConfiguration {
      */
     @NotNull
     String getInstallRoot();
+
+    int getJsonUnnestMaxValueSize();
 
     int getLatestByQueueCapacity();
 
