@@ -788,6 +788,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (argColIndex < 0) {
                     return false;
                 }
+                // SampleByFirstLastRecord does not support variable-width
+                // types; fall back to the general SAMPLE BY path for arrays.
                 if (ColumnType.isArray(metadata.getColumnType(argColIndex))) {
                     return false;
                 }
