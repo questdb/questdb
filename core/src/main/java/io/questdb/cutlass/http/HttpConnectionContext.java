@@ -202,9 +202,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.forceDisconnectOnComplete = false;
         this.localValueMap.disconnect();
+        // SECURITY: these unconditional resets are the safety net for the conditional
+        // skip in reset(), which preserves securityContext while protocolSwitched is true.
+        // Both fields MUST be reset here to prevent security context leaks between pooled
+        // connections. Do not make these conditional.
         this.protocolSwitched = false;
-        // Security: Always reset security context when context is returned to pool.
-        // This ensures no security context leaks between connections.
         this.securityContext = DenyAllSecurityContext.INSTANCE;
     }
 
@@ -434,9 +436,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.retryAttemptAttributes.attempt = 0;
         this.receivedBytes = 0;
         this.authenticationNanos = 0L;
-        // Preserve securityContext for protocol-switched connections (e.g., WebSocket)
+        // Preserve securityContext for protocol-switched connections (e.g., WebSocket).
         // The security context was configured during the initial HTTP request and should
         // persist for the lifetime of the WebSocket connection.
+        //
+        // SECURITY: this conditional skip is safe ONLY because clear() unconditionally
+        // resets both protocolSwitched and securityContext when the context returns to
+        // the pool. The pool (WeakObjectPoolBase.push) always calls clear() before reuse.
+        // Do not add code paths that return a context to the pool without calling clear().
         if (!protocolSwitched) {
             this.securityContext = DenyAllSecurityContext.INSTANCE;
         }
