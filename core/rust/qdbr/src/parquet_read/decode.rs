@@ -1059,10 +1059,15 @@ impl ParquetDecoder {
             }
             PhysicalType::Float => {
                 let min_max = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
-                        f32::from_le_bytes(min_b.try_into().unwrap()),
-                        f32::from_le_bytes(max_b.try_into().unwrap()),
-                    )),
+                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => {
+                        let min_val = f32::from_le_bytes(min_b.try_into().unwrap());
+                        let max_val = f32::from_le_bytes(max_b.try_into().unwrap());
+                        if min_val.is_nan() || max_val.is_nan() {
+                            None
+                        } else {
+                            Some((min_val, max_val))
+                        }
+                    }
                     _ => None,
                 };
                 for i in 0..count {
@@ -1083,10 +1088,15 @@ impl ParquetDecoder {
             }
             PhysicalType::Double => {
                 let min_max = match (min_bytes, max_bytes) {
-                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => Some((
-                        f64::from_le_bytes(min_b.try_into().unwrap()),
-                        f64::from_le_bytes(max_b.try_into().unwrap()),
-                    )),
+                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => {
+                        let min_val = f64::from_le_bytes(min_b.try_into().unwrap());
+                        let max_val = f64::from_le_bytes(max_b.try_into().unwrap());
+                        if min_val.is_nan() || max_val.is_nan() {
+                            None
+                        } else {
+                            Some((min_val, max_val))
+                        }
+                    }
                     _ => None,
                 };
                 for i in 0..count {

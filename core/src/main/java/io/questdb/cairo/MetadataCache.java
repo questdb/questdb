@@ -280,8 +280,11 @@ public class MetadataCache implements QuietCloseable {
                     }
                     Path txnPath = Path.getThreadLocal2(engine.getConfiguration().getDbRoot());
                     txReader.ofRO(txnPath.concat(token.getDirName()).concat(TableUtils.TXN_FILE_NAME).$(), table.getTimestampType(), partitionBy);
-                    txReader.unsafeLoadAll();
-                    table.setHasParquetPartitions(txReader.hasParquetPartitions());
+                    if (txReader.unsafeLoadAll()) {
+                        table.setHasParquetPartitions(txReader.hasParquetPartitions());
+                    } else {
+                        table.setHasParquetPartitions(true);
+                    }
                 } catch (CairoException e) {
                     LOG.error().$("could not read partition format, assuming parquet [table=").$(token)
                             .$(", error=").$((Throwable) e).I$();
@@ -661,7 +664,7 @@ public class MetadataCache implements QuietCloseable {
         @Override
         public void setHasParquetPartitions(@NotNull TableToken tableToken, boolean hasParquetPartitions) {
             CairoTable table = tableMap.get(tableToken.getTableName());
-            if (table != null) {
+            if (table != null && tableToken.equals(table.getTableToken())) {
                 table.setHasParquetPartitions(hasParquetPartitions);
             }
         }
