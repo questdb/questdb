@@ -316,12 +316,10 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
      */
     private void deliverMessage(int opcode, long payload, int length, WebSocketProcessor processor) {
         switch (opcode) {
-            case WebSocketOpcode.BINARY:
-                processor.onBinaryMessage(payload, length);
-                break;
-            case WebSocketOpcode.TEXT:
-                processor.onTextMessage(payload, length);
-                break;
+            case WebSocketOpcode.BINARY -> processor.onBinaryMessage(payload, length);
+            case WebSocketOpcode.TEXT -> processor.onTextMessage(payload, length);
+            default -> {
+            }
         }
     }
 
@@ -352,24 +350,23 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
      */
     private boolean handleControlFrame(int opcode, long payloadPtr, int payloadLength,
                                        WebSocketProcessor processor) {
-        switch (opcode) {
-            case WebSocketOpcode.PING:
+        return switch (opcode) {
+            case WebSocketOpcode.PING -> {
                 processor.onPing(payloadPtr, payloadLength);
                 // Send pong response immediately (RFC 6455 requires a pong for each ping)
                 sendPongFrameImmediate(payloadPtr, payloadLength);
-                return true;
-
-            case WebSocketOpcode.PONG:
+                yield true;
+            }
+            case WebSocketOpcode.PONG -> {
                 processor.onPong(payloadPtr, payloadLength);
-                return true;
-
-            case WebSocketOpcode.CLOSE:
-                return handleCloseFrame(payloadPtr, payloadLength, processor);
-
-            default:
+                yield true;
+            }
+            case WebSocketOpcode.CLOSE -> handleCloseFrame(payloadPtr, payloadLength, processor);
+            default -> {
                 processor.onError(WebSocketCloseCode.PROTOCOL_ERROR, "Unknown control opcode");
-                return false;
-        }
+                yield false;
+            }
+        };
     }
 
     /**

@@ -107,41 +107,29 @@ public final class WebSocketCloseCode {
      * @return the description
      */
     public static String describe(int code) {
-        switch (code) {
-            case NORMAL_CLOSURE:
-                return "Normal Closure";
-            case GOING_AWAY:
-                return "Going Away";
-            case PROTOCOL_ERROR:
-                return "Protocol Error";
-            case UNSUPPORTED_DATA:
-                return "Unsupported Data";
-            case RESERVED:
-                return "Reserved";
-            case NO_STATUS_RECEIVED:
-                return "No Status Received";
-            case ABNORMAL_CLOSURE:
-                return "Abnormal Closure";
-            case INVALID_PAYLOAD_DATA:
-                return "Invalid Payload Data";
-            case POLICY_VIOLATION:
-                return "Policy Violation";
-            case MESSAGE_TOO_BIG:
-                return "Message Too Big";
-            case MANDATORY_EXTENSION:
-                return "Mandatory Extension";
-            case INTERNAL_ERROR:
-                return "Internal Error";
-            case TLS_HANDSHAKE:
-                return "TLS Handshake";
-            default:
+        return switch (code) {
+            case NORMAL_CLOSURE -> "Normal Closure";
+            case GOING_AWAY -> "Going Away";
+            case PROTOCOL_ERROR -> "Protocol Error";
+            case UNSUPPORTED_DATA -> "Unsupported Data";
+            case RESERVED -> "Reserved";
+            case NO_STATUS_RECEIVED -> "No Status Received";
+            case ABNORMAL_CLOSURE -> "Abnormal Closure";
+            case INVALID_PAYLOAD_DATA -> "Invalid Payload Data";
+            case POLICY_VIOLATION -> "Policy Violation";
+            case MESSAGE_TOO_BIG -> "Message Too Big";
+            case MANDATORY_EXTENSION -> "Mandatory Extension";
+            case INTERNAL_ERROR -> "Internal Error";
+            case TLS_HANDSHAKE -> "TLS Handshake";
+            default -> {
                 if (code >= 3000 && code < 4000) {
-                    return "Library/Framework Code (" + code + ")";
+                    yield "Library/Framework Code (" + code + ")";
                 } else if (code >= 4000 && code < 5000) {
-                    return "Application Code (" + code + ")";
+                    yield "Application Code (" + code + ")";
                 }
-                return "Unknown (" + code + ")";
-        }
+                yield "Unknown (" + code + ")";
+            }
+        };
     }
 
     /**

@@ -111,21 +111,14 @@ public final class WebSocketOpcode {
      * @return the opcode name
      */
     public static String name(int opcode) {
-        switch (opcode) {
-            case CONTINUATION:
-                return "CONTINUATION";
-            case TEXT:
-                return "TEXT";
-            case BINARY:
-                return "BINARY";
-            case CLOSE:
-                return "CLOSE";
-            case PING:
-                return "PING";
-            case PONG:
-                return "PONG";
-            default:
-                return "UNKNOWN(" + opcode + ")";
-        }
+        return switch (opcode) {
+            case CONTINUATION -> "CONTINUATION";
+            case TEXT -> "TEXT";
+            case BINARY -> "BINARY";
+            case CLOSE -> "CLOSE";
+            case PING -> "PING";
+            case PONG -> "PONG";
+            default -> "UNKNOWN(" + opcode + ")";
+        };
     }
 }
