@@ -128,6 +128,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
                 final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
                 final double bloomFilterFpp = cairoConfiguration.getPartitionEncoderParquetBloomFilterFpp();
+                final double minCompressionRatio = cairoConfiguration.getPartitionEncoderParquetMinCompressionRatio();
 
                 // partitionUpdater is the owner of the partitionDecoder descriptor
                 final int opts = cairoConfiguration.getWriterFileOpenOpts();
@@ -141,7 +142,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         rawArrayEncoding,
                         rowGroupSize,
                         dataPageSize,
-                        bloomFilterFpp
+                        bloomFilterFpp,
+                        minCompressionRatio
                 );
 
                 // The O3 range [srcOooLo, srcOooHi] has been split into intervals between row group minimums: [rowGroupN-1.min, rowGroupN.min].
@@ -1682,6 +1684,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 assert columnType >= 0;
                 final String columnName = tableWriterMetadata.getColumnName(columnIndex);
                 final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
                 final boolean notTheTimestamp = columnIndex != timestampIndex;
                 final int columnOffset = getPrimaryColumnIndex(columnIndex);
@@ -1731,7 +1734,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             dstFixMemAddr,
                             dstFixSize,
                             0,
-                            0
+                            0,
+                            parquetEncodingConfig
                     );
                 } else {
                     final long srcOooFixAddr = oooMem1.addressOf(0);
@@ -1782,7 +1786,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 valuesMemSize,
                                 // Skip header
                                 offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
-                                offsetsMemSize
+                                offsetsMemSize,
+                                parquetEncodingConfig
                         );
                     } else {
                         partitionDescriptor.addColumn(
@@ -1795,7 +1800,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 0,
                                 0,
                                 0,
-                                0
+                                0,
+                                parquetEncodingConfig
                         );
                     }
                 }

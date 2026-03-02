@@ -71,11 +71,53 @@ public class ParquetCompression {
         return nameToCodecMap.get(name);
     }
 
+    public static CharSequence getCompressionName(int codec) {
+        return codecToNameMap.get(codec);
+    }
+
     public static long packCompressionCodecLevel(int codec, long level) {
         if (codec < 0 || codec >= MAX_ENUM_INT) {
             throw new IllegalArgumentException("Invalid codec: " + codec + ", must be in range [0, " + MAX_ENUM_INT + ")");
         }
         return (level << 32) | CODEC_MAPPING[codec];
+    }
+
+    /**
+     * Validates that the compression level is within the allowed range for the given codec.
+     * Codecs that ignore the level (uncompressed, snappy, lz4_raw) accept any value silently.
+     *
+     * @param codec    one of the {@code COMPRESSION_*} constants
+     * @param level    the user-supplied compression level
+     * @param levelPos character position in the SQL text, used for error reporting
+     */
+    public static void validateCompressionLevel(int codec, int level, int levelPos) throws SqlException {
+        switch (codec) {
+            case COMPRESSION_UNCOMPRESSED:
+            case COMPRESSION_SNAPPY:
+            case COMPRESSION_LZ4_RAW:
+                // these codecs ignore the level
+                break;
+            case COMPRESSION_GZIP:
+                if (level < GZIP_MIN_COMPRESSION_LEVEL || level > GZIP_MAX_COMPRESSION_LEVEL) {
+                    throw SqlException.$(levelPos, "GZIP compression level must be between ")
+                            .put(GZIP_MIN_COMPRESSION_LEVEL).put(" and ").put(GZIP_MAX_COMPRESSION_LEVEL);
+                }
+                break;
+            case COMPRESSION_BROTLI:
+                if (level < BROTLI_MIN_COMPRESSION_LEVEL || level > BROTLI_MAX_COMPRESSION_LEVEL) {
+                    throw SqlException.$(levelPos, "Brotli compression level must be between ")
+                            .put(BROTLI_MIN_COMPRESSION_LEVEL).put(" and ").put(BROTLI_MAX_COMPRESSION_LEVEL);
+                }
+                break;
+            case COMPRESSION_ZSTD:
+                if (level < ZSTD_MIN_COMPRESSION_LEVEL || level > ZSTD_MAX_COMPRESSION_LEVEL) {
+                    throw SqlException.$(levelPos, "ZSTD compression level must be between ")
+                            .put(ZSTD_MIN_COMPRESSION_LEVEL).put(" and ").put(ZSTD_MAX_COMPRESSION_LEVEL);
+                }
+                break;
+            default:
+                throw SqlException.$(levelPos, "unknown compression codec: ").put(codec);
+        }
     }
 
     static {

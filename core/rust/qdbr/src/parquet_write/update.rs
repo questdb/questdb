@@ -24,6 +24,7 @@
 use crate::allocator::QdbAllocator;
 use crate::parquet::error::{ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
+use crate::parquet_write::schema::to_compressions;
 use crate::parquet_write::schema::{to_encodings, Partition};
 use parquet2::compression::CompressionOptions;
 use parquet2::metadata::{KeyValue, SortingColumn};
@@ -42,6 +43,7 @@ pub struct ParquetUpdater {
     data_page_size: Option<usize>,
     raw_array_encoding: bool,
     bloom_filter_columns: HashSet<usize>,
+    min_compression_ratio: f64,
 }
 
 impl ParquetUpdater {
@@ -57,6 +59,7 @@ impl ParquetUpdater {
         row_group_size: Option<usize>,
         data_page_size: Option<usize>,
         bloom_filter_fpp: f64,
+        min_compression_ratio: f64,
     ) -> ParquetResult<Self> {
         fn version_from_i32(value: i32) -> ParquetResult<Version> {
             match value {
@@ -110,6 +113,7 @@ impl ParquetUpdater {
             row_group_size,
             data_page_size,
             bloom_filter_columns,
+            min_compression_ratio,
         })
     }
 
@@ -126,6 +130,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &to_compressions(partition),
             false,
         )?;
 
@@ -143,6 +148,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &to_compressions(partition),
             false,
         )?;
 
@@ -170,6 +176,7 @@ impl ParquetUpdater {
             raw_array_encoding: self.raw_array_encoding,
             bloom_filter_columns: self.bloom_filter_columns.clone(),
             bloom_filter_fpp: self.parquet_file.options().bloom_filter_fpp,
+            min_compression_ratio: self.min_compression_ratio,
         }
     }
 }
@@ -189,10 +196,11 @@ mod tests {
     use std::io::Write;
     use std::ptr::null;
 
-    use crate::parquet_write::file::{
-        create_row_group, ParquetWriter, WriteOptions, DEFAULT_BLOOM_FILTER_FPP,
+    use crate::parquet_write::file::DEFAULT_BLOOM_FILTER_FPP;
+    use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
+    use crate::parquet_write::schema::{
+        to_compressions, to_encodings, to_parquet_schema, Column, Partition,
     };
-    use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;
@@ -223,6 +231,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -274,6 +283,7 @@ mod tests {
             raw_array_encoding: false,
             bloom_filter_columns: HashSet::new(),
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            min_compression_ratio: 0.0,
         };
 
         let options = write::WriteOptions {
@@ -289,6 +299,7 @@ mod tests {
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
             foptions.clone(),
+            &to_compressions(&new_partition),
             false,
         )?;
 
@@ -299,6 +310,7 @@ mod tests {
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
             foptions,
+            &to_compressions(&new_partition),
             false,
         )?;
 

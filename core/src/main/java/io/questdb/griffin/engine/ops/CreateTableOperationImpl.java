@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -71,6 +72,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final LowerCaseCharSequenceIntHashMap colNameToIndexClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LongList columnBits = new LongList();
     private final ObjList<String> columnNames = new ObjList<>();
+    private final IntList parquetEncodingConfigs = new IntList();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
     private final String selectText;
     private final String sqlText;
@@ -186,7 +188,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getSymbolCapacity(),
                     model.isIndexed(),
                     model.getIndexValueBlockSize(),
-                    model.isDedupKey()
+                    model.isDedupKey(),
+                    model.getParquetEncodingConfig()
             );
         }
         // this is a vanilla "create table" with fixed columns and fixed timestamp index
@@ -376,6 +379,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public int getParquetEncodingConfig(int index) {
+        return parquetEncodingConfigs.getQuick(index);
+    }
+
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -554,6 +562,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
         columnNames.clear();
         columnBits.clear();
+        parquetEncodingConfigs.clear();
         for (int i = 0; i < likeTableMetadata.getColumnCount(); i++) {
             TableColumnMetadata colMeta = likeTableMetadata.getColumnMetadata(i);
             addColumnBits(
@@ -562,7 +571,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     colMeta.getSymbolCapacity(),
                     colMeta.isSymbolIndexFlag(),
                     colMeta.getIndexValueBlockCapacity(),
-                    colMeta.isDedupKeyFlag()
+                    colMeta.isDedupKeyFlag(),
+                    colMeta.getParquetEncodingConfig()
             );
             columnNames.add(colMeta.getColumnName());
         }
@@ -598,6 +608,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         // at SQL parse time.
         assert this.selectText != null;
         this.columnBits.clear();
+        this.parquetEncodingConfigs.clear();
         if (this.timestampColumnName == null) {
             int timestampIndex = metadata.getTimestampIndex();
             if (timestampIndex > -1 && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
@@ -737,6 +748,18 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int indexBlockCapacity,
             boolean dedupFlag
     ) {
+        addColumnBits(columnType, symbolCacheFlag, symbolCapacity, indexFlag, indexBlockCapacity, dedupFlag, 0);
+    }
+
+    private void addColumnBits(
+            int columnType,
+            boolean symbolCacheFlag,
+            int symbolCapacity,
+            boolean indexFlag,
+            int indexBlockCapacity,
+            boolean dedupFlag,
+            int parquetEncodingConfig
+    ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
                 | (indexFlag ? COLUMN_FLAG_INDEXED : 0)
                 | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0);
@@ -744,6 +767,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
                 Numbers.encodeLowHighInts(flags, indexBlockCapacity)
         );
+        parquetEncodingConfigs.add(parquetEncodingConfig);
     }
 
     private int getHighAt(int index) {

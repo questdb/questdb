@@ -119,7 +119,8 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         false,
                         0,
                         0,
-                        0.01
+                        0.01,
+                        0.0
                 );
 
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);

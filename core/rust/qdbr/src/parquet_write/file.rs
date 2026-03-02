@@ -18,7 +18,9 @@ use parquet2::write::{
 };
 use qdb_core::error::CoreResult;
 
-use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
+use crate::parquet_write::schema::{
+    to_compressions, to_encodings, to_parquet_schema, Column, Partition,
+};
 use crate::parquet_write::{
     array, binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar,
 };
@@ -33,6 +35,18 @@ pub const DEFAULT_BLOOM_FILTER_FPP: f64 = 0.01;
 
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 pub const DEFAULT_ROW_GROUP_SIZE: usize = 100_000;
+
+/// Returns the compression for a given column, using per-column override if available.
+fn column_compression(
+    per_column_compressions: &[Option<CompressionOptions>],
+    global_compression: CompressionOptions,
+    col_idx: usize,
+) -> CompressionOptions {
+    per_column_compressions
+        .get(col_idx)
+        .and_then(|opt| *opt)
+        .unwrap_or(global_compression)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WriteOptions {
@@ -52,6 +66,9 @@ pub struct WriteOptions {
     pub bloom_filter_columns: HashSet<usize>,
     /// False positive probability for bloom filters
     pub bloom_filter_fpp: f64,
+    /// Minimum compression ratio (uncompressed/compressed) to keep compressed output.
+    /// A value of 0.0 (or <= 1.0) means always keep compressed output.
+    pub min_compression_ratio: f64,
 }
 
 pub struct ParquetWriter<W: Write> {
@@ -75,6 +92,8 @@ pub struct ParquetWriter<W: Write> {
     bloom_filter_columns: HashSet<usize>,
     /// False positive probability for bloom filters
     bloom_filter_fpp: f64,
+    /// Minimum compression ratio to keep compressed output
+    min_compression_ratio: f64,
 }
 
 impl<W: Write> ParquetWriter<W> {
@@ -95,6 +114,7 @@ impl<W: Write> ParquetWriter<W> {
             parallel: false,
             bloom_filter_columns: HashSet::new(),
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            min_compression_ratio: 0.0,
         }
     }
 
@@ -164,6 +184,13 @@ impl<W: Write> ParquetWriter<W> {
         self
     }
 
+    /// Set the minimum compression ratio to keep compressed output.
+    /// A value of 0.0 means always keep compressed output.
+    pub fn with_min_compression_ratio(mut self, min_compression_ratio: f64) -> Self {
+        self.min_compression_ratio = min_compression_ratio;
+        self
+    }
+
     fn write_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.statistics,
@@ -174,6 +201,7 @@ impl<W: Write> ParquetWriter<W> {
             raw_array_encoding: self.raw_array_encoding,
             bloom_filter_columns: self.bloom_filter_columns.clone(),
             bloom_filter_fpp: self.bloom_filter_fpp,
+            min_compression_ratio: self.min_compression_ratio,
         }
     }
 
@@ -181,6 +209,15 @@ impl<W: Write> ParquetWriter<W> {
         self,
         parquet_schema: SchemaDescriptor,
         encodings: Vec<Encoding>,
+    ) -> ParquetResult<ChunkedWriter<W>> {
+        self.chunked_with_compressions(parquet_schema, encodings, vec![])
+    }
+
+    pub fn chunked_with_compressions(
+        self,
+        parquet_schema: SchemaDescriptor,
+        encodings: Vec<Encoding>,
+        per_column_compressions: Vec<Option<CompressionOptions>>,
     ) -> ParquetResult<ChunkedWriter<W>> {
         let options = self.write_options();
         let parallel = self.parallel;
@@ -203,6 +240,7 @@ impl<W: Write> ParquetWriter<W> {
             parquet_schema,
             encodings,
             options,
+            per_column_compressions,
             parallel,
         })
     }
@@ -211,7 +249,8 @@ impl<W: Write> ParquetWriter<W> {
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
         let (schema, additional_meta) = to_parquet_schema(&partition, self.raw_array_encoding)?;
         let encodings = to_encodings(&partition);
-        let mut chunked = self.chunked(schema, encodings)?;
+        let compressions = to_compressions(&partition);
+        let mut chunked = self.chunked_with_compressions(schema, encodings, compressions)?;
         chunked.write_chunk(&partition)?;
         chunked.finish(additional_meta)
     }
@@ -222,6 +261,7 @@ pub struct ChunkedWriter<W: Write> {
     parquet_schema: SchemaDescriptor,
     encodings: Vec<Encoding>,
     options: WriteOptions,
+    per_column_compressions: Vec<Option<CompressionOptions>>,
     parallel: bool,
 }
 
@@ -252,6 +292,7 @@ impl<W: Write> ChunkedWriter<W> {
                 schema.fields(),
                 &self.encodings,
                 self.options.clone(),
+                &self.per_column_compressions,
                 self.parallel,
             )?;
             self.writer.write(row_group, &bloom_hashes)?;
@@ -273,6 +314,7 @@ impl<W: Write> ChunkedWriter<W> {
             schema.fields(),
             &self.encodings,
             self.options.clone(),
+            &self.per_column_compressions,
             self.parallel,
         )?;
         self.writer.write(row_group, &bloom_hashes)?;
@@ -288,6 +330,7 @@ impl<W: Write> ChunkedWriter<W> {
 
 pub type BloomHashes = Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_row_group(
     partition: &Partition,
     offset: usize,
@@ -295,9 +338,9 @@ pub fn create_row_group(
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
+    per_column_compressions: &[Option<CompressionOptions>],
     parallel: bool,
 ) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes)> {
-    let compression = options.compression;
     let num_columns = partition.columns.len();
 
     // Collect unique hash values for bloom filter construction.
@@ -331,11 +374,13 @@ pub fn create_row_group(
     let col_to_iter = |column: &Column,
                        column_type: &ParquetType,
                        encoding: &Encoding,
+                       compression: Option<CompressionOptions>,
                        options: &WriteOptions,
                        bloom_set: Option<Arc<Mutex<HashSet<u64>>>>|
      -> ParquetResult<
         DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
     > {
+        let col_compression = compression.unwrap_or(options.compression);
         let pages = column_chunk_to_pages(
             *column,
             column_type.clone(),
@@ -345,8 +390,8 @@ pub fn create_row_group(
             *encoding,
             bloom_set,
         )?;
-
-        let compressor = Compressor::new(pages, compression, vec![]);
+        let min_ratio = options.min_compression_ratio;
+        let compressor = Compressor::new(pages, col_compression, vec![], min_ratio);
         Ok(DynStreamingIterator::new(compressor))
     };
 
@@ -358,9 +403,10 @@ pub fn create_row_group(
                 .par_iter()
                 .zip(column_types)
                 .zip(encoding)
+                .zip(per_column_compressions)
                 .zip(&bloom_hashes)
-                .map(|(((column, column_type), enc), bloom)| {
-                    col_to_iter(column, column_type, enc, &options, bloom.clone())
+                .map(|((((column, column_type), enc), comp), bloom)| {
+                    col_to_iter(column, column_type, enc, *comp, &options, bloom.clone())
                 })
                 .collect::<ParquetResult<Vec<_>>>()
         })?
@@ -370,9 +416,10 @@ pub fn create_row_group(
             .iter()
             .zip(column_types)
             .zip(encoding)
+            .zip(per_column_compressions)
             .zip(&bloom_hashes)
-            .map(|(((column, column_type), enc), bloom)| {
-                col_to_iter(column, column_type, enc, &options, bloom.clone())
+            .map(|((((column, column_type), enc), comp), bloom)| {
+                col_to_iter(column, column_type, enc, *comp, &options, bloom.clone())
             })
             .collect::<ParquetResult<Vec<_>>>()?
     };
@@ -394,6 +441,7 @@ pub fn create_row_group(
 /// * `encoding` - Encoding for each column
 /// * `options` - Write options
 /// * `parallel` - Whether to process columns in parallel
+#[allow(clippy::too_many_arguments)]
 pub fn create_row_group_from_partitions(
     partitions: &[&Partition],
     first_partition_start: usize,
@@ -401,13 +449,12 @@ pub fn create_row_group_from_partitions(
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
+    per_column_compressions: &[Option<CompressionOptions>],
     parallel: bool,
 ) -> ParquetResult<(RowGroupIter<'static, ParquetError>, BloomHashes)> {
     assert!(!partitions.is_empty(), "partitions cannot be empty");
     let num_columns = partitions[0].columns.len();
     let num_partitions = partitions.len();
-
-    let compression = options.compression;
 
     // Collect unique hash values for bloom filter construction.
     // See comment in create_row_group() for rationale on using HashSet vs direct bloom
@@ -429,8 +476,20 @@ pub fn create_row_group_from_partitions(
         DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
     > {
         let column_type = &column_types[col_idx];
-        let col_encoding = encoding[col_idx];
+        let mut col_encoding = encoding[col_idx];
         let first_partition_column = partitions[0].columns[col_idx];
+        let col_compression =
+            column_compression(per_column_compressions, options.compression, col_idx);
+
+        // Multi-partition dict encoding fallback: when merging multiple partitions,
+        // non-Symbol dict columns would emit multiple DictPages per column chunk
+        // (invalid Parquet). Fall back to the type's default encoding.
+        if num_partitions > 1
+            && col_encoding == Encoding::RleDictionary
+            && !first_partition_column.data_type.is_symbol()
+        {
+            col_encoding = super::schema::encoding_map(first_partition_column.data_type);
+        }
 
         let partition_ranges: Vec<(Column, usize, usize)> = partitions
             .iter()
@@ -466,7 +525,13 @@ pub fn create_row_group_from_partitions(
                 bloom_set,
             )?;
 
-            let compressor = Compressor::new(pages.into_iter().map(Ok), compression, vec![]);
+            let min_ratio = options.min_compression_ratio;
+            let compressor = Compressor::new(
+                pages.into_iter().map(Ok),
+                col_compression,
+                vec![],
+                min_ratio,
+            );
             return Ok(DynStreamingIterator::new(compressor));
         }
 
@@ -478,7 +543,12 @@ pub fn create_row_group_from_partitions(
             bloom_set,
         )?;
 
-        let compressor = Compressor::new(all_pages.into_iter(), compression, vec![]);
+        let compressor = Compressor::new(
+            all_pages.into_iter(),
+            col_compression,
+            vec![],
+            options.min_compression_ratio,
+        );
         Ok(DynStreamingIterator::new(compressor))
     };
 
@@ -859,14 +929,28 @@ fn column_chunk_to_primitive_pages(
             chunk_offset + chunk_length - orig_column_top
         };
 
-        return varchar::varchar_to_dict_pages(
-            &aux[lower_bound..upper_bound],
-            data,
-            adjusted_column_top,
-            options,
-            primitive_type,
-            bloom_hashes,
-        );
+        return match encoding {
+            Encoding::DeltaLengthByteArray | Encoding::Plain => {
+                let page = varchar::varchar_to_page(
+                    &aux[lower_bound..upper_bound],
+                    data,
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                    encoding,
+                    bloom_hashes,
+                )?;
+                Ok(DynIter::new(std::iter::once(Ok(page))))
+            }
+            _ => varchar::varchar_to_dict_pages(
+                &aux[lower_bound..upper_bound],
+                data,
+                adjusted_column_top,
+                options,
+                primitive_type,
+                bloom_hashes,
+            ),
+        };
     }
 
     let number_of_rows = chunk_length;

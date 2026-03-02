@@ -15,6 +15,7 @@ use questdbr::parquet_write::bench::{
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
+use std::collections::HashSet;
 use std::hint::black_box;
 
 const ROW_COUNT: usize = 100_000;
@@ -122,6 +123,8 @@ fn write_options() -> WriteOptions {
         data_page_size: None,
         raw_array_encoding: true,
         min_compression_ratio: 0.0,
+        bloom_filter_columns: HashSet::new(),
+        bloom_filter_fpp: 0.01,
     }
 }
 
@@ -471,8 +474,9 @@ fn make_varchar_data_sized(
         let value = &values[i % values.len()];
         let size = value.len();
         if size <= VARCHAR_MAX_BYTES_FULLY_INLINED {
-            let header =
-                ((size as u8) << HEADER_FLAGS_WIDTH as u8) | HEADER_FLAG_INLINED | HEADER_FLAG_ASCII;
+            let header = ((size as u8) << HEADER_FLAGS_WIDTH as u8)
+                | HEADER_FLAG_INLINED
+                | HEADER_FLAG_ASCII;
             aux_bytes.push(header);
             aux_bytes.extend_from_slice(value);
             if size < VARCHAR_MAX_BYTES_FULLY_INLINED {
@@ -678,7 +682,7 @@ macro_rules! encode_simd_cases {
                 let data = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
-                let opts = $opts;
+                let opts = $opts.clone();
                 $cases.push(EncodeBenchCase {
                     name: format!(
                         concat!($name, "_{enc}_n{null_pct}"),
@@ -688,7 +692,7 @@ macro_rules! encode_simd_cases {
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
                         black_box(
-                            slice_to_page_simd(&data, 0, opts, pt.clone(), encoding)
+                            slice_to_page_simd(&data, 0, opts.clone(), pt.clone(), encoding, None)
                                 .expect("encode"),
                         );
                     }),
@@ -707,7 +711,7 @@ macro_rules! encode_int_notnull_cases {
                 let data: Vec<$T> = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
-                let opts = $opts;
+                let opts = $opts.clone();
                 $cases.push(EncodeBenchCase {
                     name: format!(
                         concat!($name, "_{enc}_n{null_pct}"),
@@ -718,7 +722,12 @@ macro_rules! encode_int_notnull_cases {
                     encode_fn: Box::new(move || {
                         black_box(
                             int_slice_to_page_notnull::<$T, $U>(
-                                &data, 0, opts, pt.clone(), encoding,
+                                &data,
+                                0,
+                                opts.clone(),
+                                pt.clone(),
+                                encoding,
+                                None,
                             )
                             .expect("encode"),
                         );
@@ -738,7 +747,7 @@ macro_rules! encode_int_nullable_cases {
                 let data: Vec<$T> = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
-                let opts = $opts;
+                let opts = $opts.clone();
                 $cases.push(EncodeBenchCase {
                     name: format!(
                         concat!($name, "_{enc}_n{null_pct}"),
@@ -748,8 +757,13 @@ macro_rules! encode_int_nullable_cases {
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
                         black_box(
-                            int_slice_to_page_nullable::<$T, $U>(
-                                &data, 0, opts, pt.clone(), encoding,
+                            int_slice_to_page_nullable::<$T, $U, false>(
+                                &data,
+                                0,
+                                opts.clone(),
+                                pt.clone(),
+                                encoding,
+                                None,
                             )
                             .expect("encode"),
                         );
@@ -767,13 +781,14 @@ macro_rules! encode_bytes_cases {
             let data = $data;
             let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
             let pt = primitive_type_for(ct);
-            let opts = $opts;
+            let opts = $opts.clone();
             $cases.push(EncodeBenchCase {
                 name: format!(concat!($name, "_plain_n{null_pct}"), null_pct = $np),
                 row_count: ROW_COUNT,
                 encode_fn: Box::new(move || {
                     black_box(
-                        bytes_to_page(&data, $swap, 0, opts, pt.clone()).expect("encode"),
+                        bytes_to_page(&data, $swap, 0, opts.clone(), pt.clone(), None)
+                            .expect("encode"),
                     );
                 }),
             });
@@ -792,13 +807,14 @@ macro_rules! encode_decimal_flba_cases {
         for &null_pct in null_pcts(true) {
             let data = make_decimal_flba_data::<$src_len>(ROW_COUNT, null_pct);
             let pt = primitive_type.clone();
-            let opts = $opts;
+            let opts = $opts.clone();
             $cases.push(EncodeBenchCase {
                 name: format!(concat!($label, "_plain_n{null_pct}"), null_pct = null_pct),
                 row_count: ROW_COUNT,
                 encode_fn: Box::new(move || {
                     black_box(
-                        bytes_to_page(&data, false, 0, opts, pt.clone()).expect("encode"),
+                        bytes_to_page(&data, false, 0, opts.clone(), pt.clone(), None)
+                            .expect("encode"),
                     );
                 }),
             });
@@ -815,12 +831,14 @@ fn build_cases() -> Vec<EncodeBenchCase> {
         let data = make_boolean_data(ROW_COUNT);
         let column_type = ColumnType::new(ColumnTypeTag::Boolean, 0);
         let primitive_type = primitive_type_for(column_type);
+        let opts = options.clone();
         cases.push(EncodeBenchCase {
             name: "boolean_plain_n0".to_string(),
             row_count: ROW_COUNT,
             encode_fn: Box::new(move || {
                 black_box(
-                    boolean_to_page(&data, 0, options, primitive_type.clone()).expect("encode"),
+                    boolean_to_page(&data, 0, opts.clone(), primitive_type.clone())
+                        .expect("encode"),
                 );
             }),
         });
@@ -874,12 +892,14 @@ fn build_cases() -> Vec<EncodeBenchCase> {
         for &null_pct in null_pcts(true) {
             let data = make_int96_data(ROW_COUNT, null_pct);
             let pt = int96_pt.clone();
+            let opts = options.clone();
             cases.push(EncodeBenchCase {
                 name: format!("timestamp_int96_plain_n{null_pct}"),
                 row_count: ROW_COUNT,
                 encode_fn: Box::new(move || {
                     black_box(
-                        bytes_to_page(&data, false, 0, options, pt.clone()).expect("encode"),
+                        bytes_to_page(&data, false, 0, opts.clone(), pt.clone(), None)
+                            .expect("encode"),
                     );
                 }),
             });
@@ -954,6 +974,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
             let data = make_string_data(ROW_COUNT, null_pct);
             let column_type = ColumnType::new(ColumnTypeTag::String, 0);
             let primitive_type = primitive_type_for(column_type);
+            let options = options.clone();
             cases.push(EncodeBenchCase {
                 name: format!("string_{enc}_n{null_pct}"),
                 row_count: ROW_COUNT,
@@ -963,9 +984,10 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                             &data.offsets,
                             &data.data,
                             0,
-                            options,
+                            options.clone(),
                             primitive_type.clone(),
                             encoding,
+                            None,
                         )
                         .expect("encode"),
                     );
@@ -979,9 +1001,11 @@ fn build_cases() -> Vec<EncodeBenchCase> {
         let enc = enc_label(encoding);
         for &str_len in &[2usize, 200] {
             for &null_pct in null_pcts(true) {
-                let data = make_varchar_data_sized(ROW_COUNT, null_pct, str_len, DEFAULT_CARDINALITY);
+                let data =
+                    make_varchar_data_sized(ROW_COUNT, null_pct, str_len, DEFAULT_CARDINALITY);
                 let column_type = ColumnType::new(ColumnTypeTag::Varchar, 0);
                 let primitive_type = primitive_type_for(column_type);
+                let options = options.clone();
                 cases.push(EncodeBenchCase {
                     name: format!("varchar_{enc}_s{str_len}_n{null_pct}"),
                     row_count: ROW_COUNT,
@@ -991,9 +1015,10 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                                 &data.aux,
                                 &data.data,
                                 0,
-                                options,
+                                options.clone(),
                                 primitive_type.clone(),
                                 encoding,
+                                None,
                             )
                             .expect("encode"),
                         );
@@ -1010,6 +1035,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                 let data = make_varchar_data_sized(ROW_COUNT, null_pct, str_len, card);
                 let column_type = ColumnType::new(ColumnTypeTag::Varchar, 0);
                 let primitive_type = primitive_type_for(column_type);
+                let options = options.clone();
                 cases.push(EncodeBenchCase {
                     name: format!("varchar_dict_s{str_len}_c{card}_n{null_pct}"),
                     row_count: ROW_COUNT,
@@ -1018,8 +1044,9 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                             &data.aux,
                             &data.data,
                             0,
-                            options,
+                            options.clone(),
                             primitive_type.clone(),
+                            None,
                         )
                         .expect("encode");
                         for page in iter {
@@ -1038,6 +1065,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
             let data = make_binary_data(ROW_COUNT, null_pct);
             let column_type = ColumnType::new(ColumnTypeTag::Binary, 0);
             let primitive_type = primitive_type_for(column_type);
+            let options = options.clone();
             cases.push(EncodeBenchCase {
                 name: format!("binary_{enc}_n{null_pct}"),
                 row_count: ROW_COUNT,
@@ -1047,9 +1075,10 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                             &data.offsets,
                             &data.data,
                             0,
-                            options,
+                            options.clone(),
                             primitive_type.clone(),
                             encoding,
+                            None,
                         )
                         .expect("encode"),
                     );
@@ -1065,6 +1094,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
             let data = make_array_data(ROW_COUNT, null_pct);
             let column_type = encode_array_type(ColumnTypeTag::Double, 1).expect("array type");
             let primitive_type = primitive_type_for(column_type);
+            let options = options.clone();
             cases.push(EncodeBenchCase {
                 name: format!("array_{enc}_n{null_pct}"),
                 row_count: ROW_COUNT,
@@ -1074,7 +1104,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                             &data.aux,
                             &data.data,
                             0,
-                            options,
+                            options.clone(),
                             primitive_type.clone(),
                             encoding,
                         )
@@ -1090,6 +1120,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
         let data = make_symbol_data(ROW_COUNT, null_pct);
         let column_type = ColumnType::new(ColumnTypeTag::Symbol, 0);
         let primitive_type = primitive_type_for(column_type);
+        let options = options.clone();
         cases.push(EncodeBenchCase {
             name: format!("symbol_dict_n{null_pct}"),
             row_count: ROW_COUNT,
@@ -1099,9 +1130,10 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                     &data.offsets,
                     &data.chars,
                     0,
-                    options,
+                    options.clone(),
                     primitive_type.clone(),
                     false,
+                    None,
                 )
                 .expect("encode");
                 for page in iter {
@@ -1122,17 +1154,19 @@ fn build_cases() -> Vec<EncodeBenchCase> {
         for &null_pct in null_pcts(true) {
             let data = make_decimal_i32_data(ROW_COUNT, null_pct);
             let pt = primitive_type.clone();
+            let options = options.clone();
             cases.push(EncodeBenchCase {
                 name: format!("decimal_int32_plain_n{null_pct}"),
                 row_count: ROW_COUNT,
                 encode_fn: Box::new(move || {
                     black_box(
-                        int_slice_to_page_nullable::<i32, i32>(
+                        int_slice_to_page_nullable::<i32, i32, false>(
                             &data,
                             0,
-                            options,
+                            options.clone(),
                             pt.clone(),
                             Encoding::Plain,
+                            None,
                         )
                         .expect("encode"),
                     );
@@ -1154,17 +1188,19 @@ fn build_cases() -> Vec<EncodeBenchCase> {
             for &null_pct in null_pcts(true) {
                 let data = make_decimal_i64_data(ROW_COUNT, null_pct);
                 let pt = primitive_type.clone();
+                let options = options.clone();
                 cases.push(EncodeBenchCase {
                     name: format!("decimal_int64_{enc}_n{null_pct}"),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
                         black_box(
-                            int_slice_to_page_nullable::<i64, i64>(
+                            int_slice_to_page_nullable::<i64, i64, false>(
                                 &data,
                                 0,
-                                options,
+                                options.clone(),
                                 pt.clone(),
                                 encoding,
+                                None,
                             )
                             .expect("encode"),
                         );
@@ -1183,6 +1219,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
         for &null_pct in null_pcts(true) {
             let data = make_decimal_var_data(ROW_COUNT, null_pct, 12);
             let pt = primitive_type.clone();
+            let options = options.clone();
             cases.push(EncodeBenchCase {
                 name: format!("decimal_byte_array_{label}_plain_n{null_pct}"),
                 row_count: ROW_COUNT,
@@ -1192,9 +1229,10 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                             &data.offsets,
                             &data.data,
                             0,
-                            options,
+                            options.clone(),
                             pt.clone(),
                             Encoding::Plain,
+                            None,
                         )
                         .expect("encode"),
                     );

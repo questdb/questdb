@@ -180,6 +180,7 @@ fn write_options() -> WriteOptions {
         raw_array_encoding: true,
         bloom_filter_columns: HashSet::new(),
         bloom_filter_fpp: 0.01,
+        min_compression_ratio: 0.0,
     }
 }
 
@@ -1785,6 +1786,7 @@ fn build_cases() -> Vec<BenchCase> {
 
     // Decimal256 target (precision 60): odd len close to 32 to exercise multi-word sign-extension.
     decimal_flba_cases!(cases, options, 31, 60usize, 6usize, "decimal_flba31_dec256");
+    decimal_flba_cases!(cases, options, 32, 60usize, 6usize, "decimal_flba32_dec256");
 
     // Variable-length types — each uses a different page function with different args
     for &encoding in &LEN_ENCODINGS {

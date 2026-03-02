@@ -74,6 +74,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
+    public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
+    public final static short DROP_PARQUET_ENCODING = SET_PARQUET_ENCODING + 1; // 27
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -204,6 +206,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case SET_MAT_VIEW_REFRESH:
                     setMatViewRefresh(svc);
+                    break;
+                case SET_PARQUET_ENCODING:
+                    setParquetEncoding(svc);
+                    break;
+                case DROP_PARQUET_ENCODING:
+                    dropParquetEncoding(svc);
                     break;
                 default:
                     LOG.error()
@@ -677,6 +685,24 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             e.position(columnNamePosition);
             throw e;
         }
+    }
+
+    private void setParquetEncoding(MetadataService svc) {
+        if (activeExtraStrInfo.size() != 1) {
+            throw CairoException.nonCritical().put("invalid set parquet encoding alter statement");
+        }
+        CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        int parquetEncodingConfig = (int) extraInfo.get(0);
+        svc.setColumnParquetEncoding(columnName, parquetEncodingConfig);
+    }
+
+    private void dropParquetEncoding(MetadataService svc) {
+        if (activeExtraStrInfo.size() != 1) {
+            throw CairoException.nonCritical().put("invalid drop parquet encoding alter statement");
+        }
+        CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        int dropFlags = (int) extraInfo.get(0);
+        svc.dropColumnParquetEncoding(columnName, dropFlags);
     }
 
     private void changeSymbolCapacity(MetadataService svc) {

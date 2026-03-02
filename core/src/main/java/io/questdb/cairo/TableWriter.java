@@ -1468,6 +1468,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
                     final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
+                    final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
@@ -1481,7 +1482,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     columnName,
                                     encodeColumnType,
                                     columnId,
-                                    columnTop
+                                    columnTop,
+                                    parquetEncodingConfig
                             );
 
                             final long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
@@ -1518,7 +1520,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // recover the partition path
                             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
                         } else if (ColumnType.isVarSize(columnType)) {
-                            partitionDescriptor.addColumn(columnName, columnType, columnId, columnTop);
+                            partitionDescriptor.addColumn(columnName, columnType, columnId, columnTop, parquetEncodingConfig);
 
                             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                             final long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
@@ -1559,7 +1561,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     0,
                                     0,
                                     0,
-                                    0
+                                    0,
+                                    parquetEncodingConfig
                             );
                         }
                     } else {
@@ -1568,7 +1571,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 columnName,
                                 columnType,
                                 columnId,
-                                partitionRowCount
+                                partitionRowCount,
+                                parquetEncodingConfig
                         );
                     }
                 }
@@ -1581,6 +1585,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean statisticsEnabled = config.isPartitionEncoderParquetStatisticsEnabled();
                 final boolean rawArrayEncoding = config.isPartitionEncoderParquetRawArrayEncoding();
                 final int parquetVersion = config.getPartitionEncoderParquetVersion();
+                final double minCompressionRatio = config.getPartitionEncoderParquetMinCompressionRatio();
 
                 long bloomFilterColumnIndexesPtr = 0;
                 int bloomFilterColumnCount = 0;
@@ -1605,7 +1610,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             parquetVersion,
                             bloomFilterColumnIndexesPtr,
                             bloomFilterColumnCount,
-                            fpp
+                            fpp,
+                            minCompressionRatio
                     );
                 } finally {
                     Misc.free(bloomFilterIndexes);
@@ -2899,6 +2905,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Record column structure version bump in txn file for WAL sequencer structure version to match the writer structure version.
         bumpColumnStructureVersion();
+    }
+
+    @Override
+    public void dropColumnParquetEncoding(CharSequence columnName, int dropFlags) {
+        checkDistressed();
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex < 0) {
+            LOG.error().$("cannot drop parquet encoding, column does not exist [table=").$(tableToken)
+                    .$(", column=").$safe(columnName).I$();
+            return;
+        }
+        commit();
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+        int currentConfig = columnMetadata.getParquetEncodingConfig();
+        boolean dropEncoding = (dropFlags & 1) != 0;
+        boolean dropCompression = (dropFlags & 2) != 0;
+
+        int newConfig;
+        if (dropEncoding && dropCompression) {
+            newConfig = 0;
+        } else {
+            int encoding = dropEncoding ? 0 : TableUtils.getParquetConfigEncoding(currentConfig);
+            int compression = dropCompression ? 0 : TableUtils.getParquetConfigCompression(currentConfig);
+            int level = dropCompression ? 0 : TableUtils.getParquetConfigCompressionLevel(currentConfig);
+            if (encoding == 0 && compression == 0) {
+                newConfig = 0;
+            } else {
+                newConfig = TableUtils.packParquetConfig(encoding, compression, level);
+            }
+        }
+        columnMetadata.setParquetEncodingConfig(newConfig);
+        writeMetadataToDisk();
+    }
+
+    @Override
+    public void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig) {
+        checkDistressed();
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex < 0) {
+            LOG.error().$("cannot set parquet encoding, column does not exist [table=").$(tableToken)
+                    .$(", column=").$safe(columnName).I$();
+            return;
+        }
+        commit();
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+        columnMetadata.setParquetEncodingConfig(parquetEncodingConfig);
+        writeMetadataToDisk();
     }
 
     @Override
@@ -9754,7 +9807,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 ddlMem.putInt(metadata.getIndexBlockCapacity(i));
                 ddlMem.putInt(metadata.getSymbolCapacity(i));
-                ddlMem.skip(4);
+                ddlMem.putInt(metadata.getParquetEncodingConfig(i));
                 int replaceColumnIndex = metadata.getReplacingColumnIndex(i);
                 ddlMem.putInt(replaceColumnIndex > -1 ? replaceColumnIndex + 1 : 0);
                 ddlMem.skip(4);
