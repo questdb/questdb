@@ -378,13 +378,6 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
-        public Request putByteNoBoundCheckUnsafe(byte b) {
-            checkCapacity(1);
-            Unsafe.getUnsafe().putByte(ptr, b);
-            ptr++;
-            return this;
-        }
-
         @Override
         public Request put(@Nullable CharSequence cs) {
             Utf8Sink.super.put(cs);
