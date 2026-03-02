@@ -95,6 +95,10 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      * Base for the overallocation factor {@code pow(OVERALLOC_BASE, nDims)}: 1D → 1.5x, 2D → 2.25x, 3D → 3.375x.
      */
     private static final double OVERALLOC_BASE = 1.5;
+    /**
+     * Beyond this flat cardinality, overallocation is skipped and exact capacity is used.
+     */
+    private static final int OVERALLOC_CAP = 1024;
 
     /**
      * Scratch: current accumulator shape, read from the compact block header.
@@ -185,7 +189,9 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
             return;
         }
         int flatCardinality = array.getCardinality();
-        int capacity = (int) Math.min(Integer.MAX_VALUE, Math.max(flatCardinality, (long) (flatCardinality * overallocFactor)));
+        int capacity = flatCardinality <= OVERALLOC_CAP
+                ? (int) Math.min(Integer.MAX_VALUE, Math.max(flatCardinality, (long) (flatCardinality * overallocFactor)))
+                : flatCardinality;
         long blockSize = headerSize + (long) capacity * Double.BYTES;
         long ptr = allocator.malloc(blockSize);
 
@@ -424,7 +430,9 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
             mapValue.putLong(valueIndex + 1, newFlatCardinality);
             onShapeGrow(mapValue, accFlatCardinality, capacity, needsRemap);
         } else {
-            long newCapacity = Math.max(newFlatCardinality, (long) (newFlatCardinality * overallocFactor));
+            long newCapacity = newFlatCardinality <= OVERALLOC_CAP
+                    ? Math.max(newFlatCardinality, (long) (newFlatCardinality * overallocFactor))
+                    : newFlatCardinality;
             long newBlockSize = headerSize + newCapacity * Double.BYTES;
             long newPtr = allocator.malloc(newBlockSize);
             writeHeader(newPtr, newShape, newFlatCardinality);
