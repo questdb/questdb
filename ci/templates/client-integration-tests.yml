@@ -1,0 +1,137 @@
+steps:
+  - checkout: self
+    fetchDepth: 1
+    lfs: false
+    submodules: false
+
+  - bash: |
+      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
+      JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+    displayName: "Install JDK and Maven"
+
+  - bash: mkdir -p "$HOME/.m2/repository"
+    displayName: "Ensure .m2/repository exists"
+
+  - bash: git clone --depth 1 https://github.com/questdb/java-questdb-client.git
+    displayName: "Clone java-questdb-client (main)"
+
+  - task: Maven@3
+    displayName: "Build server JAR"
+    inputs:
+      mavenPomFile: "pom.xml"
+      jdkVersionOption: "1.17"
+      goals: "package"
+      options: "--batch-mode -Dmaven.test.skip=true -pl core -am -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+
+  # --- Default config: start server, run tests, stop server ---
+  - bash: |
+      set -e
+      mkdir -p questdb-data
+      cp -r java-questdb-client/ci/confs/default questdb-data/conf
+      mkdir -p logs
+
+      java -p core/target/questdb-*-SNAPSHOT.jar \
+        -m io.questdb/io.questdb.ServerMain \
+        -d questdb-data > logs/questdb.log 2>&1 &
+      echo $! > questdb.pid
+
+      echo "Waiting for QuestDB to start..."
+      for i in {1..30}; do
+        if grep -q "server-main enjoy" logs/questdb.log; then
+          echo "Server started."
+          break
+        fi
+        echo "Waiting..."
+        sleep 2
+      done
+
+      if ! grep -q "server-main enjoy" logs/questdb.log; then
+        echo "QuestDB failed to start:"
+        cat logs/questdb.log
+        exit 1
+      fi
+    displayName: "Start QuestDB (default config)"
+
+  - task: Maven@3
+    displayName: "Run client tests (default config)"
+    inputs:
+      mavenPomFile: "java-questdb-client/core/pom.xml"
+      jdkVersionOption: "1.17"
+      goals: "test"
+      options: "--batch-mode -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+    env:
+      QUESTDB_RUNNING: "true"
+      QUESTDB_ILP_TCP_AUTH_ENABLE: "false"
+
+  - bash: |
+      echo "Stopping QuestDB server..."
+      kill -TERM "$(cat questdb.pid)" || true
+      rm -f questdb.pid
+      rm -rf questdb-data
+    displayName: "Stop QuestDB (default config)"
+    condition: always()
+
+  # --- Authenticated config: start server, run tests, stop server ---
+  - bash: |
+      set -e
+      mkdir -p questdb-data
+      cp -r java-questdb-client/ci/confs/authenticated questdb-data/conf
+      mkdir -p logs
+
+      java -p core/target/questdb-*-SNAPSHOT.jar \
+        -m io.questdb/io.questdb.ServerMain \
+        -d questdb-data > logs/questdb-auth.log 2>&1 &
+      echo $! > questdb.pid
+
+      echo "Waiting for QuestDB to start..."
+      for i in {1..30}; do
+        if grep -q "server-main enjoy" logs/questdb-auth.log; then
+          echo "Server started."
+          break
+        fi
+        echo "Waiting..."
+        sleep 2
+      done
+
+      if ! grep -q "server-main enjoy" logs/questdb-auth.log; then
+        echo "QuestDB failed to start:"
+        cat logs/questdb-auth.log
+        exit 1
+      fi
+    displayName: "Start QuestDB (authenticated config)"
+
+  - task: Maven@3
+    displayName: "Run client tests (authenticated config)"
+    inputs:
+      mavenPomFile: "java-questdb-client/core/pom.xml"
+      jdkVersionOption: "1.17"
+      goals: "test"
+      options: "--batch-mode -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+    env:
+      QUESTDB_RUNNING: "true"
+      QUESTDB_ILP_TCP_AUTH_ENABLE: "true"
+
+  - bash: |
+      echo "Stopping QuestDB server..."
+      kill -TERM "$(cat questdb.pid)" || true
+      rm -f questdb.pid
+      rm -rf questdb-data
+    displayName: "Stop QuestDB (authenticated config)"
+    condition: always()
+
+  # --- On failure: archive logs ---
+  - task: ArchiveFiles@2
+    displayName: "Tests failed -- Compress logs"
+    condition: failed()
+    inputs:
+      rootFolderOrFile: "logs"
+      includeRootFolder: false
+      archiveFile: $(ARCHIVED_LOGS)
+  - task: PublishBuildArtifacts@1
+    displayName: "Tests failed -- Upload logs"
+    condition: failed()
+    inputs:
+      pathToPublish: $(ARCHIVED_LOGS)
+      artifactName: ClientIntegrationTestsLogs
