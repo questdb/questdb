@@ -28,8 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -41,11 +39,8 @@ import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Rows;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -101,7 +96,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowHi());
                             cursor.open();
                             for (long row = frame.getRowHi() - 1; row >= frame.getRowLo(); row--) {
-                                cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), row));
+                                cursor.recordAt(record, TimeFrameCursor.toRowID(frame.getFrameIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
@@ -142,7 +137,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowHi());
                             cursor.open();
                             for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
-                                cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), row));
+                                cursor.recordAt(record, TimeFrameCursor.toRowID(frame.getFrameIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
@@ -157,7 +152,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowHi());
                             cursor.open();
                             for (long row = frame.getRowHi() - 1; row >= frame.getRowLo(); row--) {
-                                cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), row));
+                                cursor.recordAt(record, TimeFrameCursor.toRowID(frame.getFrameIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
@@ -198,7 +193,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowHi());
                             cursor.open();
                             for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
-                                cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), row));
+                                cursor.recordAt(record, TimeFrameCursor.toRowID(frame.getFrameIndex(), row));
                                 actualSink.put(record.getInt(0));
                                 actualSink.put('\t');
                                 actualSink.put(record.getStrA(1));
@@ -235,7 +230,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                         Assert.assertEquals(-1, frame.getRowHi());
                         cursor.open();
                         for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
-                            cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), row));
+                            cursor.recordAt(record, TimeFrameCursor.toRowID(frame.getFrameIndex(), row));
                             actualSink.put(record.getLong(0));
                             actualSink.put('\t');
                             actualSink.put(record.getBool(1));
@@ -496,7 +491,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(-1, frame.getRowLo());
                             Assert.assertEquals(-1, frame.getRowHi());
                             cursor.open();
-                            cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowLo()));
+                            cursor.recordAt(record, TimeFrameCursor.toRowID(frame.getFrameIndex(), frame.getRowLo()));
                             long tsLo = record.getTimestamp(0);
 
                             TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, partitionBy);
@@ -509,7 +504,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             Assert.assertEquals(expectedEstimateTsHi, frame.getTimestampEstimateHi());
 
                             Assert.assertEquals(tsLo, frame.getTimestampLo());
-                            cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowHi() - 1));
+                            cursor.recordAt(record, TimeFrameCursor.toRowID(frame.getFrameIndex(), frame.getRowHi() - 1));
                             long tsHi = record.getTimestamp(0);
                             Assert.assertEquals(tsHi + 1, frame.getTimestampHi());
                         }
@@ -560,7 +555,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                         Assert.assertEquals(-1, frame.getRowLo());
                         Assert.assertEquals(-1, frame.getRowHi());
                         timeFrameCursor.open();
-                        timeFrameCursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowLo()));
+                        timeFrameCursor.recordAt(record, TimeFrameCursor.toRowID(frame.getFrameIndex(), frame.getRowLo()));
                         long tsLo = record.getTimestamp(0);
 
                         TimestampDriver.TimestampFloorMethod floorMethod = PartitionBy.getPartitionFloorMethod(ColumnType.TIMESTAMP, PartitionBy.DAY);
@@ -583,7 +578,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                         }
 
                         Assert.assertEquals(tsLo, frame.getTimestampLo());
-                        timeFrameCursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), frame.getRowHi() - 1));
+                        timeFrameCursor.recordAt(record, TimeFrameCursor.toRowID(frame.getFrameIndex(), frame.getRowHi() - 1));
                         long tsHi = record.getTimestamp(0);
                         Assert.assertEquals(tsHi + 1, frame.getTimestampHi());
                     }

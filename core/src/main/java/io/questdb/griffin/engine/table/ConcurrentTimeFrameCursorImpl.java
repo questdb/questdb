@@ -274,14 +274,14 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         while (lo <= hi) {
             int mid = (lo + hi) >>> 1;
             if (sharedState.getPartitionCeiling(mid) <= timestamp) {
+                result = mid;
                 lo = mid + 1;
             } else {
-                result = mid;
                 hi = mid - 1;
             }
         }
         if (result == -1) {
-            timeFrame.ofEstimate(partitionCount, Long.MIN_VALUE, Long.MIN_VALUE);
+            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
         } else {
             timeFrame.ofEstimate(result,
                     sharedState.getPartitionTimestamp(result),
