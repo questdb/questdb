@@ -294,8 +294,7 @@ public class BoundedWalEventReader extends AbstractBoundedReader {
                     state.getEvents().add(WalEventEntry.ofMatViewInvalidate(txn, recordOffset, recordLength));
             case WalTxnType.VIEW_DEFINITION ->
                     readViewDefinitionPayloadInto(eventFd, recordEnd, scratch, state, issues, payloadOffset, txn, recordOffset, recordLength, eventPathStr);
-            default ->
-                    state.getEvents().add(WalEventEntry.ofUnknown(txn, type, recordOffset, recordLength));
+            default -> state.getEvents().add(WalEventEntry.ofUnknown(txn, type, recordOffset, recordLength));
         }
     }
 

@@ -44,13 +44,23 @@ public final class AnsiColor {
         this.enabled = enabled;
     }
 
-    public String bold(String text) { return enabled ? BOLD + text + RESET : text; }
+    public String bold(String text) {
+        return enabled ? BOLD + text + RESET : text;
+    }
 
-    public String cyan(String text) { return enabled ? CYAN + text + RESET : text; }
+    public String cyan(String text) {
+        return enabled ? CYAN + text + RESET : text;
+    }
 
-    public String green(String text) { return enabled ? GREEN + text + RESET : text; }
+    public String green(String text) {
+        return enabled ? GREEN + text + RESET : text;
+    }
 
-    public String red(String text) { return enabled ? RED + text + RESET : text; }
+    public String red(String text) {
+        return enabled ? RED + text + RESET : text;
+    }
 
-    public String yellow(String text) { return enabled ? YELLOW + text + RESET : text; }
+    public String yellow(String text) {
+        return enabled ? YELLOW + text + RESET : text;
+    }
 }

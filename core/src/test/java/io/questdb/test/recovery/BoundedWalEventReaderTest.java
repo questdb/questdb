@@ -79,6 +79,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(record.length, e.getRawLength());
         });
     }
+
     @Test
     public void testMultipleDataEvents() throws Exception {
         assertMemoryLeak(() -> {
@@ -118,6 +119,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(600L, e2.getMaxTimestamp());
         });
     }
+
     @Test
     public void testSqlEvent() throws Exception {
         assertMemoryLeak(() -> {
@@ -140,6 +142,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(TxnState.UNSET_LONG, e.getEndRowID());
         });
     }
+
     @Test
     public void testTruncateEvent() throws Exception {
         assertMemoryLeak(() -> {
@@ -161,6 +164,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(TxnState.UNSET_INT, e.getCmdType());
         });
     }
+
     @Test
     public void testMixedEvents() throws Exception {
         assertMemoryLeak(() -> {
@@ -185,6 +189,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals("TRUNCATE", state.getEvents().getQuick(2).getTypeName());
         });
     }
+
     @Test
     public void testMatViewDataEvent() throws Exception {
         assertMemoryLeak(() -> {
@@ -208,6 +213,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(e.isOutOfOrder());
         });
     }
+
     @Test
     public void testMatViewInvalidateEvent() throws Exception {
         assertMemoryLeak(() -> {
@@ -227,6 +233,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(TxnState.UNSET_LONG, e.getStartRowID());
         });
     }
+
     @Test
     public void testViewDefinitionEvent() throws Exception {
         assertMemoryLeak(() -> {
@@ -247,6 +254,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(viewSql, e.getSqlText());
         });
     }
+
     @Test
     public void testUnknownEventType() throws Exception {
         assertMemoryLeak(() -> {
@@ -265,6 +273,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals("UNKNOWN(127)", e.getTypeName());
         });
     }
+
     @Test
     public void testReadForSegment() throws Exception {
         assertMemoryLeak(() -> {
@@ -293,6 +302,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(state.getEventIndexPath().contains(WalUtils.EVENT_INDEX_FILE_NAME));
         });
     }
+
     @Test
     public void testSqlWithZeroLengthText() throws Exception {
         assertMemoryLeak(() -> {
@@ -315,6 +325,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertNull(e.getSqlText());
         });
     }
+
     @Test
     public void testSqlWithNegativeLengthText() throws Exception {
         assertMemoryLeak(() -> {
@@ -334,6 +345,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertNull(state.getEvents().getQuick(0).getSqlText());
         });
     }
+
     @Test
     public void testSqlWithLongTextTruncation() throws Exception {
         assertMemoryLeak(() -> {
@@ -358,6 +370,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(1024, sqlText.indexOf("...(truncated)"));
         });
     }
+
     @Test
     public void testEmptySegment() throws Exception {
         assertMemoryLeak(() -> {
@@ -370,6 +383,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(0, state.getEvents().size());
         });
     }
+
     @Test
     public void testTruncatedEventHeader() throws Exception {
         assertMemoryLeak(() -> {
@@ -383,6 +397,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssueContaining(state, "_event file is shorter than header"));
         });
     }
+
     @Test
     public void testMissingEventFile() throws Exception {
         assertMemoryLeak(() -> {
@@ -392,6 +407,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssue(state, RecoveryIssueCode.MISSING_FILE));
         });
     }
+
     @Test
     public void testMissingEventIndexFile() throws Exception {
         assertMemoryLeak(() -> {
@@ -404,6 +420,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssue(state, RecoveryIssueCode.MISSING_FILE));
         });
     }
+
     @Test
     public void testNegativeMaxTxnCorrupt() throws Exception {
         assertMemoryLeak(() -> {
@@ -434,6 +451,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(0, state.getEvents().size());
         });
     }
+
     @Test
     public void testInvalidOffsetBelowHeader() throws Exception {
         assertMemoryLeak(() -> {
@@ -463,6 +481,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssue(state, RecoveryIssueCode.INVALID_OFFSET));
         });
     }
+
     @Test
     public void testRecordLengthOverflow() throws Exception {
         assertMemoryLeak(() -> {
@@ -486,6 +505,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssueContaining(state, "event record extends beyond file"));
         });
     }
+
     @Test
     public void testRecordTooShort() throws Exception {
         assertMemoryLeak(() -> {
@@ -503,6 +523,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssueContaining(state, "event record too short"));
         });
     }
+
     @Test
     public void testEofMarkerStopsReading() throws Exception {
         assertMemoryLeak(() -> {
@@ -549,6 +570,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(1, state.getEvents().size());
         });
     }
+
     @Test
     public void testTxnMismatchWarning() throws Exception {
         assertMemoryLeak(() -> {
@@ -566,6 +588,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(1, state.getEvents().size());
         });
     }
+
     @Test
     public void testTruncatedEventIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -587,6 +610,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(2, state.getEvents().size());
         });
     }
+
     @Test
     public void testMaxEventsCap() throws Exception {
         assertMemoryLeak(() -> {
@@ -612,6 +636,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssueContaining(state, "event list capped"));
         });
     }
+
     @Test
     public void testMaxEventsCapWithTruncatedIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -643,6 +668,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssue(state, RecoveryIssueCode.TRUNCATED_OUTPUT));
         });
     }
+
     @Test
     public void testDataWithOutOfOrder() throws Exception {
         assertMemoryLeak(() -> {
@@ -657,6 +683,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(state.getEvents().getQuick(0).isOutOfOrder());
         });
     }
+
     @Test
     public void testMultipleSegmentsViaReadForSegment() throws Exception {
         assertMemoryLeak(() -> {
@@ -682,6 +709,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             }
         });
     }
+
     @Test
     public void testFormatVersionPreserved() throws Exception {
         assertMemoryLeak(() -> {
@@ -692,6 +720,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(42, state.getFormatVersion());
         });
     }
+
     @Test
     public void testEventFileSizePreserved() throws Exception {
         assertMemoryLeak(() -> {
@@ -705,6 +734,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(WALE_HEADER_SIZE + record.length, state.getEventFileSize());
         });
     }
+
     @Test
     public void testEventIndexFileSizePreserved() throws Exception {
         assertMemoryLeak(() -> {
@@ -719,6 +749,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals((1 + 1) * Long.BYTES, state.getEventIndexFileSize());
         });
     }
+
     @Test
     public void testEventPathsPreserved() throws Exception {
         assertMemoryLeak(() -> {
@@ -735,6 +766,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(state.getEventIndexPath().contains(WalUtils.EVENT_INDEX_FILE_NAME));
         });
     }
+
     @Test
     public void testDataWithZeroRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -752,6 +784,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(50, e.getEndRowID());
         });
     }
+
     @Test
     public void testLargeMaxTxnWithSmallFile() throws Exception {
         assertMemoryLeak(() -> {
@@ -772,6 +805,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(2, state.getEvents().size());
         });
     }
+
     @Test
     public void testMaxEventsClampedToOne() throws Exception {
         assertMemoryLeak(() -> {
@@ -791,6 +825,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssue(state, RecoveryIssueCode.TRUNCATED_OUTPUT));
         });
     }
+
     @Test
     public void testDefaultConstructor() throws Exception {
         assertMemoryLeak(() -> {
@@ -806,6 +841,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(1, state.getEvents().size());
         });
     }
+
     @Test
     public void testMaxTxnStoredOnError() throws Exception {
         assertMemoryLeak(() -> {
@@ -820,6 +856,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssue(state, RecoveryIssueCode.CORRUPT_WAL_EVENT));
         });
     }
+
     @Test
     public void testFormatVersionStoredOnNegativeMaxTxn() throws Exception {
         assertMemoryLeak(() -> {
@@ -834,6 +871,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(-1, state.getMaxTxn());
         });
     }
+
     @Test
     public void testAllEventTypesInOneBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -871,6 +909,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals("UNKNOWN(99)", state.getEvents().getQuick(6).getTypeName());
         });
     }
+
     @Test
     public void testRawOffsetAndLengthForSqlEvent() throws Exception {
         assertMemoryLeak(() -> {
@@ -887,6 +926,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(record.length, e.getRawLength());
         });
     }
+
     @Test
     public void testViewDefinitionWithNullViewSql() throws Exception {
         assertMemoryLeak(() -> {
@@ -905,6 +945,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertNull(state.getEvents().getQuick(0).getSqlText());
         });
     }
+
     @Test
     public void testUnsetStateWhenEventFileMissing() throws Exception {
         assertMemoryLeak(() -> {
@@ -917,6 +958,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertEquals(0, state.getEvents().size());
         });
     }
+
     @Test
     public void testSqlWithExact1024Chars() throws Exception {
         assertMemoryLeak(() -> {
@@ -939,6 +981,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertFalse(sqlText.contains("truncated"));
         });
     }
+
     @Test
     public void testSqlTextExtendsBeyondFile() throws Exception {
         assertMemoryLeak(() -> {
@@ -968,6 +1011,7 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
             Assert.assertTrue(hasIssueContaining(state, "SQL text extends beyond file"));
         });
     }
+
     @Test
     public void testTxnFieldMatchesExpected() throws Exception {
         assertMemoryLeak(() -> {
@@ -1202,9 +1246,9 @@ public class BoundedWalEventReaderTest extends AbstractCairoTest {
      * The provided offsets should contain the record offsets followed by the end-of-records sentinel.
      * Any remaining entries are padded with the last provided offset value.
      *
-     * @param dir            directory to write into
-     * @param eventCount     the number of events (determines required entry count)
-     * @param recordOffsets  record offsets (entry[0]..entry[N-1]) plus end sentinel
+     * @param dir           directory to write into
+     * @param eventCount    the number of events (determines required entry count)
+     * @param recordOffsets record offsets (entry[0]..entry[N-1]) plus end sentinel
      */
     private static void writeFullEventIndex(String dir, int eventCount, long... recordOffsets) throws IOException {
         int requiredEntries = eventCount + 1;

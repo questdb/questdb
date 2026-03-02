@@ -24,7 +24,9 @@
 
 package io.questdb.recovery;
 
-/** Per-column validation outcome. */
+/**
+ * Per-column validation outcome.
+ */
 public enum ColumnCheckStatus {
     ERROR,
     OK,

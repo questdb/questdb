@@ -24,7 +24,9 @@
 
 package io.questdb.recovery;
 
-/** Navigation level within the WAL hierarchy. */
+/**
+ * Navigation level within the WAL hierarchy.
+ */
 public enum WalLevel {
     WAL_ROOT,
     WAL_DIR,

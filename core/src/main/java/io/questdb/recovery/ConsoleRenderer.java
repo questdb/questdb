@@ -418,7 +418,8 @@ public class ConsoleRenderer {
                 switch (entry.status()) {
                     case ORPHAN -> orphanCount++;
                     case MISSING -> missingCount++;
-                    default -> {}
+                    default -> {
+                    }
                 }
                 if (part != null) {
                     totalRows += entry.rowCount();

@@ -1903,7 +1903,7 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     @Test
-public void testLsShowsTransientRowCountForLastPartition() throws Exception {
+    public void testLsShowsTransientRowCountForLastPartition() throws Exception {
         assertMemoryLeak(() -> {
             // 2 rows across 2 day-partitions: 1970-01-01 (1 row) and 1970-01-02 (1 row).
             // The last partition's row count is stored as transientRowCount in the _txn

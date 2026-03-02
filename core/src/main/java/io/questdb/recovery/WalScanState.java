@@ -26,7 +26,9 @@ package io.questdb.recovery;
 
 import io.questdb.std.ObjList;
 
-/** Result of a WAL directory scan for a table. */
+/**
+ * Result of a WAL directory scan for a table.
+ */
 public final class WalScanState {
     private final ObjList<WalDirEntry> entries;
     private final ObjList<ReadIssue> issues;

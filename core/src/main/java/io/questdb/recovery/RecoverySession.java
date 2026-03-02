@@ -213,7 +213,6 @@ public class RecoverySession {
     }
 
 
-
     private static void cmdCd(String arg, CommandContext ctx, PrintStream out, PrintStream err) {
         NavigationContext nav = ctx.getNav();
         if (nav.cd(arg, err)) {
@@ -1324,7 +1323,6 @@ public class RecoverySession {
 
         err.println("event not found: segmentTxn " + found.getSegmentTxn() + " in wal" + found.getWalId() + "/" + found.getSegmentId());
     }
-
 
 
     private static void checkAllPartitions(

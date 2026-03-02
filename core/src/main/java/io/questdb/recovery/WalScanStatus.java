@@ -24,12 +24,20 @@
 
 package io.questdb.recovery;
 
-/** Cross-reference status between WAL dirs on disk and sequencer txnlog entries. */
+/**
+ * Cross-reference status between WAL dirs on disk and sequencer txnlog entries.
+ */
 public enum WalScanStatus {
-    /** WAL dir is referenced in the sequencer txnlog but missing from disk. */
+    /**
+     * WAL dir is referenced in the sequencer txnlog but missing from disk.
+     */
     MISSING,
-    /** WAL dir exists but is not referenced in the sequencer txnlog. */
+    /**
+     * WAL dir exists but is not referenced in the sequencer txnlog.
+     */
     ORPHAN,
-    /** WAL dir is referenced in the sequencer txnlog and exists on disk. */
+    /**
+     * WAL dir is referenced in the sequencer txnlog and exists on disk.
+     */
     REFERENCED
 }

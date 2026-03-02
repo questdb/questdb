@@ -24,7 +24,9 @@
 
 package io.questdb.recovery;
 
-/** Severity levels for issues found during file reading and validation. */
+/**
+ * Severity levels for issues found during file reading and validation.
+ */
 public enum RecoveryIssueSeverity {
     INFO,
     WARN,
