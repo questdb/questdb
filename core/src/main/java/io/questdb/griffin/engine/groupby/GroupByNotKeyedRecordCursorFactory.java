@@ -158,8 +158,8 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         // because we use it as symbol table source for the functions
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private boolean isExhausted = false;
-        private boolean isValueBuilt = false;
+        private boolean isExhausted;
+        private boolean isValueBuilt;
 
         public GroupByNotKeyedRecordCursor(
                 CairoConfiguration configuration,

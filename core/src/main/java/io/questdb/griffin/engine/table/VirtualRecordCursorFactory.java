@@ -109,6 +109,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    public int getColumnComplexity(int columnIndex) {
+        return functions.getQuick(columnIndex).getComplexity();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = base.getCursor(executionContext);
@@ -121,6 +125,14 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.close();
             throw th;
         }
+    }
+
+    public ObjList<Function> getFunctions() {
+        return functions;
+    }
+
+    public PriorityMetadata getPriorityMetadata() {
+        return priorityMetadata;
     }
 
     @Override

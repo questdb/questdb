@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -53,7 +52,7 @@ public class BitwiseAndLongFunctionFactory implements FunctionFactory {
         return new BitAndLongFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    public static final class BitAndLongFunction extends LongFunction implements BinaryFunction {
+    public static final class BitAndLongFunction extends LongFunction implements ArithmeticBinaryFunction {
         private final Function left;
         private final Function right;
 

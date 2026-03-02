@@ -132,6 +132,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull CheckpointListener getCheckpointListener() {
+        return getDelegate().getCheckpointListener();
+    }
+
+    @Override
     public boolean getCheckpointRecoveryRebuildColumnIndexes() {
         return getDelegate().getCheckpointRecoveryRebuildColumnIndexes();
     }
@@ -942,6 +947,26 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlHorizonJoinMaxOffsets() {
+        return getDelegate().getSqlHorizonJoinMaxOffsets();
+    }
+
+    @Override
+    public int getSqlIntervalIncrementalMergeThreshold() {
+        return getDelegate().getSqlIntervalIncrementalMergeThreshold();
+    }
+
+    @Override
+    public int getSqlIntervalMaxBracketDepth() {
+        return getDelegate().getSqlIntervalMaxBracketDepth();
+    }
+
+    @Override
+    public int getSqlIntervalMaxIntervalsAfterMerge() {
+        return getDelegate().getSqlIntervalMaxIntervalsAfterMerge();
+    }
+
+    @Override
     public int getSqlJitBindVarsMemoryMaxPages() {
         return getDelegate().getSqlJitBindVarsMemoryMaxPages();
     }
@@ -1042,13 +1067,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParallelWorkStealingThreshold() {
-        return getDelegate().getSqlParallelWorkStealingThreshold();
+    public long getSqlParallelWorkStealingSpinTimeout() {
+        return getDelegate().getSqlParallelWorkStealingSpinTimeout();
     }
 
     @Override
-    public long getSqlParallelWorkStealingSpinTimeout() {
-        return getDelegate().getSqlParallelWorkStealingSpinTimeout();
+    public int getSqlParallelWorkStealingThreshold() {
+        return getDelegate().getSqlParallelWorkStealingThreshold();
     }
 
     @Override
@@ -1079,6 +1104,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlSmallPageFrameMinRows() {
         return getDelegate().getSqlSmallPageFrameMinRows();
+    }
+
+    @Override
+    public int getSqlSortKeyMaterializationThreshold() {
+        return getDelegate().getSqlSortKeyMaterializationThreshold();
     }
 
     @Override
@@ -1157,21 +1187,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlIntervalIncrementalMergeThreshold() {
-        return getDelegate().getSqlIntervalIncrementalMergeThreshold();
-    }
-
-    @Override
-    public int getSqlIntervalMaxBracketDepth() {
-        return getDelegate().getSqlIntervalMaxBracketDepth();
-    }
-
-    @Override
-    public int getSqlIntervalMaxIntervalsAfterMerge() {
-        return getDelegate().getSqlIntervalMaxIntervalsAfterMerge();
-    }
-
-    @Override
     public int getStrFunctionMaxBufferLength() {
         return getDelegate().getStrFunctionMaxBufferLength();
     }
@@ -1239,6 +1254,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getTxnScoreboardEntryCount() {
         return getDelegate().getTxnScoreboardEntryCount();
+    }
+
+    @Override
+    public int getUnorderedPageFrameReduceQueueCapacity() {
+        return getDelegate().getUnorderedPageFrameReduceQueueCapacity();
     }
 
     @Override
@@ -1504,6 +1524,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelGroupByEnabled() {
         return getDelegate().isSqlParallelGroupByEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelHorizonJoinEnabled() {
+        return getDelegate().isSqlParallelHorizonJoinEnabled();
     }
 
     @Override

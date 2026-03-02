@@ -26,18 +26,13 @@ package io.questdb.test.cutlass.line.interop;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.histogram.org.HdrHistogram.Base64Helper;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -105,6 +100,70 @@ public class ClientInteropTest {
         public JsonTestSuiteParser(Sender sender, ByteChannel channel) {
             this.sender = sender;
             this.byteChannel = channel;
+        }
+
+        private static CharSequence unescape(CharSequence tag, StringSink stringSink) {
+            if (tag == null) {
+                return null;
+            }
+            stringSink.clear();
+
+            for (int i = 0, n = tag.length(); i < n; i++) {
+                char sourceChar = tag.charAt(i);
+                if (sourceChar != '\\') {
+                    // happy-path, nothing to unescape
+                    stringSink.put(sourceChar);
+                } else {
+                    // slow path. either there is a code unit sequence. think of this: foo\u0001bar
+                    // or a simple escaping: \n, \r, \\, \", etc.
+                    // in both cases we will consume more than 1 character from the input,
+                    // so we have to adjust "i" accordingly
+
+                    // malformed input could throw IndexOutOfBoundsException, but given we control
+                    // the test data then we are OK.
+                    char nextChar = tag.charAt(i + 1);
+                    if (nextChar == 'u') {
+                        // code unit sequence
+                        char ch;
+                        try {
+                            ch = (char) Numbers.parseHexInt(tag, i + 2, i + 6);
+                        } catch (NumericException e) {
+                            throw new AssertionError("cannot parse code sequence in " + tag);
+                        }
+                        stringSink.put(ch);
+                        i += 5;
+                    } else if (nextChar == '\\') {
+                        stringSink.put('\\');
+                        i++;
+                    } else if (nextChar == '\"') {
+                        stringSink.put('\"');
+                        i++;
+                    } else if (nextChar == 'b') {
+                        // backspace
+                        stringSink.put('\b');
+                        i++;
+                    } else if (nextChar == 'f') {
+                        // form-feed
+                        stringSink.put('\f');
+                        i++;
+                    } else if (nextChar == 'n') {
+                        // new line
+                        stringSink.put('\n');
+                        i++;
+                    } else if (nextChar == 'r') {
+                        // carriage return
+                        stringSink.put('\r');
+                        i++;
+                    } else if (nextChar == 't') {
+                        // tab
+                        stringSink.put('\t');
+                        i++;
+                    } else {
+                        throw new AssertionError("Unknown escaping sequence at " + tag);
+                    }
+                }
+            }
+            return stringSink.toString();
         }
 
         @Override
@@ -256,70 +315,6 @@ public class ClientInteropTest {
                     }
                     break;
             }
-        }
-
-        private static CharSequence unescape(CharSequence tag, StringSink stringSink) {
-            if (tag == null) {
-                return null;
-            }
-            stringSink.clear();
-
-            for (int i = 0, n = tag.length(); i < n; i++) {
-                char sourceChar = tag.charAt(i);
-                if (sourceChar != '\\') {
-                    // happy-path, nothing to unescape
-                    stringSink.put(sourceChar);
-                } else {
-                    // slow path. either there is a code unit sequence. think of this: foo\u0001bar
-                    // or a simple escaping: \n, \r, \\, \", etc.
-                    // in both cases we will consume more than 1 character from the input,
-                    // so we have to adjust "i" accordingly
-
-                    // malformed input could throw IndexOutOfBoundsException, but given we control
-                    // the test data then we are OK.
-                    char nextChar = tag.charAt(i + 1);
-                    if (nextChar == 'u') {
-                        // code unit sequence
-                        char ch;
-                        try {
-                            ch = (char) Numbers.parseHexInt(tag, i + 2, i + 6);
-                        } catch (NumericException e) {
-                            throw new AssertionError("cannot parse code sequence in " + tag);
-                        }
-                        stringSink.put(ch);
-                        i += 5;
-                    } else if (nextChar == '\\') {
-                        stringSink.put('\\');
-                        i++;
-                    } else if (nextChar == '\"') {
-                        stringSink.put('\"');
-                        i++;
-                    } else if (nextChar == 'b') {
-                        // backspace
-                        stringSink.put('\b');
-                        i++;
-                    } else if (nextChar == 'f') {
-                        // form-feed
-                        stringSink.put('\f');
-                        i++;
-                    } else if (nextChar == 'n') {
-                        // new line
-                        stringSink.put('\n');
-                        i++;
-                    } else if (nextChar == 'r') {
-                        // carriage return
-                        stringSink.put('\r');
-                        i++;
-                    } else if (nextChar == 't') {
-                        // tab
-                        stringSink.put('\t');
-                        i++;
-                    } else {
-                        throw new AssertionError("Unknown escaping sequence at " + tag);
-                    }
-                }
-            }
-            return stringSink.toString();
         }
 
         private void assertSuccessfulLine(byte[] tag) {

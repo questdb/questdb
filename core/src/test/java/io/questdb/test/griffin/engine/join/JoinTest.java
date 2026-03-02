@@ -2008,6 +2008,29 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinWithMultiColumnQualifiedJoinKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (event INT, origin INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 1, '2024-01-01T00:00:00.000000Z'), (2, 2, '2024-01-02T00:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            origin\tcount
+                            1\t4
+                            2\t4
+                            """,
+                    "SELECT T1.origin, count(*) " +
+                            "FROM t T1 " +
+                            "CROSS JOIN t T2 " +
+                            "CROSS JOIN t T3 " +
+                            "JOIN t T4 ON T3.event = T4.event AND T3.origin = T4.origin " +
+                            "GROUP BY T1.origin " +
+                            "ORDER BY T1.origin",
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testCrossTripleOverflow() throws Exception {
         assertMemoryLeak(() -> {
             try (RecordCursorFactory factory = select("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c")) {

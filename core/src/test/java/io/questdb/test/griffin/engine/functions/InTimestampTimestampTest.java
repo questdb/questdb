@@ -24,11 +24,14 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVariableTestTuple;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class InTimestampTimestampTest extends AbstractCairoTest {
@@ -198,5 +201,34 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 49,
                 "cannot compare TIMESTAMP with type BOOLEAN"
         );
+    }
+
+    @Test
+    public void testNowInTickExprWithDateVariableReevaluatesOnCachedExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            // T1 = 1_000_000_000 micros (1000 seconds since epoch)
+            long t1 = 1_000_000_000L;
+            setCurrentMicros(t1);
+
+            // Compile the query once; the factory will be reused (cached)
+            try (RecordCursorFactory factory = select(
+                    "SELECT 1 AS v FROM long_sequence(1) WHERE now() IN '$now-100s..$now'"
+            )) {
+                // First execution: now() == T1, interval is [T1-100s, T1] — should match
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue("first execution should return a row", cursor.hasNext());
+                }
+
+                // Advance now by 200 seconds (well past the first interval)
+                long t2 = t1 + 200_000_000L;
+                setCurrentMicros(t2);
+
+                // Second execution with the same factory: now() == T2,
+                // interval must re-evaluate to [T2-100s, T2] — should still match
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue("second execution should return a row after now() advances", cursor.hasNext());
+                }
+            }
+        });
     }
 }
