@@ -237,6 +237,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         Misc.free(parquetDecoder);
     }
 
+    /**
+     * Switches the address cache without resetting parquet state.
+     * Invalidates the cached frame memory so the next {@link #navigateTo}
+     * call re-reads from the new cache.
+     */
+    public void switchAddressCache(PageFrameAddressCache addressCache) {
+        this.addressCache = addressCache;
+        frameMemory.clear();
+    }
+
     @Override
     public void recordAt(Record record, long atRowId) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;

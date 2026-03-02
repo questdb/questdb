@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
@@ -228,23 +229,13 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor pageFrameCursor,
-            PageFrameAddressCache frameAddressCache,
-            DirectIntList framePartitionIndexes,
-            LongList frameRowCounts,
-            LongList partitionTimestamps,
-            LongList partitionCeilings,
-            int frameCount
+            ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         super.initTimeFrameCursors(
                 executionContext,
                 masterSymbolTableSource,
                 pageFrameCursor,
-                frameAddressCache,
-                framePartitionIndexes,
-                frameRowCounts,
-                partitionTimestamps,
-                partitionCeilings,
-                frameCount
+                sharedState
         );
 
         slaveSymbolLookupMap.reopen();

@@ -56,7 +56,6 @@ import io.questdb.std.ObjList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
-import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
 class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
@@ -68,12 +67,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final ObjList<Function> recordFunctions;
     private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
     private final RecordCursorFactory slaveFactory;
-    private final LongList slavePartitionCeilings = new LongList();
-    private final LongList slavePartitionTimestamps = new LongList();
-    // Slave time frame cache data
-    private final PageFrameAddressCache slaveTimeFrameAddressCache;
-    private final DirectIntList slaveTimeFramePartitionIndexes;
-    private final LongList slaveTimeFrameRowCounts = new LongList();
+    private final ConcurrentTimeFrameState slaveTimeFrameState = new ConcurrentTimeFrameState();
     private SqlExecutionCircuitBreaker circuitBreaker;
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence;
@@ -97,8 +91,6 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             this.slaveFactory = slaveFactory;
             this.recordA = new VirtualRecord(recordFunctions);
             this.recordB = new VirtualRecord(recordFunctions);
-            this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
-            this.slaveTimeFramePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
             close();
             throw th;
@@ -124,8 +116,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                 // Free shared resources only after workers have finished
                 mapCursor = Misc.free(mapCursor);
                 slaveFrameCursor = Misc.free(slaveFrameCursor);
-                Misc.free(slaveTimeFrameAddressCache);
-                Misc.free(slaveTimeFramePartitionIndexes);
+                Misc.free(slaveTimeFrameState);
                 isOpen = false;
             }
         }
@@ -227,45 +218,23 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
-            final int frameCount = initializeSlaveTimeFrameCache();
-            populatePartitionTimestamps(slaveFrameCursor, slavePartitionTimestamps, slavePartitionCeilings);
-            initializeTimeFrameCursors(frameCount);
-            isSlaveTimeFrameCacheBuilt = true;
-        }
-    }
-
-    private int initializeSlaveTimeFrameCache() {
-        RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
-        slaveTimeFramePartitionIndexes.reopen();
-        slaveTimeFramePartitionIndexes.clear();
-        slaveTimeFrameRowCounts.clear();
-
-        int frameCount = 0;
-        PageFrame frame;
-        while ((frame = slaveFrameCursor.next()) != null) {
-            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
-            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-            slaveTimeFrameAddressCache.add(frameCount++, frame);
-        }
-        return frameCount;
-    }
-
-    private void initializeTimeFrameCursors(int frameCount) {
-        try {
-            frameSequence.getAtom().initTimeFrameCursors(
-                    executionContext,
-                    frameSequence.getSymbolTableSource(),
+            slaveTimeFrameState.of(
                     slaveFrameCursor,
-                    slaveTimeFrameAddressCache,
-                    slaveTimeFramePartitionIndexes,
-                    slaveTimeFrameRowCounts,
-                    slavePartitionTimestamps,
-                    slavePartitionCeilings,
-                    frameCount
+                    slaveFactory.getMetadata(),
+                    slaveFrameCursor.getColumnIndexes(),
+                    slaveFrameCursor.isExternal()
             );
-        } catch (SqlException e) {
-            throw CairoException.nonCritical().put(e.getFlyweightMessage());
+            try {
+                frameSequence.getAtom().initTimeFrameCursors(
+                        executionContext,
+                        frameSequence.getSymbolTableSource(),
+                        slaveFrameCursor,
+                        slaveTimeFrameState
+                );
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().put(e.getFlyweightMessage());
+            }
+            isSlaveTimeFrameCacheBuilt = true;
         }
     }
 

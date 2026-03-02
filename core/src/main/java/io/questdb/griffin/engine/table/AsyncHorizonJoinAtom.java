@@ -232,23 +232,13 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
-            PageFrameAddressCache slaveFrameAddressCache,
-            DirectIntList slaveFramePartitionIndexes,
-            LongList slaveFrameRowCounts,
-            LongList slavePartitionTimestamps,
-            LongList slavePartitionCeilings,
-            int frameCount
+            ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         super.initTimeFrameCursors(
                 executionContext,
                 masterSymbolTableSource,
                 slavePageFrameCursor,
-                slaveFrameAddressCache,
-                slaveFramePartitionIndexes,
-                slaveFrameRowCounts,
-                slavePartitionTimestamps,
-                slavePartitionCeilings,
-                frameCount
+                sharedState
         );
 
         // Initialize key functions (for expression keys) with combined symbol table source

@@ -30,7 +30,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.Record;
@@ -47,7 +46,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -295,16 +293,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public ConcurrentTimeFrameCursor of(
+                ConcurrentTimeFrameState sharedState,
                 TablePageFrameCursor frameCursor,
-                PageFrameAddressCache frameAddressCache,
-                DirectIntList framePartitionIndexes,
-                LongList frameRowCounts,
-                LongList partitionTimestamps,
-                LongList partitionCeilings,
-                int frameCount,
                 int timestampIndex
         ) {
-            delegate.of(frameCursor, frameAddressCache, framePartitionIndexes, frameRowCounts, partitionTimestamps, partitionCeilings, frameCount, selectedTimestampIndex);
+            delegate.of(sharedState, frameCursor, selectedTimestampIndex);
             return this;
         }
 

@@ -76,6 +76,18 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
     }
 
     /**
+     * Positions the cursor at the given partition index. The next call to
+     * {@link #next(long)} will return the frame for this partition. Iteration
+     * is limited to this single partition — subsequent {@link #next(long)}
+     * calls return {@code null} once the partition is exhausted.
+     *
+     * @param partitionIndex the target partition index
+     */
+    default void toPartition(int partitionIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Return the cursor to the first partition frame.
      */
     void toTop();

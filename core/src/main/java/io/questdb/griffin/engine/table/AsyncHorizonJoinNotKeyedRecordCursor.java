@@ -51,18 +51,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
-import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
 class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
     private final RecordCursorFactory slaveFactory;
-    private final LongList slavePartitionCeilings = new LongList();
-    private final LongList slavePartitionTimestamps = new LongList();
-    // Slave time frame cache data
-    private final PageFrameAddressCache slaveTimeFrameAddressCache;
-    private final DirectIntList slaveTimeFramePartitionIndexes;
-    private final LongList slaveTimeFrameRowCounts = new LongList();
+    private final ConcurrentTimeFrameState slaveTimeFrameState = new ConcurrentTimeFrameState();
     private SqlExecutionContext executionContext;
     private UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence;
     private boolean isExhausted;
@@ -80,8 +74,6 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
             this.groupByFunctions = groupByFunctions;
             this.slaveFactory = slaveFactory;
             this.recordA = new VirtualRecord(groupByFunctions);
-            this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
-            this.slaveTimeFramePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
             close();
             throw th;
@@ -108,8 +100,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
                 // Free shared resources only after workers have finished
                 Misc.clearObjList(groupByFunctions);
                 slaveFrameCursor = Misc.free(slaveFrameCursor);
-                Misc.free(slaveTimeFrameAddressCache);
-                Misc.free(slaveTimeFramePartitionIndexes);
+                Misc.free(slaveTimeFrameState);
                 isOpen = false;
             }
         }
@@ -164,9 +155,22 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
 
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
-            final int frameCount = initializeSlaveTimeFrameCache();
-            populatePartitionTimestamps(slaveFrameCursor, slavePartitionTimestamps, slavePartitionCeilings);
-            initializeTimeFrameCursors(frameCount);
+            slaveTimeFrameState.of(
+                    slaveFrameCursor,
+                    slaveFactory.getMetadata(),
+                    slaveFrameCursor.getColumnIndexes(),
+                    slaveFrameCursor.isExternal()
+            );
+            try {
+                frameSequence.getAtom().initTimeFrameCursors(
+                        executionContext,
+                        frameSequence.getSymbolTableSource(),
+                        slaveFrameCursor,
+                        slaveTimeFrameState
+                );
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().put(e.getFlyweightMessage());
+            }
             isSlaveTimeFrameCacheBuilt = true;
         }
     }
@@ -195,41 +199,6 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
         }
 
         isValueBuilt = true;
-    }
-
-    private int initializeSlaveTimeFrameCache() {
-        RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
-        slaveTimeFramePartitionIndexes.reopen();
-        slaveTimeFramePartitionIndexes.clear();
-        slaveTimeFrameRowCounts.clear();
-
-        int frameCount = 0;
-        PageFrame frame;
-        while ((frame = slaveFrameCursor.next()) != null) {
-            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
-            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-            slaveTimeFrameAddressCache.add(frameCount++, frame);
-        }
-        return frameCount;
-    }
-
-    private void initializeTimeFrameCursors(int frameCount) {
-        try {
-            frameSequence.getAtom().initTimeFrameCursors(
-                    executionContext,
-                    frameSequence.getSymbolTableSource(),
-                    slaveFrameCursor,
-                    slaveTimeFrameAddressCache,
-                    slaveTimeFramePartitionIndexes,
-                    slaveTimeFrameRowCounts,
-                    slavePartitionTimestamps,
-                    slavePartitionCeilings,
-                    frameCount
-            );
-        } catch (SqlException e) {
-            throw CairoException.nonCritical().put(e.getFlyweightMessage());
-        }
     }
 
     void of(UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {

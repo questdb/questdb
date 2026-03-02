@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -51,14 +50,13 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.SelectivityStats;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -525,37 +523,14 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor pageFrameCursor,
-            PageFrameAddressCache frameAddressCache,
-            DirectIntList framePartitionIndexes,
-            LongList frameRowCounts,
-            LongList partitionTimestamps,
-            LongList partitionCeilings,
-            int frameCount
+            ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
-        ownerSlaveTimeFrameCursor.of(
-                pageFrameCursor,
-                frameAddressCache,
-                framePartitionIndexes,
-                frameRowCounts,
-                partitionTimestamps,
-                partitionCeilings,
-                frameCount,
-                timestampIndex
-        );
+        ownerSlaveTimeFrameCursor.of(sharedState, pageFrameCursor, timestampIndex);
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
         for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
             final ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
-            workerCursor.of(
-                    pageFrameCursor,
-                    frameAddressCache,
-                    framePartitionIndexes,
-                    frameRowCounts,
-                    partitionTimestamps,
-                    partitionCeilings,
-                    frameCount,
-                    timestampIndex
-            );
+            workerCursor.of(sharedState, pageFrameCursor, timestampIndex);
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 

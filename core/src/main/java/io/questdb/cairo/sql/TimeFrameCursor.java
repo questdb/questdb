@@ -25,45 +25,43 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.std.DirectIntList;
-import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rows;
 
 /**
  * Cursor for time-based navigation. Supports lazy navigation in both directions
  * and random row access.
  */
 public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
+    // Marker bit set on all TimeFrameCursor row IDs (bit 63). Makes row IDs
+    // negative, so misuse against PageFrameMemoryPool (which expects page frame
+    // indices in the upper bits) causes immediate array index out of bounds.
+    long TIME_FRAME_ROW_ID_MARKER = Long.MIN_VALUE;
 
-    static void findSeekEstimate(
-            long timestamp,
-            int frameCount,
-            DirectIntList framePartitionIndexes,
-            LongList partitionCeilings,
-            LongList partitionTimestamps,
-            TimeFrame timeFrame
-    ) {
-        if (frameCount == 0) {
-            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
-            return;
-        }
-        int lo = 0, hi = frameCount - 1, result = -1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            int partIdx = framePartitionIndexes.get(mid);
-            if (partitionCeilings.getQuick(partIdx) <= timestamp) {
-                result = mid;
-                lo = mid + 1;
-            } else {
-                hi = mid - 1;
-            }
-        }
-        if (result >= 0) {
-            int partIdx = framePartitionIndexes.get(result);
-            timeFrame.ofEstimate(result, partitionTimestamps.getQuick(partIdx), partitionCeilings.getQuick(partIdx));
-        } else {
-            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
-        }
+    static boolean isTimeFrameRowID(long rowId) {
+        return rowId < 0;
+    }
+
+    static long toLocalRowID(long timeFrameRowId) {
+        return Rows.toLocalRowID(timeFrameRowId); // lower 44 bits unaffected by bit 63
+    }
+
+    static int toPartitionIndex(long timeFrameRowId) {
+        return Rows.toPartitionIndex(timeFrameRowId & ~TIME_FRAME_ROW_ID_MARKER);
+    }
+
+    /**
+     * Encodes a time frame index and row index into a row ID with the
+     * {@link #TIME_FRAME_ROW_ID_MARKER} bit set. The resulting row ID is
+     * always negative, ensuring misuse against non-time-frame APIs causes
+     * immediate failure.
+     *
+     * @param frameIndex time frame index (partition index)
+     * @param rowIndex   row index within the time frame
+     * @return encoded row ID with marker bit set
+     */
+    static long toRowID(int frameIndex, long rowIndex) {
+        return Rows.toRowID(frameIndex, rowIndex) | TIME_FRAME_ROW_ID_MARKER;
     }
 
     /**

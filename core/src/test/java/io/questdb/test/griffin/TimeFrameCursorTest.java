@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.DirectIntList;
@@ -625,45 +626,26 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
         RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
         ConcurrentTimeFrameCursor cursor = baseFactory.newTimeFrameCursor();
         Assert.assertNotNull(cursor);
-        PageFrameAddressCache addressCache = new PageFrameAddressCache();
-        DirectIntList partitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
+        ConcurrentTimeFrameState sharedState = new ConcurrentTimeFrameState();
         try {
             TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
                     sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC
             );
             RecordMetadata metadata = baseFactory.getMetadata();
-            addressCache.of(metadata, pageFrameCursor.getColumnIndexes(), pageFrameCursor.isExternal());
 
-            LongList rowCounts = new LongList();
-            LongList partitionTimestamps = new LongList();
-            LongList partitionCeilings = new LongList();
-
-            int frameCount = 0;
-            PageFrame frame;
-            while ((frame = pageFrameCursor.next()) != null) {
-                partitionIndexes.add(frame.getPartitionIndex());
-                rowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-                addressCache.add(frameCount++, frame);
-            }
-
-            ConcurrentTimeFrameCursor.populatePartitionTimestamps(pageFrameCursor, partitionTimestamps, partitionCeilings);
-
-            cursor.of(
+            sharedState.of(
                     pageFrameCursor,
-                    addressCache,
-                    partitionIndexes,
-                    rowCounts,
-                    partitionTimestamps,
-                    partitionCeilings,
-                    frameCount,
-                    metadata.getTimestampIndex()
+                    metadata,
+                    pageFrameCursor.getColumnIndexes(),
+                    pageFrameCursor.isExternal()
             );
+
+            cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
 
             assertion.test(cursor);
         } finally {
             Misc.free(cursor);
-            Misc.free(partitionIndexes);
-            Misc.free(addressCache);
+            Misc.free(sharedState);
         }
     }
 

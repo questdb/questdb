@@ -177,6 +177,14 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public void toPartition(int targetPartitionIndex) {
+        partitionFrameCursor.toPartition(targetPartitionIndex);
+        reenterPartitionFrame = false;
+        reenterParquetDecoder = null;
+        clearAddresses();
+    }
+
+    @Override
     public void toTop() {
         partitionFrameCursor.toTop();
         reenterPartitionFrame = false;

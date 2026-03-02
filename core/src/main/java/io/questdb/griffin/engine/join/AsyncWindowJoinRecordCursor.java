@@ -42,6 +42,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.FlyweightMapValue;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.log.Log;
@@ -57,8 +58,6 @@ import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
-
 class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncWindowJoinRecordCursor.class);
     private final int columnSplit;
@@ -69,11 +68,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private final PageFrameMemoryRecord masterRecord;
     private final Record record;
     private final RecordMetadata slaveMetadata;
-    private final LongList slavePartitionCeilings = new LongList();
-    private final LongList slavePartitionTimestamps = new LongList();
-    private final PageFrameAddressCache slaveTimeFrameAddressCache;
-    private final DirectIntList slaveTimeFramePartitionIndexes;
-    private final LongList slaveTimeFrameRowCounts = new LongList();
+    private final ConcurrentTimeFrameState slaveTimeFrameState = new ConcurrentTimeFrameState();
     private boolean allFramesActive;
     private long cursor = -1;
     private SqlExecutionContext executionContext;
@@ -103,8 +98,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             this.slaveMetadata = slaveMetadata;
             this.columnSplit = columnSplit;
             this.isMasterFiltered = isMasterFiltered;
-            this.slaveTimeFrameAddressCache = new PageFrameAddressCache();
-            this.slaveTimeFramePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.crossIndex = columnIndex;
             this.masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
             this.groupByRecord = new VirtualRecord(groupByFunctions);
@@ -156,8 +149,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             } finally {
                 // Free shared resources only after workers have finished
                 Misc.free(slaveFrameCursor);
-                Misc.free(slaveTimeFrameAddressCache);
-                Misc.free(slaveTimeFramePartitionIndexes);
+                Misc.free(slaveTimeFrameState);
                 isOpen = false;
             }
         }
@@ -226,9 +218,22 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     private void buildSlaveTimeFrameCacheConditionally() {
         if (!isSlaveTimeFrameCacheBuilt) {
-            final int frameCount = initializeSlaveTimeFrameCache();
-            populatePartitionTimestamps(slaveFrameCursor, slavePartitionTimestamps, slavePartitionCeilings);
-            initializeTimeFrameCursors(frameCount);
+            slaveTimeFrameState.of(
+                    slaveFrameCursor,
+                    slaveMetadata,
+                    slaveFrameCursor.getColumnIndexes(),
+                    slaveFrameCursor.isExternal()
+            );
+            try {
+                masterFrameSequence.getAtom().initTimeFrameCursors(
+                        executionContext,
+                        masterFrameSequence.getSymbolTableSource(),
+                        slaveFrameCursor,
+                        slaveTimeFrameState
+                );
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().put(e.getFlyweightMessage());
+            }
             isSlaveTimeFrameCacheBuilt = true;
         }
     }
@@ -447,40 +452,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             throwTimeoutException();
         }
         return false;
-    }
-
-    private int initializeSlaveTimeFrameCache() {
-        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
-        slaveTimeFramePartitionIndexes.reopen();
-        slaveTimeFramePartitionIndexes.clear();
-        slaveTimeFrameRowCounts.clear();
-
-        int frameCount = 0;
-        PageFrame frame;
-        while ((frame = slaveFrameCursor.next()) != null) {
-            slaveTimeFramePartitionIndexes.add(frame.getPartitionIndex());
-            slaveTimeFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-            slaveTimeFrameAddressCache.add(frameCount++, frame);
-        }
-        return frameCount;
-    }
-
-    private void initializeTimeFrameCursors(int frameCount) {
-        try {
-            masterFrameSequence.getAtom().initTimeFrameCursors(
-                    executionContext,
-                    masterFrameSequence.getSymbolTableSource(),
-                    slaveFrameCursor,
-                    slaveTimeFrameAddressCache,
-                    slaveTimeFramePartitionIndexes,
-                    slaveTimeFrameRowCounts,
-                    slavePartitionTimestamps,
-                    slavePartitionCeilings,
-                    frameCount
-            );
-        } catch (SqlException e) {
-            throw CairoException.nonCritical().put(e.getFlyweightMessage());
-        }
     }
 
     private void throwTimeoutException() {
