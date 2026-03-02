@@ -78,8 +78,9 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
 
     @Override
     public boolean hasParquetFormatPartitions(SqlExecutionContext executionContext) {
-        try (TableReader reader = getReader(executionContext)) {
-            return reader.hasParquetPartitions();
+        try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
+            CairoTable table = metadataRO.getTable(tableToken);
+            return table != null && table.hasParquetPartitions();
         }
     }
 

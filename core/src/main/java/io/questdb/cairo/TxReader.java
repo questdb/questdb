@@ -237,6 +237,15 @@ public class TxReader implements Closeable, Mutable {
         return maxTimestamp;
     }
 
+    public boolean hasParquetPartitions() {
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            if (isPartitionParquetByRawIndex(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public int getMetadataVersion() {
         return Numbers.decodeLowInt(structureVersion);
     }

@@ -65,6 +65,10 @@ public interface TableStructure {
         return 0; // TTL disabled by default
     }
 
+    default boolean hasParquetPartitions() {
+        return false;
+    }
+
     default ViewDefinition getViewDefinition() {
         return null;
     }

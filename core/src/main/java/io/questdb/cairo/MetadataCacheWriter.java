@@ -54,4 +54,6 @@ public interface MetadataCacheWriter extends QuietCloseable {
     void hydrateTable(@NotNull TableMetadata tableMetadata);
 
     void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken);
+
+    void setHasParquetPartitions(@NotNull TableToken tableToken, boolean hasParquetPartitions);
 }

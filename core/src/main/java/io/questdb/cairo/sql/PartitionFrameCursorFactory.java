@@ -79,6 +79,16 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
 
     TableToken getTableToken();
 
+    /**
+     * Returns {@code true} if the table has any parquet-format partitions.
+     * <p>
+     * The check is table-level rather than query-level: even for
+     * {@code IntervalPartitionFrameCursorFactory} with static intervals, we do not
+     * narrow the check to only the partitions the query will touch. The table-level
+     * flag is a single cached boolean read under the metadata cache read lock (O(1),
+     * zero IO), whereas a partition-level check would require opening a
+     * {@code TxReader} at compile time.
+     */
     boolean hasParquetFormatPartitions(SqlExecutionContext executionContext);
 
     boolean supportsTableRowId(TableToken tableToken);

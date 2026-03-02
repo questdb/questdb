@@ -434,6 +434,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             this.metadata = new TableWriterMetadata(this.tableToken);
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
+            this.metadata.setTxReader(txWriter);
             this.timestampType = metadata.getTimestampType();
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
@@ -1633,6 +1634,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
 
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+        }
+
         if (lastPartitionConverted) {
             closeActivePartition(false);
         }
@@ -1812,6 +1817,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.resetPartitionParquetFormat(partitionTimestamp);
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+        }
 
         if (lastPartitionConverted) {
             closeActivePartition(false);

@@ -201,7 +201,8 @@ public class MetadataCache implements QuietCloseable {
                     .$(", version=").$(metadataVersion)
                     .I$();
 
-            table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
+            int partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+            table.setPartitionBy(partitionBy);
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
@@ -268,6 +269,17 @@ public class MetadataCache implements QuietCloseable {
                 }
 
                 table.upsertColumn(column);
+            }
+
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade())) {
+                    Path txnPath = Path.getThreadLocal2(engine.getConfiguration().getDbRoot());
+                    txReader.ofRO(txnPath.concat(token.getDirName()).concat(TableUtils.TXN_FILE_NAME).$(), table.getTimestampType(), partitionBy);
+                    txReader.unsafeLoadAll();
+                    table.setHasParquetPartitions(txReader.hasParquetPartitions());
+                } catch (CairoException e) {
+                    table.setHasParquetPartitions(true);
+                }
             }
 
             tableMap.put(table.getTableName(), table);
@@ -551,6 +563,7 @@ public class MetadataCache implements QuietCloseable {
             table.setPartitionBy(tableMetadata.getPartitionBy());
             table.setMaxUncommittedRows(tableMetadata.getMaxUncommittedRows());
             table.setO3MaxLag(tableMetadata.getO3MaxLag());
+            table.setHasParquetPartitions(tableMetadata.hasParquetPartitions());
             int timestampWriterIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
@@ -622,6 +635,14 @@ public class MetadataCache implements QuietCloseable {
         @Override
         public void hydrateTable(@NotNull TableToken token) {
             hydrateTableStartup(token, true);
+        }
+
+        @Override
+        public void setHasParquetPartitions(@NotNull TableToken tableToken, boolean hasParquetPartitions) {
+            CairoTable table = tableMap.get(tableToken.getTableName());
+            if (table != null) {
+                table.setHasParquetPartitions(hasParquetPartitions);
+            }
         }
 
         @Override
