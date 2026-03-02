@@ -34,46 +34,16 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
-/**
- * {@inheritDoc}
- */
 public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoinCursor {
-    /**
-     * {@inheritDoc}
-     */
     protected final Map joinKeyMap;
-    /**
-     * {@inheritDoc}
-     */
     protected final LongChain slaveChain;
-    /**
-     * {@inheritDoc}
-     */
     protected SqlExecutionCircuitBreaker circuitBreaker;
-    /**
-     * {@inheritDoc}
-     */
     protected boolean isMapBuilt;
-    /**
-     * {@inheritDoc}
-     */
     protected boolean isOpen;
-    /**
-     * {@inheritDoc}
-     */
     protected Record masterRecord;
-    /**
-     * {@inheritDoc}
-     */
     protected LongChain.Cursor slaveChainCursor;
-    /**
-     * {@inheritDoc}
-     */
     protected Record slaveRecord;
 
-    /**
-     * {@inheritDoc}
-     */
     public AbstractHashOuterJoinLightRecordCursor(
             int columnSplit,
             Map joinKeyMap,
@@ -116,9 +86,6 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     protected static void populateRowIDHashMap(
             SqlExecutionCircuitBreaker circuitBreaker,
             RecordCursor cursor,
@@ -141,9 +108,6 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     protected static void populateRowIDHashMapWithMatchedFlag(
             SqlExecutionCircuitBreaker circuitBreaker,
             RecordCursor cursor,
@@ -167,9 +131,6 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;

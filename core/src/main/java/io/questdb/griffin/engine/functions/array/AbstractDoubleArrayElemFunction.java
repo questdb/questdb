@@ -95,9 +95,6 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
      */
     protected int[] outStrides;
 
-    /**
-     * {@inheritDoc}
-     */
     protected AbstractDoubleArrayElemFunction(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
         this.args = args;
         this.nDims = resolvedDims;

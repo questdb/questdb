@@ -351,9 +351,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
     // Construction:
     //
 
-    /**
-     * {@inheritDoc}
-     */
     public int countsArrayIndex(final long value) {
         if (value < 0) {
             throw CairoException.nonCritical().put("Histogram recorded value cannot be negative.");
@@ -541,9 +538,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return leadingZeroCountBase - Long.numberOfLeadingZeros(value | subBucketMask);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract long getCountAtIndex(int index);
 
     /**
@@ -793,9 +787,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return Math.sqrt(geometric_deviation_total / getTotalCount());
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public int getSubBucketIndex(final long value, final int bucketIndex) {
         // For bucketIndex 0, this is just value, so it may be anywhere in 0 to subBucketCount.
         // For other bucketIndex, this will always end up in the top half of subBucketCount: assume that for some bucket
@@ -917,9 +908,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return autoResize;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public int leadingZeroCountBase() {
         return leadingZeroCountBase;
     }
@@ -1144,9 +1132,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return new Percentiles(this, percentileTicksPerHalfDistance);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public void recordConvertedDoubleValueWithCount(final double value, final long count) throws CairoException {
         long integerValue = (long) (value * doubleToIntegerValueConversionRatio);
         recordCountAtValue(count, integerValue);
@@ -1396,16 +1381,10 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
         return output;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public int unitMagnitude() {
         return unitMagnitude;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public final long valueFromIndex(final int index) {
         int bucketIndex = (index >> subBucketHalfCountMagnitude) - 1;
         int subBucketIndex = (index & (subBucketHalfCount - 1)) + subBucketHalfCount;
@@ -2480,23 +2459,14 @@ abstract class AbstractHistogramBase extends EncodableHistogram {
     String tag = null;
     int wordSizeInBytes;
 
-    /**
-     * {@inheritDoc}
-     */
     public int bucketCount() {
         return bucketCount;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public int countsArrayLength() {
         return countsArrayLength;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public int subBucketCount() {
         return subBucketCount;
     }

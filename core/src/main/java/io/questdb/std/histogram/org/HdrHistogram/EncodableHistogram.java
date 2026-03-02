@@ -39,49 +39,22 @@ import java.util.zip.DataFormatException;
  */
 public abstract class EncodableHistogram {
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract int encodeIntoCompressedByteBuffer(final ByteBuffer targetBuffer, int compressionLevel);
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract long getEndTimeStamp();
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract double getMaxValueAsDouble();
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract int getNeededByteBufferCapacity();
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract long getStartTimeStamp();
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract String getTag();
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract void setEndTimeStamp(long endTimestamp);
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract void setStartTimeStamp(long startTimeStamp);
 
-    /**
-     * {@inheritDoc}
-     */
     public abstract void setTag(String tag);
 
     /**

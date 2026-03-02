@@ -147,34 +147,16 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     ArrayView getArray(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     BinarySequence getBin(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     long getBinLen(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     boolean getBool(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     byte getByte(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     char getChar(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     long getDate(Record rec);
 
     /**
@@ -185,9 +167,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     void getDecimal128(Record rec, Decimal128 sink);
 
-    /**
-     * {@inheritDoc}
-     */
     short getDecimal16(Record rec);
 
     /**
@@ -198,29 +177,14 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     void getDecimal256(Record rec, Decimal256 sink);
 
-    /**
-     * {@inheritDoc}
-     */
     int getDecimal32(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     long getDecimal64(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     byte getDecimal8(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     double getDouble(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     float getFloat(Record rec);
 
     /**
@@ -255,14 +219,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     short getGeoShort(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     int getIPv4(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     int getInt(Record rec);
 
     /**
@@ -282,14 +240,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     long getLong(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     long getLong128Hi(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     long getLong128Lo(Record rec);
 
     /**
@@ -300,14 +252,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     void getLong256(Record rec, CharSink<?> sink);
 
-    /**
-     * {@inheritDoc}
-     */
     Long256 getLong256A(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     Long256 getLong256B(Record rec);
 
     default RecordMetadata getMetadata() {
@@ -322,34 +268,18 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getClass().getName();
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    // when function returns factory it becomes factory
+    // on other words this is not a tear-away instance
     RecordCursorFactory getRecordCursorFactory();
 
-    /**
-     * {@inheritDoc}
-     */
     short getShort(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     CharSequence getStrA(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     CharSequence getStrB(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     int getStrLen(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     CharSequence getSymbol(Record rec);
 
     /**
@@ -360,25 +290,13 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     CharSequence getSymbolB(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     long getTimestamp(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     int getType();
 
-    /**
-     * {@inheritDoc}
-     */
     @Nullable
     Utf8Sequence getVarcharA(Record rec);
 
-    /**
-     * {@inheritDoc}
-     */
     @Nullable
     Utf8Sequence getVarcharB(Record rec);
 
