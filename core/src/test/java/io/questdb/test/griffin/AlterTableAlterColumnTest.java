@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -170,6 +171,361 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     @Test
     public void testExpectTableName() throws Exception {
         assertFailure("alter table", 11, "table name expected");
+    }
+
+    @Test
+    public void testCreateTableParquetCompressionPersistence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT," +
+                            " b DOUBLE PARQUET COMPRESSION ZSTD 3," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("b");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(0, TableUtils.getParquetConfigEncoding(config));
+                // compression = ZSTD (4) + 1 = 5 in packed form
+                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableParquetConfigSurvivesReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            " b DOUBLE," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+            }
+
+            engine.releaseAllWriters();
+
+            try (TableReader reader = getReader("y")) {
+                int colIndex = reader.getMetadata().getColumnIndex("a");
+                int config = reader.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableParquetEncodingAndCompressionPersistence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            " b DOUBLE," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableParquetEncodingPersistence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED," +
+                            " b DOUBLE," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testDropParquetCompressionOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            " b DOUBLE," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            execute("ALTER TABLE y ALTER COLUMN a DROP PARQUET COMPRESSION");
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                // Dropping compression only should keep encoding but clear compression
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                int encoding = TableUtils.getParquetConfigEncoding(config);
+                Assert.assertEquals(4, encoding);
+                Assert.assertEquals(0, TableUtils.getParquetConfigCompression(config));
+                Assert.assertEquals(0, TableUtils.getParquetConfigCompressionLevel(config));
+            }
+        });
+    }
+
+    @Test
+    public void testDropParquetEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            " b DOUBLE," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertNotEquals(0, config);
+            }
+
+            execute("ALTER TABLE y ALTER COLUMN a DROP PARQUET ENCODING COMPRESSION");
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertEquals(0, config);
+            }
+        });
+    }
+
+    @Test
+    public void testDropParquetEncodingInvalidColumnName() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN nonexistent DROP PARQUET ENCODING COMPRESSION",
+                27,
+                "column 'nonexistent' does not exist in table 'x'"
+        );
+    }
+
+    @Test
+    public void testDropParquetEncodingOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE y (" +
+                            "a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                            " b DOUBLE," +
+                            " t TIMESTAMP" +
+                            ") TIMESTAMP(t) PARTITION BY DAY"
+            );
+
+            execute("ALTER TABLE y ALTER COLUMN a DROP PARQUET ENCODING");
+
+            try (TableWriter writer = getWriter("y")) {
+                int colIndex = writer.getMetadata().getColumnIndex("a");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                // Dropping encoding only should clear encoding but keep compression
+                int encoding = TableUtils.getParquetConfigEncoding(config);
+                Assert.assertEquals(0, encoding);
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetCompressionLevelTooHigh() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION ZSTD 30",
+                58,
+                "ZSTD compression level must be between 1 and 22"
+        );
+    }
+
+    @Test
+    public void testSetParquetCompressionLevelTooLow() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION ZSTD 0",
+                58,
+                "ZSTD compression level must be between 1 and 22"
+        );
+    }
+
+    @Test
+    public void testSetParquetCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION ZSTD 3");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("d");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                // compression = ZSTD (4) + 1 = 5 in packed form
+                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetCompressionUncompressed() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION UNCOMPRESSED");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("d");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                // compression = UNCOMPRESSED (0) + 1 = 1 in packed form
+                Assert.assertEquals(1, TableUtils.getParquetConfigCompression(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET ENCODING DELTA_BINARY_PACKED");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
+                Assert.assertEquals(3, TableUtils.getParquetConfigCompressionLevel(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetEncodingInvalidForType() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY",
+                50,
+                "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
+        );
+    }
+
+    @Test
+    public void testSetParquetEncodingInvalidName() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET ENCODING INVALID_ENCODING",
+                50,
+                "invalid parquet encoding, supported values:"
+        );
+    }
+
+    @Test
+    public void testSetParquetInvalidCompressionName() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION INVALID_CODEC",
+                53,
+                "invalid parquet compression codec:"
+        );
+    }
+
+    @Test
+    public void testSetParquetMissingEncodingOrCompression() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET",
+                40,
+                "'encoding' or 'compression' expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetByteStreamSplitRejectedForFloat() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN e SET PARQUET ENCODING BYTE_STREAM_SPLIT",
+                50,
+                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
+        );
+    }
+
+    @Test
+    public void testSetParquetByteStreamSplitRejectedForInt() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET ENCODING BYTE_STREAM_SPLIT",
+                50,
+                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
+        );
+    }
+
+    @Test
+    public void testSetParquetDeltaBinaryPackedForShort() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN f SET PARQUET ENCODING DELTA_BINARY_PACKED");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("f");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetPlainRejectedForSymbol() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN sym SET PARQUET ENCODING PLAIN",
+                52,
+                "encoding 'PLAIN' is not valid for column type"
+        );
+    }
+
+    @Test
+    public void testSetParquetRleDictionaryRejectedForInt() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET ENCODING RLE_DICTIONARY",
+                50,
+                "encoding 'RLE_DICTIONARY' is not valid for column type"
+        );
     }
 
     @Test

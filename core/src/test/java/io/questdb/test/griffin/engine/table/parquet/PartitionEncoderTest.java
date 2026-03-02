@@ -62,7 +62,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 try {
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, false, 0, 0, ParquetVersion.PARQUET_VERSION_V1);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, false, 0, 0, ParquetVersion.PARQUET_VERSION_V1, 0.0);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "unsupported compression codec id: 42");
@@ -87,7 +87,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 try {
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, ParquetCompression.COMPRESSION_UNCOMPRESSED, false, false, 0, 0, 42);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, ParquetCompression.COMPRESSION_UNCOMPRESSED, false, false, 0, 0, 42, 0.0);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "unsupported parquet version 42");

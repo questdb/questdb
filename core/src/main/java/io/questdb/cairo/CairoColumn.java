@@ -37,6 +37,7 @@ public class CairoColumn implements Sinkable {
     private int indexBlockCapacity;
     private boolean indexed;
     private long metadataVersion;
+    private int parquetEncodingConfig;
     private CharSequence name;
     private int position;
     private boolean symbolCached;
@@ -55,6 +56,7 @@ public class CairoColumn implements Sinkable {
         target.indexed = this.indexed;
         target.symbolTableStatic = this.symbolTableStatic;
         target.name = this.name;
+        target.parquetEncodingConfig = this.parquetEncodingConfig;
         target.position = this.position;
         target.symbolCached = this.symbolCached;
         target.symbolCapacity = this.symbolCapacity;
@@ -69,6 +71,10 @@ public class CairoColumn implements Sinkable {
 
     public CharSequence getName() {
         return name;
+    }
+
+    public int getParquetEncodingConfig() {
+        return parquetEncodingConfig;
     }
 
     public int getPosition() {
@@ -127,6 +133,10 @@ public class CairoColumn implements Sinkable {
         this.name = name;
     }
 
+    public void setParquetEncodingConfig(int parquetEncodingConfig) {
+        this.parquetEncodingConfig = parquetEncodingConfig;
+    }
+
     public void setPosition(int position) {
         this.position = position;
     }
@@ -164,6 +174,7 @@ public class CairoColumn implements Sinkable {
         sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
         sink.put("isIndexed=").put(isIndexed()).put(", ");
         sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
+        sink.put("parquetEncodingConfig=").put(getParquetEncodingConfig()).put(", ");
         sink.put("writerIndex=").put(getWriterIndex()).put("]");
     }
 }

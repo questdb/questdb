@@ -12,6 +12,7 @@ fn compress_data(
     page: DataPage,
     mut compressed_buffer: Vec<u8>,
     compression: CompressionOptions,
+    min_compression_ratio: f64,
 ) -> Result<CompressedDataPage> {
     let DataPage {
         mut buffer,
@@ -37,6 +38,24 @@ fn compress_data(
                 )?;
             }
         };
+
+        // If the compression ratio is below the threshold, discard compressed output.
+        if min_compression_ratio > 0.0
+            && !compressed_buffer.is_empty()
+            && (uncompressed_page_size as f64 / compressed_buffer.len() as f64)
+                < min_compression_ratio
+        {
+            compressed_buffer.clear();
+            std::mem::swap(&mut buffer, &mut compressed_buffer);
+            return Ok(CompressedDataPage::new_read(
+                header,
+                compressed_buffer,
+                CompressionOptions::Uncompressed.into(),
+                uncompressed_page_size,
+                descriptor,
+                selected_rows,
+            ));
+        }
     } else {
         std::mem::swap(&mut buffer, &mut compressed_buffer);
     };
@@ -54,6 +73,7 @@ fn compress_dict(
     page: DictPage,
     mut compressed_buffer: Vec<u8>,
     compression: CompressionOptions,
+    min_compression_ratio: f64,
 ) -> Result<CompressedDictPage> {
     let DictPage {
         mut buffer,
@@ -63,6 +83,23 @@ fn compress_dict(
     let uncompressed_page_size = buffer.len();
     if compression != CompressionOptions::Uncompressed {
         compression::compress(compression, &buffer, &mut compressed_buffer)?;
+
+        // If the compression ratio is below the threshold, discard compressed output.
+        if min_compression_ratio > 0.0
+            && !compressed_buffer.is_empty()
+            && (uncompressed_page_size as f64 / compressed_buffer.len() as f64)
+                < min_compression_ratio
+        {
+            compressed_buffer.clear();
+            std::mem::swap(&mut buffer, &mut compressed_buffer);
+            return Ok(CompressedDictPage::new(
+                compressed_buffer,
+                CompressionOptions::Uncompressed.into(),
+                uncompressed_page_size,
+                num_values,
+                is_sorted,
+            ));
+        }
     } else {
         std::mem::swap(&mut buffer, &mut compressed_buffer);
     }
@@ -86,13 +123,16 @@ pub fn compress(
     page: Page,
     compressed_buffer: Vec<u8>,
     compression: CompressionOptions,
+    min_compression_ratio: f64,
 ) -> Result<CompressedPage> {
     match page {
         Page::Data(page) => {
-            compress_data(page, compressed_buffer, compression).map(CompressedPage::Data)
+            compress_data(page, compressed_buffer, compression, min_compression_ratio)
+                .map(CompressedPage::Data)
         }
         Page::Dict(page) => {
-            compress_dict(page, compressed_buffer, compression).map(CompressedPage::Dict)
+            compress_dict(page, compressed_buffer, compression, min_compression_ratio)
+                .map(CompressedPage::Dict)
         }
     }
 }
@@ -105,6 +145,7 @@ pub struct Compressor<
 > {
     iter: I,
     compression: CompressionOptions,
+    min_compression_ratio: f64,
     buffer: Vec<u8>,
     current: Option<CompressedPage>,
 }
@@ -113,18 +154,29 @@ impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<
     Compressor<E, I>
 {
     /// Creates a new [`Compressor`]
-    pub fn new(iter: I, compression: CompressionOptions, buffer: Vec<u8>) -> Self {
+    pub fn new(
+        iter: I,
+        compression: CompressionOptions,
+        buffer: Vec<u8>,
+        min_compression_ratio: f64,
+    ) -> Self {
         Self {
             iter,
             compression,
+            min_compression_ratio,
             buffer,
             current: None,
         }
     }
 
     /// Creates a new [`Compressor`] (same as `new`)
-    pub fn new_from_vec(iter: I, compression: CompressionOptions, buffer: Vec<u8>) -> Self {
-        Self::new(iter, compression, buffer)
+    pub fn new_from_vec(
+        iter: I,
+        compression: CompressionOptions,
+        buffer: Vec<u8>,
+        min_compression_ratio: f64,
+    ) -> Self {
+        Self::new(iter, compression, buffer, min_compression_ratio)
     }
 
     /// Deconstructs itself into its iterator and scratch buffer.
@@ -153,10 +205,15 @@ impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<
         };
         compressed_buffer.clear();
 
+        let min_ratio = self.min_compression_ratio;
         let next = self
             .iter
             .next()
-            .map(|x| x.and_then(|page| Ok(compress(page, compressed_buffer, self.compression)?)))
+            .map(|x| {
+                x.and_then(|page| {
+                    Ok(compress(page, compressed_buffer, self.compression, min_ratio)?)
+                })
+            })
             .transpose()?;
         self.current = next;
         Ok(())

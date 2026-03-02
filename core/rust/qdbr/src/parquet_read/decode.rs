@@ -3340,6 +3340,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -3366,6 +3367,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -3393,6 +3395,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap()
     }

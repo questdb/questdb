@@ -188,6 +188,7 @@ mod tests {
                     0,
                     false,
                     false,
+                    0,
                 )
                 .expect("column")
             })
@@ -299,6 +300,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -364,6 +366,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -381,6 +384,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -440,6 +444,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -557,6 +562,7 @@ mod tests {
             0,
             true,
             false,
+            0,
         )
         .expect("column");
 
@@ -615,6 +621,7 @@ mod tests {
             0,
             true,
             true,
+            0,
         )
         .expect("column");
 
@@ -687,6 +694,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -704,6 +712,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -721,6 +730,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -785,6 +795,217 @@ mod tests {
     }
 
     #[test]
+    fn test_per_column_encoding_config() {
+        // Create two int columns: one with default encoding (Plain), one with DeltaBinaryPacked
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1_data: Vec<i32> = (0..100).collect();
+        let col2_data: Vec<i32> = (0..100).collect();
+
+        // Pack config: encoding=4 (DeltaBinaryPacked), compression=0, level=0, explicit flag set
+        let delta_binary_config = 4 | (1 << 24);
+
+        let col1 = Column::from_raw_data(
+            0,
+            "col_plain",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            100,
+            col1_data.as_ptr() as *const u8,
+            col1_data.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0, // default encoding
+        )
+        .unwrap();
+
+        let col2 = Column::from_raw_data(
+            1,
+            "col_delta",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            100,
+            col2_data.as_ptr() as *const u8,
+            col2_data.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            delta_binary_config,
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1, col2],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        // Read back and verify encodings
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+
+        let row_group = &metadata.row_groups[0];
+
+        // col_plain should use Plain encoding (default for Int)
+        let col0_chunk = &row_group.columns()[0];
+        let col0_encoding = col0_chunk.column_encoding();
+        // parquet_format_safe::Encoding uses i32 constants: PLAIN=0, DELTA_BINARY_PACKED=5
+        assert!(
+            col0_encoding.iter().any(|e| e.0 == 0), // PLAIN = 0
+            "col_plain should use Plain encoding, got: {:?}",
+            col0_encoding
+        );
+
+        // col_delta should use DeltaBinaryPacked encoding
+        let col1_chunk = &row_group.columns()[1];
+        let col1_encoding = col1_chunk.column_encoding();
+        assert!(
+            col1_encoding.iter().any(|e| e.0 == 5), // DELTA_BINARY_PACKED = 5
+            "col_delta should use DeltaBinaryPacked encoding, got: {:?}",
+            col1_encoding
+        );
+
+        // Verify data is correct by reading with arrow
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr0 = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .expect("downcast");
+            let collected: Vec<_> = arr0.iter().collect();
+            let expected: Vec<_> = (0..100).map(Some).collect();
+            assert_eq!(collected, expected);
+        }
+    }
+
+    #[test]
+    fn test_per_column_compression_config() {
+        // Create two double columns: one uncompressed, one with Snappy compression
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1_data: Vec<f64> = (0..1000).map(|i| i as f64 * 0.1).collect();
+        let col2_data: Vec<f64> = (0..1000).map(|i| i as f64 * 0.1).collect();
+
+        // Pack config: encoding=0 (default), compression=2 (Snappy), level=0, explicit flag set
+        let snappy_config = (2 << 8) | (1 << 24);
+
+        let col1 = Column::from_raw_data(
+            0,
+            "col_uncompressed",
+            ColumnTypeTag::Double.into_type().code(),
+            0,
+            1000,
+            col1_data.as_ptr() as *const u8,
+            col1_data.len() * size_of::<f64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0, // default (uncompressed, since global is uncompressed)
+        )
+        .unwrap();
+
+        let col2 = Column::from_raw_data(
+            1,
+            "col_snappy",
+            ColumnTypeTag::Double.into_type().code(),
+            0,
+            1000,
+            col2_data.as_ptr() as *const u8,
+            col2_data.len() * size_of::<f64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            snappy_config,
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1, col2],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        // Read metadata and verify compression
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+
+        let row_group = &metadata.row_groups[0];
+
+        // col_uncompressed should use no compression
+        let col0_compression = row_group.columns()[0].compression();
+        assert_eq!(
+            col0_compression,
+            parquet2::compression::Compression::Uncompressed,
+            "col_uncompressed should be uncompressed"
+        );
+
+        // col_snappy should use Snappy compression
+        let col1_compression = row_group.columns()[1].compression();
+        assert_eq!(
+            col1_compression,
+            parquet2::compression::Compression::Snappy,
+            "col_snappy should use Snappy compression"
+        );
+
+        // Verify data is correct
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr0 = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Float64Array>()
+                .expect("downcast");
+            assert_eq!(arr0.len(), 1000);
+            // Check first few values
+            for i in 0..10 {
+                assert!((arr0.value(i) - i as f64 * 0.1).abs() < 1e-10);
+            }
+        }
+    }
+
+    #[test]
     fn test_bloom_filter_roundtrip_i64() {
         use crate::allocator::TestAllocatorState;
         use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
@@ -809,6 +1030,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -890,6 +1112,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -981,6 +1204,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -998,6 +1222,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1077,6 +1302,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1168,6 +1394,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1257,6 +1484,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1346,6 +1574,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1440,6 +1669,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1548,6 +1778,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1621,6 +1852,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1693,6 +1925,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1765,6 +1998,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 
@@ -1838,6 +2072,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .expect("column");
 

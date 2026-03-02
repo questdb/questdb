@@ -165,7 +165,7 @@ pub fn varchar_to_dict_pages(
     let num_rows = column_top + aux.len();
     let aux: &[AuxEntryInlined] = unsafe { mem::transmute(aux) };
 
-    // Extract UTF-8 slices (same logic as varchar_to_page)
+    // Pass 1: decode aux entries into contiguous slice pointers.
     let mut null_count = 0usize;
     let utf8_slices: Vec<Option<&[u8]>> = aux
         .iter()
@@ -194,35 +194,41 @@ pub fn varchar_to_dict_pages(
         })
         .collect::<ParquetResult<Vec<_>>>()?;
 
-    // Build dictionary: deduplicate strings
+    // Pass 2: deduplicate strings into dictionary.
     let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
     let mut keys = Vec::with_capacity(utf8_slices.len() - null_count);
+    let mut total_keys_bytes = 0usize;
     for s in utf8_slices.iter().flatten() {
-        if let Some(&key) = dict_map.get(s) {
-            keys.push(key);
-        } else {
-            let key = dict_entries.len() as u32;
-            dict_map.insert(s, key);
+        let next_id = dict_entries.len() as u32;
+        let key = *dict_map.entry(s).or_insert_with(|| {
             dict_entries.push(s);
-            keys.push(key);
-        }
+            total_keys_bytes += 4 + s.len(); // 4 bytes for length prefix
+            next_id
+        });
+        keys.push(key);
     }
 
     // Build dict buffer (length-prefixed UTF-8)
-    let mut dict_buffer = Vec::new();
-    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+    let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
+    let mut stats = if options.write_statistics {
+        Some(BinaryMaxMinStats::new(&primitive_type))
+    } else {
+        None
+    };
     for &entry in &dict_entries {
         dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
         dict_buffer.extend_from_slice(entry);
-        stats.update(entry);
+        if let Some(ref mut stats) = stats {
+            stats.update(entry);
+        }
         if let Some(ref mut h) = bloom_hashes {
             h.insert(hash_byte(entry));
         }
     }
 
     // Encode data page: def levels + RLE-encoded keys
-    let mut data_buffer = vec![];
+    let mut data_buffer = Vec::with_capacity(num_rows / 4);
     let total_null_count = column_top + null_count;
 
     let def_levels =
@@ -250,11 +256,7 @@ pub fn varchar_to_dict_pages(
         num_rows,
         total_null_count,
         definition_levels_byte_length,
-        if options.write_statistics {
-            Some(stats.into_parquet_stats(total_null_count))
-        } else {
-            None
-        },
+        stats.map(|s| s.into_parquet_stats(total_null_count)),
         primitive_type,
         options,
         Encoding::RleDictionary,
@@ -569,6 +571,7 @@ mod tests {
             raw_array_encoding: false,
             bloom_filter_columns: HashSet::new(),
             bloom_filter_fpp: 0.05,
+            min_compression_ratio: 0.0,
         }
     }
 

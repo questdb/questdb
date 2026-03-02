@@ -462,6 +462,10 @@ public interface CairoConfiguration {
 
     double getPartitionEncoderParquetBloomFilterFpp();
 
+    default double getPartitionEncoderParquetMinCompressionRatio() {
+        return 0.0;
+    }
+
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
