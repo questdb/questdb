@@ -36,8 +36,6 @@ import io.questdb.std.str.LPSZ;
 
 /**
  * Serializes a {@link TxnState} to the binary {@code _txn} file format.
- * Follows the same layout as {@link io.questdb.cliutil.TxSerializer} but
- * works directly from {@link TxnState} rather than a JSON intermediary.
  */
 public final class TxnSerializer {
 
