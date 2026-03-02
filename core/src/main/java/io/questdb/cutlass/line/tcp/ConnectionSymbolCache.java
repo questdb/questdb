@@ -50,11 +50,9 @@ import io.questdb.std.ObjList;
  */
 public class ConnectionSymbolCache {
 
-    private static final int DEFAULT_TABLE_CAPACITY = 8;
-    private static final int DEFAULT_COLUMN_CAPACITY = 8;
-
     private static final ClearConsumer CLEAR_CONSUMER = new ClearConsumer();
-
+    private static final int DEFAULT_COLUMN_CAPACITY = 8;
+    private static final int DEFAULT_TABLE_CAPACITY = 8;
     // Map: tableToken → list of caches (indexed by columnIndex)
     private final LongObjHashMap<ObjList<ClientSymbolCache>> tableColumnCaches;
 
@@ -69,6 +67,18 @@ public class ConnectionSymbolCache {
         this.tableColumnCaches = new LongObjHashMap<>(DEFAULT_TABLE_CAPACITY);
         this.cacheHits = 0;
         this.cacheMisses = 0;
+    }
+
+    /**
+     * Clears all caches for all tables.
+     * <p>
+     * This should be called when the connection is closed.
+     */
+    public void clear() {
+        tableColumnCaches.forEach(CLEAR_CONSUMER);
+        tableColumnCaches.clear();
+        cacheHits = 0;
+        cacheMisses = 0;
     }
 
     /**
@@ -103,52 +113,6 @@ public class ConnectionSymbolCache {
     }
 
     /**
-     * Invalidates (clears) the cache for a specific table.
-     * <p>
-     * This should be called when the table's symbol watermark changes,
-     * e.g., after segment rollover.
-     *
-     * @param tableToken the table's unique token
-     */
-    public void invalidateTable(long tableToken) {
-        ObjList<ClientSymbolCache> columnCaches = tableColumnCaches.get(tableToken);
-        if (columnCaches != null) {
-            for (int i = 0, n = columnCaches.size(); i < n; i++) {
-                ClientSymbolCache cache = columnCaches.getQuick(i);
-                if (cache != null) {
-                    cache.clear();
-                }
-            }
-        }
-    }
-
-    /**
-     * Clears all caches for all tables.
-     * <p>
-     * This should be called when the connection is closed.
-     */
-    public void clear() {
-        tableColumnCaches.forEach(CLEAR_CONSUMER);
-        tableColumnCaches.clear();
-        cacheHits = 0;
-        cacheMisses = 0;
-    }
-
-    /**
-     * Records a cache hit for statistics.
-     */
-    public void recordHit() {
-        cacheHits++;
-    }
-
-    /**
-     * Records a cache miss for statistics.
-     */
-    public void recordMiss() {
-        cacheMisses++;
-    }
-
-    /**
      * Returns the total number of cache hits.
      */
     public long getCacheHits() {
@@ -160,6 +124,26 @@ public class ConnectionSymbolCache {
      */
     public long getCacheMisses() {
         return cacheMisses;
+    }
+
+    /**
+     * Returns the number of column caches for a specific table.
+     *
+     * @param tableToken the table's unique token
+     * @return the number of column caches, or 0 if table not cached
+     */
+    public int getColumnCacheCount(long tableToken) {
+        ObjList<ClientSymbolCache> columnCaches = tableColumnCaches.get(tableToken);
+        if (columnCaches == null) {
+            return 0;
+        }
+        int count = 0;
+        for (int i = 0, n = columnCaches.size(); i < n; i++) {
+            if (columnCaches.getQuick(i) != null) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**
@@ -182,23 +166,37 @@ public class ConnectionSymbolCache {
     }
 
     /**
-     * Returns the number of column caches for a specific table.
+     * Invalidates (clears) the cache for a specific table.
+     * <p>
+     * This should be called when the table's symbol watermark changes,
+     * e.g., after segment rollover.
      *
      * @param tableToken the table's unique token
-     * @return the number of column caches, or 0 if table not cached
      */
-    public int getColumnCacheCount(long tableToken) {
+    public void invalidateTable(long tableToken) {
         ObjList<ClientSymbolCache> columnCaches = tableColumnCaches.get(tableToken);
-        if (columnCaches == null) {
-            return 0;
-        }
-        int count = 0;
-        for (int i = 0, n = columnCaches.size(); i < n; i++) {
-            if (columnCaches.getQuick(i) != null) {
-                count++;
+        if (columnCaches != null) {
+            for (int i = 0, n = columnCaches.size(); i < n; i++) {
+                ClientSymbolCache cache = columnCaches.getQuick(i);
+                if (cache != null) {
+                    cache.clear();
+                }
             }
         }
-        return count;
+    }
+
+    /**
+     * Records a cache hit for statistics.
+     */
+    public void recordHit() {
+        cacheHits++;
+    }
+
+    /**
+     * Records a cache miss for statistics.
+     */
+    public void recordMiss() {
+        cacheMisses++;
     }
 
     private static class ClearConsumer implements LongObjHashMap.LongObjConsumer<ObjList<ClientSymbolCache>> {

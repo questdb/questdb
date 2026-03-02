@@ -69,43 +69,6 @@ public class ClientSymbolCache {
     }
 
     /**
-     * Returns the table symbol ID for the given client symbol ID, or {@link #NO_ENTRY} if not cached.
-     *
-     * @param clientSymbolId the client-side symbol dictionary index
-     * @return the table symbol ID, or {@link #NO_ENTRY} if not found
-     */
-    public int get(int clientSymbolId) {
-        return cache.get(clientSymbolId);
-    }
-
-    /**
-     * Stores a mapping from client symbol ID to table symbol ID.
-     *
-     * @param clientSymbolId the client-side symbol dictionary index
-     * @param tableSymbolId  the table's internal symbol ID
-     */
-    public void put(int clientSymbolId, int tableSymbolId) {
-        cache.put(clientSymbolId, tableSymbolId);
-    }
-
-    /**
-     * Removes all entries from the cache.
-     */
-    public void clear() {
-        cache.clear();
-        lastKnownWatermark = -1;
-    }
-
-    /**
-     * Returns the number of cached entries.
-     *
-     * @return the cache size
-     */
-    public int size() {
-        return cache.size();
-    }
-
-    /**
      * Checks if the watermark has changed and clears the cache if needed.
      * <p>
      * This method should be called before each lookup with the current watermark.
@@ -134,6 +97,24 @@ public class ClientSymbolCache {
     }
 
     /**
+     * Removes all entries from the cache.
+     */
+    public void clear() {
+        cache.clear();
+        lastKnownWatermark = -1;
+    }
+
+    /**
+     * Returns the table symbol ID for the given client symbol ID, or {@link #NO_ENTRY} if not cached.
+     *
+     * @param clientSymbolId the client-side symbol dictionary index
+     * @return the table symbol ID, or {@link #NO_ENTRY} if not found
+     */
+    public int get(int clientSymbolId) {
+        return cache.get(clientSymbolId);
+    }
+
+    /**
      * Returns the last known watermark value.
      * Used for testing and debugging.
      *
@@ -141,5 +122,24 @@ public class ClientSymbolCache {
      */
     public int getLastKnownWatermark() {
         return lastKnownWatermark;
+    }
+
+    /**
+     * Stores a mapping from client symbol ID to table symbol ID.
+     *
+     * @param clientSymbolId the client-side symbol dictionary index
+     * @param tableSymbolId  the table's internal symbol ID
+     */
+    public void put(int clientSymbolId, int tableSymbolId) {
+        cache.put(clientSymbolId, tableSymbolId);
+    }
+
+    /**
+     * Returns the number of cached entries.
+     *
+     * @return the cache size
+     */
+    public int size() {
+        return cache.size();
     }
 }
