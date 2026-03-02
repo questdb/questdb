@@ -8876,6 +8876,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetAddr = mapRO(ff, partitionPath.concat(PARQUET_PARTITION_NAME).$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
             final int timestampIndex = metadata.getTimestampIndex();
+            assert parquetDecoder.metadata().getRowGroupCount() > 0;
             return parquetDecoder.rowGroupMinTimestamp(0, timestampIndex);
         } finally {
             if (parquetAddr != 0) {
@@ -8978,12 +8979,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             parquetAddr = mapRO(ff, filePath.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
-            final int timestampIndex = metadata.getTimestampIndex();
-            attachMinTimestamp = parquetDecoder.rowGroupMinTimestamp(0, timestampIndex);
             final int rowGroupCount = parquetDecoder.metadata().getRowGroupCount();
             assert rowGroupCount > 0;
+            final int timestampIndex = metadata.getTimestampIndex();
+            attachMinTimestamp = parquetDecoder.rowGroupMinTimestamp(0, timestampIndex);
             attachMaxTimestamp = parquetDecoder.rowGroupMaxTimestamp(rowGroupCount - 1, timestampIndex);
-
             return parquetDecoder.metadata().getRowCount();
         } finally {
             if (parquetAddr != 0) {
