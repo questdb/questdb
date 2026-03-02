@@ -357,15 +357,17 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 while (nameEnd > nameStart && Character.isWhitespace(columns.charAt(nameEnd - 1))) {
                     nameEnd--;
                 }
-                if (nameStart < nameEnd) {
-                    CharSequence columnName = columns.subSequence(nameStart, nameEnd);
-                    int columnIndex = meta.getColumnIndexQuiet(columnName);
-                    if (columnIndex >= 0) {
-                        indexes.add(columnIndex);
-                    } else {
-                        throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName)
-                                .position(bloomFilterColumnsPosition > 0 ? bloomFilterColumnsPosition + start : 0);
-                    }
+                if (nameStart >= nameEnd) {
+                    throw CairoException.nonCritical().put("empty column name in bloom_filter_columns")
+                            .position(bloomFilterColumnsPosition > 0 ? bloomFilterColumnsPosition + start : 0);
+                }
+                CharSequence columnName = columns.subSequence(nameStart, nameEnd);
+                int columnIndex = meta.getColumnIndexQuiet(columnName);
+                if (columnIndex >= 0) {
+                    indexes.add(columnIndex);
+                } else {
+                    throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName)
+                            .position(bloomFilterColumnsPosition > 0 ? bloomFilterColumnsPosition + start : 0);
                 }
                 start = i + 1;
             }

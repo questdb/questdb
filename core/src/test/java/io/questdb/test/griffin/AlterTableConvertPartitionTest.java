@@ -238,6 +238,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "fpp must be between 0 and 1 (exclusive)"
             );
 
+            // fpp = -0.1 (negative, out of range)
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06-10' with (fpp = '-0.1')",
+                    73,
+                    "fpp must be between 0 and 1 (exclusive)"
+            );
+
             // fpp = non-numeric
             assertException(
                     "alter table x convert partition to parquet list '2024-06-10' with (fpp = abc)",
