@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
@@ -123,19 +124,20 @@ public class QwpResponseEncoder {
 
         if (statusCode == QwpStatusCode.PARTIAL) {
             // Decode table errors
-            int[] varintResult = decodeVarint(buf, pos, offset + length);
-            int errorCount = varintResult[0];
-            pos = varintResult[1];
+            int end = offset + length;
+            long varintResult = decodeVarint(buf, pos, end);
+            int errorCount = Numbers.decodeLowInt(varintResult);
+            pos = Numbers.decodeHighInt(varintResult);
 
             ObjList<QwpResponse.TableError> errors = new ObjList<>(errorCount);
             for (int i = 0; i < errorCount; i++) {
                 // Table index
-                varintResult = decodeVarint(buf, pos, offset + length);
-                int tableIndex = varintResult[0];
-                pos = varintResult[1];
+                varintResult = decodeVarint(buf, pos, end);
+                int tableIndex = Numbers.decodeLowInt(varintResult);
+                pos = Numbers.decodeHighInt(varintResult);
 
                 // Error code
-                if (pos >= offset + length) {
+                if (pos >= end) {
                     throw QwpParseException.create(
                             QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                             "unexpected end of response reading error code"
@@ -144,9 +146,11 @@ public class QwpResponseEncoder {
                 byte errorCode = buf[pos++];
 
                 // Error message
-                String[] stringResult = decodeString(buf, pos, offset + length);
-                String errorMessage = stringResult[0];
-                pos = Integer.parseInt(stringResult[1]);
+                varintResult = decodeVarint(buf, pos, end);
+                int strLen = Numbers.decodeLowInt(varintResult);
+                pos = Numbers.decodeHighInt(varintResult);
+                String errorMessage = decodeStringBytes(buf, pos, strLen, end);
+                pos += strLen;
 
                 errors.add(new QwpResponse.TableError(tableIndex, errorCode, errorMessage));
             }
@@ -154,8 +158,11 @@ public class QwpResponseEncoder {
             return QwpResponse.partial(errors);
         } else {
             // Decode error message
-            String[] stringResult = decodeString(buf, pos, offset + length);
-            String errorMessage = stringResult[0];
+            int end = offset + length;
+            long varintResult = decodeVarint(buf, pos, end);
+            int strLen = Numbers.decodeLowInt(varintResult);
+            pos = Numbers.decodeHighInt(varintResult);
+            String errorMessage = decodeStringBytes(buf, pos, strLen, end);
 
             return QwpResponse.error(statusCode, errorMessage);
         }
@@ -263,23 +270,22 @@ public class QwpResponseEncoder {
 
     // Helper methods
 
-    private static String[] decodeString(byte[] buf, int offset, int limit) throws QwpParseException {
-        int[] varintResult = decodeVarint(buf, offset, limit);
-        int strLen = varintResult[0];
-        int pos = varintResult[1];
-
-        if (pos + strLen > limit) {
+    private static String decodeStringBytes(byte[] buf, int offset, int strLen, int limit) throws QwpParseException {
+        if (offset + strLen > limit) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                     "string extends beyond buffer"
             );
         }
-
-        String str = new String(buf, pos, strLen, StandardCharsets.UTF_8);
-        return new String[]{str, String.valueOf(pos + strLen)};
+        return new String(buf, offset, strLen, StandardCharsets.UTF_8);
     }
 
-    private static int[] decodeVarint(byte[] buf, int offset, int limit) throws QwpParseException {
+    /**
+     * Decodes a varint from the buffer. Returns a packed long where the low int
+     * is the decoded value and the high int is the new position after the varint.
+     * Use {@link Numbers#decodeLowInt} and {@link Numbers#decodeHighInt} to unpack.
+     */
+    private static long decodeVarint(byte[] buf, int offset, int limit) throws QwpParseException {
         long result = 0;
         int shift = 0;
         int pos = offset;
@@ -288,7 +294,7 @@ public class QwpResponseEncoder {
             byte b = buf[pos++];
             result |= (long) (b & 0x7F) << shift;
             if ((b & 0x80) == 0) {
-                return new int[]{(int) result, pos};
+                return Numbers.encodeLowHighInts((int) result, pos);
             }
             shift += 7;
             if (shift >= 64) {
