@@ -32,6 +32,7 @@ import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -707,6 +708,43 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
                 // Verify close code (big-endian)
                 Assert.assertEquals((byte) 0x03, sent[2]);  // 1000 >> 8
                 Assert.assertEquals((byte) 0xE8, sent[3]);  // 1000 & 0xFF
+            }
+        });
+    }
+
+    @Test
+    public void testSendCloseFrameWithMultiByteUtf8Reason() throws Exception {
+        assertMemoryLeak(() -> {
+            try (WebSocketConnectionContext ctx = createContext()) {
+                // Reason with multi-byte UTF-8 characters:
+                // \u00E9 = 2 bytes in UTF-8, \u4E16\u754C = 3 bytes each in UTF-8
+                String reason = "caf\u00E9 \u4E16\u754C";
+                byte[] utf8Bytes = reason.getBytes(StandardCharsets.UTF_8);
+                int expectedPayloadLen = 2 + utf8Bytes.length; // 2 for close code
+                int expectedHeaderLen = 2; // payload <= 125
+                int expectedFrameSize = expectedHeaderLen + expectedPayloadLen;
+
+                ctx.sendCloseFrame(WebSocketCloseCode.NORMAL_CLOSURE, reason);
+
+                byte[] sent = ctx.getSendBuffer().toByteArray();
+                Assert.assertEquals(expectedFrameSize, sent.length);
+
+                // Verify header
+                Assert.assertEquals((byte) 0x88, sent[0]);  // FIN + CLOSE
+                Assert.assertEquals((byte) expectedPayloadLen, sent[1]);  // payload length
+
+                // Verify close code (big-endian)
+                Assert.assertEquals((byte) 0x03, sent[2]);  // 1000 >> 8
+                Assert.assertEquals((byte) 0xE8, sent[3]);  // 1000 & 0xFF
+
+                // Verify reason bytes match UTF-8 encoding
+                for (int i = 0; i < utf8Bytes.length; i++) {
+                    Assert.assertEquals(
+                            "Reason byte mismatch at index " + i,
+                            utf8Bytes[i],
+                            sent[4 + i]
+                    );
+                }
             }
         });
     }

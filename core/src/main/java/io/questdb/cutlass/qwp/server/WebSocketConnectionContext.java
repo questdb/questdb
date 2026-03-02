@@ -274,15 +274,16 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
      * Sends a close frame.
      */
     public void sendCloseFrame(int code, String reason) {
-        int payloadLen = 2;
-        byte[] reasonBytes = null;
+        // Use an upper-bound payload size (2-byte status code + at most 3 UTF-8
+        // bytes per char) to avoid allocating a byte[] just to measure the
+        // encoded length. advanceWrite() uses the exact count from writeCloseFrame().
+        int maxPayloadLen = 2;
         if (reason != null && !reason.isEmpty()) {
-            reasonBytes = reason.getBytes();
-            payloadLen += reasonBytes.length;
+            maxPayloadLen += reason.length() * 3;
         }
 
-        int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-        sendBuffer.ensureCapacity(frameSize);
+        int maxFrameSize = WebSocketFrameWriter.headerSize(maxPayloadLen, false) + maxPayloadLen;
+        sendBuffer.ensureCapacity(maxFrameSize);
 
         long writePtr = sendBuffer.writeAddress();
         int written = WebSocketFrameWriter.writeCloseFrame(writePtr, code, reason);
