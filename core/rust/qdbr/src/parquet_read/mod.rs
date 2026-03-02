@@ -44,6 +44,14 @@ impl DecodeContext {
     }
 }
 
+pub const FILTER_OP_EQ: u8 = 0;
+pub const FILTER_OP_LT: u8 = 1;
+pub const FILTER_OP_LE: u8 = 2;
+pub const FILTER_OP_GT: u8 = 3;
+pub const FILTER_OP_GE: u8 = 4;
+pub const FILTER_OP_IS_NULL: u8 = 5;
+pub const FILTER_OP_IS_NOT_NULL: u8 = 6;
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ColumnFilterPacked {
@@ -59,7 +67,12 @@ impl ColumnFilterPacked {
 
     #[inline]
     pub fn count(&self) -> u32 {
-        (self.col_idx_and_count >> 32) as u32
+        ((self.col_idx_and_count >> 32) & 0x00FFFFFF) as u32
+    }
+
+    #[inline]
+    pub fn operation_type(&self) -> u8 {
+        ((self.col_idx_and_count >> 56) & 0xFF) as u8
     }
 }
 
@@ -133,7 +146,11 @@ mod tests {
     use crate::parquet::error::ParquetResult;
     use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
     use crate::parquet::tests::ColumnTypeTagExt;
-    use crate::parquet_read::{ColumnFilterPacked, DecodeContext, ParquetDecoder, RowGroupBuffers};
+    use crate::parquet_read::{
+        ColumnFilterPacked, DecodeContext, ParquetDecoder, RowGroupBuffers, FILTER_OP_EQ,
+        FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE,
+        FILTER_OP_LT,
+    };
     use parquet::basic::{ConvertedType, LogicalType, Type as PhysicalType};
     use parquet::data_type::{ByteArray, ByteArrayType};
     use parquet::file::properties::{BloomFilterPosition, WriterProperties, WriterVersion};
@@ -309,8 +326,14 @@ mod tests {
     }
 
     fn make_filter(column_index: u32, count: usize, ptr: u64) -> ColumnFilterPacked {
+        make_filter_with_op(column_index, count, ptr, FILTER_OP_EQ)
+    }
+
+    fn make_filter_with_op(column_index: u32, count: usize, ptr: u64, op: u8) -> ColumnFilterPacked {
         ColumnFilterPacked {
-            col_idx_and_count: (column_index as u64) | ((count as u64) << 32),
+            col_idx_and_count: (column_index as u64)
+                | (((count as u64) & 0x00FFFFFF) << 32)
+                | ((op as u64) << 56),
             ptr,
         }
     }
@@ -529,5 +552,243 @@ mod tests {
         let filters = [make_i64_filter(&filter_vals)];
         let result = decoder.can_skip_row_group(99, &buf, &filters);
         assert!(result.is_err(), "should error on invalid row group index");
+    }
+
+    fn gen_i64_parquet_with_stats(values: &[i64]) -> ParquetResult<Vec<u8>> {
+        let col = Arc::new(
+            Type::primitive_type_builder("val", PhysicalType::INT64)
+                .with_id(Some(0))
+                .with_repetition(parquet::basic::Repetition::REQUIRED)
+                .build()?,
+        );
+        let schema = Arc::new(
+            Type::group_type_builder("schema")
+                .with_fields(vec![col])
+                .build()?,
+        );
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_bloom_filter_enabled(false)
+                .set_statistics_enabled(parquet::file::properties::EnabledStatistics::Chunk)
+                .build(),
+        );
+        let mut cursor = Cursor::new(Vec::new());
+        let mut fw = SerializedFileWriter::new(&mut cursor, schema, props)?;
+        let mut rg = fw.next_row_group()?;
+        if let Some(mut cw) = rg.next_column()? {
+            let tw = cw.typed::<parquet::data_type::Int64Type>();
+            tw.write_batch(values, None, None)?;
+            cw.close()?;
+        }
+        rg.close()?;
+        fw.close()?;
+        Ok(cursor.into_inner())
+    }
+
+    fn gen_nullable_i64_parquet(
+        values: &[i64],
+        def_levels: &[i16],
+    ) -> ParquetResult<Vec<u8>> {
+        let col = Arc::new(
+            Type::primitive_type_builder("val", PhysicalType::INT64)
+                .with_id(Some(0))
+                .with_repetition(parquet::basic::Repetition::OPTIONAL)
+                .build()?,
+        );
+        let schema = Arc::new(
+            Type::group_type_builder("schema")
+                .with_fields(vec![col])
+                .build()?,
+        );
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_bloom_filter_enabled(false)
+                .set_statistics_enabled(parquet::file::properties::EnabledStatistics::Chunk)
+                .build(),
+        );
+        let mut cursor = Cursor::new(Vec::new());
+        let mut fw = SerializedFileWriter::new(&mut cursor, schema, props)?;
+        let mut rg = fw.next_row_group()?;
+        if let Some(mut cw) = rg.next_column()? {
+            let tw = cw.typed::<parquet::data_type::Int64Type>();
+            tw.write_batch(values, Some(def_levels), None)?;
+            cw.close()?;
+        }
+        rg.close()?;
+        fw.close()?;
+        Ok(cursor.into_inner())
+    }
+
+    #[test]
+    fn skip_row_group_range_lt_below_min() -> ParquetResult<()> {
+        let data: Vec<i64> = (100..110).collect();
+        let buf = gen_i64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // col < 100: min=100, so min >= val → skip
+        let filter_vals: Vec<i64> = vec![100];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        // col < 99: min=100 >= 99 → skip
+        let filter_vals: Vec<i64> = vec![99];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        // col < 101: min=100 < 101 → cannot skip
+        let filter_vals: Vec<i64> = vec![101];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LT)];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_range_le_below_min() -> ParquetResult<()> {
+        let data: Vec<i64> = (100..110).collect();
+        let buf = gen_i64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // col <= 99: min=100 > 99 → skip
+        let filter_vals: Vec<i64> = vec![99];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LE)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        // col <= 100: min=100 > 100 is false → cannot skip
+        let filter_vals: Vec<i64> = vec![100];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LE)];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_range_gt_above_max() -> ParquetResult<()> {
+        let data: Vec<i64> = (100..110).collect();
+        let buf = gen_i64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // col > 109: max=109, so max <= val → skip
+        let filter_vals: Vec<i64> = vec![109];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        // col > 110: max=109 <= 110 → skip
+        let filter_vals: Vec<i64> = vec![110];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        // col > 108: max=109 <= 108 is false → cannot skip
+        let filter_vals: Vec<i64> = vec![108];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GT)];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_range_ge_above_max() -> ParquetResult<()> {
+        let data: Vec<i64> = (100..110).collect();
+        let buf = gen_i64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // col >= 110: max=109 < 110 → skip
+        let filter_vals: Vec<i64> = vec![110];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GE)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        // col >= 109: max=109 < 109 is false → cannot skip
+        let filter_vals: Vec<i64> = vec![109];
+        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GE)];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_is_null_no_nulls() -> ParquetResult<()> {
+        // All non-null: null_count=0 → IS NULL should skip
+        let data: Vec<i64> = (100..110).collect();
+        let buf = gen_i64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        let filters = [make_filter_with_op(0, 0, 0, FILTER_OP_IS_NULL)];
+        assert!(
+            decoder.can_skip_row_group(0, &buf, &filters)?,
+            "IS NULL should skip when null_count=0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn no_skip_row_group_is_null_has_nulls() -> ParquetResult<()> {
+        // Some nulls present: IS NULL should not skip
+        let data: Vec<i64> = vec![100, 200];
+        let def_levels: Vec<i16> = vec![1, 0, 1]; // 3 rows: non-null, null, non-null
+        let buf = gen_nullable_i64_parquet(&data, &def_levels)?;
+        let decoder = read_decoder(&buf)?;
+
+        let filters = [make_filter_with_op(0, 0, 0, FILTER_OP_IS_NULL)];
+        assert!(
+            !decoder.can_skip_row_group(0, &buf, &filters)?,
+            "IS NULL should not skip when nulls exist"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_is_not_null_all_nulls() -> ParquetResult<()> {
+        // All nulls: null_count == num_values → IS NOT NULL should skip
+        let data: Vec<i64> = vec![];
+        let def_levels: Vec<i16> = vec![0, 0, 0]; // 3 rows, all null
+        let buf = gen_nullable_i64_parquet(&data, &def_levels)?;
+        let decoder = read_decoder(&buf)?;
+
+        let filters = [make_filter_with_op(0, 0, 0, FILTER_OP_IS_NOT_NULL)];
+        assert!(
+            decoder.can_skip_row_group(0, &buf, &filters)?,
+            "IS NOT NULL should skip when all values are null"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn no_skip_row_group_is_not_null_has_non_nulls() -> ParquetResult<()> {
+        // Some non-null values: IS NOT NULL should not skip
+        let data: Vec<i64> = vec![100];
+        let def_levels: Vec<i16> = vec![1, 0, 0]; // 3 rows: non-null, null, null
+        let buf = gen_nullable_i64_parquet(&data, &def_levels)?;
+        let decoder = read_decoder(&buf)?;
+
+        let filters = [make_filter_with_op(0, 0, 0, FILTER_OP_IS_NOT_NULL)];
+        assert!(
+            !decoder.can_skip_row_group(0, &buf, &filters)?,
+            "IS NOT NULL should not skip when some non-nulls exist"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_string_range() -> ParquetResult<()> {
+        let data = vec!["alice", "bob", "charlie"];
+        let buf = gen_string_parquet_with_bloom(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // col > "zzz": max is "charlie", "charlie" <= "zzz" → skip
+        let filter_buf = make_string_filter_buf(&["zzz"]);
+        let filters = [make_filter_with_op(0, 1, filter_buf.as_ptr() as u64, FILTER_OP_GT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        // col < "aaa": min is "alice", "alice" >= "aaa" → skip
+        let filter_buf = make_string_filter_buf(&["aaa"]);
+        let filters = [make_filter_with_op(0, 1, filter_buf.as_ptr() as u64, FILTER_OP_LT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        // col > "bob": max is "charlie", "charlie" > "bob" → cannot skip
+        let filter_buf = make_string_filter_buf(&["bob"]);
+        let filters = [make_filter_with_op(0, 1, filter_buf.as_ptr() as u64, FILTER_OP_GT)];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+
+        Ok(())
     }
 }

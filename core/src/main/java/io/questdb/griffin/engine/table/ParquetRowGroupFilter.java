@@ -85,16 +85,25 @@ public final class ParquetRowGroupFilter {
 
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
+                final int opType = condition.getOperationType();
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();
-                if (valueCount == 0) {
-                    continue;
-                }
 
                 int columnIndex = metadata.getColumnIndex(condition.getColumnName());
                 if (columnIndex < 0) {
                     continue;
                 }
+
+                if (opType == PushdownFilterExtractor.OP_IS_NULL || opType == PushdownFilterExtractor.OP_IS_NOT_NULL) {
+                    filterList.add(encodeColumnCountAndOp(columnIndex, 0, opType));
+                    filterList.add(0);
+                    continue;
+                }
+
+                if (valueCount == 0) {
+                    continue;
+                }
+
                 final int columnType = condition.getColumnType();
                 final long valuesOffset = filterValues.getAppendOffset();
                 boolean supported = true;
@@ -329,7 +338,7 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
-                filterList.add(encodeColumnAndCount(columnIndex, valueCount));
+                filterList.add(encodeColumnCountAndOp(columnIndex, valueCount, opType));
                 filterList.add(valuesOffset);
             }
             final int filterCount = (int) (filterList.size() / LONGS_PER_FILTER);
@@ -365,7 +374,7 @@ public final class ParquetRowGroupFilter {
         rowGroupsSkipped = 0;
     }
 
-    private static long encodeColumnAndCount(int columnIndex, int count) {
-        return (columnIndex & 0xFFFFFFFFL) | ((long) count << 32);
+    private static long encodeColumnCountAndOp(int columnIndex, int count, int op) {
+        return (columnIndex & 0xFFFFFFFFL) | ((long) (count & 0x00FFFFFF) << 32) | ((long) (op & 0xFF) << 56);
     }
 }
