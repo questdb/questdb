@@ -4358,7 +4358,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (unnestFilter != null) {
                             master = new FilteredRecordCursorFactory(
                                     master,
-                                    compileJoinFilter(unnestFilter, master.getMetadata(), executionContext)
+                                    compileBooleanFilter(unnestFilter, master.getMetadata(), executionContext)
                             );
                         }
                         continue;
@@ -8659,15 +8659,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     new ObjList<>(exprCount);
             UnnestSource[] sources = new UnnestSource[exprCount];
             try {
-                // Build output metadata. For standalone UNNEST,
-                // skip master columns in the output.
-                JoinRecordMetadata outputMetadata;
-                if (isStandalone) {
-                    outputMetadata = new JoinRecordMetadata(
-                            configuration, totalUnnestColumns
+                // Build output metadata separately from the
+                // parser metadata to avoid leaking UNNEST columns
+                // into subsequent parseFunction() calls.
+                JoinRecordMetadata outputMetadata =
+                        new JoinRecordMetadata(
+                                configuration,
+                                isStandalone
+                                        ? totalUnnestColumns
+                                        : masterColumnCount
+                                        + totalUnnestColumns
+                        );
+                if (!isStandalone) {
+                    outputMetadata.copyColumnMetadataFrom(
+                            masterAlias, masterMetadata
                     );
-                } else {
-                    outputMetadata = parserMetadata;
                 }
 
                 try {
@@ -8708,7 +8714,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             .getUnnestJsonColumnTypes()
                                             .getQuick(i);
                             sources[i] = new JsonUnnestSource(
-                                    f, jsonColNames, jsonColTypes
+                                    f, jsonColNames, jsonColTypes,
+                                    configuration
+                                            .getJsonUnnestMaxValueSize()
                             );
                             for (int j = 0, jn = jsonColNames.size();
                                  j < jn; j++) {
@@ -8810,16 +8818,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     hasOrdinality,
                                     columnNames
                             );
-                    // In standalone mode, parserMetadata was
-                    // only needed for function compilation.
-                    if (isStandalone) {
-                        Misc.free(parserMetadata);
-                    }
+                    // parserMetadata was only needed for
+                    // function compilation; outputMetadata is
+                    // now owned by the factory.
+                    Misc.free(parserMetadata);
                     return factory;
                 } catch (Throwable th) {
-                    if (isStandalone) {
-                        Misc.free(outputMetadata);
-                    }
+                    Misc.free(outputMetadata);
                     throw th;
                 }
             } catch (Throwable th) {

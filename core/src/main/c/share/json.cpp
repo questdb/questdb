@@ -693,13 +693,18 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerArrayLength(
     } else {
         val = doc.at_pointer(pointer);
     }
-    if (!result->set_error(val)) { return 0; }
+    if (!result->from(val)) { return 0; }
     auto arr = val.get_array();
     if (!result->set_error(arr)) { return 0; }
     auto count = arr.count_elements();
     if (!result->set_error(count)) { return 0; }
+    const auto count_value = count.value_unsafe();
+    if (count_value > static_cast<size_t>(std::numeric_limits<jint>::max())) {
+        result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+        return 0;
+    }
     result->error = simdjson::error_code::SUCCESS;
-    return static_cast<jint>(count.value_unsafe());
+    return static_cast<jint>(count_value);
 }
 
 } // extern "C"

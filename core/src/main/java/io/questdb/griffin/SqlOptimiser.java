@@ -2566,15 +2566,15 @@ public class SqlOptimiser implements Mutable {
             ObjList<QueryModel> models = baseModel.getJoinModels();
             // For standalone UNNEST, skip the synthetic base model
             // (long_sequence) so SELECT * only returns unnest columns.
-            boolean skipBase = false;
+            boolean hasStandaloneUnnest = false;
             for (int j = 1, z = models.size(); j < z; j++) {
                 if (models.getQuick(j).isStandaloneUnnest()) {
-                    skipBase = true;
+                    hasStandaloneUnnest = true;
                     break;
                 }
             }
             for (int j = 0, z = models.size(); j < z; j++) {
-                if (j == 0 && skipBase) {
+                if (j == 0 && hasStandaloneUnnest) {
                     continue;
                 }
                 createSelectColumnsForWildcard0(

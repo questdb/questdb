@@ -587,7 +587,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
     @Test
     public void testTimestampOverflowThrowsError() throws Exception {
         // Exercises the overflow check in getTimestamp() - a string value
-        // exceeding MAX_JSON_VALUE_SIZE in a TIMESTAMP column must throw.
+        // exceeding DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE in a TIMESTAMP column must throw.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             String bigTs = "2024-01-15T10:30:00.000000Z" + "x".repeat(5000);
@@ -598,7 +598,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             + ") u",
                     0,
                     "JSON UNNEST: value exceeds maximum size of "
-                            + JsonUnnestSource.MAX_JSON_VALUE_SIZE
+                            + JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE
                             + " bytes for column 'ts'"
             );
         });
@@ -652,13 +652,13 @@ public class JsonUnnestTest extends AbstractCairoTest {
 
     @Test
     public void testLargeNonAsciiVarcharOverflowThrowsError() throws Exception {
-        // Non-ASCII values exceeding MAX_JSON_VALUE_SIZE trigger UTF-8
+        // Non-ASCII values exceeding DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE trigger UTF-8
         // backoff in the native layer, producing sink.size() < maxSize.
         // The native truncated flag detects the overflow and throws.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             // 1366 CJK characters x 3 bytes each = 4098 bytes > 4096
-            int charCount = (JsonUnnestSource.MAX_JSON_VALUE_SIZE / 3) + 2;
+            int charCount = (JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE / 3) + 2;
             String bigVal = "\u4e16".repeat(charCount); // '世' = 3 bytes in UTF-8
             execute("INSERT INTO t VALUES ('[{\"s\":\"" + bigVal + "\"}]')");
             assertExceptionNoLeakCheck(
@@ -667,7 +667,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             + ") u",
                     0,
                     "JSON UNNEST: value exceeds maximum size of "
-                            + JsonUnnestSource.MAX_JSON_VALUE_SIZE
+                            + JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE
                             + " bytes for column 's'"
             );
         });
@@ -675,7 +675,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
 
     @Test
     public void testLargeVarcharOverflowThrowsError() throws Exception {
-        // Values exceeding MAX_JSON_VALUE_SIZE (4096) throw an error
+        // Values exceeding DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE (4096) throw an error
         // rather than silently truncating or returning NULL.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -687,7 +687,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             + ") u",
                     0,
                     "JSON UNNEST: value exceeds maximum size of "
-                            + JsonUnnestSource.MAX_JSON_VALUE_SIZE
+                            + JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE
                             + " bytes for column 's'"
             );
         });
@@ -1090,12 +1090,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharExactlyAtCapDoesNotError() throws Exception {
-        // A value exactly MAX_JSON_VALUE_SIZE bytes must NOT be treated
+        // A value exactly DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE bytes must NOT be treated
         // as overflow. This guards against false positives in the
         // truncation check.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
-            int cap = JsonUnnestSource.MAX_JSON_VALUE_SIZE;
+            int cap = JsonUnnestSource.DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE;
             String exactVal = "a".repeat(cap);
             execute("INSERT INTO t VALUES ('[{\"s\":\"" + exactVal + "\"}]')");
             assertSql(

@@ -54,16 +54,11 @@ import io.questdb.std.str.Utf8Sequence;
  * accessed directly (e.g., /3).
  */
 public class JsonUnnestSource implements UnnestSource, QuietCloseable {
-    // Max size for JSON field value extraction. JSON field values are
-    // typically short, so 4KB is generous. This bounds the per-column
-    // DirectUtf8Sink allocation (2 sinks * 4KB per VARCHAR/TIMESTAMP col).
-    // The native truncated_utf8_copy() sets result.truncated when the
-    // source exceeds this limit; callers check result.isTruncated() and
-    // throw CairoException for overflowed values.
-    public static final int MAX_JSON_VALUE_SIZE = 4096;
+    public static final int DEFAULT_MAX_JSON_UNNEST_VALUE_SIZE = 4096;
     private final ObjList<CharSequence> columnNames;
     private final IntList columnTypes;
     private final Function function;
+    private final int maxJsonValueSize;
     private final SimdJsonParser parser;
     private final DirectUtf8Sink pointerSink;
     private final SimdJsonResult result;
@@ -77,18 +72,20 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     public JsonUnnestSource(
             Function function,
             ObjList<CharSequence> columnNames,
-            IntList columnTypes
+            IntList columnTypes,
+            int maxJsonValueSize
     ) {
         this.function = function;
         this.columnNames = columnNames;
         this.columnTypes = columnTypes;
+        this.maxJsonValueSize = maxJsonValueSize;
         this.parser = new SimdJsonParser();
         this.result = new SimdJsonResult();
         this.pointerSink = new DirectUtf8Sink(64);
         this.jsonSink = null;
 
         // Allocate varchar sinks for VARCHAR and TIMESTAMP columns.
-        // Each sink must have capacity >= MAX_JSON_VALUE_SIZE to satisfy
+        // Each sink must have capacity >= maxJsonValueSize to satisfy
         // the SimdJsonParser.queryPointerUtf8 assertion.
         int colCount = columnTypes.size();
         this.varcharSinks = new DirectUtf8Sink[colCount][];
@@ -96,8 +93,8 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
             int type = ColumnType.tagOf(columnTypes.getQuick(i));
             if (type == ColumnType.VARCHAR || type == ColumnType.TIMESTAMP) {
                 varcharSinks[i] = new DirectUtf8Sink[]{
-                        new DirectUtf8Sink(MAX_JSON_VALUE_SIZE),
-                        new DirectUtf8Sink(MAX_JSON_VALUE_SIZE)
+                        new DirectUtf8Sink(maxJsonValueSize),
+                        new DirectUtf8Sink(maxJsonValueSize)
                 };
             }
         }
@@ -246,7 +243,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         sink.clear();
         buildPointer(elementIndex, sourceCol);
         parser.queryPointerUtf8(
-                jsonSeq, pointerSink, result, sink, MAX_JSON_VALUE_SIZE
+                jsonSeq, pointerSink, result, sink, maxJsonValueSize
         );
         if (result.getError() != SimdJsonError.SUCCESS
                 || result.getType() != SimdJsonType.STRING) {
@@ -358,7 +355,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         sink.clear();
         buildPointer(elementIndex, sourceCol);
         parser.queryPointerUtf8(
-                jsonSeq, pointerSink, result, sink, MAX_JSON_VALUE_SIZE
+                jsonSeq, pointerSink, result, sink, maxJsonValueSize
         );
         if (result.getError() != SimdJsonError.SUCCESS) {
             return null;
@@ -372,7 +369,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     private CairoException overflowError(int sourceCol, int elementIndex) {
         return CairoException.nonCritical()
                 .put("JSON UNNEST: value exceeds maximum size of ")
-                .put(MAX_JSON_VALUE_SIZE)
+                .put(maxJsonValueSize)
                 .put(" bytes for column '")
                 .put(columnNames.getQuick(sourceCol))
                 .put("' at array index ")
