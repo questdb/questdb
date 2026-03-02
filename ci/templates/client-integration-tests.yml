@@ -14,8 +14,7 @@ steps:
   - bash: mkdir -p "$HOME/.m2/repository"
     displayName: "Ensure .m2/repository exists"
 
-  - bash: git clone --depth 1 https://github.com/questdb/java-questdb-client.git
-    displayName: "Clone java-questdb-client (main)"
+  - template: detect-local-client.yml
 
   - task: Maven@3
     displayName: "Build server JAR"
@@ -23,13 +22,18 @@ steps:
       mavenPomFile: "pom.xml"
       jdkVersionOption: "1.17"
       goals: "package"
-      options: "--batch-mode -Dmaven.test.skip=true -pl core -am -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+      options: "--batch-mode -Dmaven.test.skip=true -pl core -am $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+
+  # Clone client main separately — the submodule above is only for building
+  # the server. Tests run against client main to catch server regressions.
+  - bash: git clone --depth 1 https://github.com/questdb/java-questdb-client.git client-main
+    displayName: "Clone java-questdb-client main"
 
   # --- Default config: start server, run tests, stop server ---
   - bash: |
       set -e
       mkdir -p questdb-data
-      cp -r java-questdb-client/ci/confs/default questdb-data/conf
+      cp -r client-main/ci/confs/default questdb-data/conf
       mkdir -p logs
 
       java -p core/target/questdb-*-SNAPSHOT.jar \
@@ -57,7 +61,7 @@ steps:
   - task: Maven@3
     displayName: "Run client tests (default config)"
     inputs:
-      mavenPomFile: "java-questdb-client/core/pom.xml"
+      mavenPomFile: "client-main/core/pom.xml"
       jdkVersionOption: "1.17"
       goals: "test"
       options: "--batch-mode -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
@@ -77,7 +81,7 @@ steps:
   - bash: |
       set -e
       mkdir -p questdb-data
-      cp -r java-questdb-client/ci/confs/authenticated questdb-data/conf
+      cp -r client-main/ci/confs/authenticated questdb-data/conf
       mkdir -p logs
 
       java -p core/target/questdb-*-SNAPSHOT.jar \
@@ -105,7 +109,7 @@ steps:
   - task: Maven@3
     displayName: "Run client tests (authenticated config)"
     inputs:
-      mavenPomFile: "java-questdb-client/core/pom.xml"
+      mavenPomFile: "client-main/core/pom.xml"
       jdkVersionOption: "1.17"
       goals: "test"
       options: "--batch-mode -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
