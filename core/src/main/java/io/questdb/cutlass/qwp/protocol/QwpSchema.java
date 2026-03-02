@@ -228,7 +228,7 @@ public final class QwpSchema {
         long pos = address + 1;
 
         for (QwpColumnDef col : columns) {
-            byte[] nameBytes = col.getName().getBytes(StandardCharsets.UTF_8);
+            byte[] nameBytes = col.getNameUtf8();
             pos = QwpVarint.encode(pos, nameBytes.length);
             for (byte b : nameBytes) {
                 Unsafe.getUnsafe().putByte(pos++, b);
@@ -250,7 +250,7 @@ public final class QwpSchema {
         buf[offset++] = SCHEMA_MODE_FULL;
 
         for (QwpColumnDef col : columns) {
-            byte[] nameBytes = col.getName().getBytes(StandardCharsets.UTF_8);
+            byte[] nameBytes = col.getNameUtf8();
             offset = QwpVarint.encode(buf, offset, nameBytes.length);
             System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
             offset += nameBytes.length;
@@ -268,7 +268,7 @@ public final class QwpSchema {
     public int encodedSize() {
         int size = 1; // schema mode byte
         for (QwpColumnDef col : columns) {
-            byte[] nameBytes = col.getName().getBytes(StandardCharsets.UTF_8);
+            byte[] nameBytes = col.getNameUtf8();
             size += QwpVarint.encodedLength(nameBytes.length);
             size += nameBytes.length;
             size += 1; // type code

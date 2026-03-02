@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import java.nio.charset.StandardCharsets;
+
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
 
@@ -34,6 +36,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
  */
 public final class QwpColumnDef {
     private final String name;
+    private final byte[] nameUtf8;
     private final boolean nullable;
     private final byte typeCode;
 
@@ -45,6 +48,7 @@ public final class QwpColumnDef {
      */
     public QwpColumnDef(String name, byte typeCode) {
         this.name = name;
+        this.nameUtf8 = name.getBytes(StandardCharsets.UTF_8);
         // Extract nullable flag (high bit) and base type
         this.nullable = (typeCode & 0x80) != 0;
         this.typeCode = (byte) (typeCode & 0x7F);
@@ -59,6 +63,7 @@ public final class QwpColumnDef {
      */
     public QwpColumnDef(String name, byte typeCode, boolean nullable) {
         this.name = name;
+        this.nameUtf8 = name.getBytes(StandardCharsets.UTF_8);
         this.typeCode = (byte) (typeCode & 0x7F);
         this.nullable = nullable;
     }
@@ -87,6 +92,18 @@ public final class QwpColumnDef {
      */
     public String getName() {
         return name;
+    }
+
+    /**
+     * Gets the column name as pre-computed UTF-8 bytes.
+     * <p>
+     * Returns the internal array directly (no copy) for zero-allocation access.
+     * Callers must not modify the returned array.
+     *
+     * @return UTF-8 encoded name bytes (do not modify)
+     */
+    public byte[] getNameUtf8() {
+        return nameUtf8;
     }
 
     /**

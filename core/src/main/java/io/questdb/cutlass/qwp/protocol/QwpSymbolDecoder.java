@@ -24,11 +24,10 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Decoder for SYMBOL columns in ILP v4 format.
@@ -88,7 +87,7 @@ public final class QwpSymbolDecoder implements QwpColumnDecoder {
         }
 
         // Build dictionary (only from non-null values)
-        List<String> dictList = new ArrayList<>();
+        ObjList<String> dictList = new ObjList<>();
         int[] dictIndices = new int[rowCount];
         for (int i = 0; i < rowCount; i++) {
             if (nullable && nulls[i]) {
@@ -111,8 +110,8 @@ public final class QwpSymbolDecoder implements QwpColumnDecoder {
         pos = QwpVarint.encode(pos, dictList.size());
 
         // Write dictionary entries
-        for (String entry : dictList) {
-            byte[] bytes = entry.getBytes(StandardCharsets.UTF_8);
+        for (int i = 0, n = dictList.size(); i < n; i++) {
+            byte[] bytes = dictList.getQuick(i).getBytes(StandardCharsets.UTF_8);
             pos = QwpVarint.encode(pos, bytes.length);
             for (byte b : bytes) {
                 Unsafe.getUnsafe().putByte(pos++, b);
@@ -160,7 +159,7 @@ public final class QwpSymbolDecoder implements QwpColumnDecoder {
         }
 
         // Build dictionary (only from non-null values)
-        List<String> dictList = new ArrayList<>();
+        ObjList<String> dictList = new ObjList<>();
         int[] dictIndices = new int[rowCount];
         for (int i = 0; i < rowCount; i++) {
             if (nullable && nulls[i]) {
@@ -183,8 +182,8 @@ public final class QwpSymbolDecoder implements QwpColumnDecoder {
         offset = QwpVarint.encode(buf, offset, dictList.size());
 
         // Write dictionary entries
-        for (String entry : dictList) {
-            byte[] bytes = entry.getBytes(StandardCharsets.UTF_8);
+        for (int i = 0, n = dictList.size(); i < n; i++) {
+            byte[] bytes = dictList.getQuick(i).getBytes(StandardCharsets.UTF_8);
             offset = QwpVarint.encode(buf, offset, bytes.length);
             System.arraycopy(bytes, 0, buf, offset, bytes.length);
             offset += bytes.length;
