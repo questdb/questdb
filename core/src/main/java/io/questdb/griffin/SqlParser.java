@@ -4286,7 +4286,7 @@ public class SqlParser {
                 do {
                     CharSequence colNameTok = tok(lexer, "column name");
                     assertNameIsQuotedOrNotAKeyword(colNameTok, lexer.lastTokenPosition());
-                    CharSequence colName = GenericLexer.immutableOf(colNameTok);
+                    CharSequence colName = GenericLexer.immutableOf(unquote(colNameTok));
                     CharSequence typeName = tok(lexer, "column type");
                     int type = ColumnType.typeOf(typeName);
                     if (type == -1) {
@@ -4363,7 +4363,7 @@ public class SqlParser {
                 tok = tok(lexer, "column alias");
                 int aliasPos = lexer.lastTokenPosition();
                 assertNameIsQuotedOrNotAKeyword(tok, aliasPos);
-                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(tok));
+                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(unquote(tok)));
                 if (firstExcessAliasPos == -1
                         && unnestModel.getUnnestColumnAliases().size() > maxAliases) {
                     firstExcessAliasPos = aliasPos;
