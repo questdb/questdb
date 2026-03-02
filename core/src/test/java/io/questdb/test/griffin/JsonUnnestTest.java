@@ -1129,4 +1129,32 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- Tests for COLUMNS keyword validation ----
+
+    @Test
+    public void testColumnsKeywordAsColumnNameRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.payload COLUMNS(select DOUBLE)) u",
+                    42,
+                    "have to be enclosed in double quotes"
+            );
+        });
+    }
+
+    @Test
+    public void testColumnsKeywordQuotedColumnNameAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"select\":1.5}]')");
+            assertQueryNoLeakCheck(
+                    "select\n"
+                            + "1.5\n",
+                    "SELECT u.\"select\" FROM t, UNNEST(t.payload COLUMNS(\"select\" DOUBLE)) u",
+                    (String) null
+            );
+        });
+    }
 }

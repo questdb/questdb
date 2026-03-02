@@ -1628,4 +1628,89 @@ public class UnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- Tests for keyword validation in column aliases ----
+
+    @Test
+    public void testColumnAliasKeywordRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.arr) u(select)",
+                    33,
+                    "have to be enclosed in double quotes"
+            );
+        });
+    }
+
+    @Test
+    public void testColumnAliasKeywordQuotedAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            execute("INSERT INTO t VALUES (ARRAY[1.0, 2.0])");
+            assertQueryNoLeakCheck(
+                    "select\n"
+                            + "1.0\n"
+                            + "2.0\n",
+                    "SELECT u.\"select\" FROM t, UNNEST(t.arr) u(\"select\")",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- Test for double-offset fix (chained 2D->scalar) ----
+
+    @Test
+    public void testUnnest2DChainedToScalar() throws Exception {
+        // Verifies that reading scalar doubles from a 2D array UNNEST
+        // produces correct values (no double-offset).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[][])");
+            execute("INSERT INTO t VALUES (ARRAY[[10.0, 20.0], [30.0, 40.0]])");
+            // First UNNEST: 2D -> 1D slices, second UNNEST: 1D -> scalars
+            assertQueryNoLeakCheck(
+                    "s\n"
+                            + "30.0\n"
+                            + "70.0\n",
+                    "SELECT array_sum(u.val) s FROM t, UNNEST(t.arr) u(val)",
+                    (String) null
+            );
+        });
+    }
+
+    // ---- Test for invalid post-UNNEST filter (compileBooleanFilter) ----
+
+    @Test
+    public void testWhereWithInvalidFilterExpression() throws Exception {
+        // Validates that a parse error in post-UNNEST WHERE does not
+        // cause a double-free (compileBooleanFilter vs compileJoinFilter).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (arr DOUBLE[])");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.arr) u(val) WHERE u.nonexistent > 0",
+                    44,
+                    "Invalid column"
+            );
+        });
+    }
+
+    // ---- Test for metadata separation (multiple UNNEST expressions) ----
+
+    @Test
+    public void testMultipleUnnestExpressionsMetadata() throws Exception {
+        // Ensures UNNEST column definitions from earlier expressions
+        // don't leak into subsequent parseFunction() calls.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO t VALUES (ARRAY[1.0, 2.0], ARRAY[10.0, 20.0, 30.0])");
+            assertQueryNoLeakCheck(
+                    "x\ty\n"
+                            + "1.0\t10.0\n"
+                            + "2.0\t20.0\n"
+                            + "null\t30.0\n",
+                    "SELECT u.x, u.y FROM t, UNNEST(t.a, t.b) u(x, y)",
+                    (String) null
+            );
+        });
+    }
 }
