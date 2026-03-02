@@ -624,7 +624,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         int valueIdx = 0;
 
         switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BYTE:
+            case ColumnType.BYTE -> {
                 for (int row = 0; row < rowCount; row++) {
                     if (hasNulls && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putByte((byte) 0);
@@ -633,8 +633,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         valueIdx++;
                     }
                 }
-                break;
-            case ColumnType.SHORT:
+            }
+            case ColumnType.SHORT -> {
                 for (int row = 0; row < rowCount; row++) {
                     if (hasNulls && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putShort((short) 0);
@@ -643,8 +643,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         valueIdx++;
                     }
                 }
-                break;
-            case ColumnType.INT:
+            }
+            case ColumnType.INT -> {
                 for (int row = 0; row < rowCount; row++) {
                     if (hasNulls && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putInt(Numbers.INT_NULL);
@@ -653,8 +653,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         valueIdx++;
                     }
                 }
-                break;
-            case ColumnType.FLOAT:
+            }
+            case ColumnType.FLOAT -> {
                 for (int row = 0; row < rowCount; row++) {
                     if (hasNulls && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                         dataMem.putFloat(Float.NaN);
@@ -663,10 +663,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         valueIdx++;
                     }
                 }
-                break;
-            default:
-                throw CairoException.nonCritical()
-                        .put("type coercion to ").put(ColumnType.nameOf(columnType)).put(" is not supported");
+            }
+            default -> throw CairoException.nonCritical()
+                    .put("type coercion to ").put(ColumnType.nameOf(columnType)).put(" is not supported");
         }
 
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
