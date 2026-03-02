@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -58,6 +59,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private static final byte RECORD_B_MASK = 1 << 1;
     // LRU cache (most recently used buffers are to the right)
     private final ObjList<ParquetBuffers> cachedParquetBuffers;
+    // Maps column ID (field_id / writer index) to parquet column index.
+    // Rebuilt each time openParquet() encounters a new file.
+    private final IntIntHashMap columnIdToParquetIdx;
     private final PageFrameMemoryImpl frameMemory;
     private final ObjList<ParquetBuffers> freeParquetBuffers;
     // Contains parquet to query column index mapping.
@@ -76,6 +80,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             for (int i = 0; i < parquetCacheSize; i++) {
                 freeParquetBuffers.add(new ParquetBuffers());
             }
+            columnIdToParquetIdx = new IntIntHashMap();
             frameMemory = new PageFrameMemoryImpl();
             fromParquetColumnIndexes = new IntList(16);
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
@@ -306,30 +311,38 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 .put(']');
     }
 
+    private void buildColumnIdMap(PartitionDecoder.Metadata parquetMetadata) {
+        final int parquetColumnCount = parquetMetadata.getColumnCount();
+        columnIdToParquetIdx.clear();
+        for (int i = 0; i < parquetColumnCount; i++) {
+            columnIdToParquetIdx.put(parquetMetadata.getColumnId(i), i);
+        }
+
+        parquetColumns.reopen();
+        parquetColumns.clear();
+        fromParquetColumnIndexes.clear();
+        fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
+    }
+
     private void openParquet(int frameIndex) {
         final PartitionDecoder frameDecoder = addressCache.getParquetPartitionDecoder(frameIndex);
         if (parquetDecoder.getFileAddr() != frameDecoder.getFileAddr() || parquetDecoder.getFileSize() != frameDecoder.getFileSize()) {
             parquetDecoder.of(frameDecoder);
         }
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-        int readParquetColumnCount = addressCache.getColumnIndexes().size();
-        if (parquetMetadata.getColumnCount() < readParquetColumnCount) {
-            throw CairoException.nonCritical().put("parquet column count is less than number of queried table columns [parquetColumnCount=")
-                    .put(parquetMetadata.getColumnCount())
-                    .put(", columnCount=")
-                    .put(readParquetColumnCount);
-        }
+        buildColumnIdMap(parquetMetadata);
 
-        parquetColumns.reopen();
-        parquetColumns.clear();
-        fromParquetColumnIndexes.clear();
-        fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
+        final int readParquetColumnCount = addressCache.getColumnIndexes().size();
         for (int i = 0; i < readParquetColumnCount; i++) {
-            final int parquetColumnIndex = addressCache.getColumnIndexes().getQuick(i);
-            final int columnType = addressCache.getColumnTypes().getQuick(i);
-            parquetColumns.add(parquetColumnIndex);
-            fromParquetColumnIndexes.setQuick(parquetColumnIndex, i);
-            parquetColumns.add(columnType);
+            final int columnWriterIndex = addressCache.getColumnIndexes().getQuick(i);
+            final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
+            if (parquetIdx >= 0) {
+                final int columnType = addressCache.getColumnTypes().getQuick(i);
+                parquetColumns.add(parquetIdx);
+                fromParquetColumnIndexes.setQuick(parquetIdx, i);
+                parquetColumns.add(columnType);
+            }
+            // Column missing from parquet (ADD COLUMN): stays at address 0 (NULL).
         }
     }
 
@@ -339,25 +352,19 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetDecoder.of(frameDecoder);
         }
         final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
-        int readParquetColumnCount = addressCache.getColumnIndexes().size();
-        if (parquetMetadata.getColumnCount() < readParquetColumnCount) {
-            throw CairoException.nonCritical().put("parquet column count is less than number of queried table columns [parquetColumnCount=")
-                    .put(parquetMetadata.getColumnCount())
-                    .put(", columnCount=")
-                    .put(readParquetColumnCount);
-        }
+        buildColumnIdMap(parquetMetadata);
 
-        parquetColumns.reopen();
-        parquetColumns.clear();
-        fromParquetColumnIndexes.clear();
-        fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
+        final int readParquetColumnCount = addressCache.getColumnIndexes().size();
         for (int i = 0; i < readParquetColumnCount; i++) {
             if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
-                final int parquetColumnIndex = addressCache.getColumnIndexes().getQuick(i);
-                final int columnType = addressCache.getColumnTypes().getQuick(i);
-                parquetColumns.add(parquetColumnIndex);
-                fromParquetColumnIndexes.setQuick(parquetColumnIndex, i);
-                parquetColumns.add(columnType);
+                final int columnWriterIndex = addressCache.getColumnIndexes().getQuick(i);
+                final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
+                if (parquetIdx >= 0) {
+                    final int columnType = addressCache.getColumnTypes().getQuick(i);
+                    parquetColumns.add(parquetIdx);
+                    fromParquetColumnIndexes.setQuick(parquetIdx, i);
+                    parquetColumns.add(columnType);
+                }
             }
         }
     }

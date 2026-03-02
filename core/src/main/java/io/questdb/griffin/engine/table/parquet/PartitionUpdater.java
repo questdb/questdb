@@ -48,6 +48,44 @@ public class PartitionUpdater implements QuietCloseable {
         copyRowGroup(ptr, rowGroupIndex);
     }
 
+    /**
+     * Copies a row group from the source file, appending null column chunks
+     * for columns present in the target schema but missing from the source.
+     *
+     * @param rowGroupIndex    index of the row group to copy
+     * @param nullColDescAddr  native memory address of flat array: pairs of
+     *                         [targetSchemaPosition (long), columnType (long)]
+     * @param nullColCount     number of null columns
+     */
+    public void copyRowGroupWithNullColumns(short rowGroupIndex, long nullColDescAddr, int nullColCount) {
+        assert ptr != 0;
+        copyRowGroupWithNullColumns(ptr, rowGroupIndex, nullColDescAddr, nullColCount);
+    }
+
+    /**
+     * Sets the target schema for the output file. Call this after {@link #of}
+     * when the table schema differs from the source parquet file schema
+     * (e.g., after ADD COLUMN or DROP COLUMN).
+     *
+     * @param descriptor a PartitionDescriptor containing the full target
+     *                   schema (column names, IDs, types). Data pointers are
+     *                   not required — only schema metadata is used.
+     */
+    public void setTargetSchema(PartitionDescriptor descriptor) {
+        assert ptr != 0;
+        setTargetSchema(
+                ptr,
+                descriptor.tableName.ptr(),
+                descriptor.tableName.size(),
+                descriptor.getColumnCount(),
+                descriptor.getColumnNamesPtr(),
+                descriptor.getColumnNamesLen(),
+                descriptor.getColumnDataPtr(),
+                descriptor.getColumnDataLen(),
+                descriptor.getTimestampIndex()
+        );
+    }
+
     public long getResultUnusedBytes() {
         assert ptr != 0;
         return getResultUnusedBytes(ptr);
@@ -146,6 +184,13 @@ public class PartitionUpdater implements QuietCloseable {
             short rowGroupIndex
     ) throws CairoException;
 
+    private static native void copyRowGroupWithNullColumns(
+            long impl,
+            short rowGroupIndex,
+            long nullColDescAddr,
+            int nullColCount
+    ) throws CairoException;
+
     private static native long create(
             long allocator,
             int srcPathLen,
@@ -165,6 +210,18 @@ public class PartitionUpdater implements QuietCloseable {
     private static native void destroy(long impl);
 
     private static native long getResultUnusedBytes(long impl);
+
+    private static native void setTargetSchema(
+            long impl,
+            long tableNamePtr,
+            int tableNameLen,
+            int colCount,
+            long colNamesPtr,
+            int colNamesLen,
+            long colDataPtr,
+            long colDataLen,
+            int timestampIndex
+    ) throws CairoException;
 
     private static native void insertRowGroup(
             long impl,

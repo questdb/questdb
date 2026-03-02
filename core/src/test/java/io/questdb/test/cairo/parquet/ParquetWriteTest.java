@@ -42,7 +42,76 @@ import org.junit.Test;
 public class ParquetWriteTest extends AbstractCairoTest {
 
     @Test
-    public void testO3AfterAddColumnSuspendsTable() throws Exception {
+    public void testO3AfterAddColumnMultipleRowGroups() throws Exception {
+        // Small row group size → multiple row groups. Schema mismatch forces
+        // rewrite, exercising copyRowGroupWithNullColumns() for untouched RGs.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, s SYMBOL, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, s, ts) VALUES
+                            (1, 'a', '2020-01-01T00:00:00.000Z'),
+                            (2, 'b', '2020-01-01T01:00:00.000Z'),
+                            (3, 'a', '2020-01-01T02:00:00.000Z'),
+                            (4, 'c', '2020-01-01T03:00:00.000Z'),
+                            (5, 'b', '2020-01-01T04:00:00.000Z'),
+                            (6, 'a', '2020-01-01T05:00:00.000Z'),
+                            (7, 'c', '2020-01-01T06:00:00.000Z'),
+                            (8, 'b', '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, s, ts) VALUES (100, 'd', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows with row group size 4 → 2 row groups.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN y DOUBLE");
+            drainWalQueue();
+
+            // O3 insert overlapping first row group (00:00-03:00).
+            // RG0 is merged (null fill for y), RG1 is copied via
+            // copyRowGroupWithNullColumns (null column chunk for y).
+            execute(
+                    """
+                            INSERT INTO x(x, s, y, ts) VALUES
+                            (9, 'b', 1.5, '2020-01-01T00:30:00.000Z'),
+                            (10, 'c', 2.5, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            assertSql(
+                    """
+                            x\ts\tts\ty
+                            1\ta\t2020-01-01T00:00:00.000000Z\tnull
+                            9\tb\t2020-01-01T00:30:00.000000Z\t1.5
+                            2\tb\t2020-01-01T01:00:00.000000Z\tnull
+                            10\tc\t2020-01-01T01:30:00.000000Z\t2.5
+                            3\ta\t2020-01-01T02:00:00.000000Z\tnull
+                            4\tc\t2020-01-01T03:00:00.000000Z\tnull
+                            5\tb\t2020-01-01T04:00:00.000000Z\tnull
+                            6\ta\t2020-01-01T05:00:00.000000Z\tnull
+                            7\tc\t2020-01-01T06:00:00.000000Z\tnull
+                            8\tb\t2020-01-01T07:00:00.000000Z\tnull
+                            100\td\t2020-01-02T00:00:00.000000Z\tnull
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testO3AfterAddColumnRewriteMode() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -70,10 +139,8 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x ADD COLUMN y DOUBLE");
             drainWalQueue();
 
-            // O3 insert into the parquet partition that overlaps existing data.
-            // The merge fails because O3 merge does not support column remapping:
-            // the Parquet file has 3 columns but the table schema now has 4.
-            // The partition must be reconverted before O3 merges can succeed.
+            // O3 insert into the parquet partition.
+            // Single row group → always REWRITE. Original rows get NULL for y.
             execute(
                     """
                             INSERT INTO x(x, s, y, ts) VALUES
@@ -84,9 +151,80 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            // The O3 merge failure suspends the table. The failing WAL transaction
-            // is rolled back, so the O3 rows are not visible. Original data remains intact.
-            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            assertSql(
+                    """
+                            x\ts\tts\ty
+                            1\ta\t2020-01-01T00:00:00.000000Z\tnull
+                            5\tb\t2020-01-01T03:00:00.000000Z\t1.5
+                            2\tb\t2020-01-01T06:00:00.000000Z\tnull
+                            6\ta\t2020-01-01T09:00:00.000000Z\t2.5
+                            3\ta\t2020-01-01T12:00:00.000000Z\tnull
+                            7\tc\t2020-01-01T15:00:00.000000Z\t3.5
+                            4\tc\t2020-01-01T18:00:00.000000Z\tnull
+                            100\td\t2020-01-02T00:00:00.000000Z\tnull
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testO3AfterMultipleAddColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T06:00:00.000Z'),
+                            (3, '2020-01-01T12:00:00.000Z'),
+                            (4, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Add two columns after conversion. The parquet file has 2 columns,
+            // the table now has 4.
+            execute("ALTER TABLE x ADD COLUMN a DOUBLE");
+            execute("ALTER TABLE x ADD COLUMN b VARCHAR");
+            drainWalQueue();
+
+            // O3 insert with both new columns.
+            execute(
+                    """
+                            INSERT INTO x(x, a, b, ts) VALUES
+                            (5, 1.5, 'hello', '2020-01-01T03:00:00.000Z'),
+                            (6, 2.5, 'world', '2020-01-01T09:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+
+            assertSql(
+                    """
+                            x\tts\ta\tb
+                            1\t2020-01-01T00:00:00.000000Z\tnull\t
+                            5\t2020-01-01T03:00:00.000000Z\t1.5\thello
+                            2\t2020-01-01T06:00:00.000000Z\tnull\t
+                            6\t2020-01-01T09:00:00.000000Z\t2.5\tworld
+                            3\t2020-01-01T12:00:00.000000Z\tnull\t
+                            4\t2020-01-01T18:00:00.000000Z\tnull\t
+                            100\t2020-01-02T00:00:00.000000Z\tnull\t
+                            """,
+                    "SELECT * FROM x"
+            );
         });
     }
 
@@ -170,6 +308,54 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             11\t2020-01-01T10:00:00.000000Z\tghi
                             12\t2020-01-01T11:00:00.000000Z\tjkl
                             100\t2020-01-02T00:00:00.000000Z\t
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testReadParquetAfterAddColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T06:00:00.000Z'),
+                            (3, '2020-01-01T12:00:00.000Z'),
+                            (4, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01', '2020-01-02'");
+            drainWalQueue();
+
+            // Add column after conversion. No O3 — just query.
+            execute("ALTER TABLE x ADD COLUMN y DOUBLE");
+            drainWalQueue();
+
+            // Insert with the new column into the non-parquet partition.
+            execute("INSERT INTO x(x, y, ts) VALUES (5, 1.5, '2020-01-02T06:00:00.000Z')");
+            drainWalQueue();
+
+            // Parquet partition returns NULLs for the missing column.
+            assertSql(
+                    """
+                            x\tts\ty
+                            1\t2020-01-01T00:00:00.000000Z\tnull
+                            2\t2020-01-01T06:00:00.000000Z\tnull
+                            3\t2020-01-01T12:00:00.000000Z\tnull
+                            4\t2020-01-01T18:00:00.000000Z\tnull
+                            100\t2020-01-02T00:00:00.000000Z\tnull
+                            5\t2020-01-02T06:00:00.000000Z\t1.5
                             """,
                     "SELECT * FROM x"
             );
