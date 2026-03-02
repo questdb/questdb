@@ -241,13 +241,13 @@ public class WalTxnDetails implements QuietCloseable {
      * Calculates the count of transactions to apply in one go in {@link io.questdb.cairo.TableWriter}.
      * Applying many transactions is also referenced as writing a block of transactions.
      *
-     * @param seqTxn                starting WAL sequence transaction number
-     * @param pressureControl       pressure control to calculate the block size, pressure control can limit the block size
-     * @param maxBlockRecordCount   maximum number of records in the block
-     * @param inOrderMinTimestamp   in-order optimization applies only to commits whose timestamps >= this value.
-     *                              Pass the last partition's max timestamp for native partitions (optimization applies
-     *                              only to appending data). Pass Long.MAX_VALUE when the last partition is parquet
-     *                              to disable in-order optimization entirely and batch more aggressively.
+     * @param seqTxn              starting WAL sequence transaction number
+     * @param pressureControl     pressure control to calculate the block size, pressure control can limit the block size
+     * @param maxBlockRecordCount maximum number of records in the block
+     * @param inOrderMinTimestamp in-order optimization applies only to commits whose timestamps >= this value.
+     *                            Pass the last partition's max timestamp for native partitions (optimization applies
+     *                            only to appending data). Pass Long.MAX_VALUE when the last partition is parquet
+     *                            to disable in-order optimization entirely and batch more aggressively.
      * @return the number of transactions to apply in one go, e.g. the block size
      */
     public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount, long inOrderMinTimestamp) {
