@@ -95,12 +95,14 @@ public abstract class AbstractDoubleArrayElemParallelGroupByTest extends Abstrac
                                 sqlExecutionContext
                         );
                     }
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
+                    assertQueryNoLeakCheck(
+                            compiler,
+                            expected,
                             "SELECT grp, " + funcName() + "(arr) arr FROM tab ORDER BY grp",
-                            sink,
-                            expected
+                            null,
+                            sqlExecutionContext,
+                            true,
+                            true
                     );
                 }, configuration, LOG);
             }
