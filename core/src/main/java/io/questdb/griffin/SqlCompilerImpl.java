@@ -179,7 +179,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final CharacterStore characterStore;
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ViewCompilerExecutionContext compileViewContext;
-    private final CharSequenceObjHashMap<String> dropAllTablesFailedTableNames = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
@@ -4252,8 +4252,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private boolean executeDropAllTables(DropAllOperation op, SqlExecutionContext executionContext) {
-        // collect table names
-        dropAllTablesFailedTableNames.clear();
+        // collect failures
+        dropAllTablesFailures.clear();
         tableTokenBucket.clear();
         engine.getTableTokens(tableTokenBucket, false);
         final SecurityContext securityContext = executionContext.getSecurityContext();
@@ -4275,20 +4275,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     hasDroppedAny = true;
                     op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
                 } catch (Exception e) {
-                    LOG.error().$("Error while dropping table [table=").$(tableName).$(", error=").$(e).I$();
-                    dropAllTablesFailedTableNames.put(tableName, e.getMessage());
+                    LOG.error().$("Error while dropping table, view or materialized view [").$(tableName).$(", error=").$(e).I$();
+                    dropAllTablesFailures.put(tableName, e.getMessage());
                 }
             }
         }
-        if (dropAllTablesFailedTableNames.size() > 0) {
-            final CairoException ex = CairoException.nonCritical().put("failed to drop tables and materialized views [");
+        if (dropAllTablesFailures.size() > 0) {
+            final CairoException ex = CairoException.nonCritical().put("Failures while dropping tables, views and materialized views [");
             CharSequence tableName;
-            String reason;
-            final ObjList<CharSequence> keys = dropAllTablesFailedTableNames.keys();
+            String message;
+            final ObjList<CharSequence> keys = dropAllTablesFailures.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 tableName = keys.get(i);
-                reason = dropAllTablesFailedTableNames.get(tableName);
-                ex.put('\'').put(tableName).put("': ").put(reason);
+                message = dropAllTablesFailures.get(tableName);
+                ex.put('\'').put(tableName).put("': ").put(message);
                 if (i + 1 < n) {
                     ex.put(", ");
                 }
