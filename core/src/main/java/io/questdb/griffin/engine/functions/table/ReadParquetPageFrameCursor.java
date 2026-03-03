@@ -70,6 +70,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private long addr = 0;
     private long fd = -1;
     private long fileSize = 0;
+    private boolean isFilterListPrepared;
     private long rowCount;
     private int rowGroupCount;
 
@@ -149,12 +150,10 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
                 return null;
             }
 
-            if (filterList != null && ParquetRowGroupFilter.canSkipRowGroup(
+            if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
                     rowGroupIndex,
                     decoder,
-                    pushdownFilterConditions,
-                    filterList,
-                    filterValues
+                    filterList
             )) {
                 frame.partitionHi += decoder.metadata().getRowGroupSize(rowGroupIndex);
                 continue;
@@ -179,11 +178,14 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
             throw TableReferenceOutOfDateException.of(path);
         }
         this.rowCount = decoder.metadata().getRowCount();
+        isFilterListPrepared = false;
         this.rowGroupCount = decoder.metadata().getRowGroupCount();
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; ++i) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
             }
+            isFilterListPrepared = ParquetRowGroupFilter.prepareFilterList(
+                    decoder.metadata(), pushdownFilterConditions, filterList, filterValues);
         }
 
         toTop();

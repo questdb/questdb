@@ -91,6 +91,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private int currentRowInRowGroup;
     private long fd = -1;
     private long fileSize = 0;
+    private boolean isFilterListPrepared;
     private int rowGroupIndex;
     private long rowGroupRowCount;
 
@@ -248,10 +249,13 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 throw TableReferenceOutOfDateException.of(path);
             }
         }
+        isFilterListPrepared = false;
         if (pushdownFilterConditions != null) {
             for (int i = 0, sz = pushdownFilterConditions.size(); i < sz; ++i) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
             }
+            isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
+                    decoder.metadata(), pushdownFilterConditions, filterList, filterValues);
         }
 
         toTop();
@@ -313,12 +317,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         dataPtrs.clear();
         auxPtrs.clear();
         while (++rowGroupIndex < decoder.metadata().getRowGroupCount()) {
-            if (filterList != null && ParquetRowGroupFilter.canSkipRowGroup(
+            if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
                     rowGroupIndex,
                     decoder,
-                    pushdownFilterConditions,
-                    filterList,
-                    filterValues
+                    filterList
             )) {
                 continue;
             }

@@ -60,6 +60,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final LongList pageSizes = new LongList();
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private final int sharedQueryWorkerCount;
+    private boolean isFilterListPrepared;
     // Track the lowest partition index that has not been released yet
     private int lowestOpenPartitionIndex = 0;
     private int pageFrameMaxRows;
@@ -332,8 +333,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             final long rowGroupEndRow = rowGroupStartRow + rowGroupSize;
 
             if (partitionLo < rowGroupEndRow) {
-                if (filterList != null && ParquetRowGroupFilter.canSkipRowGroup(
-                        i, reenterParquetDecoder, pushdownFilterConditions, filterList, filterValues)) {
+                if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
+                        i, reenterParquetDecoder, filterList)) {
                     partitionLo = rowGroupEndRow;
                     if (partitionLo >= partitionHi) {
                         reenterPartitionFrame = false;
@@ -379,6 +380,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             clearAddresses();
             reenterParquetDecoder = partitionFrame.getParquetDecoder();
             reenterPageFrameRowLimit = 0;
+            assert reenterParquetDecoder != null;
+            isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
+                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues);
             return computeParquetFrame(lo, hi);
         }
 

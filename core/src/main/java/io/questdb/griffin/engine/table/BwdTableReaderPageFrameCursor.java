@@ -64,6 +64,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int sharedQueryWorkerCount;
     // Track the highest partition index that has not been released yet
     private int highestOpenPartitionIndex = -1;
+    private boolean isFilterListPrepared;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
@@ -203,6 +204,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
             }
+
+
         }
         toTop();
         return this;
@@ -357,8 +360,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         while (targetGroup >= 0) {
-            if (filterList != null && ParquetRowGroupFilter.canSkipRowGroup(
-                    targetGroup, reenterParquetDecoder, pushdownFilterConditions, filterList, filterValues)) {
+            if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
+                    targetGroup, reenterParquetDecoder, filterList)) {
                 partitionHi = targetGroupStart;
                 if (partitionHi <= partitionLo) {
                     this.reenterPartitionFrame = false;
@@ -403,6 +406,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             clearAddresses();
             reenterParquetDecoder = partitionFrame.getParquetDecoder();
             reenterPageFrameRowLimit = 0;
+            assert reenterParquetDecoder != null;
+            isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
+                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues);
             return computeParquetFrame(lo, hi);
         }
 

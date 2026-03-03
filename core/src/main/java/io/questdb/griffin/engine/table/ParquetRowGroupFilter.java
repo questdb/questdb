@@ -57,19 +57,47 @@ public final class ParquetRowGroupFilter {
     private static int rowGroupsSkipped;
 
     /**
-     * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
+     * Check if a row group can be skipped based on the prepared filter list.
+     * Call {@link #prepareFilterList} once per partition before using this method.
      *
-     * @param rowGroupIndex            the row group index to check
-     * @param decoder                  the Parquet partition decoder
-     * @param pushdownFilterConditions the filter conditions to apply
-     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter
-     * @param filterValues             reusable memory buffer for filter values
-     * @return true if the row group can be safely skipped (all filter values absent from bloom filter
-     * or outside min/max statistics), false otherwise
+     * @param rowGroupIndex the row group index to check
+     * @param decoder       the Parquet partition decoder
+     * @param filterList    filter descriptors prepared by {@link #prepareFilterList}
+     * @return true if the row group can be safely skipped, false otherwise
      */
     public static boolean canSkipRowGroup(
             int rowGroupIndex,
             PartitionDecoder decoder,
+            DirectLongList filterList
+    ) {
+        try {
+            boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList);
+            if (skip) {
+                rowGroupsSkipped++;
+            }
+            return skip;
+        } catch (CairoException e) {
+            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+            return false;
+        } catch (Exception e) {
+            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e).$(']').$();
+            return false;
+        }
+    }
+
+    /**
+     * Prepare the filter list from pushdown filter conditions. This resolves column indices
+     * and serializes filter values into the provided buffers. Call once per partition, then
+     * use {@link #canSkipRowGroup} for each row group.
+     *
+     * @param metadata                 the partition metadata for column index resolution
+     * @param pushdownFilterConditions the filter conditions to apply
+     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter
+     * @param filterValues             reusable memory buffer for filter values
+     * @return true if filters were prepared successfully and row group pruning should be attempted
+     */
+    public static boolean prepareFilterList(
+            PartitionDecoder.Metadata metadata,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
             MemoryCARWImpl filterValues
@@ -81,7 +109,6 @@ public final class ParquetRowGroupFilter {
             filterList.clear();
             filterList.reopen();
             filterValues.jumpTo(0);
-            PartitionDecoder.Metadata metadata = decoder.metadata();
 
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
@@ -370,16 +397,12 @@ public final class ParquetRowGroupFilter {
             for (int i = 1, n = (int) filterList.size(); i < n; i += LONGS_PER_FILTER) {
                 filterList.set(i, baseAddress + filterList.get(i));
             }
-            boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList);
-            if (skip) {
-                rowGroupsSkipped++;
-            }
-            return skip;
+            return true;
         } catch (CairoException e) {
-            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+            LOG.error().$("error during filter list preparation [msg=").$(e.getFlyweightMessage()).$(']').$();
             return false;
         } catch (Exception e) {
-            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e).$(']').$();
+            LOG.error().$("error during filter list preparation [msg=").$(e).$(']').$();
             return false;
         }
     }
