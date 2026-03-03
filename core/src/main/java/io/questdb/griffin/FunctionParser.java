@@ -312,7 +312,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
         try {
             this.metadata = metadata;
-            node.reassociateConstants(configuration.getCairoSqlLegacyOperatorPrecedence());
+            if (node != null) {
+                node.reassociateConstants(configuration.getCairoSqlLegacyOperatorPrecedence());
+            }
             try {
                 traverseAlgo.traverse(node, this);
             } catch (Exception e) {
