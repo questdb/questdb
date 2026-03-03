@@ -1357,6 +1357,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalWriterMadviseMode() {
+        return getDelegate().getWalWriterMadviseMode();
+    }
+
+    @Override
     public int getWalWriterPoolMaxSegments() {
         return getDelegate().getWalWriterPoolMaxSegments();
     }
