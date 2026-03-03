@@ -116,6 +116,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
+    private final int columnsMadviseMode;
     private final DdlListener ddlListener;
     private final AtomicIntList initialSymbolCounts;
     private final IntList localSymbolIds;
@@ -174,6 +175,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         super(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker);
 
         LOG.info().$("open [table=").$(tableToken).I$();
+        this.columnsMadviseMode = configuration.getWalWriterMadviseMode();
         this.ddlListener = ddlListener;
         this.recentWriteTracker = recentWriteTracker;
         this.telemetryWal = telemetryWal;
@@ -1308,7 +1310,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     -1,
                     MemoryTag.MMAP_TABLE_WAL_WRITER,
                     configuration.getWriterFileOpenOpts(),
-                    Files.POSIX_MADV_RANDOM
+                    columnsMadviseMode
             );
 
             final MemoryMA auxMem = getAuxColumn(columnIndex);
@@ -1323,7 +1325,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         getDataAppendPageSize(),
                         MemoryTag.MMAP_TABLE_WAL_WRITER,
                         configuration.getWriterFileOpenOpts(),
-                        Files.POSIX_MADV_RANDOM
+                        columnsMadviseMode
                 );
             }
         } finally {
