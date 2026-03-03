@@ -772,6 +772,7 @@ mod tests {
     fn test_bloom_filter_roundtrip_i64() {
         use crate::allocator::TestAllocatorState;
         use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnTypeTag;
         use std::collections::HashSet;
 
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
@@ -825,6 +826,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: (absent_vals.len() as u64) << 32,
             ptr: absent_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -839,6 +841,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: (present_vals.len() as u64) << 32,
             ptr: present_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -850,6 +853,7 @@ mod tests {
     fn test_bloom_filter_roundtrip_i32() {
         use crate::allocator::TestAllocatorState;
         use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnTypeTag;
         use std::collections::HashSet;
 
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
@@ -913,6 +917,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: (absent_vals.len() as u64) << 32,
             ptr: absent_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1083,6 +1088,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: absent_vals_be.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1096,6 +1102,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: present_vals_be.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1172,6 +1179,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: absent_vals_be.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1185,6 +1193,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: present_vals_be.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1259,6 +1268,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: absent_vals_be.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1272,6 +1282,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: present_vals_be.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1346,6 +1357,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: absent_vals_be.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1359,6 +1371,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: present_vals_be.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1452,6 +1465,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: absent_vals_flat.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1470,6 +1484,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: present_vals_flat.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1531,6 +1546,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: outside_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1542,6 +1558,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: inside_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1601,6 +1618,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: outside_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1612,6 +1630,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: inside_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1671,6 +1690,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: outside_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1682,6 +1702,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: inside_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1741,6 +1762,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: outside_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1752,6 +1774,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: inside_vals.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1826,6 +1849,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 4u64 << 32,
             ptr: outside_vals_flat.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)
@@ -1840,6 +1864,7 @@ mod tests {
         let filters = [ColumnFilterPacked {
             col_idx_and_count: 3u64 << 32,
             ptr: inside_vals_flat.as_ptr() as u64,
+            column_type: 0,
         }];
         let can_skip = decoder
             .can_skip_row_group(0, &data, &filters)

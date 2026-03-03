@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -79,12 +80,13 @@ public class PartitionDecoder implements QuietCloseable {
     /**
      * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
      * <p>
-     * Filter list format: 2 longs per filter
-     * - Long 0: encoded(column_index, count) - lower 32 bits: column_index, upper 32 bits: count
+     * Filter list format: 3 longs per filter
+     * - Long 0: encoded(column_index, count, op) - lower 32 bits: column_index, next 24 bits: count, upper 8 bits: op
      * - Long 1: values_ptr
+     * - Long 2: column_type
      *
      * @param rowGroupIndex the row group index to check
-     * @param filters       filter descriptors: [encoded(col_idx, count), ptr] per filter
+     * @param filters       filter descriptors: [encoded(col_idx, count, op), ptr, column_type] per filter
      * @return true if the row group can be safely skipped
      */
     public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters) {
@@ -95,7 +97,7 @@ public class PartitionDecoder implements QuietCloseable {
                 fileAddr,
                 fileSize,
                 filters.getAddress(),
-                (int) (filters.size() / 2)  // 2 longs per filter
+                (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER)
         );
     }
 

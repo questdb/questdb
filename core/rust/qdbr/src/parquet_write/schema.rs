@@ -281,7 +281,7 @@ pub fn column_type_to_parquet_type(
             PhysicalType::Int32,
             repetition,
             None,
-            None,
+            Some(PrimitiveLogicalType::Integer(IntegerType::UInt32)),
             Some(column_id),
         )?),
         ColumnTypeTag::Decimal8

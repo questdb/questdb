@@ -86,7 +86,7 @@ where
     .map(Page::Data)
 }
 
-pub fn int_slice_to_page_nullable<T, P>(
+pub fn int_slice_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
     slice: &[T],
     column_top: usize,
     options: WriteOptions,
@@ -97,9 +97,10 @@ pub fn int_slice_to_page_nullable<T, P>(
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Nullable + num_traits::AsPrimitive<P> + Debug,
+    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
     match encoding {
-        Encoding::Plain => slice_to_page_nullable(
+        Encoding::Plain => slice_to_page_nullable_impl::<_, P, UNSIGNED_STATS, _>(
             slice,
             column_top,
             options,
@@ -108,7 +109,7 @@ where
             encode_plain_nullable,
             bloom_hashes,
         ),
-        Encoding::DeltaBinaryPacked => slice_to_page_nullable(
+        Encoding::DeltaBinaryPacked => slice_to_page_nullable_impl::<_, P, UNSIGNED_STATS, _>(
             slice,
             column_top,
             options,
@@ -125,6 +126,101 @@ where
         }
     }
     .map(Page::Data)
+}
+
+pub trait StatsUpdater<T, const UNSIGNED: bool> {
+    fn update_stats(&mut self, v: T);
+}
+
+impl StatsUpdater<i32, false> for MaxMin<i32> {
+    #[inline]
+    fn update_stats(&mut self, v: i32) {
+        self.update(v);
+    }
+}
+
+impl StatsUpdater<i32, true> for MaxMin<i32> {
+    #[inline]
+    fn update_stats(&mut self, v: i32) {
+        self.update_unsigned(v);
+    }
+}
+
+impl<const UNSIGNED: bool> StatsUpdater<i64, UNSIGNED> for MaxMin<i64> {
+    #[inline]
+    fn update_stats(&mut self, v: i64) {
+        self.update(v);
+    }
+}
+
+fn slice_to_page_nullable_impl<T, P, const UNSIGNED_STATS: bool, F>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    encode_fn: F,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<DataPage>
+where
+    P: NativeType,
+    T: Nullable + num_traits::AsPrimitive<P> + Debug,
+    F: Fn(&[T], usize, Vec<u8>) -> Vec<u8>,
+    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+    let mut null_count = 0;
+    let write_stats = options.write_statistics;
+    let mut statistics: MaxMin<P> = MaxMin::new();
+
+    let def_levels_iter = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            let value = slice[i - column_top];
+            if value.is_null() {
+                null_count += 1;
+                false
+            } else {
+                let v: P = value.as_();
+                if write_stats {
+                    statistics.update_stats(v);
+                }
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_native(v));
+                }
+                true
+            }
+        }
+    });
+    let mut buffer = vec![];
+    encode_primitive_def_levels(&mut buffer, def_levels_iter, num_rows, options.version)?;
+
+    let definition_levels_byte_length = buffer.len();
+    let buffer = encode_fn(slice, null_count, buffer);
+
+    let statistics = if options.write_statistics {
+        Some(build_statistics(
+            Some((column_top + null_count) as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        column_top + null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        encoding,
+        false,
+    )
 }
 
 pub fn int_slice_to_page_notnull<T, P>(
@@ -227,75 +323,6 @@ where
         options,
         encoding,
         true,
-    )
-}
-
-fn slice_to_page_nullable<T, P, F>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-    encode_fn: F,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<DataPage>
-where
-    P: NativeType,
-    T: Nullable + num_traits::AsPrimitive<P> + Debug,
-    F: Fn(&[T], usize, Vec<u8>) -> Vec<u8>,
-{
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
-    let num_rows = column_top + slice.len();
-    let mut null_count = 0;
-    let write_stats = options.write_statistics;
-    let mut statistics = MaxMin::new();
-
-    let def_levels_iter = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
-        } else {
-            let value = slice[i - column_top];
-            if value.is_null() {
-                null_count += 1;
-                false
-            } else {
-                let v: P = value.as_();
-                if write_stats {
-                    statistics.update(v);
-                }
-                if let Some(ref mut h) = bloom_hashes {
-                    h.insert(hash_native(v));
-                }
-                true
-            }
-        }
-    });
-    let mut buffer = vec![];
-    encode_primitive_def_levels(&mut buffer, def_levels_iter, num_rows, options.version)?;
-
-    let definition_levels_byte_length = buffer.len();
-    let buffer = encode_fn(slice, null_count, buffer);
-
-    let statistics = if options.write_statistics {
-        Some(build_statistics(
-            Some((column_top + null_count) as i64),
-            statistics,
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
-
-    build_plain_page(
-        buffer,
-        num_rows,
-        column_top + null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        encoding,
-        false,
     )
 }
 

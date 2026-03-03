@@ -36,6 +36,30 @@ impl<T: Copy + NativeType> MaxMin<T> {
     }
 }
 
+impl MaxMin<i32> {
+    pub fn update_unsigned(&mut self, x: i32) {
+        let xu = x as u32;
+        self.max = Some(if let Some(max) = self.max {
+            if xu > max as u32 {
+                x
+            } else {
+                max
+            }
+        } else {
+            x
+        });
+        self.min = Some(if let Some(min) = self.min {
+            if xu < min as u32 {
+                x
+            } else {
+                min
+            }
+        } else {
+            x
+        });
+    }
+}
+
 pub struct BinaryMaxMinStats {
     primitive_type: PrimitiveType,
     max_value: Option<Vec<u8>>,

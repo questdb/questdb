@@ -474,18 +474,21 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('1.1.1.1', '2024-01-01T00:00:00.000000Z'),
                     ('10.0.0.1', '2024-01-01T01:00:00.000000Z'),
-                    ('192.168.1.1', '2024-01-01T02:00:00.000000Z'),
+                    (NULL, '2024-01-01T02:00:00.000000Z'),
+                    ('192.168.1.1', '2024-01-01T03:00:00.000000Z'),
                     ('127.0.0.1', '2024-01-02T01:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
 
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
                     "SELECT val FROM x WHERE val = '5.5.5.5'",
                     null, true, false
             );
-
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     """
                             val
@@ -494,6 +497,17 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val = '10.0.0.1'",
                     null, true, false
             );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            
+                            """,
+                    "SELECT val FROM x WHERE val in (NULL)",
+                    null, true, false
+            );
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
         });
     }
 
@@ -1258,6 +1272,36 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCombinedFilters() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n19\n",
+                    "SELECT count() AS cnt FROM x WHERE val > 100 AND val < 120",
+                    null, false, true
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > 10_000 AND val IS NOT NULL",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testHasParquetPartitionsFlagAfterConvertBackToNative() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1492,6 +1536,107 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val IN (null, 'world')",
                     null, true, false
             );
+        });
+    }
+
+    @Test
+    public void testIsNotNullAllNullsRowGroup() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT NULL, timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(100)
+                    """);
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01T16:40:00', 600_000_000)
+                    FROM long_sequence(50)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n50\n",
+                    "SELECT count() AS cnt FROM x WHERE val IS NOT NULL",
+                    null, false, true
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testIsNotNullFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (NULL, '2024-01-01T00:00:00.000000Z'),
+                    (NULL, '2024-01-01T01:00:00.000000Z'),
+                    (42, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            42
+                            """,
+                    "SELECT val FROM x WHERE val IS NOT NULL",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testIsNullFilter() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val IS NULL",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testIsNullNoNullsRowGroup() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(100)
+                    """);
+            execute("""
+                    INSERT INTO x
+                    SELECT NULL, timestamp_sequence('2024-01-01T16:40:00', 600_000_000)
+                    FROM long_sequence(50)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n50\n",
+                    "SELECT count() AS cnt FROM x WHERE val IS NULL",
+                    null, false, true
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 
@@ -1846,11 +1991,13 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     INSERT INTO x VALUES
                     ('1.1.1.1', '2024-01-01T00:00:00.000000Z'),
                     ('10.0.0.1', '2024-01-01T01:00:00.000000Z'),
-                    ('192.168.1.1', '2024-01-01T02:00:00.000000Z'),
+                    (NULL, '2024-01-01T02:00:00.000000Z'),
+                    ('192.168.1.1', '2024-01-01T03:00:00.000000Z'),
                     ('192.168.1.2', '2024-01-02T02:00:00.000000Z')
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     """
                             val
@@ -1859,12 +2006,35 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT val FROM x WHERE val = '10.0.0.1'",
                     null, true, false
             );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
-                    "SELECT val FROM x WHERE val = '10.0.0.2'",
+                    "SELECT val FROM x WHERE val = '1.1.1.0'",
                     null, true, false
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            
+                            """,
+                    "SELECT val FROM x WHERE val in (NULL)",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            192.168.1.1
+                            192.168.1.2
+                            """,
+                    "SELECT val FROM x WHERE val IN ('192.168.1.1', '192.168.1.2') ORDER BY val",
+                    null, true, false
+            );
         });
     }
 
@@ -2573,6 +2743,206 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrEqualityFilter() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = -1 OR val = -2",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            42
+                            43
+                            """,
+                    "SELECT val FROM x WHERE val = 42 OR val = 43",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = -1 OR val = -2 OR val = -3",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            100
+                            """,
+                    "SELECT val FROM x WHERE val = -1 OR val = 100 OR val = -3",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = -1 OR ts = '2099-01-01T00:00:00.000000Z'",
+                    null, true, false
+            );
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n150\n",
+                    "SELECT count() AS cnt FROM x WHERE val = 1 OR val > 0",
+                    null, false, true
+            );
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE (val = -1 OR val = -2) AND val > 0",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // OR with IS NULL on non-nullable data → all absent, skip all
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = -1 OR val IS NULL",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // OR: matching value + IS NULL on non-nullable data → returns matching rows
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            42
+                            """,
+                    "SELECT val FROM x WHERE val = 42 OR val IS NULL",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testOrEqualityFilterString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('alice', '2024-01-01T00:00:00.000000Z'),
+                    ('bob', '2024-01-01T01:00:00.000000Z'),
+                    ('charlie', '2024-01-01T02:00:00.000000Z'),
+                    ('diana', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "name\n",
+                    "SELECT name FROM x WHERE name = 'xyz' OR name = 'unknown'",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            name
+                            bob
+                            """,
+                    "SELECT name FROM x WHERE name = 'xyz' OR name = 'bob'",
+                    null, true, false
+            );
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "name\n",
+                    "SELECT name FROM x WHERE name = 'xyz' OR name IS NULL",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            name
+                            bob
+                            """,
+                    "SELECT name FROM x WHERE name = 'bob' OR name IS NULL",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testOrEqualityFilterWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (NULL, '2024-01-01T00:00:00.000000Z'),
+                    (NULL, '2024-01-01T01:00:00.000000Z'),
+                    (42, '2024-01-02T00:00:00.000000Z'),
+                    (43, '2024-01-02T01:00:00.000000Z'),
+                    (44, '2024-01-03T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            null
+                            """,
+                    "SELECT val FROM x WHERE val = -1 OR val IS NULL",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            null
+                            42
+                            """,
+                    "SELECT val FROM x WHERE val = 42 OR val IS NULL",
+                    null, true, false
+            );
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            null
+                            null
+                            """,
+                    "SELECT val FROM x WHERE val = -999 OR val IS NULL",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testPruningAllTypesMultipleRowGroups() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
         assertMemoryLeak(() -> {
@@ -2731,18 +3101,473 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeFilterBetween() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val BETWEEN 10_000 AND 20_000",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n11\n",
+                    "SELECT count() AS cnt FROM x WHERE val BETWEEN 50 AND 60",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testRangeFilterBoundaryConditions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (151, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val >= 152",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            151
+                            """,
+                    "SELECT val FROM x WHERE val > 150",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val <= 0",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < 1",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n151\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= 1",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n150\n",
+                    "SELECT count() AS cnt FROM x WHERE val <= 150",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testRangeFilterByte() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS BYTE), timestamp_sequence('2024-01-01', 1200_000_000)
+                    FROM long_sequence(100)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > 120",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < 0",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n50\n",
+                    "SELECT count() AS cnt FROM x WHERE val > 50",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testRangeFilterChar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('A', '2024-01-01T00:00:00.000000Z'),
+                    ('B', '2024-01-01T01:00:00.000000Z'),
+                    ('C', '2024-01-01T02:00:00.000000Z'),
+                    ('M', '2024-01-01T03:00:00.000000Z'),
+                    ('X', '2024-01-01T04:00:00.000000Z'),
+                    ('Y', '2024-01-01T05:00:00.000000Z'),
+                    ('Z', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            Z
+                            """,
+                    "SELECT val FROM x WHERE val > 'Y'",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < 'A'",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n3\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= 'X'",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n3\n",
+                    "SELECT count() AS cnt FROM x WHERE val <= 'C'",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testRangeFilterDate() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(timestamp_sequence('2020-01-01', 86400_000_000) AS DATE), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > '2025-01-01'::DATE",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < '2019-01-01'::DATE",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n31\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= '2020-02-01'::DATE AND val <= '2020-03-02'::DATE",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testRangeFilterDouble() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS DOUBLE) * 0.1, timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > 100.0",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < 0.0",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n50\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= 5.0 AND val < 10.0",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testRangeFilterFloat() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS FLOAT) * 0.1, timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > 100.0",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < 0.0",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n50\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= 5.0 AND val < 10.0",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testRangeFilterIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1.1.1.1', '2024-01-01T00:00:00.000000Z'),
+                    ('10.0.0.1', '2024-01-01T01:00:00.000000Z'),
+                    ('192.168.1.1', '2024-01-01T02:00:00.000000Z'),
+                    ('255.255.255.254', '2024-01-01T03:00:00.000000Z'),
+                    (NULL, '2024-01-01T04:00:00.000000Z'),
+                    (NULL, '2024-01-02T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            192.168.1.1
+                            255.255.255.254
+                            """,
+                    "SELECT val FROM x WHERE val > '10.0.0.1' ORDER BY val",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1.1.1.1
+                            10.0.0.1
+                            """,
+                    "SELECT val FROM x WHERE val < '192.168.1.1' ORDER BY val",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            192.168.1.1
+                            255.255.255.254
+                            """,
+                    "SELECT val FROM x WHERE val >= '192.168.1.1' ORDER BY val",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1.1.1.1
+                            10.0.0.1
+                            """,
+                    "SELECT val FROM x WHERE val <= '10.0.0.1' ORDER BY val",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > '255.255.255.254'",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < '1.1.1.1'",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1.1.1.1
+                            10.0.0.1
+                            192.168.1.1
+                            255.255.255.254
+                            """,
+                    "SELECT val FROM x WHERE val > '0.0.0.1' ORDER BY val",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            
+                            
+                            """,
+                    "SELECT val FROM x WHERE val IS NULL",
+                    null, true, false
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1.1.1.1
+                            10.0.0.1
+                            192.168.1.1
+                            255.255.255.254
+                            """,
+                    "SELECT val FROM x WHERE val IS NOT NULL ORDER BY val",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testRangeFilterIPv4HighValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('200.0.0.1', '2024-01-01T00:00:00.000000Z'),
+                    ('210.0.0.1', '2024-01-01T01:00:00.000000Z'),
+                    ('220.0.0.1', '2024-01-01T02:00:00.000000Z'),
+                    ('230.0.0.1', '2024-01-01T03:00:00.000000Z'),
+                    ('240.0.0.1', '2024-01-01T04:00:00.000000Z'),
+                    ('250.0.0.1', '2024-01-01T05:00:00.000000Z'),
+                    ('250.0.0.1', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n6\n",
+                    "SELECT count() AS cnt FROM x WHERE val > '200.0.0.1'",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > '250.0.0.1'",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < '200.0.0.1'",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n3\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= '210.0.0.1' AND val <= '230.0.0.1'",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testRangeFilterInt() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
-                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
-                    FROM long_sequence(5000)
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            // val > 10000 → all values are in [1..5000], should skip all row groups
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
@@ -2751,7 +3576,6 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            // val < -1 → all values positive, should skip all
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
@@ -2760,24 +3584,24 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            // val > 50 → should return correct results and skip some groups
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
-                    "cnt\n4950\n",
+                    """
+                            cnt
+                            100
+                            """,
                     "SELECT count() AS cnt FROM x WHERE val > 50",
-                    null, true, false
+                    null, false, true
             );
 
-            // val >= 5001 → all values <= 5000, should skip all
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
-                    "SELECT val FROM x WHERE val >= 5001",
+                    "SELECT val FROM x WHERE val >= 151",
                     null, true, false
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            // val <= -1 → should skip all
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
@@ -2789,61 +3613,139 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeFilterBetween() throws Exception {
+    public void testRangeFilterLong() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
-                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
-                    FROM long_sequence(5000)
+                    SELECT x, timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            // BETWEEN 10000 AND 20000 → all values in [1..5000], skip all
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
-                    "SELECT val FROM x WHERE val BETWEEN 10_000 AND 20_000",
+                    "SELECT val FROM x WHERE val > 10000",
                     null, true, false
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            // BETWEEN 50 AND 60 → should return correct results
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
-                    "cnt\n11\n",
-                    "SELECT count() AS cnt FROM x WHERE val BETWEEN 50 AND 60",
+                    "val\n",
+                    "SELECT val FROM x WHERE val < 0",
                     null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n51\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= 100",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n100\n",
+                    "SELECT count() AS cnt FROM x WHERE val <= 100",
+                    null, false, true
             );
         });
     }
 
     @Test
-    public void testRangeFilterTimestamp() throws Exception {
+    public void testRangeFilterNegativeToPositive() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
-                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
-                    FROM long_sequence(5000)
+                    SELECT CAST(x - 101 AS INT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(300)
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            // ts > future date → skip all
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n149\n",
+                    "SELECT count() AS cnt FROM x WHERE val > 50",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n50\n",
+                    "SELECT count() AS cnt FROM x WHERE val < -50",
+                    null, false, true
+            );
+
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
-                    "SELECT val FROM x WHERE ts > '2025-01-01T00:00:00.000000Z'",
+                    "SELECT val FROM x WHERE val > 199",
                     null, true, false
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < -100",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n21\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= -10 AND val <= 10",
+                    null, false, true
+            );
         });
     }
 
     @Test
-    public void testRangeFilterString() throws Exception {
+    public void testRangeFilterShort() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS SHORT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > 10000",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < 0",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n50\n",
+                    "SELECT count() AS cnt FROM x WHERE val > 100",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testRangeFilterStringNotPruningRowGroup() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2855,140 +3757,57 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            // name > 'zzz' → all names < 'zzz', skip all
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "name\n",
                     "SELECT name FROM x WHERE name > 'zzz'",
                     null, true, false
             );
-            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-
-            // name < 'A' → all names start with lowercase > 'A', skip all
-            ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "name\n",
-                    "SELECT name FROM x WHERE name < 'A'",
-                    null, true, false
-            );
-            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
         });
     }
 
     @Test
-    public void testIsNullFilter() throws Exception {
+    public void testRangeFilterTimestamp() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
-                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
-                    FROM long_sequence(5000)
+                    SELECT timestamp_sequence('2020-01-01', 600_000_000), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
                     """);
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
-            // IS NULL on a non-nullable column (all non-null) → skip all
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
-                    "SELECT val FROM x WHERE val IS NULL",
+                    "SELECT val FROM x WHERE val > '2025-01-01'::timestamp",
                     null, true, false
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-        });
-    }
 
-    @Test
-    public void testIsNotNullFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO x VALUES
-                    (NULL, '2024-01-01T00:00:00.000000Z'),
-                    (NULL, '2024-01-01T01:00:00.000000Z'),
-                    (42, '2024-01-02T00:00:00.000000Z')
-                    """);
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-
-            // IS NOT NULL → should return correct results
-            ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    """
-                            val
-                            42
-                            """,
-                    "SELECT val FROM x WHERE val IS NOT NULL",
-                    null, true, false
-            );
-            // The all-null partition should be skipped
-            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-        });
-    }
-
-    @Test
-    public void testOrEqualityFilter() throws Exception {
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO x
-                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
-                    FROM long_sequence(5000)
-                    """);
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-
-            // val = -1 OR val = -2 → neither exists, skip all
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     "val\n",
-                    "SELECT val FROM x WHERE val = -1 OR val = -2",
+                    "SELECT val FROM x WHERE val < '2019-01-01'::timestamp",
                     null, true, false
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
 
-            // val = 42 OR val = 43 → correct results
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
-                    """
-                            val
-                            42
-                            43
-                            """,
-                    "SELECT val FROM x WHERE val = 42 OR val = 43",
-                    null, true, false
+                    "cnt\n6\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= '2020-01-02'::timestamp",
+                    null, false, true
             );
-        });
-    }
 
-    @Test
-    public void testCombinedFilters() throws Exception {
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO x
-                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
-                    FROM long_sequence(5000)
-                    """);
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
-
-            // val > 100 AND val < 200 → correct results, some row groups skipped
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
-                    "cnt\n99\n",
-                    "SELECT count() AS cnt FROM x WHERE val > 100 AND val < 200",
-                    null, true, false
+                    "cnt\n145\n",
+                    "SELECT count() AS cnt FROM x WHERE val <= '2020-01-02'::timestamp",
+                    null, false, true
             );
-            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
-
-            // val > 10000 AND val IS NOT NULL → skip all (val > 10000 already skips)
-            ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertQueryNoLeakCheck(
-                    "val\n",
-                    "SELECT val FROM x WHERE val > 10_000 AND val IS NOT NULL",
-                    null, true, false
-            );
-            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 

@@ -3171,7 +3171,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions = null;
         try {
             if (factory.mayHaveParquetPartitions(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
-                ObjList<PushdownFilterExtractor.PushdownFilterCondition> tempConditions = pushdownFilterExtractor.extract(sqlNodeStack, filterExpr, factory.getMetadata());
+                ObjList<PushdownFilterExtractor.PushdownFilterCondition> tempConditions = pushdownFilterExtractor.extract(sqlNodeStack, sqlNodeStack2, filterExpr, factory.getMetadata());
                 for (int i = 0, n = tempConditions.size(); i < n; i++) {
                     PushdownFilterExtractor.PushdownFilterCondition condition = tempConditions.getQuick(i);
                     try {
@@ -3211,7 +3211,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
                 final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
-                        && (!model.isUpdate() || executionContext.isWalApplication());
+                        && (!model.isUpdate() || executionContext.isWalApplication()) && false;
                 final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
                 if (useJit && canCompile) {
                     CompiledFilter compiledFilter = null;

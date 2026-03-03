@@ -57,6 +57,7 @@ pub const FILTER_OP_IS_NOT_NULL: u8 = 6;
 pub struct ColumnFilterPacked {
     pub col_idx_and_count: u64,
     pub ptr: u64,
+    pub column_type: u64,
 }
 
 impl ColumnFilterPacked {
@@ -73,6 +74,11 @@ impl ColumnFilterPacked {
     #[inline]
     pub fn operation_type(&self) -> u8 {
         ((self.col_idx_and_count >> 56) & 0xFF) as u8
+    }
+
+    #[inline]
+    pub fn qdb_column_type(&self) -> i32 {
+        self.column_type as i32
     }
 }
 
@@ -329,12 +335,18 @@ mod tests {
         make_filter_with_op(column_index, count, ptr, FILTER_OP_EQ)
     }
 
-    fn make_filter_with_op(column_index: u32, count: usize, ptr: u64, op: u8) -> ColumnFilterPacked {
+    fn make_filter_with_op(
+        column_index: u32,
+        count: usize,
+        ptr: u64,
+        op: u8,
+    ) -> ColumnFilterPacked {
         ColumnFilterPacked {
             col_idx_and_count: (column_index as u64)
                 | (((count as u64) & 0x00FFFFFF) << 32)
                 | ((op as u64) << 56),
             ptr,
+            column_type: 0,
         }
     }
 
@@ -585,10 +597,7 @@ mod tests {
         Ok(cursor.into_inner())
     }
 
-    fn gen_nullable_i64_parquet(
-        values: &[i64],
-        def_levels: &[i16],
-    ) -> ParquetResult<Vec<u8>> {
+    fn gen_nullable_i64_parquet(values: &[i64], def_levels: &[i16]) -> ParquetResult<Vec<u8>> {
         let col = Arc::new(
             Type::primitive_type_builder("val", PhysicalType::INT64)
                 .with_id(Some(0))
@@ -627,17 +636,32 @@ mod tests {
 
         // col < 100: min=100, so min >= val → skip
         let filter_vals: Vec<i64> = vec![100];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LT)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_LT,
+        )];
         assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
 
         // col < 99: min=100 >= 99 → skip
         let filter_vals: Vec<i64> = vec![99];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LT)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_LT,
+        )];
         assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
 
         // col < 101: min=100 < 101 → cannot skip
         let filter_vals: Vec<i64> = vec![101];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LT)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_LT,
+        )];
         assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
 
         Ok(())
@@ -651,12 +675,22 @@ mod tests {
 
         // col <= 99: min=100 > 99 → skip
         let filter_vals: Vec<i64> = vec![99];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LE)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_LE,
+        )];
         assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
 
         // col <= 100: min=100 > 100 is false → cannot skip
         let filter_vals: Vec<i64> = vec![100];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_LE)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_LE,
+        )];
         assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
 
         Ok(())
@@ -670,17 +704,32 @@ mod tests {
 
         // col > 109: max=109, so max <= val → skip
         let filter_vals: Vec<i64> = vec![109];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GT)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_GT,
+        )];
         assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
 
         // col > 110: max=109 <= 110 → skip
         let filter_vals: Vec<i64> = vec![110];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GT)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_GT,
+        )];
         assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
 
         // col > 108: max=109 <= 108 is false → cannot skip
         let filter_vals: Vec<i64> = vec![108];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GT)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_GT,
+        )];
         assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
 
         Ok(())
@@ -694,12 +743,22 @@ mod tests {
 
         // col >= 110: max=109 < 110 → skip
         let filter_vals: Vec<i64> = vec![110];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GE)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_GE,
+        )];
         assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
 
         // col >= 109: max=109 < 109 is false → cannot skip
         let filter_vals: Vec<i64> = vec![109];
-        let filters = [make_filter_with_op(0, 1, filter_vals.as_ptr() as u64, FILTER_OP_GE)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_vals.as_ptr() as u64,
+            FILTER_OP_GE,
+        )];
         assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
 
         Ok(())
@@ -776,17 +835,32 @@ mod tests {
 
         // col > "zzz": max is "charlie", "charlie" <= "zzz" → skip
         let filter_buf = make_string_filter_buf(&["zzz"]);
-        let filters = [make_filter_with_op(0, 1, filter_buf.as_ptr() as u64, FILTER_OP_GT)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_buf.as_ptr() as u64,
+            FILTER_OP_GT,
+        )];
         assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
 
         // col < "aaa": min is "alice", "alice" >= "aaa" → skip
         let filter_buf = make_string_filter_buf(&["aaa"]);
-        let filters = [make_filter_with_op(0, 1, filter_buf.as_ptr() as u64, FILTER_OP_LT)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_buf.as_ptr() as u64,
+            FILTER_OP_LT,
+        )];
         assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
 
         // col > "bob": max is "charlie", "charlie" > "bob" → cannot skip
         let filter_buf = make_string_filter_buf(&["bob"]);
-        let filters = [make_filter_with_op(0, 1, filter_buf.as_ptr() as u64, FILTER_OP_GT)];
+        let filters = [make_filter_with_op(
+            0,
+            1,
+            filter_buf.as_ptr() as u64,
+            FILTER_OP_GT,
+        )];
         assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
 
         Ok(())

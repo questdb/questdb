@@ -52,7 +52,7 @@ import org.jetbrains.annotations.TestOnly;
 public final class ParquetRowGroupFilter {
     public static final int FILTER_BUFFER_MAX_PAGES = 1_048_576; // 128MB with 128-byte pages
     public static final long FILTER_BUFFER_PAGE_SIZE = 128;
-    public static final int LONGS_PER_FILTER = 2;
+    public static final int LONGS_PER_FILTER = 3;
     private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
     private static int rowGroupsSkipped;
 
@@ -62,7 +62,7 @@ public final class ParquetRowGroupFilter {
      * @param rowGroupIndex            the row group index to check
      * @param decoder                  the Parquet partition decoder
      * @param pushdownFilterConditions the filter conditions to apply
-     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count), ptr] per filter
+     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter
      * @param filterValues             reusable memory buffer for filter values
      * @return true if the row group can be safely skipped (all filter values absent from bloom filter
      * or outside min/max statistics), false otherwise
@@ -97,6 +97,7 @@ public final class ParquetRowGroupFilter {
                 if (opType == PushdownFilterExtractor.OP_IS_NULL || opType == PushdownFilterExtractor.OP_IS_NOT_NULL) {
                     filterList.add(encodeColumnCountAndOp(columnIndex, 0, opType));
                     filterList.add(0);
+                    filterList.add(condition.getColumnType());
                     continue;
                 }
 
@@ -317,6 +318,24 @@ public final class ParquetRowGroupFilter {
                         break;
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
+                        // Skip range comparisons for String/Symbol types because Parquet min/max
+                        // statistics use UTF-8 byte order, which differs from Java's UTF-16 char
+                        // comparison semantics for characters outside BMP (e.g., emoji).
+                        if (opType != PushdownFilterExtractor.OP_EQ) {
+                            supported = false;
+                            break;
+                        }
+                        for (int j = 0; j < valueCount; j++) {
+                            Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
+                            if (utf8 != null) {
+                                int len = utf8.size();
+                                filterValues.putInt(len);
+                                filterValues.putVarchar(utf8);
+                            } else {
+                                filterValues.putInt(-1);
+                            }
+                        }
+                        break;
                     case ColumnType.VARCHAR:
                         for (int j = 0; j < valueCount; j++) {
                             Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
@@ -340,6 +359,7 @@ public final class ParquetRowGroupFilter {
 
                 filterList.add(encodeColumnCountAndOp(columnIndex, valueCount, opType));
                 filterList.add(valuesOffset);
+                filterList.add(columnType);
             }
             final int filterCount = (int) (filterList.size() / LONGS_PER_FILTER);
             if (filterCount == 0) {
