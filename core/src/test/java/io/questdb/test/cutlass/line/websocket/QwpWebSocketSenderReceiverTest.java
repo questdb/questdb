@@ -25,9 +25,11 @@
 package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -43,6 +45,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.TimeUnit;
+
+import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
 
 /**
  * End-to-end integration tests for ILP v4 WebSocket sender and receiver.
@@ -2064,6 +2068,229 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("ws_test_flush_5");
                 serverMain.assertSql("select count() from ws_test_flush_5", "count\n50\n");
+            }
+        });
+    }
+
+    /**
+     * Tests GEOHASH(1c) = 5 bits (GEOBYTE) via the native GeoHash wire protocol.
+     * Pre-creates the table, sends a GeoHash value through the full path:
+     * client sender -> WebSocket -> server decoder -> QwpWalAppender -> WAL -> SQL query.
+     */
+    @Test
+    public void testGeoHash_byteResolution() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_geohash_byte (" +
+                        "geo GEOHASH(1c), " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_byte");
+                    QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+
+                    geoCol.addGeoHash(GeoHashes.fromString("s"), 5);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_geohash_byte");
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_byte",
+                        "geo\ns\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests GEOHASH(6c) = 30 bits (GEOINT) via the native GeoHash wire protocol.
+     */
+    @Test
+    public void testGeoHash_intResolution() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_geohash_int (" +
+                        "geo GEOHASH(6c), " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_int");
+                    QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+
+                    geoCol.addGeoHash(GeoHashes.fromString("s24se0"), 30);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_geohash_int");
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_int",
+                        "geo\ns24se0\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests GEOHASH(12c) = 60 bits (GEOLONG) via the native GeoHash wire protocol.
+     */
+    @Test
+    public void testGeoHash_longResolution() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_geohash_long (" +
+                        "geo GEOHASH(12c), " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_long");
+                    QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+
+                    geoCol.addGeoHash(GeoHashes.fromString("s24se0g8k2bj"), 60);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_geohash_long");
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_long",
+                        "geo\ns24se0g8k2bj\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests sending multiple GeoHash rows via the native GeoHash wire protocol.
+     * Verifies all rows are stored and queryable.
+     */
+    @Test
+    public void testGeoHash_multipleRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_geohash_multi (" +
+                        "geo GEOHASH(6c), " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_multi");
+                    QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+
+                    String[] geoValues = {"s24se0", "u33dc0", "9v1s8h", "hp4muv", "zfuqd3"};
+                    for (int i = 0; i < geoValues.length; i++) {
+                        geoCol.addGeoHash(GeoHashes.fromString(geoValues[i]), 30);
+                        sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_geohash_multi");
+                serverMain.assertSql("SELECT count() FROM ws_geohash_multi", "count\n5\n");
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_multi ORDER BY ts",
+                        "geo\ns24se0\nu33dc0\n9v1s8h\nhp4muv\nzfuqd3\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests null GeoHash values interleaved with non-null values.
+     * Verifies correct null handling through the full path.
+     */
+    @Test
+    public void testGeoHash_nullable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_geohash_null (" +
+                        "geo GEOHASH(6c), " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_null");
+                    QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, true);
+
+                    geoCol.addGeoHash(GeoHashes.fromString("s24se0"), 30);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    geoCol.addNull();
+                    sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    geoCol.addGeoHash(GeoHashes.fromString("u33dc0"), 30);
+                    sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                    geoCol.addNull();
+                    sender.at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_geohash_null");
+                serverMain.assertSql("SELECT count() FROM ws_geohash_null", "count\n4\n");
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_null ORDER BY ts",
+                        "geo\ns24se0\n\nu33dc0\n\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests GEOHASH(4c) = 20 bits (GEOINT) via the native GeoHash wire protocol.
+     */
+    @Test
+    public void testGeoHash_shortResolution() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_geohash_short (" +
+                        "geo GEOHASH(4c), " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_short");
+                    QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+
+                    geoCol.addGeoHash(GeoHashes.fromString("s24s"), 20);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_geohash_short");
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_short",
+                        "geo\ns24s\n"
+                );
             }
         });
     }
