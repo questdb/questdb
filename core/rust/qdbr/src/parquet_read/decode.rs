@@ -760,6 +760,8 @@ impl ParquetDecoder {
 
     pub fn find_row_group_by_timestamp(
         &self,
+        file_ptr: *const u8,
+        file_size: u64,
         timestamp: i64,
         row_lo: usize,
         row_hi: usize,
@@ -774,55 +776,46 @@ impl ParquetDecoder {
             ));
         }
 
-        let timestamp_column_index = timestamp_column_index as usize;
-        let column_type = self.columns[timestamp_column_index]
-            .column_type
-            .ok_or_else(|| {
-                fmt_err!(
-                    InvalidType,
-                    "unknown timestamp column type, column index: {}",
-                    timestamp_column_index
-                )
-            })?;
-        if column_type.tag() != ColumnTypeTag::Timestamp {
-            return Err(fmt_err!(
-                InvalidType,
-                "expected timestamp column, but got {}, column index: {}",
-                column_type,
-                timestamp_column_index
-            ));
-        }
+        let ts = timestamp_column_index as usize;
+        self.validate_timestamp_column(ts)?;
 
         let row_group_count = self.row_group_count;
         let mut row_count = 0usize;
+        let mut sorting_key_validated = false;
         for (row_group_idx, row_group_meta) in self.metadata.row_groups.iter().enumerate() {
             let columns_meta = row_group_meta.columns();
-            let column_metadata = &columns_meta[timestamp_column_index];
+            let column_metadata = &columns_meta[ts];
             let column_chunk = column_metadata.column_chunk();
             let column_chunk_meta = column_chunk.meta_data.as_ref().ok_or_else(|| {
                 fmt_err!(
                     InvalidType,
                     "metadata not found for timestamp column, column index: {}",
-                    timestamp_column_index
+                    ts
                 )
             })?;
 
             let column_chunk_size = column_chunk_meta.num_values as usize;
+            if column_chunk_size == 0 {
+                continue;
+            }
             if row_hi + 1 < row_count {
                 break;
             }
             if row_lo < row_count + column_chunk_size {
-                let column_chunk_stats =
-                    column_chunk_meta.statistics.as_ref().ok_or_else(|| {
-                        fmt_err!(
-                            InvalidLayout,
-                            "statistics not found for timestamp column, column index: {}",
-                            timestamp_column_index
-                        )
-                    })?;
-
-                let min_value = long_stat_value(&column_chunk_stats.min_value)?;
-                let max_value = long_stat_value(&column_chunk_stats.max_value)?;
+                let min_value = match self.row_group_timestamp_stat::<false>(
+                    row_group_idx,
+                    ts,
+                    Some(column_metadata),
+                )? {
+                    Some(val) => val,
+                    None => {
+                        if !sorting_key_validated {
+                            self.validate_timestamp_sorting_key(ts)?;
+                            sorting_key_validated = true;
+                        }
+                        self.decode_single_timestamp(file_ptr, file_size, row_group_idx, ts, 0, 1)?
+                    }
+                };
 
                 // Our overall scan direction is Vect#BIN_SEARCH_SCAN_DOWN (increasing
                 // scan direction) and we're iterating over row groups left-to-right,
@@ -833,17 +826,36 @@ impl ParquetDecoder {
                 // right boundary of a row group or in a gap between two row groups
                 // and, thus, row group decoding is not needed.
 
-                // Check if we're at the left boundary or within the row group.
-                if timestamp >= min_value && timestamp < max_value {
-                    // We'll have to decode the group and search in it (even value).
-                    return Ok(2 * (row_group_idx + 1) as u64);
-                }
                 // The value is to the left of the row group.
-                // It must be either the right boundary of the previous row group
-                // or a gap between the previous and the current row groups.
                 if timestamp < min_value {
                     // We don't need to decode the row group (odd value).
                     return Ok((2 * row_group_idx + 1) as u64);
+                }
+
+                let max_value = match self.row_group_timestamp_stat::<true>(
+                    row_group_idx,
+                    ts,
+                    Some(column_metadata),
+                )? {
+                    Some(val) => val,
+                    None => {
+                        if !sorting_key_validated {
+                            self.validate_timestamp_sorting_key(ts)?;
+                            sorting_key_validated = true;
+                        }
+                        self.decode_single_timestamp(
+                            file_ptr,
+                            file_size,
+                            row_group_idx,
+                            ts,
+                            column_chunk_size - 1,
+                            column_chunk_size,
+                        )?
+                    }
+                };
+
+                if timestamp < max_value {
+                    return Ok(2 * (row_group_idx + 1) as u64);
                 }
             }
             row_count += column_chunk_size;
@@ -851,6 +863,205 @@ impl ParquetDecoder {
 
         // The value is to the right of the last row group, no need to decode (odd value).
         Ok((2 * row_group_count + 1) as u64)
+    }
+
+    fn row_group_timestamp_stat<const IS_MAX: bool>(
+        &self,
+        row_group_index: usize,
+        timestamp_column_index: usize,
+        column_chunk_meta: Option<&parquet2::metadata::ColumnChunkMetaData>,
+    ) -> ParquetResult<Option<i64>> {
+        let owned;
+        let chunk_meta = match column_chunk_meta {
+            Some(m) => m,
+            None => {
+                let columns_meta = self.metadata.row_groups[row_group_index].columns();
+                owned = &columns_meta[timestamp_column_index];
+                owned
+            }
+        };
+        let meta_data = match &chunk_meta.column_chunk().meta_data {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+        let statistics = match &meta_data.statistics {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let value = if IS_MAX {
+            &statistics.max_value
+        } else {
+            &statistics.min_value
+        };
+        match value {
+            Some(v) if v.len() == 8 => Ok(Some(i64::from_le_bytes(
+                v[0..8].try_into().expect("unexpected vec length"),
+            ))),
+            Some(v) => Err(fmt_err!(
+                InvalidLayout,
+                "unexpected timestamp stat byte array size of {}",
+                v.len()
+            )),
+            None => Ok(None),
+        }
+    }
+
+    fn validate_timestamp_column(&self, ts: usize) -> ParquetResult<()> {
+        let column_type = self.columns[ts].column_type.ok_or_else(|| {
+            fmt_err!(
+                InvalidType,
+                "unknown timestamp column type, column index: {}",
+                ts
+            )
+        })?;
+        if column_type.tag() != ColumnTypeTag::Timestamp {
+            return Err(fmt_err!(
+                InvalidType,
+                "expected timestamp column, but got {}, column index: {}",
+                column_type,
+                ts
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_timestamp_sorting_key(&self, timestamp_column_index: usize) -> ParquetResult<()> {
+        if let Some(ts_idx) = self.timestamp_index {
+            if ts_idx.get() as usize == timestamp_column_index {
+                return Ok(());
+            }
+        }
+
+        Err(fmt_err!(
+            InvalidLayout,
+            "timestamp column {} is not an ascending sorting key, \
+             cannot determine min/max without statistics",
+            timestamp_column_index
+        ))
+    }
+
+    fn decode_single_timestamp(
+        &self,
+        file_ptr: *const u8,
+        file_size: u64,
+        row_group_index: usize,
+        timestamp_column_index: usize,
+        row_lo: usize,
+        row_hi: usize,
+    ) -> ParquetResult<i64> {
+        let mut ctx = DecodeContext::new(file_ptr, file_size);
+        let mut bufs = ColumnChunkBuffers::new(self.allocator.clone());
+        let col_info = QdbMetaCol {
+            column_type: ColumnType::new(ColumnTypeTag::Timestamp, 0),
+            column_top: 0,
+            format: None,
+        };
+        self.decode_column_chunk(
+            &mut ctx,
+            &mut bufs,
+            row_group_index,
+            row_lo,
+            row_hi,
+            timestamp_column_index,
+            col_info,
+        )?;
+        let data = &bufs.data_vec;
+        if data.len() < std::mem::size_of::<i64>() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "decoded timestamp buffer too short: expected at least 8 bytes, got {}",
+                data.len()
+            ));
+        }
+        Ok(i64::from_le_bytes(data[..8].try_into().unwrap()))
+    }
+
+    pub fn row_group_min_timestamp(
+        &self,
+        file_ptr: *const u8,
+        file_size: u64,
+        row_group_index: u32,
+        timestamp_column_index: u32,
+    ) -> ParquetResult<i64> {
+        if row_group_index >= self.row_group_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                self.row_group_count
+            ));
+        }
+        if timestamp_column_index >= self.col_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "timestamp column index {} out of range [0,{})",
+                timestamp_column_index,
+                self.col_count
+            ));
+        }
+
+        let rg = row_group_index as usize;
+        let ts = timestamp_column_index as usize;
+        self.validate_timestamp_column(ts)?;
+
+        // Try statistics first
+        if let Some(val) = self.row_group_timestamp_stat::<false>(rg, ts, None)? {
+            return Ok(val);
+        }
+
+        self.validate_timestamp_sorting_key(ts)?;
+        self.decode_single_timestamp(file_ptr, file_size, rg, ts, 0, 1)
+    }
+
+    pub fn row_group_max_timestamp(
+        &self,
+        file_ptr: *const u8,
+        file_size: u64,
+        row_group_index: u32,
+        timestamp_column_index: u32,
+    ) -> ParquetResult<i64> {
+        if row_group_index >= self.row_group_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                self.row_group_count
+            ));
+        }
+        if timestamp_column_index >= self.col_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "timestamp column index {} out of range [0,{})",
+                timestamp_column_index,
+                self.col_count
+            ));
+        }
+
+        let rg = row_group_index as usize;
+        let ts = timestamp_column_index as usize;
+        self.validate_timestamp_column(ts)?;
+        if let Some(val) = self.row_group_timestamp_stat::<true>(rg, ts, None)? {
+            return Ok(val);
+        }
+
+        self.validate_timestamp_sorting_key(ts)?;
+        let row_group_size = self.row_group_sizes[rg] as usize;
+        if row_group_size == 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group {} has zero rows for timestamp column {}",
+                row_group_index,
+                timestamp_column_index
+            ));
+        }
+        self.decode_single_timestamp(
+            file_ptr,
+            file_size,
+            rg,
+            ts,
+            row_group_size - 1,
+            row_group_size,
+        )
     }
 }
 
@@ -4505,22 +4716,6 @@ fn page_row_count(page: &DataPage, column_type: ColumnType) -> ParquetResult<usi
             }
         }
     }
-}
-
-fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
-    let value = value
-        .as_ref()
-        .ok_or_else(|| fmt_err!(InvalidLayout, "missing statistics value"))?;
-    if value.len() != 8 {
-        return Err(fmt_err!(
-            InvalidLayout,
-            "unexpected value byte array size of {}",
-            value.len()
-        ));
-    }
-    Ok(i64::from_le_bytes(
-        value[0..8].try_into().expect("unexpected vec length"),
-    ))
 }
 
 #[cfg(test)]
