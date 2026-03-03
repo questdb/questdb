@@ -444,11 +444,13 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
 
         if (!needsRemap && newFlatCardinality <= capacity) {
             // In-place extension: flat indices unchanged, NaN-fill the tail.
+            // Aux buffers (counts, compensation) already have correct zero-fill
+            // in [oldCardinality, capacity) from their initial allocation, so
+            // no onShapeGrow call is needed.
             long dataPtr = ptr + headerSize;
             nanFill(dataPtr, accFlatCardinality, newFlatCardinality);
             writeHeader(ptr, newShape, newFlatCardinality);
             mapValue.putLong(valueIndex + 1, newFlatCardinality);
-            onShapeGrow(mapValue, accFlatCardinality, capacity, needsRemap);
         } else {
             long newCapacity = newFlatCardinality <= OVERALLOC_CAP
                     ? Math.max(newFlatCardinality, (long) (newFlatCardinality * overallocFactor))
@@ -714,9 +716,10 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
     }
 
     /**
-     * Called when the accumulator shape grows (from either computeNext or merge).
-     * The base class has already remapped its double[] data and updated its 3 base
-     * MapValue slots; subclasses should remap their auxiliary arrays (e.g. counts).
+     * Called when the accumulator shape grows and a new data block is allocated
+     * (from either computeNext or merge). Not called for in-place extensions
+     * where the growth fits within the overallocated capacity, since auxiliary
+     * buffers already have correct zero-fill in the tail.
      * <p>
      * When {@code needsRemap} is true, {@link #accStrides} and {@link #newStrides}
      * are populated and coordinate conversion is required. When false, old flat
