@@ -188,7 +188,7 @@ public class UnsignedTypesTest extends AbstractCairoTest {
                             32768
                             65535
                             \
-
+                            
                             """,
                     "SELECT val FROM ut_range16"
             );
@@ -214,7 +214,7 @@ public class UnsignedTypesTest extends AbstractCairoTest {
                             2147483648
                             4294967295
                             \
-
+                            
                             """,
                     "SELECT val FROM ut_range32"
             );
@@ -247,7 +247,7 @@ public class UnsignedTypesTest extends AbstractCairoTest {
                             9223372036854775808
                             18446744073709551615
                             \
-
+                            
                             """,
                     "SELECT val FROM ut_range64"
             );
@@ -268,7 +268,7 @@ public class UnsignedTypesTest extends AbstractCairoTest {
                             10
                             5
                             \
-
+                            
                             """,
                     "SELECT COALESCE(a, b) AS c FROM ut_coal"
             );
@@ -316,7 +316,7 @@ public class UnsignedTypesTest extends AbstractCairoTest {
                             c
                             one
                             \
-
+                            
                             other
                             """,
                     "SELECT CASE WHEN val = 1 THEN 'one' WHEN val IS NULL THEN NULL ELSE 'other' END AS c FROM ut_case"

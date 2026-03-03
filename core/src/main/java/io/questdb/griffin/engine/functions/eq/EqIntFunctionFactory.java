@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -53,16 +54,24 @@ public class EqIntFunctionFactory implements FunctionFactory {
             Function other = args.getQuick(0).isNullConstant() ? args.getQuick(1) : args.getQuick(0);
             return new IsNullCheckFunc(other);
         }
-        return new Func(args.getQuick(0), args.getQuick(1));
+        boolean bitmapNull = ColumnType.needsNullBitmap(args.getQuick(0).getType())
+                || ColumnType.needsNullBitmap(args.getQuick(1).getType());
+        return new Func(args.getQuick(0), args.getQuick(1), bitmapNull);
     }
 
     private static class Func extends AbstractEqBinaryFunction {
-        public Func(Function left, Function right) {
+        private final boolean bitmapNull;
+
+        public Func(Function left, Function right, boolean bitmapNull) {
             super(left, right);
+            this.bitmapNull = bitmapNull;
         }
 
         @Override
         public boolean getBool(Record rec) {
+            if (bitmapNull && (left.isNull(rec) || right.isNull(rec))) {
+                return false;
+            }
             return negated != (left.getInt(rec) == right.getInt(rec));
         }
     }

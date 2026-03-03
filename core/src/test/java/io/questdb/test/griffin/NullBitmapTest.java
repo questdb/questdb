@@ -151,7 +151,7 @@ public class NullBitmapTest extends AbstractCairoTest {
                             c
                             true
                             false
-
+                            
                             """,
                     "SELECT COALESCE(a, b) AS c FROM t"
             );
@@ -263,7 +263,7 @@ public class NullBitmapTest extends AbstractCairoTest {
                             c
                             10
                             5
-
+                            
                             """,
                     "SELECT COALESCE(a, b) AS c FROM t"
             );
@@ -333,7 +333,7 @@ public class NullBitmapTest extends AbstractCairoTest {
                             c
                             100
                             50
-
+                            
                             """,
                     "SELECT COALESCE(a, b) AS c FROM t"
             );
@@ -463,7 +463,7 @@ public class NullBitmapTest extends AbstractCairoTest {
                     """
                             c
                             true
-
+                            
                             false
                             """,
                     "SELECT CASE WHEN val = 1 THEN true WHEN val = 3 THEN false ELSE NULL END AS c FROM t"
@@ -1064,9 +1064,9 @@ public class NullBitmapTest extends AbstractCairoTest {
                     """
                             val
                             10
-
+                            
                             0
-
+                            
                             127
                             """,
                     "SELECT val FROM t"
@@ -1101,7 +1101,7 @@ public class NullBitmapTest extends AbstractCairoTest {
                     """
                             val
                             5
-
+                            
                             0
                             100
                             """,
@@ -1205,7 +1205,7 @@ public class NullBitmapTest extends AbstractCairoTest {
                     """
                             val
                             true
-
+                            
                             false
                             """,
                     "SELECT val FROM t"
@@ -1343,10 +1343,10 @@ public class NullBitmapTest extends AbstractCairoTest {
             assertSql(
                     """
                             u
-
-
+                            
+                            
                             100
-
+                            
                             """,
                     "SELECT u FROM t ORDER BY ts"
             );
@@ -1755,7 +1755,7 @@ public class NullBitmapTest extends AbstractCairoTest {
                     """
                             val
                             true
-
+                            
                             false
                             """,
                     "SELECT val FROM t"

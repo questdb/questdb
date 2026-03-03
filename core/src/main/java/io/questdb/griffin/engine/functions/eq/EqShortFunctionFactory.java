@@ -63,6 +63,9 @@ public class EqShortFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            if (left.isNull(rec) || right.isNull(rec)) {
+                return false;
+            }
             return negated != (left.getShort(rec) == right.getShort(rec));
         }
     }

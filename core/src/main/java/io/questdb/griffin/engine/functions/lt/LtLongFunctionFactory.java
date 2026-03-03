@@ -75,10 +75,10 @@ public class LtLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (this.left.isNull(rec) || this.right.isNull(rec)) {
-                return false;
-            }
             if (unsigned64) {
+                if (this.left.isNull(rec) || this.right.isNull(rec)) {
+                    return false;
+                }
                 return Numbers.lessThanUInt64(
                         this.left.getLong(rec),
                         this.right.getLong(rec),

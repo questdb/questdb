@@ -30,11 +30,11 @@ import org.junit.Test;
 /**
  * Tests that aggregate functions (SUM, AVG, MIN, MAX, COUNT) produce correct
  * results for UINT16, UINT32, and UINT64 columns.
- *
+ * <p>
  * These types use bitmap-based null support (not sentinel values), and their
  * unsigned value ranges include bit patterns that coincide with the signed
  * null sentinels (INT_NULL = 0x80000000, LONG_NULL = 0x8000000000000000).
- *
+ * <p>
  * Known issues these tests expose:
  * 1. SUM/AVG use signed getShort()/getInt()/getLong() without unsigned promotion
  * 2. SumIntGroupByFunction checks value != INT_NULL (sentinel), which misidentifies
