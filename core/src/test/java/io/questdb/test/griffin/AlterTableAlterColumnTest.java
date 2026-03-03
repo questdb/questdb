@@ -168,6 +168,19 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQuotedColumnName() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    execute("CREATE TABLE test_quoted (\"MY_COL\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" ADD INDEX");
+                    execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" DROP INDEX");
+                    execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" CACHE");
+                    execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" NOCACHE");
+                }
+        );
+    }
+
+    @Test
     public void testExpectTableName() throws Exception {
         assertFailure("alter table", 11, "table name expected");
     }
