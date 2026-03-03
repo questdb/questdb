@@ -514,9 +514,9 @@ fn validate_encoding(data_type: ColumnType, encoding: Encoding) -> Encoding {
             data_type.tag(),
             ColumnTypeTag::Symbol | ColumnTypeTag::Varchar
         ),
-        Encoding::RleDictionary => matches!(
+        Encoding::RleDictionary => !matches!(
             data_type.tag(),
-            ColumnTypeTag::Symbol | ColumnTypeTag::Varchar
+            ColumnTypeTag::Boolean | ColumnTypeTag::Array
         ),
         Encoding::DeltaLengthByteArray => matches!(
             data_type.tag(),
@@ -601,7 +601,7 @@ fn compression_from_config(config: i32) -> Option<CompressionOptions> {
     }
 }
 
-pub fn encoding_map(data_type: ColumnType) -> Encoding {
+pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type.tag() {
         ColumnTypeTag::Symbol => Encoding::RleDictionary,
         ColumnTypeTag::Binary => Encoding::DeltaLengthByteArray,
@@ -822,26 +822,54 @@ mod tests {
 
     #[test]
     fn test_validate_encoding_rle_dictionary_valid() {
-        assert_eq!(
-            validate_encoding(col_type(ColumnTypeTag::Symbol), Encoding::RleDictionary),
-            Encoding::RleDictionary
-        );
-        assert_eq!(
-            validate_encoding(col_type(ColumnTypeTag::Varchar), Encoding::RleDictionary),
-            Encoding::RleDictionary
-        );
+        for tag in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long,
+            ColumnTypeTag::Date,
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Float,
+            ColumnTypeTag::Double,
+            ColumnTypeTag::String,
+            ColumnTypeTag::Symbol,
+            ColumnTypeTag::Binary,
+            ColumnTypeTag::Varchar,
+            ColumnTypeTag::Long128,
+            ColumnTypeTag::Uuid,
+            ColumnTypeTag::Long256,
+            ColumnTypeTag::IPv4,
+            ColumnTypeTag::GeoByte,
+            ColumnTypeTag::GeoShort,
+            ColumnTypeTag::GeoInt,
+            ColumnTypeTag::GeoLong,
+            ColumnTypeTag::Decimal8,
+            ColumnTypeTag::Decimal16,
+            ColumnTypeTag::Decimal32,
+            ColumnTypeTag::Decimal64,
+            ColumnTypeTag::Decimal128,
+            ColumnTypeTag::Decimal256,
+        ] {
+            assert_eq!(
+                validate_encoding(col_type(tag), Encoding::RleDictionary),
+                Encoding::RleDictionary,
+                "RleDictionary should be valid for {:?}",
+                tag
+            );
+        }
     }
 
     #[test]
     fn test_validate_encoding_rle_dictionary_invalid() {
-        // INT should fall back to Plain
+        // Boolean should fall back to Plain
         assert_eq!(
-            validate_encoding(col_type(ColumnTypeTag::Int), Encoding::RleDictionary),
+            validate_encoding(col_type(ColumnTypeTag::Boolean), Encoding::RleDictionary),
             Encoding::Plain
         );
-        // DOUBLE should fall back to Plain
+        // Array should fall back to Plain
         assert_eq!(
-            validate_encoding(col_type(ColumnTypeTag::Double), Encoding::RleDictionary),
+            validate_encoding(col_type(ColumnTypeTag::Array), Encoding::RleDictionary),
             Encoding::Plain
         );
     }

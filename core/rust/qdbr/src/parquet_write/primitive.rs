@@ -1,14 +1,16 @@
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::hash::Hash;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_def_levels, ExactSizedIter, MaxMin,
+    build_plain_page, dict_pages_iter, encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
 use parquet2::bloom_filter::hash_native;
 use parquet2::encoding::delta_bitpacked::encode;
+use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
@@ -17,6 +19,8 @@ use parquet2::statistics::{
     serialize_statistics, FixedLenStatistics, ParquetStatistics, PrimitiveStatistics,
 };
 use parquet2::types::NativeType;
+use parquet2::write::DynIter;
+use rapidhash::RapidHashMap;
 
 pub fn decimal_slice_to_page_plain<T>(
     slice: &[T],
@@ -640,4 +644,412 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
         false,
     )
     .map(Page::Data)
+}
+
+// =============================================================================
+// Dictionary encoding functions
+// =============================================================================
+
+/// Dictionary encoding for SIMD-encodable nullable types (i32, i64, f32, f64).
+/// Uses the byte representation as HashMap key to avoid float Eq/Hash issues.
+pub fn slice_to_dict_pages_simd<T: SimdEncodable>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    T::Bytes: Eq + Hash,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+    let value_size = size_of::<T>();
+
+    // Build dictionary: use byte representation as key
+    let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<T> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
+    let mut null_count = 0usize;
+    let mut statistics = MaxMin::new();
+
+    for &value in slice {
+        if value.is_null() {
+            null_count += 1;
+        } else {
+            statistics.update(value);
+            let bytes = value.to_bytes();
+            let next_id = dict_entries.len() as u32;
+            let key = *dict_map.entry(bytes).or_insert_with(|| {
+                dict_entries.push(value);
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    // Build dict buffer: raw native bytes per unique value
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+    }
+
+    // Encode data page: def levels + bit_width + RLE-encoded keys
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            !slice[i - column_top].is_null()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let max_key = if dict_entries.is_empty() {
+        0u32
+    } else {
+        (dict_entries.len() - 1) as u32
+    };
+    let bits_per_key = super::util::bit_width(max_key as u64);
+    let non_null_len = slice.len() - null_count;
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        keys.into_iter(),
+        non_null_len,
+        bits_per_key as u32,
+    )?;
+
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(total_null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        total_null_count,
+        definition_levels_byte_length,
+        stats,
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+        false,
+    )?;
+
+    let unique_count = if dict_buffer.is_empty() {
+        0
+    } else {
+        dict_entries.len()
+    };
+    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+}
+
+/// Dictionary encoding for nullable int types that need type conversion (Geo*, IPv4).
+pub fn int_slice_to_dict_pages_nullable<T, P>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    P: NativeType,
+    P::Bytes: Eq + Hash,
+    T: Nullable + num_traits::AsPrimitive<P> + Copy + Debug,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+    let value_size = size_of::<P>();
+
+    let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<P> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
+    let mut null_count = 0usize;
+    let mut statistics = MaxMin::new();
+
+    for &value in slice {
+        if value.is_null() {
+            null_count += 1;
+        } else {
+            let p: P = value.as_();
+            statistics.update(p);
+            let bytes = p.to_bytes();
+            let next_id = dict_entries.len() as u32;
+            let key = *dict_map.entry(bytes).or_insert_with(|| {
+                dict_entries.push(p);
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+    }
+
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            !slice[i - column_top].is_null()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let max_key = if dict_entries.is_empty() {
+        0u32
+    } else {
+        (dict_entries.len() - 1) as u32
+    };
+    let bits_per_key = super::util::bit_width(max_key as u64);
+    let non_null_len = slice.len() - null_count;
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        keys.into_iter(),
+        non_null_len,
+        bits_per_key as u32,
+    )?;
+
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(total_null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        total_null_count,
+        definition_levels_byte_length,
+        stats,
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+        false,
+    )?;
+
+    let unique_count = if dict_buffer.is_empty() {
+        0
+    } else {
+        dict_entries.len()
+    };
+    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+}
+
+/// Dictionary encoding for not-null int types (Byte, Short, Char) — Required repetition,
+/// no def levels. Column top rows use T::default() as the dict value.
+pub fn int_slice_to_dict_pages_notnull<T, P>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    P: NativeType,
+    P::Bytes: Eq + Hash,
+    T: Default + num_traits::AsPrimitive<P> + Copy + Debug,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    let num_rows = column_top + slice.len();
+    let value_size = size_of::<P>();
+
+    let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<P> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(num_rows);
+    let mut statistics = MaxMin::new();
+
+    // Column top rows use the default value
+    if column_top > 0 {
+        let default_p: P = T::default().as_();
+        let bytes = default_p.to_bytes();
+        let next_id = dict_entries.len() as u32;
+        let key = *dict_map.entry(bytes).or_insert_with(|| {
+            dict_entries.push(default_p);
+            next_id
+        });
+        for _ in 0..column_top {
+            keys.push(key);
+        }
+    }
+
+    for &value in slice {
+        let p: P = value.as_();
+        statistics.update(p);
+        let bytes = p.to_bytes();
+        let next_id = dict_entries.len() as u32;
+        let key = *dict_map.entry(bytes).or_insert_with(|| {
+            dict_entries.push(p);
+            next_id
+        });
+        keys.push(key);
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+    }
+
+    let mut data_buffer = Vec::new();
+    // No def levels for Required columns
+
+    let max_key = if dict_entries.is_empty() {
+        0u32
+    } else {
+        (dict_entries.len() - 1) as u32
+    };
+    let bits_per_key = super::util::bit_width(max_key as u64);
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        keys.into_iter(),
+        num_rows,
+        bits_per_key as u32,
+    )?;
+
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(column_top as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        column_top,
+        0, // no def levels
+        stats,
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+        true,
+    )?;
+
+    let unique_count = if dict_buffer.is_empty() {
+        0
+    } else {
+        dict_entries.len()
+    };
+    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+}
+
+/// Dictionary encoding for Decimal types (FixedLenByteArray).
+pub fn decimal_slice_to_dict_pages<T>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    T: Nullable + NativeType + Debug,
+    T::Bytes: Eq + Hash,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+
+    let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<T> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
+    let mut null_count = 0usize;
+    let mut statistics = MaxMin::new();
+
+    for &value in slice {
+        if value.is_null() {
+            null_count += 1;
+        } else {
+            statistics.update(value);
+            let bytes = value.to_bytes();
+            let next_id = dict_entries.len() as u32;
+            let key = *dict_map.entry(bytes).or_insert_with(|| {
+                dict_entries.push(value);
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * size_of::<T>());
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+    }
+
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            !slice[i - column_top].is_null()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let max_key = if dict_entries.is_empty() {
+        0u32
+    } else {
+        (dict_entries.len() - 1) as u32
+    };
+    let bits_per_key = super::util::bit_width(max_key as u64);
+    let non_null_len = slice.len() - null_count;
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        keys.into_iter(),
+        non_null_len,
+        bits_per_key as u32,
+    )?;
+
+    let stats = if options.write_statistics {
+        let s = &PrimitiveStatistics::<T> {
+            primitive_type: primitive_type.clone(),
+            null_count: Some(total_null_count as i64),
+            distinct_count: None,
+            max_value: statistics.max,
+            min_value: statistics.min,
+        } as &dyn parquet2::statistics::Statistics;
+        Some(serialize_statistics(s))
+    } else {
+        None
+    };
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        total_null_count,
+        definition_levels_byte_length,
+        stats,
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+        false,
+    )?;
+
+    let unique_count = if dict_buffer.is_empty() {
+        0
+    } else {
+        dict_entries.len()
+    };
+    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
 }

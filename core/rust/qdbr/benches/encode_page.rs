@@ -9,9 +9,11 @@ use parquet2::schema::Repetition;
 use parquet2::write::Version;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::bench::{
-    array_to_raw_page, binary_to_page, boolean_to_page, bytes_to_page, int_slice_to_page_notnull,
-    int_slice_to_page_nullable, slice_to_page_simd, string_to_page, symbol_to_pages,
-    varchar_to_dict_pages, varchar_to_page, WriteOptions,
+    array_to_raw_page, binary_to_dict_pages, binary_to_page, boolean_to_page, bytes_to_dict_pages,
+    bytes_to_page, decimal_slice_to_dict_pages, int_slice_to_dict_pages_notnull,
+    int_slice_to_dict_pages_nullable, int_slice_to_page_notnull, int_slice_to_page_nullable,
+    slice_to_dict_pages_simd, slice_to_page_simd, string_to_dict_pages, string_to_page,
+    symbol_to_pages, varchar_to_dict_pages, varchar_to_page, WriteOptions,
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
@@ -663,6 +665,258 @@ fn make_ipv4_data(row_count: usize, null_pct: u8) -> Vec<i32> {
     data
 }
 
+// --- Dict data generators (low-cardinality data for dictionary encoding benchmarks) ---
+
+fn make_dict_i32_data(
+    row_count: usize,
+    null_pct: u8,
+    null_value: i32,
+    cardinality: usize,
+) -> Vec<i32> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            null_value
+        } else {
+            (i % cardinality) as i32
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_dict_i64_data(
+    row_count: usize,
+    null_pct: u8,
+    null_value: i64,
+    cardinality: usize,
+) -> Vec<i64> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            null_value
+        } else {
+            (i % cardinality) as i64
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_dict_f32_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<f32> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            f32::NAN
+        } else {
+            (i % cardinality) as f32
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_dict_f64_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<f64> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            f64::NAN
+        } else {
+            (i % cardinality) as f64
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_dict_i8_data(row_count: usize, cardinality: usize) -> Vec<i8> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        data.push(((i % cardinality) as i8).wrapping_add(1));
+    }
+    data
+}
+
+fn make_dict_i16_data(row_count: usize, cardinality: usize) -> Vec<i16> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        data.push(((i % cardinality) as i16).wrapping_add(1));
+    }
+    data
+}
+
+fn make_dict_char_data(row_count: usize, cardinality: usize) -> Vec<u16> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        data.push(((i % cardinality) as u16).wrapping_add(1));
+    }
+    data
+}
+
+fn make_dict_string_data(row_count: usize, null_pct: u8, cardinality: usize) -> StringData {
+    let values: Vec<String> = (0..cardinality).map(|i| format!("str{i}")).collect();
+    let mut data = Vec::new();
+    let mut offsets = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        offsets.push(data.len() as i64);
+        if is_null_at(i, null_pct) {
+            data.extend_from_slice(&(-1i32).to_le_bytes());
+        } else {
+            let value = &values[i % values.len()];
+            let utf16: Vec<u16> = value.encode_utf16().collect();
+            data.extend_from_slice(&(utf16.len() as i32).to_le_bytes());
+            for u in utf16 {
+                data.extend_from_slice(&u.to_le_bytes());
+            }
+        }
+    }
+    StringData { data, offsets }
+}
+
+fn make_dict_binary_data(row_count: usize, null_pct: u8, cardinality: usize) -> BinaryData {
+    let values: Vec<Vec<u8>> = (0..cardinality)
+        .map(|i| vec![i as u8; 8 + (i % 5)])
+        .collect();
+    let mut data = Vec::new();
+    let mut offsets = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        offsets.push(data.len() as i64);
+        if is_null_at(i, null_pct) {
+            data.extend_from_slice(&(-1i64).to_le_bytes());
+        } else {
+            let value = &values[i % values.len()];
+            data.extend_from_slice(&(value.len() as i64).to_le_bytes());
+            data.extend_from_slice(value);
+        }
+    }
+    BinaryData { data, offsets }
+}
+
+fn make_dict_long128_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<[u8; 16]> {
+    let mut null_value = [0u8; 16];
+    let null_bytes = i64::MIN.to_le_bytes();
+    for i in 0..16 {
+        null_value[i] = null_bytes[i % null_bytes.len()];
+    }
+    let unique_values: Vec<[u8; 16]> = (0..cardinality)
+        .map(|i| (i as u128).to_le_bytes())
+        .collect();
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            data.push(null_value);
+        } else {
+            data.push(unique_values[i % cardinality]);
+        }
+    }
+    data
+}
+
+fn make_dict_long256_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<[u8; 32]> {
+    let mut null_value = [0u8; 32];
+    let null_bytes = i64::MIN.to_le_bytes();
+    for i in 0..32 {
+        null_value[i] = null_bytes[i % null_bytes.len()];
+    }
+    let unique_values: Vec<[u8; 32]> = (0..cardinality)
+        .map(|i| {
+            let mut value = [0u8; 32];
+            let bytes = (i as u128).to_le_bytes();
+            value[..16].copy_from_slice(&bytes);
+            value
+        })
+        .collect();
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            data.push(null_value);
+        } else {
+            data.push(unique_values[i % cardinality]);
+        }
+    }
+    data
+}
+
+fn make_dict_ipv4_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<BenchIPv4> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            BenchIPv4(0)
+        } else {
+            BenchIPv4((0x0A00_0000u32 + (i as u32 % cardinality as u32) + 1) as i32)
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_dict_geobyte_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<BenchGeoByte> {
+    let effective_card = cardinality.min(127);
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            BenchGeoByte(-1)
+        } else {
+            BenchGeoByte((i % effective_card) as i8)
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_dict_decimal_i32_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<i32> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            i32::MIN
+        } else {
+            ((i % cardinality) as i32).wrapping_mul(17)
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_dict_decimal_i64_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<i64> {
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            i64::MIN
+        } else {
+            ((i % cardinality) as i64).wrapping_mul(1_003)
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_dict_decimal_flba_data<const N: usize>(
+    row_count: usize,
+    null_pct: u8,
+    cardinality: usize,
+) -> Vec<[u8; N]> {
+    let null_value = decimal_flba_null_value::<N>();
+    let unique_values: Vec<[u8; N]> = (0..cardinality)
+        .map(|i| {
+            let value = (i as i64).wrapping_mul(7);
+            let mut be: [u8; N] = be_from_i64(value, N).try_into().expect("fixed length");
+            if be == null_value {
+                be[0] ^= 1;
+            }
+            be
+        })
+        .collect();
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            data.push(null_value);
+        } else {
+            data.push(unique_values[i % cardinality]);
+        }
+    }
+    data
+}
+
 // --- Encode benchmark case ---
 
 struct EncodeBenchCase {
@@ -818,6 +1072,150 @@ macro_rules! encode_decimal_flba_cases {
                     );
                 }),
             });
+        }
+    }};
+}
+
+macro_rules! encode_simd_dict_cases {
+    ($cases:ident, $opts:ident, $name:literal, $tag:ident,
+     |$np:ident, $card:ident| $data:expr) => {
+        for &$card in &DICT_CARDINALITIES {
+            for &$np in null_pcts(true) {
+                let data = $data;
+                let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
+                let pt = primitive_type_for(ct);
+                let opts = $opts;
+                $cases.push(EncodeBenchCase {
+                    name: format!(
+                        concat!($name, "_dict_c{card}_n{np}"),
+                        card = $card,
+                        np = $np
+                    ),
+                    row_count: ROW_COUNT,
+                    encode_fn: Box::new(move || {
+                        let iter =
+                            slice_to_dict_pages_simd(&data, 0, opts, pt.clone()).expect("encode");
+                        for page in iter {
+                            black_box(page.expect("page"));
+                        }
+                    }),
+                });
+            }
+        }
+    };
+}
+
+macro_rules! encode_int_notnull_dict_cases {
+    ($cases:ident, $opts:ident, $name:literal, $tag:ident,
+     $T:ty, $U:ty, |$card:ident| $data:expr) => {
+        for &$card in &DICT_CARDINALITIES {
+            let data: Vec<$T> = $data;
+            let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
+            let pt = primitive_type_for(ct);
+            let opts = $opts;
+            $cases.push(EncodeBenchCase {
+                name: format!(concat!($name, "_dict_c{card}_n0"), card = $card),
+                row_count: ROW_COUNT,
+                encode_fn: Box::new(move || {
+                    let iter =
+                        int_slice_to_dict_pages_notnull::<$T, $U>(&data, 0, opts, pt.clone())
+                            .expect("encode");
+                    for page in iter {
+                        black_box(page.expect("page"));
+                    }
+                }),
+            });
+        }
+    };
+}
+
+macro_rules! encode_int_nullable_dict_cases {
+    ($cases:ident, $opts:ident, $name:literal, $tag:ident,
+     $T:ty, $U:ty, |$np:ident, $card:ident| $data:expr) => {
+        for &$card in &DICT_CARDINALITIES {
+            for &$np in null_pcts(true) {
+                let data: Vec<$T> = $data;
+                let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
+                let pt = primitive_type_for(ct);
+                let opts = $opts;
+                $cases.push(EncodeBenchCase {
+                    name: format!(
+                        concat!($name, "_dict_c{card}_n{np}"),
+                        card = $card,
+                        np = $np
+                    ),
+                    row_count: ROW_COUNT,
+                    encode_fn: Box::new(move || {
+                        let iter =
+                            int_slice_to_dict_pages_nullable::<$T, $U>(&data, 0, opts, pt.clone())
+                                .expect("encode");
+                        for page in iter {
+                            black_box(page.expect("page"));
+                        }
+                    }),
+                });
+            }
+        }
+    };
+}
+
+macro_rules! encode_bytes_dict_cases {
+    ($cases:ident, $opts:ident, $name:literal, $tag:ident,
+     $swap:expr, |$np:ident, $card:ident| $data:expr) => {
+        for &$card in &DICT_CARDINALITIES {
+            for &$np in null_pcts(true) {
+                let data = $data;
+                let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
+                let pt = primitive_type_for(ct);
+                let opts = $opts;
+                $cases.push(EncodeBenchCase {
+                    name: format!(
+                        concat!($name, "_dict_c{card}_n{np}"),
+                        card = $card,
+                        np = $np
+                    ),
+                    row_count: ROW_COUNT,
+                    encode_fn: Box::new(move || {
+                        let iter =
+                            bytes_to_dict_pages(&data, $swap, 0, opts, pt.clone()).expect("encode");
+                        for page in iter {
+                            black_box(page.expect("page"));
+                        }
+                    }),
+                });
+            }
+        }
+    };
+}
+
+macro_rules! encode_decimal_flba_dict_cases {
+    ($cases:ident, $opts:ident, $src_len:expr, $precision:expr, $scale:expr, $label:literal) => {{
+        let primitive_type = decimal_primitive_type(
+            PhysicalType::FixedLenByteArray($src_len),
+            $precision,
+            $scale,
+        );
+        for &card in &DICT_CARDINALITIES {
+            for &null_pct in null_pcts(true) {
+                let data = make_dict_decimal_flba_data::<$src_len>(ROW_COUNT, null_pct, card);
+                let pt = primitive_type.clone();
+                let opts = $opts;
+                $cases.push(EncodeBenchCase {
+                    name: format!(
+                        concat!($label, "_dict_c{card}_n{np}"),
+                        card = card,
+                        np = null_pct
+                    ),
+                    row_count: ROW_COUNT,
+                    encode_fn: Box::new(move || {
+                        let iter =
+                            bytes_to_dict_pages(&data, false, 0, opts, pt.clone()).expect("encode");
+                        for page in iter {
+                            black_box(page.expect("page"));
+                        }
+                    }),
+                });
+            }
         }
     }};
 }
@@ -1254,6 +1652,162 @@ fn build_cases() -> Vec<EncodeBenchCase> {
 
     encode_decimal_flba_cases!(cases, options, 31, 60usize, 6usize, "decimal_flba31_dec256");
     encode_decimal_flba_cases!(cases, options, 32, 60usize, 6usize, "decimal_flba32_dec256");
+
+    // === RLE Dictionary encoding benchmarks ===
+
+    // SIMD types — dict
+    encode_simd_dict_cases!(cases, options, "int", Int, |np, card| {
+        make_dict_i32_data(ROW_COUNT, np, i32::MIN, card)
+    });
+    encode_simd_dict_cases!(cases, options, "long", Long, |np, card| {
+        make_dict_i64_data(ROW_COUNT, np, i64::MIN, card)
+    });
+    encode_simd_dict_cases!(cases, options, "float", Float, |np, card| {
+        make_dict_f32_data(ROW_COUNT, np, card)
+    });
+    encode_simd_dict_cases!(cases, options, "double", Double, |np, card| {
+        make_dict_f64_data(ROW_COUNT, np, card)
+    });
+
+    // Non-nullable int types — dict
+    encode_int_notnull_dict_cases!(cases, options, "byte", Byte, i8, i32, |card| {
+        make_dict_i8_data(ROW_COUNT, card)
+    });
+    encode_int_notnull_dict_cases!(cases, options, "short", Short, i16, i32, |card| {
+        make_dict_i16_data(ROW_COUNT, card)
+    });
+    encode_int_notnull_dict_cases!(cases, options, "char", Char, u16, i32, |card| {
+        make_dict_char_data(ROW_COUNT, card)
+    });
+
+    // Nullable int types — dict
+    encode_int_nullable_dict_cases!(cases, options, "ipv4", IPv4, BenchIPv4, i32, |np, card| {
+        make_dict_ipv4_data(ROW_COUNT, np, card)
+    });
+    encode_int_nullable_dict_cases!(
+        cases,
+        options,
+        "geobyte",
+        GeoByte,
+        BenchGeoByte,
+        i32,
+        |np, card| { make_dict_geobyte_data(ROW_COUNT, np, card) }
+    );
+
+    // Fixed-size byte arrays — dict
+    encode_bytes_dict_cases!(cases, options, "long128", Long128, false, |np, card| {
+        make_dict_long128_data(ROW_COUNT, np, card)
+    });
+    encode_bytes_dict_cases!(cases, options, "uuid", Uuid, true, |np, card| {
+        make_dict_long128_data(ROW_COUNT, np, card)
+    });
+    encode_bytes_dict_cases!(cases, options, "long256", Long256, false, |np, card| {
+        make_dict_long256_data(ROW_COUNT, np, card)
+    });
+
+    // String — dict
+    for &card in &DICT_CARDINALITIES {
+        for &null_pct in null_pcts(true) {
+            let data = make_dict_string_data(ROW_COUNT, null_pct, card);
+            let column_type = ColumnType::new(ColumnTypeTag::String, 0);
+            let primitive_type = primitive_type_for(column_type);
+            cases.push(EncodeBenchCase {
+                name: format!("string_dict_c{card}_n{null_pct}"),
+                row_count: ROW_COUNT,
+                encode_fn: Box::new(move || {
+                    let iter = string_to_dict_pages(
+                        &data.offsets,
+                        &data.data,
+                        0,
+                        options,
+                        primitive_type.clone(),
+                    )
+                    .expect("encode");
+                    for page in iter {
+                        black_box(page.expect("page"));
+                    }
+                }),
+            });
+        }
+    }
+
+    // Binary — dict
+    for &card in &DICT_CARDINALITIES {
+        for &null_pct in null_pcts(true) {
+            let data = make_dict_binary_data(ROW_COUNT, null_pct, card);
+            let column_type = ColumnType::new(ColumnTypeTag::Binary, 0);
+            let primitive_type = primitive_type_for(column_type);
+            cases.push(EncodeBenchCase {
+                name: format!("binary_dict_c{card}_n{null_pct}"),
+                row_count: ROW_COUNT,
+                encode_fn: Box::new(move || {
+                    let iter = binary_to_dict_pages(
+                        &data.offsets,
+                        &data.data,
+                        0,
+                        options,
+                        primitive_type.clone(),
+                    )
+                    .expect("encode");
+                    for page in iter {
+                        black_box(page.expect("page"));
+                    }
+                }),
+            });
+        }
+    }
+
+    // Decimal Int32 — dict
+    {
+        let precision = 9usize;
+        let scale = 2usize;
+        let primitive_type = decimal_primitive_type(PhysicalType::Int32, precision, scale);
+        for &card in &DICT_CARDINALITIES {
+            for &null_pct in null_pcts(true) {
+                let data = make_dict_decimal_i32_data(ROW_COUNT, null_pct, card);
+                let pt = primitive_type.clone();
+                cases.push(EncodeBenchCase {
+                    name: format!("decimal_int32_dict_c{card}_n{null_pct}"),
+                    row_count: ROW_COUNT,
+                    encode_fn: Box::new(move || {
+                        let iter = decimal_slice_to_dict_pages(&data, 0, options, pt.clone())
+                            .expect("encode");
+                        for page in iter {
+                            black_box(page.expect("page"));
+                        }
+                    }),
+                });
+            }
+        }
+    }
+
+    // Decimal Int64 — dict
+    {
+        let precision = 18usize;
+        let scale = 3usize;
+        let primitive_type = decimal_primitive_type(PhysicalType::Int64, precision, scale);
+        for &card in &DICT_CARDINALITIES {
+            for &null_pct in null_pcts(true) {
+                let data = make_dict_decimal_i64_data(ROW_COUNT, null_pct, card);
+                let pt = primitive_type.clone();
+                cases.push(EncodeBenchCase {
+                    name: format!("decimal_int64_dict_c{card}_n{null_pct}"),
+                    row_count: ROW_COUNT,
+                    encode_fn: Box::new(move || {
+                        let iter = decimal_slice_to_dict_pages(&data, 0, options, pt.clone())
+                            .expect("encode");
+                        for page in iter {
+                            black_box(page.expect("page"));
+                        }
+                    }),
+                });
+            }
+        }
+    }
+
+    // Decimal FLBA — dict (representative sizes)
+    encode_decimal_flba_dict_cases!(cases, options, 16, 30usize, 4usize, "decimal_flba16_dec128");
+    encode_decimal_flba_dict_cases!(cases, options, 32, 60usize, 6usize, "decimal_flba32_dec256");
 
     cases
 }

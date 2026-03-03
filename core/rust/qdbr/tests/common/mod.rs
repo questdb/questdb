@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+pub mod encode;
+pub mod types;
+
 use std::{
     io::Cursor,
     sync::{atomic::AtomicUsize, Arc},
