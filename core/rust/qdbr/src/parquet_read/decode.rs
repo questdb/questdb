@@ -2250,22 +2250,6 @@ pub(super) fn page_row_count(page: &DataPage, column_type: ColumnType) -> Parque
     }
 }
 
-pub(super) fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
-    let value = value
-        .as_ref()
-        .ok_or_else(|| fmt_err!(InvalidLayout, "missing statistics value"))?;
-    if value.len() != 8 {
-        return Err(fmt_err!(
-            InvalidLayout,
-            "unexpected value byte array size of {}",
-            value.len()
-        ));
-    }
-    Ok(i64::from_le_bytes(
-        value[0..8].try_into().expect("unexpected vec length"),
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{decode_page, decode_page_filtered};
