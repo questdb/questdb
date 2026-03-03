@@ -5,11 +5,11 @@ steps:
     submodules: false
 
   - bash: |
-      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
+      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk build-essential zip
       JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
       echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
       echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
-    displayName: "Install JDK and Maven"
+    displayName: "Install JDK and build tools"
 
   - bash: mkdir -p "$HOME/.m2/repository"
     displayName: "Ensure .m2/repository exists"
