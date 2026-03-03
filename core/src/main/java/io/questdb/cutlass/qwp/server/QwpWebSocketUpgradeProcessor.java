@@ -551,8 +551,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 handleBinaryMessage(context, state, payload, length);
             }
             case WebSocketOpcode.CONTINUATION ->
-                    // Continuation frames are part of a fragmented message we never started
-                    // tracking. Reject so the sender knows data was not ingested.
+                // Continuation frames are part of a fragmented message we never started
+                // tracking. Reject so the sender knows data was not ingested.
                     rejectFragmentedFrame(context, state, opcode);
             case WebSocketOpcode.TEXT ->
                     LOG.debug().$("WebSocket text message ignored [fd=").$(context.getFd()).$(", len=").$(length).I$();
@@ -621,11 +621,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
 
         return result;
-    }
-
-    private enum FrameProcessResult {
-        COMPLETE,
-        NEED_MORE_DATA
     }
 
     private void rejectFragmentedFrame(HttpConnectionContext context, QwpProcessorState state, int opcode)
@@ -774,5 +769,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     .$(", seq=").$(sequence).I$();
             throw e;
         }
+    }
+
+    private enum FrameProcessResult {
+        COMPLETE,
+        NEED_MORE_DATA
     }
 }
