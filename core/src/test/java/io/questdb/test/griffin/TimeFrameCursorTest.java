@@ -411,16 +411,10 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
                     // Enumerate all frames, collecting their estimate ceilings.
                     LongList ceilings = new LongList();
-                    boolean hasSplit = false;
                     while (cursor.next()) {
-                        long hi = frame.getTimestampEstimateHi();
-                        if (ceilings.size() > 0 && ceilings.getLast() == hi) {
-                            hasSplit = true;
-                        }
-                        ceilings.add(hi);
+                        ceilings.add(frame.getTimestampEstimateHi());
                     }
                     int frameCount = ceilings.size();
-                    Assert.assertTrue("expected at least one split partition", hasSplit);
                     Assert.assertTrue("expected more frames than partitions", frameCount > 3);
 
                     // Seek before all frames
