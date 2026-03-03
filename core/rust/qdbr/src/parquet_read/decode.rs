@@ -2228,17 +2228,18 @@ pub(super) fn page_row_count(page: &DataPage, column_type: ColumnType) -> Parque
                             get_bit_width(page.descriptor.max_rep_level),
                             header.num_values as usize,
                         )?
-                        .filter_map(|rep_level| match rep_level {
-                            Ok(rep_level) => {
-                                if rep_level == 0 {
-                                    Some(())
-                                } else {
-                                    None
-                                }
-                            }
-                            _ => None,
-                        })
-                        .count();
+                        .fold(
+                            Ok(0usize) as ParquetResult<_>,
+                            |acc, rep_level| {
+                                acc.and_then(|count| {
+                                    if rep_level? == 0 {
+                                        Ok(count + 1)
+                                    } else {
+                                        Ok(count)
+                                    }
+                                })
+                            },
+                        )?;
                         Ok(num_rows)
                     }
                 }
