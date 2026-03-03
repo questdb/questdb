@@ -542,6 +542,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // we don't want to purge the part where the last txn is in. Txn is 1-based.
             return (lastAppliedTxn - 1) / txnPartSize;
         }
+        // V1 sequencer (txnPartSize == 0) has no seq part files, so return MAX_VALUE
+        // to make `seqPart < currentSeqPart` always true, purging any stray V2 parts.
         return Long.MAX_VALUE;
     }
 

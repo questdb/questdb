@@ -555,12 +555,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         LOG.info().$("checkpoint created").$();
                     }
                 } catch (Throwable e) {
+                    engine.getBackupSeqPartLock().clear();
                     // Resume the WalPurgeJob
                     if (walPurgeJobRunLock != null && ownsWalPurgeJobRunLock && walPurgeJobRunLock.isLocked()) {
                         walPurgeJobRunLock.unlock();
                         ownsWalPurgeJobRunLock = false;
                     }
-                    engine.getBackupSeqPartLock().clear();
                     var log = LOG.error().$("cannot create checkpoint [e=").$(e);
                     if (tableToken != null) {
                         log.$(", table=").$(tableToken);
@@ -770,6 +770,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             path.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory()).$();
             ff.rmdir(path); // it's fine to ignore errors here
 
+            // Clear backup seq part locks before resuming WalPurgeJob,
+            // so the purge job never sees stale lock entries.
+            engine.getBackupSeqPartLock().clear();
+
             // Resume the WalPurgeJob
             if (walPurgeJobRunLock != null && ownsWalPurgeJobRunLock && walPurgeJobRunLock.isLocked()) {
                 try {
@@ -780,9 +784,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     // checkpointRelease() can be called several time in a row.
                 }
             }
-
-            // Clear backup seq part locks
-            engine.getBackupSeqPartLock().clear();
 
             // reset checkpoint-in-flight flag.
             startedAtTimestamp.set(Numbers.LONG_NULL);
