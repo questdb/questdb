@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -50,6 +51,10 @@ public class MaxLongGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new MaxLongGroupByFunction(args.getQuick(0));
+        final Function arg = args.getQuick(0);
+        if (ColumnType.isUInt64(arg.getType())) {
+            return new MaxUInt64GroupByFunction(arg);
+        }
+        return new MaxLongGroupByFunction(arg);
     }
 }

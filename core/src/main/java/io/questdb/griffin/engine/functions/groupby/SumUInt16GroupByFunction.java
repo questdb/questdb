@@ -29,37 +29,26 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
-public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
+public class SumUInt16GroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public AvgShortGroupByFunction(@NotNull Function arg) {
+    public SumUInt16GroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-    }
-
-    @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
-        if (count > 0) {
-            mapValue.putLong(valueIndex, Vect.sumShort(ptr, count));
-            mapValue.putLong(valueIndex + 1, count);
-        }
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         if (arg.isNull(record)) {
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-            mapValue.putLong(valueIndex + 1, 0);
         } else {
-            mapValue.putLong(valueIndex, arg.getShort(record));
-            mapValue.putLong(valueIndex + 1, 1);
+            mapValue.putLong(valueIndex, arg.getInt(record));
         }
     }
 
@@ -68,11 +57,10 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
         if (!arg.isNull(record)) {
             final long sum = mapValue.getLong(valueIndex);
             if (sum != Numbers.LONG_NULL) {
-                mapValue.addLong(valueIndex, arg.getShort(record));
+                mapValue.putLong(valueIndex, sum + arg.getInt(record));
             } else {
-                mapValue.putLong(valueIndex, arg.getShort(record));
+                mapValue.putLong(valueIndex, arg.getInt(record));
             }
-            mapValue.addLong(valueIndex + 1, 1);
         }
     }
 
@@ -82,23 +70,13 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     }
 
     @Override
-    public int getComputeBatchArgType() {
-        return ColumnType.SHORT;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        final long sum = rec.getLong(valueIndex);
-        final long count = rec.getLong(valueIndex + 1);
-        if (sum != Numbers.LONG_NULL && count > 0) {
-            return (double) rec.getLong(valueIndex) / rec.getLong(valueIndex + 1);
-        }
-        return Double.NaN;
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
     }
 
     @Override
     public String getName() {
-        return "avg";
+        return "sum";
     }
 
     @Override
@@ -120,7 +98,6 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -136,30 +113,24 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final long srcSum = srcValue.getLong(valueIndex);
-        final long srcCount = srcValue.getLong(valueIndex + 1);
-        if (srcCount > 0) {
+        if (srcSum != Numbers.LONG_NULL) {
             final long destSum = destValue.getLong(valueIndex);
-            final long destCount = destValue.getLong(valueIndex + 1);
-            if (destCount > 0) {
+            if (destSum != Numbers.LONG_NULL) {
                 destValue.putLong(valueIndex, destSum + srcSum);
-                destValue.putLong(valueIndex + 1, destCount + srcCount);
             } else {
                 destValue.putLong(valueIndex, srcSum);
-                destValue.putLong(valueIndex + 1, srcCount);
             }
         }
     }
 
     @Override
-    public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(valueIndex, value);
-        mapValue.putLong(valueIndex + 1, 1);
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putLong(valueIndex, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override

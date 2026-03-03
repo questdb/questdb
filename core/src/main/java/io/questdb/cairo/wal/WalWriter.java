@@ -1776,6 +1776,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             MemoryMA bitmapMem = getNullBitmapColumn(i);
             if (bitmapMem != null && bitmapMem.isOpen() && metadata.getColumnType(i) > 0) {
                 bitmapMem.jumpTo(bitmapByteCount);
+                if (bitmapBitCount > 0 && bitmapByteCount > 0) {
+                    long addr = bitmapMem.addressOf(bitmapByteCount - 1);
+                    byte existing = Unsafe.getUnsafe().getByte(addr);
+                    Unsafe.getUnsafe().putByte(addr, (byte) (existing & ((1 << bitmapBitCount) - 1)));
+                }
             }
         }
     }

@@ -46,6 +46,7 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
     );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
+    private final KeyValueBitmapFunc keyValueBitmapFunc;
     private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
@@ -55,12 +56,15 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
         if (keyKind == GKK_MICRO_HOUR_INT) {
             this.distinctFunc = Rosti::keyedMicroHourDistinct;
             this.keyValueFunc = Rosti::keyedMicroHourMaxShort;
+            this.keyValueBitmapFunc = Rosti::keyedMicroHourMaxShortBitmapNull;
         } else if (keyKind == GKK_NANO_HOUR_INT) {
             this.distinctFunc = Rosti::keyedNanoHourDistinct;
             this.keyValueFunc = Rosti::keyedNanoHourMaxShort;
+            this.keyValueBitmapFunc = Rosti::keyedNanoHourMaxShortBitmapNull;
         } else {
             this.distinctFunc = Rosti::keyedIntDistinct;
             this.keyValueFunc = Rosti::keyedIntMaxShort;
+            this.keyValueBitmapFunc = Rosti::keyedIntMaxShortBitmapNull;
         }
     }
 
@@ -75,9 +79,34 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
     }
 
     @Override
+    public void aggregate(long address, long bitmapAddr, long bitOffset, long frameRowCount, int workerId) {
+        if (address != 0) {
+            if (bitmapAddr != 0) {
+                final long value = Vect.maxShortBitmapNull(address, bitmapAddr, bitOffset, frameRowCount);
+                if (value != Numbers.INT_NULL) {
+                    accumulator.accumulate(value);
+                }
+            } else {
+                aggregate(address, frameRowCount, workerId);
+            }
+        }
+    }
+
+    @Override
     public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount) {
         if (valueAddress == 0) {
             return distinctFunc.run(pRosti, keyAddress, frameRowCount);
+        } else {
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
+        }
+    }
+
+    @Override
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long bitmapAddr, long bitOffset, long frameRowCount) {
+        if (valueAddress == 0) {
+            return distinctFunc.run(pRosti, keyAddress, frameRowCount);
+        } else if (bitmapAddr != 0) {
+            return keyValueBitmapFunc.run(pRosti, keyAddress, valueAddress, bitmapAddr, bitOffset, frameRowCount, valueOffset);
         } else {
             return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }

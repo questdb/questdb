@@ -3293,7 +3293,12 @@ public class RecordToRowCopierUtils {
 
     public static void copyAnyToUInt32(Record rec, TableWriter.Row row, int fromCol, int toCol, int fromTypeTag) {
         switch (fromTypeTag) {
-            case ColumnType.INT -> row.putInt(toCol, rec.getInt(fromCol));
+            case ColumnType.INT -> {
+                int v = rec.getInt(fromCol);
+                if (v != Numbers.INT_NULL) {
+                    row.putInt(toCol, v);
+                }
+            }
             case ColumnType.LONG -> {
                 long v = rec.getLong(fromCol);
                 if (v != Numbers.LONG_NULL) row.putInt(toCol, (int) v);
@@ -3328,7 +3333,12 @@ public class RecordToRowCopierUtils {
                 int v = rec.getInt(fromCol);
                 if (v != Numbers.INT_NULL) row.putLong(toCol, v);
             }
-            case ColumnType.LONG -> row.putLong(toCol, rec.getLong(fromCol));
+            case ColumnType.LONG -> {
+                long v = rec.getLong(fromCol);
+                if (v != Numbers.LONG_NULL) {
+                    row.putLong(toCol, v);
+                }
+            }
             case ColumnType.FLOAT -> {
                 float v = rec.getFloat(fromCol);
                 if (!Float.isNaN(v)) row.putLong(toCol, (long) v);

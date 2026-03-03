@@ -217,26 +217,18 @@ public class NullBitmapMigrator {
     private static void writeNFile(FilesFacade ff, LPSZ nFilePath, long bitmapAddr, long bitmapSize) {
         long fd = ff.openRW(nFilePath, CairoConfiguration.O_NONE);
         if (fd < 0) {
-            LOG.error().$("could not create null bitmap file [path=").$(nFilePath)
-                    .$(", errno=").$(ff.errno())
-                    .I$();
-            return;
+            throw CairoException.critical(ff.errno()).put("could not create null bitmap file [path=").put(nFilePath).put(']');
         }
         try {
             if (!ff.truncate(fd, bitmapSize)) {
-                LOG.error().$("could not truncate null bitmap file [path=").$(nFilePath)
-                        .$(", size=").$(bitmapSize)
-                        .$(", errno=").$(ff.errno())
-                        .I$();
-                return;
+                throw CairoException.critical(ff.errno()).put("could not truncate null bitmap file [path=").put(nFilePath)
+                        .put(", size=").put(bitmapSize).put(']');
             }
             long written = ff.write(fd, bitmapAddr, bitmapSize, 0);
             if (written != bitmapSize) {
-                LOG.error().$("could not write null bitmap file [path=").$(nFilePath)
-                        .$(", expected=").$(bitmapSize)
-                        .$(", written=").$(written)
-                        .$(", errno=").$(ff.errno())
-                        .I$();
+                throw CairoException.critical(ff.errno()).put("could not write null bitmap file [path=").put(nFilePath)
+                        .put(", expected=").put(bitmapSize)
+                        .put(", written=").put(written).put(']');
             }
         } finally {
             ff.close(fd);

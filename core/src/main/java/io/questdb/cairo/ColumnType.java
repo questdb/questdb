@@ -578,8 +578,11 @@ public final class ColumnType {
      */
     public static boolean needsNullBitmap(int columnType) {
         int tag = tagOf(columnType);
+        // BOOLEAN/BYTE/SHORT tags already cover UINT16 (tagOf(UINT16)==SHORT).
+        // UINT32 and UINT64 need explicit checks because their tags (INT/LONG)
+        // are intentionally excluded from bitmap nulls (they use sentinel nulls).
         return tag == BOOLEAN || tag == BYTE || tag == SHORT
-                || isUInt16(columnType) || isUInt32(columnType) || isUInt64(columnType);
+                || isUInt32(columnType) || isUInt64(columnType);
     }
 
     public static boolean isParseableType(int colType) {

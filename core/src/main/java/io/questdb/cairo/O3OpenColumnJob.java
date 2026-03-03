@@ -2341,6 +2341,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ff.munmap(nAddr, bitmapByteSize, MemoryTag.MMAP_O3);
             }
             if (nFd > -1) {
+                ff.fsync(nFd);
                 ff.close(nFd);
             }
         }
@@ -2410,6 +2411,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ff.munmap(nAddr, totalBitmapByteSize, MemoryTag.MMAP_O3);
             }
             if (nFd > -1) {
+                ff.fsync(nFd);
                 ff.close(nFd);
             }
         }
@@ -2559,6 +2561,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ff.munmap(nAddr, bitmapByteSize, MemoryTag.MMAP_O3);
             }
             if (nFd > -1) {
+                ff.fsync(nFd);
                 ff.close(nFd);
             }
         }
@@ -2874,12 +2877,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (ColumnType.needsNullBitmap(columnType)) {
                 long srcDataNullAddr = 0;
                 long srcDataNullSize = 0;
-                long srcDataNullFd = 0;
+                long srcDataNullFd = -1;
                 try {
                     // Open the source partition's .n file to read existing null bits
                     if (pathToOldPartition != null && srcDataMax > srcDataTop) {
                         srcDataNullFd = ff.openRO(nFile(pathToOldPartition.trimTo(pOldLen), columnName, columnNameTxn));
-                        if (srcDataNullFd > 0) {
+                        if (srcDataNullFd > -1) {
                             srcDataNullSize = (srcDataMax + 7) >> 3;
                             srcDataNullAddr = mapRO(ff, srcDataNullFd, srcDataNullSize, MemoryTag.MMAP_O3);
                         }
@@ -2910,7 +2913,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     if (srcDataNullAddr != 0) {
                         ff.munmap(srcDataNullAddr, srcDataNullSize, MemoryTag.MMAP_O3);
                     }
-                    if (srcDataNullFd > 0) {
+                    if (srcDataNullFd > -1) {
                         ff.close(srcDataNullFd);
                     }
                 }

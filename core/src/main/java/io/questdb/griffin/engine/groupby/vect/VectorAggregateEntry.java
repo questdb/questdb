@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Rows;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
@@ -83,11 +85,22 @@ public class VectorAggregateEntry implements Mutable {
             // 0 and working out size differently or finding any fixed-size column and using that.
             final long valueAddress = valueColIndex > -1 ? frameMemory.getPageAddress(valueColIndex) : 0;
 
+            // Extract bitmap address and bit offset for bitmap-null columns.
+            long bitmapAddr = 0;
+            long bitOffset = 0;
+            final DirectLongList bitmapAddresses = frameMemory.getNullBitmapAddresses();
+            if (bitmapAddresses != null && valueColIndex > -1) {
+                bitmapAddr = bitmapAddresses.get(frameMemory.getColumnOffset() + valueColIndex);
+                if (bitmapAddr != 0) {
+                    bitOffset = Rows.toLocalRowID(frameMemory.getRowIdOffset());
+                }
+            }
+
             // Zero keyAddress means non-keyed aggregation or column top.
             final long keyAddress = keyColIndex > -1 ? frameMemory.getPageAddress(keyColIndex) : 0;
             if (pRosti != null && keyAddress != 0) {
                 final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount)) {
+                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, bitmapAddr, bitOffset, frameRowCount)) {
                     if (oomCounter != null) {
                         oomCounter.incrementAndGet();
                     }
@@ -96,7 +109,7 @@ public class VectorAggregateEntry implements Mutable {
                     raf.updateMemoryUsage(pRosti[slot], oldSize);
                 }
             } else {
-                func.aggregate(valueAddress, frameRowCount, slot);
+                func.aggregate(valueAddress, bitmapAddr, bitOffset, frameRowCount, slot);
             }
         } finally {
             perWorkerLocks.releaseSlot(slot);

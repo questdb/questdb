@@ -33,23 +33,14 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
-public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
+public class AvgUInt16GroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public AvgShortGroupByFunction(@NotNull Function arg) {
+    public AvgUInt16GroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-    }
-
-    @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
-        if (count > 0) {
-            mapValue.putLong(valueIndex, Vect.sumShort(ptr, count));
-            mapValue.putLong(valueIndex + 1, count);
-        }
     }
 
     @Override
@@ -58,7 +49,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
             mapValue.putLong(valueIndex + 1, 0);
         } else {
-            mapValue.putLong(valueIndex, arg.getShort(record));
+            mapValue.putLong(valueIndex, arg.getInt(record));
             mapValue.putLong(valueIndex + 1, 1);
         }
     }
@@ -68,9 +59,9 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
         if (!arg.isNull(record)) {
             final long sum = mapValue.getLong(valueIndex);
             if (sum != Numbers.LONG_NULL) {
-                mapValue.addLong(valueIndex, arg.getShort(record));
+                mapValue.addLong(valueIndex, arg.getInt(record));
             } else {
-                mapValue.putLong(valueIndex, arg.getShort(record));
+                mapValue.putLong(valueIndex, arg.getInt(record));
             }
             mapValue.addLong(valueIndex + 1, 1);
         }
@@ -79,11 +70,6 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     @Override
     public Function getArg() {
         return arg;
-    }
-
-    @Override
-    public int getComputeBatchArgType() {
-        return ColumnType.SHORT;
     }
 
     @Override

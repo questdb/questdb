@@ -27,66 +27,71 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.UInt32Function;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.atomic.LongAccumulator;
+import java.util.function.LongBinaryOperator;
 
 import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
-public class AvgShortVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+public class MaxUInt32VectorAggregateFunction extends UInt32Function implements VectorAggregateFunction {
+
+    public static final LongBinaryOperator MAX = (long l1, long l2) -> {
+        if (l1 == Numbers.LONG_NULL) {
+            return l2;
+        }
+        if (l2 == Numbers.LONG_NULL) {
+            return l1;
+        }
+        return Math.max(l1, l2);
+    };
+    private final LongAccumulator accumulator = new LongAccumulator(
+            MAX, Numbers.LONG_NULL
+    );
     private final int columnIndex;
-    private final LongAdder count = new LongAdder();
     private final DistinctFunc distinctFunc;
     private final KeyValueBitmapFunc keyValueBitmapFunc;
     private final KeyValueFunc keyValueFunc;
-    private final LongAdder sum = new LongAdder();
     private int valueOffset;
 
     @SuppressWarnings("unused")
-    public AvgShortVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
+    public MaxUInt32VectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
-            distinctFunc = Rosti::keyedMicroHourDistinct;
-            keyValueFunc = Rosti::keyedMicroHourSumShort;
-            keyValueBitmapFunc = Rosti::keyedMicroHourSumShortBitmapNull;
+            this.distinctFunc = Rosti::keyedMicroHourDistinct;
+            this.keyValueFunc = Rosti::keyedMicroHourMaxInt;
+            this.keyValueBitmapFunc = Rosti::keyedMicroHourMaxUInt32BitmapNull;
         } else if (keyKind == GKK_NANO_HOUR_INT) {
-            distinctFunc = Rosti::keyedNanoHourDistinct;
-            keyValueFunc = Rosti::keyedNanoHourSumShort;
-            keyValueBitmapFunc = Rosti::keyedNanoHourSumShortBitmapNull;
+            this.distinctFunc = Rosti::keyedNanoHourDistinct;
+            this.keyValueFunc = Rosti::keyedNanoHourMaxInt;
+            this.keyValueBitmapFunc = Rosti::keyedNanoHourMaxUInt32BitmapNull;
         } else {
-            distinctFunc = Rosti::keyedIntDistinct;
-            keyValueFunc = Rosti::keyedIntSumShort;
-            keyValueBitmapFunc = Rosti::keyedIntSumShortBitmapNull;
+            this.distinctFunc = Rosti::keyedIntDistinct;
+            this.keyValueFunc = Rosti::keyedIntMaxInt;
+            this.keyValueBitmapFunc = Rosti::keyedIntMaxUInt32BitmapNull;
         }
     }
 
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
-        if (address != 0) {
-            final long value = Vect.sumShort(address, frameRowCount);
-            if (value != Numbers.LONG_NULL) {
-                sum.add(value);
-                count.add(frameRowCount);
-            }
-        }
+        // Non-bitmap path: UINT32 always uses bitmap nulls, so this is a fallback.
+        // Vect.maxInt() uses signed comparison which is incorrect for unsigned values,
+        // so this method is effectively a no-op for UINT32.
     }
 
     @Override
     public void aggregate(long address, long bitmapAddr, long bitOffset, long frameRowCount, int workerId) {
         if (address != 0) {
             if (bitmapAddr != 0) {
-                long nonNullCount = Vect.countShortBitmapNull(bitmapAddr, bitOffset, frameRowCount);
-                if (nonNullCount > 0) {
-                    sum.add(Vect.sumShortBitmapNull(address, bitmapAddr, bitOffset, frameRowCount));
-                    count.add(nonNullCount);
+                final long value = Vect.maxUInt32BitmapNull(address, bitmapAddr, bitOffset, frameRowCount);
+                if (value != Numbers.LONG_NULL) {
+                    accumulator.accumulate(value);
                 }
-            } else {
-                aggregate(address, frameRowCount, workerId);
             }
         }
     }
@@ -113,8 +118,7 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
 
     @Override
     public void clear() {
-        sum.reset();
-        count.reset();
+        accumulator.reset();
     }
 
     @Override
@@ -123,17 +127,19 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     }
 
     @Override
-    public double getDouble(Record rec) {
-        final long cnt = count.sum();
-        if (cnt > 0) {
-            return (double) sum.sum() / cnt;
-        }
-        return Double.NaN;
+    public int getInt(Record rec) {
+        long v = accumulator.longValue();
+        return v == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) v;
+    }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return accumulator.longValue() == Numbers.LONG_NULL;
     }
 
     @Override
     public String getName() {
-        return "avg";
+        return "max";
     }
 
     @Override
@@ -143,26 +149,22 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
 
     @Override
     public void initRosti(long pRosti) {
-        // although the final values are double, avg() calculates sum and count for longs
-        // double is derived at the very end
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NULL);
     }
 
     @Override
     public boolean merge(long pRostiA, long pRostiB) {
-        return Rosti.keyedIntSumLongMerge(pRostiA, pRostiB, valueOffset);
+        return Rosti.keyedIntMaxLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes types) {
         this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.LONG); // accumulator
-        types.add(ColumnType.LONG); // count
+        types.add(ColumnType.LONG);
     }
 
     @Override
     public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+        return Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, accumulator.longValue());
     }
 }

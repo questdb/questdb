@@ -201,18 +201,23 @@ import io.questdb.griffin.engine.groupby.vect.MaxIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MaxLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MaxShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MaxTimestampVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MaxUInt32VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinDateVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MinTimestampVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MinUInt32VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.NSumDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumLong256VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.SumUInt16VectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.SumUInt32VectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.SumUInt64VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
@@ -1234,7 +1239,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw SqlException.invalidColumn(ast.position, ast.token);
                     }
                     final int type = metadata.getColumnType(columnIndex);
-                    if (isInt(type)) {
+                    if (isInt(type) || ColumnType.isUInt32(type)) {
                         tempKeyIndexesInBase.add(columnIndex);
                         tempKeyIndex.add(i);
                         arrayColumnTypes.add(INT);
@@ -9152,6 +9157,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         countConstructors.put(DATE, CountLongVectorAggregateFunction::new);
         countConstructors.put(TIMESTAMP_MICRO, CountLongVectorAggregateFunction::new);
         countConstructors.put(TIMESTAMP_NANO, CountLongVectorAggregateFunction::new);
+        // UINT32/UINT64 COUNT not registered: sentinel-based counting is incorrect for bitmap-null types.
+        // Falls back to interpreted path which correctly uses bitmap null checks.
 
         sumConstructors.put(DOUBLE, SumDoubleVectorAggregateFunction::new);
         sumConstructors.put(INT, SumIntVectorAggregateFunction::new);
@@ -9159,6 +9166,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sumConstructors.put(LONG256, SumLong256VectorAggregateFunction::new);
         // SHORT vector aggregates disabled: native SIMD path does not check null bitmaps
         // sumConstructors.put(SHORT, SumShortVectorAggregateFunction::new);
+        sumConstructors.put(UINT16, SumUInt16VectorAggregateFunction::new);
+        sumConstructors.put(UINT32, SumUInt32VectorAggregateFunction::new);
+        sumConstructors.put(UINT64, SumUInt64VectorAggregateFunction::new);
 
         ksumConstructors.put(DOUBLE, KSumDoubleVectorAggregateFunction::new);
         nsumConstructors.put(DOUBLE, NSumDoubleVectorAggregateFunction::new);
@@ -9175,6 +9185,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         minConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         minConstructors.put(INT, MinIntVectorAggregateFunction::new);
         // minConstructors.put(SHORT, MinShortVectorAggregateFunction::new);
+        minConstructors.put(UINT32, MinUInt32VectorAggregateFunction::new);
 
         maxConstructors.put(DOUBLE, MaxDoubleVectorAggregateFunction::new);
         maxConstructors.put(LONG, MaxLongVectorAggregateFunction::new);
@@ -9183,5 +9194,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         maxConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         maxConstructors.put(INT, MaxIntVectorAggregateFunction::new);
         // maxConstructors.put(SHORT, MaxShortVectorAggregateFunction::new);
+        maxConstructors.put(UINT32, MaxUInt32VectorAggregateFunction::new);
     }
 }

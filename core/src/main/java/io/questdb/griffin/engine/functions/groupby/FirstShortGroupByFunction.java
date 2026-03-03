@@ -146,11 +146,6 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     @Override
-    public boolean supportsBatchComputation() {
-        return false;
-    }
-
-    @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }

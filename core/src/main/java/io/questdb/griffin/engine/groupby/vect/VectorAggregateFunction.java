@@ -41,6 +41,13 @@ public interface VectorAggregateFunction extends Function, Mutable {
      */
     void aggregate(long address, long frameRowCount, int workerId);
 
+    /**
+     * Non-keyed aggregation with bitmap null support.
+     * Default delegates to the non-bitmap version.
+     */
+    default void aggregate(long address, long bitmapAddr, long bitOffset, long frameRowCount, int workerId) {
+        aggregate(address, frameRowCount, workerId);
+    }
 
     /**
      * Keyed aggregation that uses rosti.
@@ -54,6 +61,14 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * @return true if processing went fine and false if it failed on memory allocation
      */
     boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount);
+
+    /**
+     * Keyed aggregation with bitmap null support.
+     * Default delegates to the non-bitmap version.
+     */
+    default boolean aggregate(long pRosti, long keyAddress, long valueAddress, long bitmapAddr, long bitOffset, long frameRowCount) {
+        return aggregate(pRosti, keyAddress, valueAddress, frameRowCount);
+    }
 
     /**
      * Returns the column index for this aggregate function.

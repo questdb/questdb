@@ -22,35 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text.types;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public final class ShortAdapter extends AbstractTypeAdapter {
-
-    public static final ShortAdapter INSTANCE = new ShortAdapter();
-
-    private ShortAdapter() {
+public class MinShortGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "min(E)";
     }
 
     @Override
-    public int getType() {
-        return ColumnType.SHORT;
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public boolean probe(DirectUtf8Sequence text) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        if (!SqlKeywords.isNullKeyword(value)) {
-            row.putShort(column, (short) Numbers.parseInt(value));
-        }
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new MinShortGroupByFunction(args.getQuick(0));
     }
 }

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.LongFunction;
 
@@ -51,11 +50,6 @@ public abstract class AbstractCastToLongFunction extends LongFunction implements
     @Override
     public Function getArg() {
         return arg;
-    }
-
-    @Override
-    public boolean isNull(Record rec) {
-        return arg.isNull(rec);
     }
 
     @Override

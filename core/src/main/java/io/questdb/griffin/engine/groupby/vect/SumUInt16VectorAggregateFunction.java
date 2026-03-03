@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.LongAdder;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
-public class AvgShortVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+public class SumUInt16VectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
     private final int columnIndex;
     private final LongAdder count = new LongAdder();
     private final DistinctFunc distinctFunc;
@@ -48,31 +48,28 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     private int valueOffset;
 
     @SuppressWarnings("unused")
-    public AvgShortVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
+    public SumUInt16VectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;
             keyValueFunc = Rosti::keyedMicroHourSumShort;
-            keyValueBitmapFunc = Rosti::keyedMicroHourSumShortBitmapNull;
+            keyValueBitmapFunc = Rosti::keyedMicroHourSumUInt16BitmapNull;
         } else if (keyKind == GKK_NANO_HOUR_INT) {
             distinctFunc = Rosti::keyedNanoHourDistinct;
             keyValueFunc = Rosti::keyedNanoHourSumShort;
-            keyValueBitmapFunc = Rosti::keyedNanoHourSumShortBitmapNull;
+            keyValueBitmapFunc = Rosti::keyedNanoHourSumUInt16BitmapNull;
         } else {
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumShort;
-            keyValueBitmapFunc = Rosti::keyedIntSumShortBitmapNull;
+            keyValueBitmapFunc = Rosti::keyedIntSumUInt16BitmapNull;
         }
     }
 
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final long value = Vect.sumShort(address, frameRowCount);
-            if (value != Numbers.LONG_NULL) {
-                sum.add(value);
-                count.add(frameRowCount);
-            }
+            sum.add(Vect.sumShort(address, frameRowCount));
+            count.increment();
         }
     }
 
@@ -82,8 +79,8 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
             if (bitmapAddr != 0) {
                 long nonNullCount = Vect.countShortBitmapNull(bitmapAddr, bitOffset, frameRowCount);
                 if (nonNullCount > 0) {
-                    sum.add(Vect.sumShortBitmapNull(address, bitmapAddr, bitOffset, frameRowCount));
-                    count.add(nonNullCount);
+                    sum.add(Vect.sumUInt16BitmapNull(address, bitmapAddr, bitOffset, frameRowCount));
+                    count.increment();
                 }
             } else {
                 aggregate(address, frameRowCount, workerId);
@@ -123,17 +120,16 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     }
 
     @Override
-    public double getDouble(Record rec) {
-        final long cnt = count.sum();
-        if (cnt > 0) {
-            return (double) sum.sum() / cnt;
+    public long getLong(Record rec) {
+        if (count.sum() > 0) {
+            return sum.sum();
         }
-        return Double.NaN;
+        return Numbers.LONG_NULL;
     }
 
     @Override
     public String getName() {
-        return "avg";
+        return "sum";
     }
 
     @Override
@@ -143,8 +139,6 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
 
     @Override
     public void initRosti(long pRosti) {
-        // although the final values are double, avg() calculates sum and count for longs
-        // double is derived at the very end
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
     }
@@ -157,12 +151,12 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     @Override
     public void pushValueTypes(ArrayColumnTypes types) {
         this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.LONG); // accumulator
-        types.add(ColumnType.LONG); // count
+        types.add(ColumnType.LONG);
+        types.add(ColumnType.LONG);
     }
 
     @Override
     public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+        return Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 }

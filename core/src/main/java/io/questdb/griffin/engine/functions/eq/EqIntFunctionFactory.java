@@ -63,14 +63,6 @@ public class EqIntFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final boolean leftNull = left.isNull(rec);
-            final boolean rightNull = right.isNull(rec);
-            if (leftNull || rightNull) {
-                if (negated) {
-                    return false;
-                }
-                return leftNull && rightNull;
-            }
             return negated != (left.getInt(rec) == right.getInt(rec));
         }
     }

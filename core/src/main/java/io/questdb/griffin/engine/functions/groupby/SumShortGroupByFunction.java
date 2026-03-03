@@ -147,11 +147,6 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
     }
 
     @Override
-    public boolean supportsBatchComputation() {
-        return false;
-    }
-
-    @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }

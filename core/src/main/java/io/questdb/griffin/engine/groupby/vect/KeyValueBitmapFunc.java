@@ -22,35 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.text.types;
+package io.questdb.griffin.engine.groupby.vect;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.DirectUtf8Sequence;
-
-public final class ShortAdapter extends AbstractTypeAdapter {
-
-    public static final ShortAdapter INSTANCE = new ShortAdapter();
-
-    private ShortAdapter() {
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.SHORT;
-    }
-
-    @Override
-    public boolean probe(DirectUtf8Sequence text) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        if (!SqlKeywords.isNullKeyword(value)) {
-            row.putShort(column, (short) Numbers.parseInt(value));
-        }
-    }
+@FunctionalInterface
+interface KeyValueBitmapFunc {
+    boolean run(long pRosti, long pKeys, long pValues, long pBitmap, long bitOffset, long count, int valueOffset);
 }
