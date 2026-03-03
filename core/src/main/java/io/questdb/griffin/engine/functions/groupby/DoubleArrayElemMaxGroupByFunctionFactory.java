@@ -56,13 +56,18 @@ public class DoubleArrayElemMaxGroupByFunctionFactory implements FunctionFactory
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new DoubleArrayElemMaxGroupByFunction(args.getQuick(0));
+        return new DoubleArrayElemMaxGroupByFunction(args.getQuick(0), configuration);
     }
 
     private static final class DoubleArrayElemMaxGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
 
-        public DoubleArrayElemMaxGroupByFunction(@NotNull Function arg) {
-            super(arg);
+        public DoubleArrayElemMaxGroupByFunction(@NotNull Function arg, @NotNull CairoConfiguration configuration) {
+            super(arg, configuration);
+        }
+
+        @Override
+        public String getName() {
+            return "array_elem_max";
         }
 
         @Override
@@ -70,11 +75,6 @@ public class DoubleArrayElemMaxGroupByFunctionFactory implements FunctionFactory
             long addr = dataPtr + (long) accFi * Double.BYTES;
             double accVal = Unsafe.getUnsafe().getDouble(addr);
             Unsafe.getUnsafe().putDouble(addr, Numbers.isFinite(accVal) ? Math.max(accVal, inputVal) : inputVal);
-        }
-
-        @Override
-        public String getName() {
-            return "array_elem_max";
         }
 
         @Override

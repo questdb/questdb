@@ -86,10 +86,60 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
         private static final int COUNT_PTR_SLOT = 3;
         private final DirectArray arrayOut;
 
-        public DoubleArrayElemAvgGroupByFunction(@NotNull Function arg, CairoConfiguration configuration) {
-            super(arg);
+        public DoubleArrayElemAvgGroupByFunction(@NotNull Function arg, @NotNull CairoConfiguration configuration) {
+            super(arg, configuration);
             this.arrayOut = new DirectArray(configuration);
             this.arrayOut.setType(type);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            Misc.free(arrayOut);
+        }
+
+        /**
+         * Returns the average array for a group by dividing accumulated sums by counts.
+         * Reads the shape from the compact block header, then for each position computes
+         * {@code sum[i] / count[i]} (or {@code NaN} if count is zero or sum is NaN).
+         */
+        @Override
+        public ArrayView getArray(Record rec) {
+            long ptr = rec.getLong(valueIndex);
+            if (ptr == 0) {
+                return ArrayConstant.NULL;
+            }
+            int accFlatCardinality = (int) rec.getLong(valueIndex + 1);
+            long countPtr = rec.getLong(valueIndex + COUNT_PTR_SLOT);
+            long dataPtr = ptr + headerSize;
+
+            readShapeFromHeader(ptr, accShape);
+            for (int d = 0; d < nDims; d++) {
+                arrayOut.setDimLen(d, accShape[d]);
+            }
+            arrayOut.applyShape();
+
+            for (int i = 0; i < accFlatCardinality; i++) {
+                double sum = Unsafe.getUnsafe().getDouble(dataPtr + (long) i * Double.BYTES);
+                if (Numbers.isFinite(sum)) {
+                    long c = Unsafe.getUnsafe().getLong(countPtr + (long) i * Long.BYTES);
+                    arrayOut.putDouble(i, c > 0 ? sum / c : Double.NaN);
+                } else {
+                    arrayOut.putDouble(i, Double.NaN);
+                }
+            }
+            return arrayOut;
+        }
+
+        @Override
+        public String getName() {
+            return "array_elem_avg";
+        }
+
+        private static void zeroFillLongs(long ptr, long from, long to) {
+            if (to > from) {
+                Vect.setMemoryLong(ptr + from * Long.BYTES, 0, to - from);
+            }
         }
 
         /**
@@ -155,63 +205,19 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void close() {
-            super.close();
-            Misc.free(arrayOut);
-        }
-
-        @Override
         protected void accumulateOne(long dataPtr, int accFi, double inputVal) {
             throw new UnsupportedOperationException("avg overrides accumulateInput directly");
-        }
-
-        @Override
-        protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
-            throw new UnsupportedOperationException("avg overrides mergeValues directly");
-        }
-
-        /**
-         * Returns the average array for a group by dividing accumulated sums by counts.
-         * Reads the shape from the compact block header, then for each position computes
-         * {@code sum[i] / count[i]} (or {@code NaN} if count is zero or sum is NaN).
-         */
-        @Override
-        public ArrayView getArray(Record rec) {
-            long ptr = rec.getLong(valueIndex);
-            if (ptr == 0) {
-                return ArrayConstant.NULL;
-            }
-            int accFlatCardinality = (int) rec.getLong(valueIndex + 1);
-            long countPtr = rec.getLong(valueIndex + COUNT_PTR_SLOT);
-            long dataPtr = ptr + headerSize;
-
-            readShapeFromHeader(ptr, accShape);
-            for (int d = 0; d < nDims; d++) {
-                arrayOut.setDimLen(d, accShape[d]);
-            }
-            arrayOut.applyShape();
-
-            for (int i = 0; i < accFlatCardinality; i++) {
-                double sum = Unsafe.getUnsafe().getDouble(dataPtr + (long) i * Double.BYTES);
-                if (Numbers.isFinite(sum)) {
-                    long c = Unsafe.getUnsafe().getLong(countPtr + (long) i * Long.BYTES);
-                    arrayOut.putDouble(i, c > 0 ? sum / c : Double.NaN);
-                } else {
-                    arrayOut.putDouble(i, Double.NaN);
-                }
-            }
-            return arrayOut;
-        }
-
-        @Override
-        public String getName() {
-            return "array_elem_avg";
         }
 
         @Override
         protected void initExtraValueTypes(ArrayColumnTypes columnTypes) {
             columnTypes.add(ColumnType.LONG); // countPtr (per-element counts)
             columnTypes.add(ColumnType.LONG); // compensationPtr (Kahan compensation buffer)
+        }
+
+        @Override
+        protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
+            throw new UnsupportedOperationException("avg overrides mergeValues directly");
         }
 
         /**
@@ -356,12 +362,6 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
         protected void setNullExtra(MapValue mapValue) {
             mapValue.putLong(valueIndex + COUNT_PTR_SLOT, 0);
             mapValue.putLong(valueIndex + COMP_SLOT, 0);
-        }
-
-        private static void zeroFillLongs(long ptr, long from, long to) {
-            if (to > from) {
-                Vect.setMemoryLong(ptr + from * Long.BYTES, 0, to - from);
-            }
         }
     }
 }

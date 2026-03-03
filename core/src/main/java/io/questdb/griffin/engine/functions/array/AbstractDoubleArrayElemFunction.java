@@ -126,7 +126,7 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
     public ArrayView getArray(Record rec) {
         boolean canUseFlatPath = scanInputs(rec);
 
-        int totalFlatLen = 1;
+        long totalFlatLen = 1;
         for (int d = 0; d < nDims; d++) {
             arrayOut.setDimLen(d, maxShape[d]);
             totalFlatLen *= maxShape[d];
@@ -135,10 +135,12 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
             return ArrayConstant.NULL;
         }
         arrayOut.applyShape();
-        for (int i = 0; i < totalFlatLen; i++) {
+        // applyShape() validates that the element count fits in int
+        int flatLen = (int) totalFlatLen;
+        for (int i = 0; i < flatLen; i++) {
             arrayOut.putDouble(i, Double.NaN);
         }
-        beforeAccumulation(totalFlatLen);
+        beforeAccumulation(flatLen);
 
         if (canUseFlatPath) {
             accumulateFlat();
@@ -146,7 +148,7 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
             accumulateCoords();
         }
 
-        postProcess(totalFlatLen);
+        postProcess(flatLen);
         return arrayOut;
     }
 

@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -137,13 +139,17 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      */
     protected final int[] newStrides;
     /**
-     * Precomputed overallocation factor: {@code pow(OVERALLOC_BASE, nDims)}.
-     */
-    private final double overallocFactor;
-    /**
      * Reusable view returned from {@link #getArray} — points into the compact block.
      */
     private final BorrowedArray borrowedArray = new BorrowedArray();
+    /**
+     * Maximum total element count for the accumulator array, from {@link CairoConfiguration#maxArrayElementCount()}.
+     */
+    private final int maxArrayElementCount;
+    /**
+     * Precomputed overallocation factor: {@code pow(OVERALLOC_BASE, nDims)}.
+     */
+    private final double overallocFactor;
     /**
      * Group-by memory allocator, set before any compute calls.
      */
@@ -153,9 +159,10 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      */
     protected int valueIndex;
 
-    public AbstractDoubleArrayElemAggGroupByFunction(@NotNull Function arg) {
+    public AbstractDoubleArrayElemAggGroupByFunction(@NotNull Function arg, @NotNull CairoConfiguration configuration) {
         this.arg = arg;
         this.type = arg.getType();
+        this.maxArrayElementCount = configuration.maxArrayElementCount();
         // Weak-dim array types (bind variables with unresolved dimensionality) cannot
         // reach GROUP BY aggregate args: column refs always carry strong dims, UNION
         // rejects array bind variables, and data binding resolves dims before execution.
@@ -397,6 +404,13 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
         boolean changed = false;
         for (int d = 0; d < nDims; d++) {
             newShape[d] = Math.max(accShape[d], inputShape[d]);
+            if (newShape[d] > ArrayView.DIM_MAX_LEN) {
+                throw CairoException.nonCritical()
+                        .put("array dimension length out of range [dim=").put(d)
+                        .put(", dimLen=").put(newShape[d])
+                        .put(", maxLen=").put(ArrayView.DIM_MAX_LEN)
+                        .put(']');
+            }
             if (newShape[d] != accShape[d]) {
                 changed = true;
             }
@@ -418,6 +432,12 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
      */
     private void growAccumulator(MapValue mapValue, int accFlatCardinality) {
         int newFlatCardinality = ArrayView.computeRowMajorStrides(newShape, newStrides);
+        if (newFlatCardinality > maxArrayElementCount) {
+            throw CairoException.nonCritical()
+                    .put("array element count exceeds max [max=").put(maxArrayElementCount)
+                    .put(", cardinality=").put(newFlatCardinality)
+                    .put(']');
+        }
         long ptr = mapValue.getLong(valueIndex);
         long capacity = mapValue.getLong(valueIndex + 2);
         boolean needsRemap = checkNeedsRemap();
@@ -471,6 +491,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
 
     /**
      * Writes the compact block header: dataSize (in bytes) followed by nDims shape integers.
+     * Callers must ensure flatCardinality does not exceed maxArrayElementCount.
      */
     private void writeHeader(long ptr, int[] shape, int flatCardinality) {
         Unsafe.getUnsafe().putInt(ptr, flatCardinality * Double.BYTES);
@@ -482,6 +503,7 @@ public abstract class AbstractDoubleArrayElemAggGroupByFunction extends ArrayFun
 
     /**
      * Writes the compact block header, reading shape dimensions from an ArrayView.
+     * Callers must ensure flatCardinality does not exceed maxArrayElementCount.
      */
     private void writeHeaderFromArray(long ptr, ArrayView array, int flatCardinality) {
         Unsafe.getUnsafe().putInt(ptr, flatCardinality * Double.BYTES);

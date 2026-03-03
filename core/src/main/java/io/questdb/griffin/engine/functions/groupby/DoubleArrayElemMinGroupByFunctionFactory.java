@@ -56,13 +56,13 @@ public class DoubleArrayElemMinGroupByFunctionFactory implements FunctionFactory
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new DoubleArrayElemMinGroupByFunction(args.getQuick(0));
+        return new DoubleArrayElemMinGroupByFunction(args.getQuick(0), configuration);
     }
 
     private static final class DoubleArrayElemMinGroupByFunction extends AbstractDoubleArrayElemAggGroupByFunction {
 
-        public DoubleArrayElemMinGroupByFunction(@NotNull Function arg) {
-            super(arg);
+        public DoubleArrayElemMinGroupByFunction(@NotNull Function arg, @NotNull CairoConfiguration configuration) {
+            super(arg, configuration);
         }
 
         @Override

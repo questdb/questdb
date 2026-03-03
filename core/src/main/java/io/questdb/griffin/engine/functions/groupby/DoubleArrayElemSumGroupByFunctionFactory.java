@@ -60,7 +60,7 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new DoubleArrayElemSumGroupByFunction(args.getQuick(0));
+        return new DoubleArrayElemSumGroupByFunction(args.getQuick(0), configuration);
     }
 
     /**
@@ -80,8 +80,13 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
         private long compensationPtr;
         private long srcCompensationPtr;
 
-        public DoubleArrayElemSumGroupByFunction(@NotNull Function arg) {
-            super(arg);
+        public DoubleArrayElemSumGroupByFunction(@NotNull Function arg, @NotNull CairoConfiguration configuration) {
+            super(arg, configuration);
+        }
+
+        @Override
+        public String getName() {
+            return "array_elem_sum";
         }
 
         @Override
@@ -98,11 +103,6 @@ public class DoubleArrayElemSumGroupByFunctionFactory implements FunctionFactory
             } else {
                 Unsafe.getUnsafe().putDouble(addr, inputVal);
             }
-        }
-
-        @Override
-        public String getName() {
-            return "array_elem_sum";
         }
 
         @Override
