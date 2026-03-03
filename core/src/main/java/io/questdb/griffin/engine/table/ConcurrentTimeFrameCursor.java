@@ -58,7 +58,7 @@ public interface ConcurrentTimeFrameCursor extends TimeFrameCursor {
         for (int i = 0; i < partitionCount; i++) {
             final long tsLo = reader.getPartitionTimestampByIndex(i);
             partitionTimestamps.add(tsLo);
-            final long maxTsHi = i < partitionCount - 2 ? reader.getPartitionTimestampByIndex(i + 1) : Long.MAX_VALUE;
+            final long maxTsHi = i < partitionCount - 1 ? reader.getPartitionTimestampByIndex(i + 1) : Long.MAX_VALUE;
             partitionCeilings.add(TimeFrameCursorImpl.estimatePartitionHi(ceilMethod, tsLo, maxTsHi));
         }
     }
