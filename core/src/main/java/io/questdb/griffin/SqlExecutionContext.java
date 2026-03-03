@@ -156,12 +156,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     Rnd getRandom();
 
-    default TableReader getReader(TableToken tableName, long version) {
-        return getCairoEngine().getReader(tableName, version);
+    default TableReader getReader(TableToken tableToken, long version) {
+        return getCairoEngine().getReader(tableToken, version);
     }
 
-    default TableReader getReader(TableToken tableName) {
-        return getCairoEngine().getReader(tableName);
+    default TableReader getReader(TableToken tableToken) {
+        return getCairoEngine().getReader(tableToken);
     }
 
     long getRequestFd();
@@ -217,6 +217,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     boolean isParallelReadParquetEnabled();
 
     boolean isParallelTopKEnabled();
+
+    boolean isParallelHorizonJoinEnabled();
 
     boolean isParallelWindowJoinEnabled();
 
@@ -275,6 +277,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
+    void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
 
     void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
 

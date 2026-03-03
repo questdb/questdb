@@ -27,12 +27,11 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
 /**
  * Abstract base class for functions that cast values to IPv4.
  */
-public abstract class AbstractCastToIPv4Function extends IPv4Function implements UnaryFunction {
+public abstract class AbstractCastToIPv4Function extends IPv4Function implements CastFunction {
 
     /**
      * The function argument to cast.

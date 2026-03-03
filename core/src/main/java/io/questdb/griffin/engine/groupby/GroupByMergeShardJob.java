@@ -26,9 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
-import io.questdb.griffin.engine.table.AsyncGroupByAtom;
-import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -41,7 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Handles parallel merge map shard tasks.
  *
- * @see AsyncGroupByRecordCursorFactory
+ * @see GroupByShardingContext
  */
 public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeShardTask> {
     private static final Log LOG = LogFactory.getLog(GroupByMergeShardJob.class);
@@ -55,12 +53,12 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             GroupByMergeShardTask task,
             Sequence subSeq,
             long cursor,
-            AsyncGroupByAtom stealingAtom
+            GroupByShardingContext stealingCtx
     ) {
         final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
-        final AsyncGroupByAtom atom = task.getAtom();
+        final GroupByShardingContext ctx = task.getShardingContext();
         final int shardIndex = task.getShardIndex();
 
         task.clear();
@@ -68,16 +66,16 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
 
         startedCounter.incrementAndGet();
 
-        final boolean owner = stealingAtom != null && stealingAtom == atom;
+        final boolean owner = stealingCtx != null && stealingCtx == ctx;
         try {
-            final int slotId = atom.maybeAcquire(workerId, owner, (ExecutionCircuitBreaker) circuitBreaker);
+            final int slotId = ctx.maybeAcquire(workerId, owner, circuitBreaker);
             try {
                 if (circuitBreaker.checkIfTripped()) {
                     return;
                 }
-                atom.mergeShard(slotId, shardIndex);
+                ctx.mergeShard(slotId, shardIndex);
             } finally {
-                atom.release(slotId);
+                ctx.release(slotId);
             }
         } catch (Throwable th) {
             LOG.error().$("merge shard failed [error=").$(th).I$();

@@ -24,8 +24,12 @@
 use crate::col_type::ColumnType;
 use crate::error::{CoreErrorExt, CoreResult, fmt_err};
 use memmap2::Mmap;
+#[cfg(windows)]
+use memmap2::MmapMut;
 use std::borrow::Cow;
 use std::fs::File;
+#[cfg(windows)]
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -38,6 +42,34 @@ pub struct MappedColumn {
 }
 
 impl MappedColumn {
+    #[cfg(windows)]
+    fn map_file_with_fallback(file: &File) -> std::io::Result<Mmap> {
+        match unsafe { Mmap::map(file) } {
+            Ok(map) => Ok(map),
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                // Windows can deny file-backed mappings even when the handle is valid
+                // (e.g., due to transient locks). Fall back to an anonymous map
+                // populated via a direct read.
+                let len = usize::try_from(file.metadata()?.len()).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "file too large to map")
+                })?;
+                let mut anon = MmapMut::map_anon(len)?;
+                if len != 0 {
+                    let mut cloned = file.try_clone()?;
+                    cloned.seek(SeekFrom::Start(0))?;
+                    cloned.read_exact(&mut anon[..])?;
+                }
+                anon.make_read_only()
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn map_file_with_fallback(file: &File) -> std::io::Result<Mmap> {
+        unsafe { Mmap::map(file) }
+    }
+
     // nightly has add_extension
     pub fn build_file_extension(base_extension: &str, col_version: Option<u64>) -> Cow<'_, str> {
         match col_version {
@@ -68,7 +100,7 @@ impl MappedColumn {
                 column_path_data.display()
             )
         })?;
-        let data = unsafe { Mmap::map(&data_file) }.with_context(|_| {
+        let data = Self::map_file_with_fallback(&data_file).with_context(|_| {
             format!(
                 "Could not map data file for column: {}, col_type: {}, path: {}",
                 col_name,
@@ -90,7 +122,7 @@ impl MappedColumn {
                     column_path_aux.display()
                 )
             })?;
-            let aux = unsafe { Mmap::map(&aux_file) }.with_context(|_| {
+            let aux = Self::map_file_with_fallback(&aux_file).with_context(|_| {
                 format!(
                     "Could not map aux file for column: {}, col_type: {}, path: {}",
                     col_name,

@@ -38,9 +38,9 @@ public class FirstNotNullArrayGroupByFunction extends FirstArrayGroupByFunction 
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getLong(valueIndex + 1) == 0) {
-            ArrayView array = arg.getArray(record);
-            if (array != null && !array.isNull()) {
+        ArrayView array = arg.getArray(record);
+        if (array != null && !array.isNull()) {
+            if (mapValue.getLong(valueIndex + 1) == 0 || rowId < mapValue.getLong(valueIndex)) {
                 mapValue.putLong(valueIndex, rowId);
                 long ptr = mapValue.getLong(valueIndex + 1);
                 sink.of(ptr);

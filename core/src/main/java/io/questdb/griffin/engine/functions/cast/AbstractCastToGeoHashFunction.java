@@ -29,14 +29,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
 import static io.questdb.cairo.ColumnType.GEOLONG_MAX_BITS;
 
 /**
  * Abstract base class for functions that cast values to geohash.
  */
-public abstract class AbstractCastToGeoHashFunction extends GeoByteFunction implements UnaryFunction {
+public abstract class AbstractCastToGeoHashFunction extends GeoByteFunction implements CastFunction {
     /**
      * The function argument to cast.
      */

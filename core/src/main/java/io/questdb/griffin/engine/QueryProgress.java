@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
@@ -350,6 +351,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
+    public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        return base.newTimeFrameCursor();
+    }
+
+    @Override
     public void onResourceBorrowed(ReaderPool.R resource) {
         assert resource.getSupervisor() != null;
         readers.add(resource);
@@ -491,6 +497,20 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         public void of(PageFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
             this.isOpen = true;
+        }
+
+        // Qodana false positive
+        @SuppressWarnings("unused")
+        @Override
+        public void releaseOpenPartitions() {
+            baseCursor.releaseOpenPartitions();
+        }
+
+        // Qodana false positive
+        @SuppressWarnings("unused")
+        @Override
+        public void setStreamingMode(boolean enabled) {
+            baseCursor.setStreamingMode(enabled);
         }
 
         @Override

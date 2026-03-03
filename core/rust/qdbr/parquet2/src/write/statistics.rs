@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
-use crate::schema::types::PhysicalType;
+use crate::schema::types::{
+    PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, PrimitiveType,
+};
 use crate::statistics::*;
 use crate::types::NativeType;
 
@@ -16,12 +18,17 @@ fn reduce_single<T, F: Fn(T, T) -> T>(lhs: Option<T>, rhs: Option<T>, op: F) -> 
 }
 
 #[inline]
-fn reduce_vec8(lhs: Option<Vec<u8>>, rhs: &Option<Vec<u8>>, max: bool) -> Option<Vec<u8>> {
+fn reduce_vec8(
+    lhs: Option<Vec<u8>>,
+    rhs: &Option<Vec<u8>>,
+    max: bool,
+    ord: fn(Vec<u8>, Vec<u8>, bool) -> Vec<u8>,
+) -> Option<Vec<u8>> {
     match (lhs, rhs) {
         (None, None) => None,
         (Some(x), None) => Some(x),
         (None, Some(x)) => Some(x.clone()),
-        (Some(x), Some(y)) => Some(ord_binary(x, y.clone(), max)),
+        (Some(x), Some(y)) => Some(ord(x, y.clone(), max)),
     }
 }
 
@@ -81,8 +88,8 @@ pub fn reduce(stats: &[&Option<Arc<dyn Statistics>>]) -> Result<Option<Arc<dyn S
 fn reduce_binary<'a, I: Iterator<Item = &'a BinaryStatistics>>(mut stats: I) -> BinaryStatistics {
     let initial = stats.next().unwrap().clone();
     stats.fold(initial, |mut acc, new| {
-        acc.min_value = reduce_vec8(acc.min_value, &new.min_value, false);
-        acc.max_value = reduce_vec8(acc.max_value, &new.max_value, true);
+        acc.min_value = reduce_vec8(acc.min_value, &new.min_value, false, ord_binary);
+        acc.max_value = reduce_vec8(acc.max_value, &new.max_value, true, ord_binary);
         acc.null_count = reduce_single(acc.null_count, new.null_count, |x, y| x + y);
         acc.distinct_count = None;
         acc
@@ -93,13 +100,29 @@ fn reduce_fix_len_binary<'a, I: Iterator<Item = &'a FixedLenStatistics>>(
     mut stats: I,
 ) -> FixedLenStatistics {
     let initial = stats.next().unwrap().clone();
+    let ord = if is_signed_decimal_primitive_type(&initial.primitive_type) {
+        ord_binary_signed
+    } else {
+        ord_binary
+    };
     stats.fold(initial, |mut acc, new| {
-        acc.min_value = reduce_vec8(acc.min_value, &new.min_value, false);
-        acc.max_value = reduce_vec8(acc.max_value, &new.max_value, true);
+        acc.min_value = reduce_vec8(acc.min_value, &new.min_value, false, ord);
+        acc.max_value = reduce_vec8(acc.max_value, &new.max_value, true, ord);
         acc.null_count = reduce_single(acc.null_count, new.null_count, |x, y| x + y);
         acc.distinct_count = None;
         acc
     })
+}
+
+#[inline]
+fn is_signed_decimal_primitive_type(primitive_type: &PrimitiveType) -> bool {
+    matches!(
+        primitive_type.logical_type,
+        Some(PrimitiveLogicalType::Decimal(_, _))
+    ) || matches!(
+        primitive_type.converted_type,
+        Some(PrimitiveConvertedType::Decimal(_, _))
+    )
 }
 
 fn ord_binary(a: Vec<u8>, b: Vec<u8>, max: bool) -> Vec<u8> {
@@ -123,6 +146,48 @@ fn ord_binary(a: Vec<u8>, b: Vec<u8>, max: bool) -> Vec<u8> {
         }
     }
     a
+}
+
+fn ord_binary_signed(a: Vec<u8>, b: Vec<u8>, max: bool) -> Vec<u8> {
+    match cmp_signed_be_twos_complement(&a, &b) {
+        std::cmp::Ordering::Greater => {
+            if max {
+                a
+            } else {
+                b
+            }
+        }
+        std::cmp::Ordering::Less => {
+            if max {
+                b
+            } else {
+                a
+            }
+        }
+        std::cmp::Ordering::Equal => a,
+    }
+}
+
+#[inline]
+fn cmp_signed_be_twos_complement(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+    if let (Some(a0), Some(b0)) = (a.first(), b.first()) {
+        let a_negative = (a0 & 0x80) != 0;
+        let b_negative = (b0 & 0x80) != 0;
+        if a_negative != b_negative {
+            return if a_negative {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            };
+        }
+    }
+    for (v1, v2) in a.iter().zip(b.iter()) {
+        match v1.cmp(v2) {
+            std::cmp::Ordering::Equal => {}
+            ord => return ord,
+        }
+    }
+    a.len().cmp(&b.len())
 }
 
 fn reduce_boolean<'a, I: Iterator<Item = &'a BooleanStatistics>>(
@@ -173,7 +238,7 @@ fn reduce_primitive<
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::types::PrimitiveType;
+    use crate::schema::types::{PrimitiveConvertedType, PrimitiveLogicalType, PrimitiveType};
 
     use super::*;
 
@@ -260,6 +325,62 @@ mod tests {
             },
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_len_binary_decimal_logical_type_uses_signed_order() -> Result<()> {
+        let mut primitive_type =
+            PrimitiveType::from_physical("dec".to_string(), PhysicalType::FixedLenByteArray(2));
+        primitive_type.logical_type = Some(PrimitiveLogicalType::Decimal(4, 0));
+        let iter = vec![
+            FixedLenStatistics {
+                primitive_type: primitive_type.clone(),
+                null_count: Some(0),
+                distinct_count: None,
+                min_value: Some(vec![0x00, 0x01]), // 1
+                max_value: Some(vec![0x00, 0x09]), // 9
+            },
+            FixedLenStatistics {
+                primitive_type,
+                null_count: Some(0),
+                distinct_count: None,
+                min_value: Some(vec![0xFF, 0xFB]), // -5
+                max_value: Some(vec![0xFF, 0xFE]), // -2
+            },
+        ];
+        let a = reduce_fix_len_binary(iter.iter());
+
+        assert_eq!(a.min_value, Some(vec![0xFF, 0xFB]));
+        assert_eq!(a.max_value, Some(vec![0x00, 0x09]));
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_len_binary_decimal_converted_type_uses_signed_order() -> Result<()> {
+        let mut primitive_type =
+            PrimitiveType::from_physical("dec".to_string(), PhysicalType::FixedLenByteArray(2));
+        primitive_type.converted_type = Some(PrimitiveConvertedType::Decimal(4, 0));
+        let iter = vec![
+            FixedLenStatistics {
+                primitive_type: primitive_type.clone(),
+                null_count: Some(0),
+                distinct_count: None,
+                min_value: Some(vec![0x00, 0x01]), // 1
+                max_value: Some(vec![0x00, 0x09]), // 9
+            },
+            FixedLenStatistics {
+                primitive_type,
+                null_count: Some(0),
+                distinct_count: None,
+                min_value: Some(vec![0xFF, 0xFB]), // -5
+                max_value: Some(vec![0xFF, 0xFE]), // -2
+            },
+        ];
+        let a = reduce_fix_len_binary(iter.iter());
+
+        assert_eq!(a.min_value, Some(vec![0xFF, 0xFB]));
+        assert_eq!(a.max_value, Some(vec![0x00, 0x09]));
         Ok(())
     }
 

@@ -81,10 +81,6 @@ public class CopyExportContext {
         this.copyIDSupplier = engine.getConfiguration().getCopyIDSupplier();
     }
 
-    public static boolean canStreamExportParquet(RecordCursorFactory factory) throws SqlException {
-        return factory.supportsPageFrameCursor();
-    }
-
     public ExportTaskEntry assignExportEntry(
             SecurityContext securityContext,
             @NotNull CharSequence sqlText,
@@ -381,6 +377,7 @@ public class CopyExportContext {
                         false
                 );
                 createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
+                createOp.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
                 createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection());
             }
         } catch (SqlException ex) {

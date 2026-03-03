@@ -89,6 +89,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.CompiledQuery.BEGIN;
+import static io.questdb.griffin.CompiledQuery.COMMIT;
+import static io.questdb.griffin.CompiledQuery.ROLLBACK;
 import static io.questdb.griffin.CompiledQuery.SET;
 
 public class SqlCompilerImplTest extends AbstractCairoTest {
@@ -2572,6 +2575,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCompileBeginTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(BEGIN, compiler.compile("BEGIN TRANSACTION", sqlExecutionContext).getType());
+            }
+        });
+    }
+
     // close command is a no-op in qdb
     @Test
     public void testCompileCloseDoesNothing() throws Exception {
@@ -2579,6 +2591,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileCommitTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(COMMIT, compiler.compile("COMMIT TRANSACTION", sqlExecutionContext).getType());
             }
         });
     }
@@ -2595,11 +2616,108 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompileRollbackTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(ROLLBACK, compiler.compile("ROLLBACK TRANSACTION", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
     public void testCompileSet() throws Exception {
         String query = "SET x = y";
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetDanglingComma() throws Exception {
+        assertException("SET x = y,", 10, "value expected");
+    }
+
+    @Test
+    public void testCompileSetNonStandardForm() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x GARBAGE y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetMissingName() throws Exception {
+        assertException("SET", 3, "parameter name expected");
+    }
+
+    @Test
+    public void testCompileSetMissingNameSemicolon() throws Exception {
+        assertException("SET;", 3, "parameter name expected");
+    }
+
+    @Test
+    public void testCompileSetMissingOperator() throws Exception {
+        assertException("SET x", 5, "'=' or 'TO' expected");
+    }
+
+    @Test
+    public void testCompileSetMissingValue() throws Exception {
+        assertException("SET x =", 7, "value expected");
+    }
+
+    @Test
+    public void testCompileSetMultipleValues() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x TO y, z", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetQuotedValue() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x = 'quoted'", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET TIME ZONE 'UTC'", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithLocal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET LOCAL x = y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithSession() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET SESSION x = y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithTo() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x TO y", sqlExecutionContext).getType());
             }
         });
     }
@@ -7167,6 +7285,149 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testTrailingContentAfterBeginRejected() throws Exception {
+        assertException("BEGIN extra_token", 6, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterBeginTransactionRejected() throws Exception {
+        assertException("BEGIN TRANSACTION extra_token", 18, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterCommitRejected() throws Exception {
+        assertException("COMMIT extra_token", 7, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterDdlRejected() throws Exception {
+        assertException(
+                "create table tab (x int) select",
+                25,
+                "unexpected token [select]"
+        );
+    }
+
+    @Test
+    public void testCloseMissingArgRejected() throws Exception {
+        assertException("CLOSE", 5, "argument expected");
+    }
+
+    @Test
+    public void testCloseSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("CLOSE;", 5, "argument expected");
+    }
+
+    @Test
+    public void testDiscardMissingArgRejected() throws Exception {
+        assertException("DISCARD", 7, "argument expected");
+    }
+
+    @Test
+    public void testDiscardSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("DISCARD;", 7, "argument expected");
+    }
+
+    @Test
+    public void testResetMissingArgRejected() throws Exception {
+        assertException("RESET", 5, "argument expected");
+    }
+
+    @Test
+    public void testResetSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("RESET;", 5, "argument expected");
+    }
+
+    @Test
+    public void testTrailingContentAfterCloseRejected() throws Exception {
+        assertException("CLOSE ALL extra", 10, "unexpected token [extra]");
+    }
+
+    @Test
+    public void testTrailingContentAfterDiscardRejected() throws Exception {
+        assertException("DISCARD ALL extra", 12, "unexpected token [extra]");
+    }
+
+    @Test
+    public void testTrailingContentAfterNoOpRejected() throws Exception {
+        assertException(
+                "RESET ALL extra",
+                10,
+                "unexpected token [extra]"
+        );
+    }
+
+    @Test
+    public void testTrailingContentAfterUnlistenRejected() throws Exception {
+        assertException("UNLISTEN * extra", 11, "unexpected token [extra]");
+    }
+
+    @Test
+    public void testUnlistenMissingArgRejected() throws Exception {
+        assertException("UNLISTEN", 8, "argument expected");
+    }
+
+    @Test
+    public void testTrailingContentAfterRollbackRejected() throws Exception {
+        assertException("ROLLBACK extra_token", 9, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterSelectRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            assertExceptionNoLeakCheck(
+                    "select x from tab limit 10 extra_token",
+                    27,
+                    "unexpected token [extra_token]"
+            );
+        });
+    }
+
+    @Test
+    public void testTrailingContentAfterSetRejected() throws Exception {
+        assertException(
+                "SET x = y extra_token",
+                10,
+                "unexpected token [extra_token]"
+        );
+    }
+
+    @Test
+    public void testTrailingSemicolonAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            // trailing semicolon should not cause an error
+            assertQuery("x\n",
+                    "select x from tab;",
+                    "", true, true);
+        });
+    }
+
+    @Test
+    public void testTrailingContentAfterSemicolonRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            assertExceptionNoLeakCheck(
+                    "select x from tab; select x from tab",
+                    19,
+                    "unexpected token [select]"
+            );
+        });
+    }
+
+    @Test
+    public void testTrailingTokenAbsentIsOk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            // no trailing content should not cause an error
+            assertQuery("x\n",
+                    "select x from tab",
+                    "", true, true);
+        });
     }
 
     @Test
