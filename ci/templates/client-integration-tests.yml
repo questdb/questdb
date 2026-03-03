@@ -14,6 +14,15 @@ steps:
   - bash: mkdir -p "$HOME/.m2/repository"
     displayName: "Ensure .m2/repository exists"
 
+  - task: Cache@2
+    displayName: "Cache .m2/repository"
+    continueOnError: true
+    inputs:
+      key: '"questdb_client_integration" | "$(Agent.OS)" | "maven"'
+      restoreKeys: |
+        "questdb_client_integration" | "$(Agent.OS)" | "maven"
+      path: $(MAVEN_CACHE_FOLDER)
+
   - template: detect-local-client.yml
 
   - task: Maven@3
