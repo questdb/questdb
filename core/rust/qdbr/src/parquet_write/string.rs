@@ -26,12 +26,15 @@ use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_def_levels, transmute_slice, ExactSizedIter,
+    build_plain_page, dict_pages_iter, encode_primitive_def_levels, transmute_slice, ExactSizedIter,
 };
+use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
+use parquet2::write::DynIter;
+use rapidhash::RapidHashMap;
 
 const SIZE_OF_HEADER: usize = std::mem::size_of::<i32>();
 
@@ -100,6 +103,110 @@ pub fn string_to_page(
         false,
     )
     .map(Page::Data)
+}
+
+pub fn string_to_dict_pages(
+    offsets: &[i64],
+    data: &[u8],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let num_rows = column_top + offsets.len();
+    let mut null_count = 0;
+
+    // Convert UTF-16 slices to UTF-8 strings
+    let utf8_strings: Vec<Option<String>> = offsets
+        .iter()
+        .map(|offset| {
+            let offset =
+                usize::try_from(*offset).expect("invalid offset value in string aux column");
+            match get_utf16(&data[offset..]) {
+                Some(utf16) => Some(String::from_utf16(utf16).expect("utf16 string")),
+                None => {
+                    null_count += 1;
+                    None
+                }
+            }
+        })
+        .collect();
+
+    // Build dictionary
+    let mut dict_map: RapidHashMap<Vec<u8>, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<Vec<u8>> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(offsets.len());
+    let mut total_keys_bytes = 0usize;
+
+    for s in &utf8_strings {
+        if let Some(ref utf8) = s {
+            let utf8_bytes = utf8.as_bytes();
+            let next_id = dict_entries.len() as u32;
+            let key = *dict_map.entry(utf8_bytes.to_vec()).or_insert_with(|| {
+                total_keys_bytes += 4 + utf8_bytes.len();
+                dict_entries.push(utf8_bytes.to_vec());
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    // Build dict buffer (length-prefixed UTF-8)
+    let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
+    let mut stats = if options.write_statistics {
+        Some(BinaryMaxMinStats::new(&primitive_type))
+    } else {
+        None
+    };
+    for entry in &dict_entries {
+        dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+        dict_buffer.extend_from_slice(entry);
+        if let Some(ref mut s) = stats {
+            s.update(entry);
+        }
+    }
+
+    // Encode data page
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels =
+        (0..num_rows).map(|i| i >= column_top && utf8_strings[i - column_top].is_some());
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let max_key = if dict_entries.is_empty() {
+        0u32
+    } else {
+        (dict_entries.len() - 1) as u32
+    };
+    let bits_per_key = super::util::bit_width(max_key as u64);
+    let non_null_len = offsets.len() - null_count;
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        keys.into_iter(),
+        non_null_len,
+        bits_per_key as u32,
+    )?;
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        total_null_count,
+        definition_levels_byte_length,
+        stats.map(|s| s.into_parquet_stats(total_null_count)),
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+        false,
+    )?;
+
+    let unique_count = if dict_buffer.is_empty() {
+        0
+    } else {
+        dict_entries.len()
+    };
+    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
 }
 
 fn encode_plain(

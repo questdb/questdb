@@ -169,7 +169,9 @@ mod tests {
     use std::ptr::null;
 
     use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
-    use crate::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Column, Partition};
+    use crate::parquet_write::schema::{
+        to_compressions, to_encodings, to_parquet_schema, Column, Partition,
+    };
 
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;

@@ -6,11 +6,13 @@ use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
-use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
+use parquet2::page::{
+    DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2, DictPage, Page,
+};
 use parquet2::schema::types::{PhysicalType, PrimitiveType};
 use parquet2::statistics::{serialize_statistics, BinaryStatistics, ParquetStatistics, Statistics};
 use parquet2::types::NativeType;
-use parquet2::write::Version;
+use parquet2::write::{DynIter, Version};
 
 #[derive(Debug)]
 pub struct MaxMin<T> {
@@ -300,6 +302,21 @@ pub fn build_plain_page(
         },
         Some(num_rows),
     ))
+}
+
+/// Build a DynIter yielding [DictPage, DataPage] from pre-built buffers.
+/// This avoids duplicating the DictPage + DataPage assembly in each dict encoder.
+pub fn dict_pages_iter(
+    dict_buffer: Vec<u8>,
+    unique_count: usize,
+    data_page: DataPage,
+) -> DynIter<'static, ParquetResult<Page>> {
+    let dict_page = DictPage::new(dict_buffer, unique_count, false);
+    DynIter::new(
+        [Page::Dict(dict_page), Page::Data(data_page)]
+            .into_iter()
+            .map(Ok),
+    )
 }
 
 pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {

@@ -514,9 +514,9 @@ fn validate_encoding(data_type: ColumnType, encoding: Encoding) -> Encoding {
             data_type.tag(),
             ColumnTypeTag::Symbol | ColumnTypeTag::Varchar
         ),
-        Encoding::RleDictionary => matches!(
+        Encoding::RleDictionary => !matches!(
             data_type.tag(),
-            ColumnTypeTag::Symbol | ColumnTypeTag::Varchar
+            ColumnTypeTag::Boolean | ColumnTypeTag::Array
         ),
         Encoding::DeltaLengthByteArray => matches!(
             data_type.tag(),
@@ -602,7 +602,7 @@ fn compression_from_config(config: i32) -> Option<CompressionOptions> {
     }
 }
 
-fn encoding_map(data_type: ColumnType) -> Encoding {
+pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type.tag() {
         ColumnTypeTag::Symbol => Encoding::RleDictionary,
         ColumnTypeTag::Binary => Encoding::DeltaLengthByteArray,
@@ -633,12 +633,18 @@ mod tests {
 
     #[test]
     fn test_encoding_from_config_plain() {
-        assert_eq!(encoding_from_config(pack_config(1, 0, 0)), Some(Encoding::Plain));
+        assert_eq!(
+            encoding_from_config(pack_config(1, 0, 0)),
+            Some(Encoding::Plain)
+        );
     }
 
     #[test]
     fn test_encoding_from_config_rle_dictionary() {
-        assert_eq!(encoding_from_config(pack_config(2, 0, 0)), Some(Encoding::RleDictionary));
+        assert_eq!(
+            encoding_from_config(pack_config(2, 0, 0)),
+            Some(Encoding::RleDictionary)
+        );
     }
 
     #[test]
@@ -748,7 +754,10 @@ mod tests {
     #[test]
     fn test_combined_encoding_and_compression() {
         let config = pack_config(5, 5, 3); // BYTE_STREAM_SPLIT + ZSTD level 3
-        assert_eq!(encoding_from_config(config), Some(Encoding::ByteStreamSplit));
+        assert_eq!(
+            encoding_from_config(config),
+            Some(Encoding::ByteStreamSplit)
+        );
         match compression_from_config(config) {
             Some(CompressionOptions::Zstd(_)) => {}
             other => panic!("expected Zstd, got {:?}", other),
@@ -814,26 +823,54 @@ mod tests {
 
     #[test]
     fn test_validate_encoding_rle_dictionary_valid() {
-        assert_eq!(
-            validate_encoding(col_type(ColumnTypeTag::Symbol), Encoding::RleDictionary),
-            Encoding::RleDictionary
-        );
-        assert_eq!(
-            validate_encoding(col_type(ColumnTypeTag::Varchar), Encoding::RleDictionary),
-            Encoding::RleDictionary
-        );
+        for tag in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long,
+            ColumnTypeTag::Date,
+            ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Float,
+            ColumnTypeTag::Double,
+            ColumnTypeTag::String,
+            ColumnTypeTag::Symbol,
+            ColumnTypeTag::Binary,
+            ColumnTypeTag::Varchar,
+            ColumnTypeTag::Long128,
+            ColumnTypeTag::Uuid,
+            ColumnTypeTag::Long256,
+            ColumnTypeTag::IPv4,
+            ColumnTypeTag::GeoByte,
+            ColumnTypeTag::GeoShort,
+            ColumnTypeTag::GeoInt,
+            ColumnTypeTag::GeoLong,
+            ColumnTypeTag::Decimal8,
+            ColumnTypeTag::Decimal16,
+            ColumnTypeTag::Decimal32,
+            ColumnTypeTag::Decimal64,
+            ColumnTypeTag::Decimal128,
+            ColumnTypeTag::Decimal256,
+        ] {
+            assert_eq!(
+                validate_encoding(col_type(tag), Encoding::RleDictionary),
+                Encoding::RleDictionary,
+                "RleDictionary should be valid for {:?}",
+                tag
+            );
+        }
     }
 
     #[test]
     fn test_validate_encoding_rle_dictionary_invalid() {
-        // INT should fall back to Plain
+        // Boolean should fall back to Plain
         assert_eq!(
-            validate_encoding(col_type(ColumnTypeTag::Int), Encoding::RleDictionary),
+            validate_encoding(col_type(ColumnTypeTag::Boolean), Encoding::RleDictionary),
             Encoding::Plain
         );
-        // DOUBLE should fall back to Plain
+        // Array should fall back to Plain
         assert_eq!(
-            validate_encoding(col_type(ColumnTypeTag::Double), Encoding::RleDictionary),
+            validate_encoding(col_type(ColumnTypeTag::Array), Encoding::RleDictionary),
             Encoding::Plain
         );
     }
@@ -861,7 +898,10 @@ mod tests {
             Encoding::Plain
         );
         assert_eq!(
-            validate_encoding(col_type(ColumnTypeTag::Float), Encoding::DeltaLengthByteArray),
+            validate_encoding(
+                col_type(ColumnTypeTag::Float),
+                Encoding::DeltaLengthByteArray
+            ),
             Encoding::Plain
         );
     }
@@ -970,8 +1010,14 @@ mod tests {
 
     #[test]
     fn test_is_encoding_valid_unknown_encoding() {
-        assert!(!is_encoding_valid_for_column_tag(99, ColumnTypeTag::Int as i32));
-        assert!(!is_encoding_valid_for_column_tag(-1, ColumnTypeTag::Int as i32));
+        assert!(!is_encoding_valid_for_column_tag(
+            99,
+            ColumnTypeTag::Int as i32
+        ));
+        assert!(!is_encoding_valid_for_column_tag(
+            -1,
+            ColumnTypeTag::Int as i32
+        ));
     }
 
     #[test]
