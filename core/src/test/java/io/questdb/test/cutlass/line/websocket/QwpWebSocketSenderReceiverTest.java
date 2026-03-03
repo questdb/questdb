@@ -4342,6 +4342,172 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testVarcharColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with VARCHAR column
+                serverMain.execute("CREATE TABLE ws_varchar_test (" +
+                        "tag SYMBOL, " +
+                        "v VARCHAR, " +
+                        "timestamp TIMESTAMP" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_varchar_test")
+                            .symbol("tag", "test")
+                            .stringColumn("v", "hello varchar")
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_varchar_test");
+                serverMain.assertSql(
+                        "SELECT tag, v FROM ws_varchar_test",
+                        "tag\tv\ntest\thello varchar\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharLargeValue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with VARCHAR column
+                serverMain.execute("CREATE TABLE ws_varchar_large_test (" +
+                        "tag SYMBOL, " +
+                        "v VARCHAR, " +
+                        "timestamp TIMESTAMP" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                // Build a 10k-character string
+                StringBuilder sb = new StringBuilder(10_000);
+                for (int i = 0; i < 10_000; i++) {
+                    sb.append((char) ('a' + (i % 26)));
+                }
+                String largeValue = sb.toString();
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_varchar_large_test")
+                            .symbol("tag", "row1")
+                            .stringColumn("v", largeValue)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_varchar_large_test");
+                serverMain.assertSql(
+                        "SELECT length(v) FROM ws_varchar_large_test",
+                        "length\n10000\n"
+                );
+                // Verify first and last characters survived the round-trip
+                serverMain.assertSql(
+                        "SELECT left(v, 5), right(v, 5) FROM ws_varchar_large_test",
+                        "left\tright\nabcde\tlmnop\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharMultipleRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with VARCHAR column
+                serverMain.execute("CREATE TABLE ws_varchar_multi_test (" +
+                        "tag SYMBOL, " +
+                        "v VARCHAR, " +
+                        "timestamp TIMESTAMP" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_varchar_multi_test")
+                                .symbol("tag", "r" + i)
+                                .stringColumn("v", "row-" + i)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_varchar_multi_test");
+                serverMain.assertSql(
+                        "SELECT count() FROM ws_varchar_multi_test",
+                        "count\n10\n"
+                );
+                serverMain.assertSql(
+                        "SELECT v FROM ws_varchar_multi_test ORDER BY timestamp LIMIT 3",
+                        "v\nrow-0\nrow-1\nrow-2\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharUnicode() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with VARCHAR column
+                serverMain.execute("CREATE TABLE ws_varchar_unicode_test (" +
+                        "tag SYMBOL, " +
+                        "v VARCHAR, " +
+                        "timestamp TIMESTAMP" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_varchar_unicode_test")
+                            .symbol("tag", "cjk")
+                            .stringColumn("v", "\u3053\u3093\u306b\u3061\u306f\u4e16\u754c")
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.table("ws_varchar_unicode_test")
+                            .symbol("tag", "emoji")
+                            .stringColumn("v", "\uD83D\uDE00\uD83D\uDE80\uD83C\uDF0D")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                    sender.table("ws_varchar_unicode_test")
+                            .symbol("tag", "mixed")
+                            .stringColumn("v", "abc-\u00E9\u00E8\u00EA-\u00FC\u00F6\u00E4-\u0410\u0411\u0412")
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_varchar_unicode_test");
+                serverMain.assertSql(
+                        "SELECT count() FROM ws_varchar_unicode_test",
+                        "count\n3\n"
+                );
+                serverMain.assertSql(
+                        "SELECT v FROM ws_varchar_unicode_test WHERE tag = 'cjk'",
+                        "v\n\u3053\u3093\u306b\u3061\u306f\u4e16\u754c\n"
+                );
+                serverMain.assertSql(
+                        "SELECT v FROM ws_varchar_unicode_test WHERE tag = 'emoji'",
+                        "v\n\uD83D\uDE00\uD83D\uDE80\uD83C\uDF0D\n"
+                );
+                serverMain.assertSql(
+                        "SELECT v FROM ws_varchar_unicode_test WHERE tag = 'mixed'",
+                        "v\nabc-\u00E9\u00E8\u00EA-\u00FC\u00F6\u00E4-\u0410\u0411\u0412\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testWideTable100Columns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
