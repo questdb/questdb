@@ -56,7 +56,6 @@ import java.io.FileInputStream;
 import java.util.zip.CRC32;
 
 public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
-
     @Test
     public void testFuzz() throws Exception {
         executeWithPool(0, this::testFuzz0);
@@ -257,5 +256,10 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
         }
 
         return crc.getValue();
+    }
+
+    @Override
+    protected boolean isParquetStatisticsEnabled() {
+        return rnd.nextBoolean();
     }
 }
