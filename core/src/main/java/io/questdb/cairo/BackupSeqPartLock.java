@@ -24,18 +24,19 @@
 
 package io.questdb.cairo;
 
-import java.util.concurrent.ConcurrentHashMap;
+import io.questdb.std.CharSequenceLongHashMap;
 
+// Thread safety: all access is serialized by WalPurgeJob.runLock
+// (shared with DatabaseCheckpointAgent.walPurgeJobRunLock).
 public class BackupSeqPartLock {
-    private final ConcurrentHashMap<String, Long> lockedSeqTxns = new ConcurrentHashMap<>();
+    private final CharSequenceLongHashMap lockedSeqTxns = new CharSequenceLongHashMap();
 
     public void clear() {
         lockedSeqTxns.clear();
     }
 
     public long getLockedSeqTxn(TableToken tableToken) {
-        Long v = lockedSeqTxns.get(tableToken.getDirName());
-        return v != null ? v : -1L;
+        return lockedSeqTxns.get(tableToken.getDirName());
     }
 
     public void lock(TableToken tableToken, long seqTxn) {

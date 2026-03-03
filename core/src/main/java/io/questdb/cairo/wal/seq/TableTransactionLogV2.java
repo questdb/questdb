@@ -303,15 +303,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 txnPartMem.close(false);
                 txnPartMem.of(ff, rootPath.$(), partSize, partSize, MemoryTag.MMAP_TX_LOG);
                 txnPartMem.jumpTo((txn % partTransactionCount) * RECORD_SIZE);
+                rootPath.trimTo(size);
+                walDirectoryPolicy.initSequencerPart(rootPath, part);
                 partId = part;
             } finally {
                 rootPath.trimTo(size);
-            }
-            int len = rootPath.size();
-            try {
-                walDirectoryPolicy.initSequencerPart(rootPath, part);
-            } finally {
-                rootPath.trimTo(len);
             }
         }
     }
@@ -358,7 +354,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         @Override
         public void close() {
-            if (headerFd > 0) {
+            if (headerFd > -1) {
                 ff.close(headerFd);
                 headerFd = -1;
             }
