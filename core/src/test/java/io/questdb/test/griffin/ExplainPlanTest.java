@@ -704,6 +704,66 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantReassociationBindVariable() throws Exception {
+        assertPlan(
+                "create table tab (d double, ts timestamp);",
+                "select * from tab where d + $1 + 4 > 10",
+                """
+                        Async JIT Filter workers: 1
+                          filter: 10<d+$0::double+4
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
+    public void testConstantReassociationFoldsAddition() throws Exception {
+        assertPlan(
+                "create table tab (d double, ts timestamp);",
+                "select * from tab where d + 1 + 4 > 10",
+                """
+                        Async JIT Filter workers: 1
+                          filter: 10<d+5
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
+    public void testConstantReassociationFoldsBitwiseAnd() throws Exception {
+        assertPlan(
+                "create table tab (l long, ts timestamp);",
+                "select * from tab where l & 3 & 5 > 0",
+                """
+                        Async Filter workers: 1
+                          filter: 0<l&1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
+    public void testConstantReassociationFoldsCommutativePattern() throws Exception {
+        assertPlan(
+                "create table tab (d double, ts timestamp);",
+                "select * from tab where 4 + (d + 1) > 10",
+                """
+                        Async JIT Filter workers: 1
+                          filter: 10<d+5
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """
+        );
+    }
+
+    @Test
     public void testCountOfColumnsVectorized() throws Exception {
         assertPlan("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp " + ")", "select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x", """
                 VirtualRecord
