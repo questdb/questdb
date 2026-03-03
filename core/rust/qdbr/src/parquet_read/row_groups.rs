@@ -1017,6 +1017,7 @@ impl ParquetDecoder {
             column_type: ColumnType::new(ColumnTypeTag::Timestamp, 0),
             column_top: 0,
             format: None,
+            ascii: None,
         };
         self.decode_column_chunk(
             &mut ctx,
