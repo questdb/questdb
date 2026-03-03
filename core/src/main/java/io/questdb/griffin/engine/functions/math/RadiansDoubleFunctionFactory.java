@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -58,7 +58,7 @@ public class RadiansDoubleFunctionFactory implements FunctionFactory {
         return new Radians(args.getQuick(0));
     }
 
-    private static class Radians extends DoubleFunction implements UnaryFunction {
+    private static class Radians extends DoubleFunction implements ArithmeticUnaryFunction {
         final Function function;
 
         public Radians(Function function) {

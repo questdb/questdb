@@ -78,13 +78,15 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango SELECT ARRAY[[ask_price[1], ask_price[2]], [ask_size[1], ask_size[2]]] FROM samba");
             execute("INSERT INTO tango SELECT ARRAY[ask_price, ask_size] FROM samba");
             execute("INSERT INTO tango SELECT ARRAY[ask_price[1:3], ask_size[2:4]] FROM samba");
-            assertSql("ask\n" +
-                            "[[1.0,2.0],[4.0,5.0]]\n" +
-                            "[[7.0,8.0],[10.0,11.0]]\n" +
-                            "[[1.0,2.0,3.0],[4.0,5.0,6.0]]\n" +
-                            "[[7.0,8.0,9.0],[10.0,11.0,12.0]]\n" +
-                            "[[1.0,2.0],[5.0,6.0]]\n" +
-                            "[[7.0,8.0],[11.0,12.0]]\n",
+            assertSql("""
+                            ask
+                            [[1.0,2.0],[4.0,5.0]]
+                            [[7.0,8.0],[10.0,11.0]]
+                            [[1.0,2.0,3.0],[4.0,5.0,6.0]]
+                            [[7.0,8.0,9.0],[10.0,11.0,12.0]]
+                            [[1.0,2.0],[5.0,6.0]]
+                            [[7.0,8.0],[11.0,12.0]]
+                            """,
                     "tango");
         });
     }
@@ -102,11 +104,13 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n2.0\nnull\nnull\n", "SELECT arr1[arr2[2]::int] x FROM tango");
             assertPlanNoLeakCheck(
                     "SELECT arr1[arr2[2]::int] x FROM tango",
-                    "VirtualRecord\n" +
-                            "  functions: [arr1[arr2[2]::int]]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tango\n"
+                    """
+                            VirtualRecord
+                              functions: [arr1[arr2[2]::int]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
+                            """
             );
         });
     }
@@ -124,11 +128,13 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n8.0\n", "SELECT arr[2][2][2] x FROM tango");
             assertPlanNoLeakCheck(
                     "SELECT arr[2][2][2] x FROM tango",
-                    "VirtualRecord\n" +
-                            "  functions: [arr[2,2,2]]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tango\n"
+                    """
+                            VirtualRecord
+                              functions: [arr[2,2,2]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
+                            """
             );
         });
     }
@@ -300,18 +306,24 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
                     "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
                     "(null, null)");
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                    "[7.0,null]\t[[5.0,7.0],[9.0,11.0]]\t[11.0,16.0]\t[[41.0,51.0]]\n" +
-                    "[19.0,22.0]\t[[17.0,19.0]]\t[41.0,46.0]\t[]\n" +
-                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0 + 1.0, b * 2.0 + 1.0, b[1] * 5.0 + 1.0, b[2:] * 10.0 + 1.0 FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[5.0,null]\t[[4.0,6.0],[5.0,7.0]]\n" +
-                    "[9.0,10.0]\t[[10.0],[11.0]]\n" +
-                    "null\tnull\n", "SELECT transpose(a) + 3.0, transpose(b) + 2.0 FROM tango");
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                    "[5.0,null]\t[[4.0,5.0],[6.0,7.0]]\t[7.0,8.0]\t[[14.0,15.0]]\n" +
-                    "[9.0,10.0]\t[[10.0,11.0]]\t[13.0,14.0]\t[]\n" +
-                    "null\tnull\tnull\tnull\n", "SELECT 3.0 + a, 2.0 + b, 5.0 + b[1], 10.0 + b[2:] FROM tango");
+            assertSql("""
+                    column\tcolumn1\tcolumn2\tcolumn3
+                    [7.0,null]\t[[5.0,7.0],[9.0,11.0]]\t[11.0,16.0]\t[[41.0,51.0]]
+                    [19.0,22.0]\t[[17.0,19.0]]\t[41.0,46.0]\t[]
+                    null\tnull\tnull\tnull
+                    """, "SELECT a * 3.0 + 1.0, b * 2.0 + 1.0, b[1] * 5.0 + 1.0, b[2:] * 10.0 + 1.0 FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [5.0,null]\t[[4.0,6.0],[5.0,7.0]]
+                    [9.0,10.0]\t[[10.0],[11.0]]
+                    null\tnull
+                    """, "SELECT transpose(a) + 3.0, transpose(b) + 2.0 FROM tango");
+            assertSql("""
+                    column\tcolumn1\tcolumn2\tcolumn3
+                    [5.0,null]\t[[4.0,5.0],[6.0,7.0]]\t[7.0,8.0]\t[[14.0,15.0]]
+                    [9.0,10.0]\t[[10.0,11.0]]\t[13.0,14.0]\t[]
+                    null\tnull\tnull\tnull
+                    """, "SELECT 3.0 + a, 2.0 + b, 5.0 + b[1], 10.0 + b[2:] FROM tango");
         });
     }
 
@@ -324,15 +336,19 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("array_avg\tarray_avg1\tarray_avg2\n" +
-                            "10.0\t11.8\t5.0\n" +
-                            "null\tnull\tnull\n" +
-                            "null\tnull\tnull\n",
+            assertSql("""
+                            array_avg\tarray_avg1\tarray_avg2
+                            10.0\t11.8\t5.0
+                            null\tnull\tnull
+                            null\tnull\tnull
+                            """,
                     "SELECT array_avg(arr1), array_avg(arr1[2:]), array_avg(arr1[1:3]) FROM tango");
-            assertSql("array_avg\tarray_avg1\tarray_avg2\tarray_avg3\tarray_avg4\n" +
-                            "10.0\t10.0\t10.0\t10.0\tnull\n" +
-                            "null\tnull\tnull\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\tnull\n",
+            assertSql("""
+                            array_avg\tarray_avg1\tarray_avg2\tarray_avg3\tarray_avg4
+                            10.0\t10.0\t10.0\t10.0\tnull
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull
+                            """,
                     "SELECT array_avg(arr2), array_avg(transpose(arr2)), array_avg(arr2[1]), array_avg(arr2[1:]), array_avg(arr2[2:]) FROM tango");
         });
     }
@@ -344,8 +360,10 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
             );
-            assertSql("array_avg\tarray_avg1\n" +
-                            "5.0\t5.0\n",
+            assertSql("""
+                            array_avg\tarray_avg1
+                            5.0\t5.0
+                            """,
                     "SELECT array_avg(arr), array_avg(transpose(arr)) FROM tango");
         });
     }
@@ -368,16 +386,20 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("array_count\tarray_count1\tarray_count2\n" +
-                            "7\t6\t2\n" +
-                            "0\t0\t0\n" +
-                            "0\t0\t0\n",
+            assertSql("""
+                            array_count\tarray_count1\tarray_count2
+                            7\t6\t2
+                            0\t0\t0
+                            0\t0\t0
+                            """,
                     "SELECT array_count(arr1), array_count(arr1[2:]), array_count(arr1[1:3]) FROM tango");
 
-            assertSql("array_count\tarray_count1\tarray_count2\tarray_count3\tarray_count4\n" +
-                            "7\t7\t7\t7\t0\n" +
-                            "0\t0\t0\t0\t0\n" +
-                            "0\t0\t0\t0\t0\n",
+            assertSql("""
+                            array_count\tarray_count1\tarray_count2\tarray_count3\tarray_count4
+                            7\t7\t7\t7\t0
+                            0\t0\t0\t0\t0
+                            0\t0\t0\t0\t0
+                            """,
                     "SELECT array_count(arr2), array_count(transpose(arr2)), array_count(arr2[1]), array_count(arr2[1:]), array_count(arr2[2:]) FROM tango");
         });
     }
@@ -389,8 +411,10 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
             );
-            assertSql("array_count\tarray_count1\n" +
-                            "9\t9\n",
+            assertSql("""
+                            array_count\tarray_count1
+                            9\t9
+                            """,
                     "SELECT array_count(arr), array_count(transpose(arr)) FROM tango");
         });
     }
@@ -404,32 +428,40 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[null], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("array_cum_sum\tarray_cum_sum1\tarray_cum_sum2\n" +
-                            "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[9.0,19.0,31.0,39.0,39.0,59.0,71.0]\t[1.0,10.0]\n" +
-                            "null\tnull\tnull\n" +
-                            "null\tnull\tnull\n",
+            assertSql("""
+                            array_cum_sum\tarray_cum_sum1\tarray_cum_sum2
+                            [1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[9.0,19.0,31.0,39.0,39.0,59.0,71.0]\t[1.0,10.0]
+                            null\tnull\tnull
+                            null\tnull\tnull
+                            """,
                     "SELECT array_cum_sum(arr1), array_cum_sum(arr1[2:]), array_cum_sum(arr1[1:3]) FROM tango");
 
-            assertSql("array_cum_sum\tarray_cum_sum1\tarray_cum_sum2\tarray_cum_sum3\tarray_cum_sum4\n" +
-                            "[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\tnull\n" +
-                            "null\tnull\tnull\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\tnull\n",
+            assertSql("""
+                            array_cum_sum\tarray_cum_sum1\tarray_cum_sum2\tarray_cum_sum3\tarray_cum_sum4
+                            [1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\t[1.0,10.0,20.0,32.0,40.0,40.0,60.0,72.0]\tnull
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull
+                            """,
                     "SELECT array_cum_sum(arr2), array_cum_sum(transpose(arr2)), array_cum_sum(arr2[1]), array_cum_sum(arr2[1:]), array_cum_sum(arr2[2:]) FROM tango");
         });
     }
 
     @Test
     public void testArrayCumSumBehaviourMixedNulls() throws Exception {
-        assertMemoryLeak(() -> assertSqlWithTypes("a\tarray_cum_sum\n" +
-                        "[null,1.2,null,5.3]:DOUBLE[]\t[null,1.2,1.2,6.5]:DOUBLE[]\n",
+        assertMemoryLeak(() -> assertSqlWithTypes("""
+                        a\tarray_cum_sum
+                        [null,1.2,null,5.3]:DOUBLE[]\t[null,1.2,1.2,6.5]:DOUBLE[]
+                        """,
                 "select array[null, 1.2, null, 5.3] as a, array_cum_sum(a);\n")
         );
     }
 
     @Test
     public void testArrayCumSumKahan() throws Exception {
-        assertSqlWithTypes("array_cum_sum\n" +
-                        "[10000.0,10003.14159,10005.85987]:DOUBLE[]\n",
+        assertSqlWithTypes("""
+                        array_cum_sum
+                        [10000.0,10003.14159,10005.85987]:DOUBLE[]
+                        """,
                 "SELECT array_cum_sum(array[10000d, 3.14159, 2.71828]);");
     }
 
@@ -441,18 +473,24 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
                     "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
                     "(null, null)");
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                    "[12.0,null]\t[[8.0,12.0],[16.0,20.0]]\t[20.0,30.0]\t[[80.0,100.0]]\n" +
-                    "[36.0,42.0]\t[[32.0,36.0]]\t[80.0,90.0]\t[]\n" +
-                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0/0.5, b * 2.0/0.5, b[1] * 5.0 / 0.5, b[2:] * 10.0 / 0.5 FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[4.0,null]\t[[4.0,8.0],[6.0,10.0]]\n" +
-                    "[12.0,14.0]\t[[16.0],[18.0]]\n" +
-                    "null\tnull\n", "SELECT transpose(a)/0.5, transpose(b)/0.5 FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[null,null]\t[null,null]\n" +
-                    "[null,null]\t[null,null]\n" +
-                    "null\tnull\n", "SELECT a/0.0, a/null::double FROM tango");
+            assertSql("""
+                    column\tcolumn1\tcolumn2\tcolumn3
+                    [12.0,null]\t[[8.0,12.0],[16.0,20.0]]\t[20.0,30.0]\t[[80.0,100.0]]
+                    [36.0,42.0]\t[[32.0,36.0]]\t[80.0,90.0]\t[]
+                    null\tnull\tnull\tnull
+                    """, "SELECT a * 3.0/0.5, b * 2.0/0.5, b[1] * 5.0 / 0.5, b[2:] * 10.0 / 0.5 FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [4.0,null]\t[[4.0,8.0],[6.0,10.0]]
+                    [12.0,14.0]\t[[16.0],[18.0]]
+                    null\tnull
+                    """, "SELECT transpose(a)/0.5, transpose(b)/0.5 FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [null,null]\t[null,null]
+                    [null,null]\t[null,null]
+                    null\tnull
+                    """, "SELECT a/0.0, a/null::double FROM tango");
         });
     }
 
@@ -463,12 +501,16 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0, 3], [2.0, 5.0]], ARRAY[[1.0, 5.0], [7.0, 2.0]]), " +
                     "(ARRAY[[1.0, 1]], ARRAY[[5.0, null]])");
-            assertSql("product\n" +
-                    "40.0\n" +
-                    "5.0\n", "SELECT dot_product(left, right) AS product FROM tango");
-            assertSql("product\n" +
-                    "40.0\n" +
-                    "5.0\n", "SELECT dot_product(transpose(left), transpose(right)) AS product FROM tango");
+            assertSql("""
+                    product
+                    40.0
+                    5.0
+                    """, "SELECT dot_product(left, right) AS product FROM tango");
+            assertSql("""
+                    product
+                    40.0
+                    5.0
+                    """, "SELECT dot_product(transpose(left), transpose(right)) AS product FROM tango");
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[[1.0]]) AS product FROM tango",
                     24, "arrays have different number of dimensions [dimsLeft=1, dimsRight=2]");
             assertExceptionNoLeakCheck("SELECT dot_product(Array[1.0], Array[1.0, 2.0]) AS product FROM tango",
@@ -483,12 +525,16 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0, 3], [2.0, 5.0]], ARRAY[[1.0, 5.0], [7.0, 2.0]]), " +
                     "(ARRAY[[1.0, 1]], ARRAY[[5.0, null]])");
-            assertSql("dot_product\tdot_product1\tdot_product2\n" +
-                    "11.0\t30.0\tnull\n" +
-                    "2.0\t10.0\tnull\n", "SELECT dot_product(left, 1.0), dot_product(right, 2.0), dot_product(left, null::double) FROM tango");
-            assertSql("dot_product\tdot_product1\tdot_product2\n" +
-                    "11.0\t30.0\t30.0\n" +
-                    "2.0\t10.0\t10.0\n", "SELECT dot_product(transpose(left), 1.0), dot_product(transpose(right), 2.0), dot_product(2.0, transpose(right)) FROM tango");
+            assertSql("""
+                    dot_product\tdot_product1\tdot_product2
+                    11.0\t30.0\tnull
+                    2.0\t10.0\tnull
+                    """, "SELECT dot_product(left, 1.0), dot_product(right, 2.0), dot_product(left, null::double) FROM tango");
+            assertSql("""
+                    dot_product\tdot_product1\tdot_product2
+                    11.0\t30.0\t30.0
+                    2.0\t10.0\t10.0
+                    """, "SELECT dot_product(transpose(left), 1.0), dot_product(transpose(right), 2.0), dot_product(2.0, transpose(right)) FROM tango");
         });
     }
 
@@ -499,10 +545,12 @@ public class ArrayTest extends AbstractCairoTest {
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, ARRAY[1.0,1.0]), ('2022-02-24', 2, null), ('2022-02-24', 3, ARRAY[2.0,2.0])");
 
             assertQuery(
-                    "ts\tx\tv\n" +
-                            "2022-02-24T00:00:00.000000Z\t1\t[1.0,1.0]\n" +
-                            "2022-02-24T00:00:00.000000Z\t2\tnull\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]\n",
+                    """
+                            ts\tx\tv
+                            2022-02-24T00:00:00.000000Z\t1\t[1.0,1.0]
+                            2022-02-24T00:00:00.000000Z\t2\tnull
+                            2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]
+                            """,
                     "select ts, x, first(v) as v from test sample by 1s",
                     "ts",
                     true,
@@ -511,15 +559,17 @@ public class ArrayTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select ts, x, first(v) as v from test sample by 1s",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts,x]\n" +
-                            "      values: [first(v)]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts,x]
+                                  values: [first(v)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: test
+                            """
             );
         });
     }
@@ -534,18 +584,22 @@ public class ArrayTest extends AbstractCairoTest {
                     "('2025-06-27', 18.0, ARRAY[11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0])," +
                     "('2025-06-27', 25.0, ARRAY[21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0])");
             assertQueryAndPlan(
-                    "ts\tv\n" +
-                            "2025-06-26T00:00:00.000000Z\t1\n" +
-                            "2025-06-27T00:00:00.000000Z\t8\n",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts]\n" +
-                            "      values: [max(array_position(arr, a))]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tango\n",
+                    """
+                            ts\tv
+                            2025-06-26T00:00:00.000000Z\t1
+                            2025-06-27T00:00:00.000000Z\t8
+                            """,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  values: [max(array_position(arr, a))]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """,
                     "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                     "ts",
                     true,
@@ -553,18 +607,22 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             assertQueryAndPlan(
-                    "ts\tv\n" +
-                            "2025-06-26T00:00:00.000000Z\t2\n" +
-                            "2025-06-27T00:00:00.000000Z\t6\n",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts]\n" +
-                            "      values: [min(insertion_point(arr,a))]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tango\n",
+                    """
+                            ts\tv
+                            2025-06-26T00:00:00.000000Z\t2
+                            2025-06-27T00:00:00.000000Z\t6
+                            """,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  values: [min(insertion_point(arr,a))]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """,
                     "select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
                     "ts",
                     true,
@@ -572,18 +630,22 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             assertQueryAndPlan(
-                    "ts\tv\n" +
-                            "2025-06-26T00:00:00.000000Z\t10\n" +
-                            "2025-06-27T00:00:00.000000Z\t20\n",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts]\n" +
-                            "      values: [sum(array_count(arr))]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tango\n",
+                    """
+                            ts\tv
+                            2025-06-26T00:00:00.000000Z\t10
+                            2025-06-27T00:00:00.000000Z\t20
+                            """,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  values: [sum(array_count(arr))]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """,
                     "select ts, sum(array_count(arr)) as v from tango sample by 1d",
                     "ts",
                     true,
@@ -591,18 +653,22 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             assertQueryAndPlan(
-                    "ts\tv\n" +
-                            "2025-06-26T00:00:00.000000Z\t5.5\n" +
-                            "2025-06-27T00:00:00.000000Z\t41.0\n",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts]\n" +
-                            "      values: [sum(array_avg(arr))]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tango\n",
+                    """
+                            ts\tv
+                            2025-06-26T00:00:00.000000Z\t5.5
+                            2025-06-27T00:00:00.000000Z\t41.0
+                            """,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  values: [sum(array_avg(arr))]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """,
                     "select ts, sum(array_avg(arr)) as v from tango sample by 1d",
                     "ts",
                     true,
@@ -610,20 +676,24 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             assertQueryAndPlan(
-                    "ts\tarray_sum\tsum\n" +
-                            "2025-06-26T00:00:00.000000Z\t220.0\t1.0\n" +
-                            "2025-06-26T00:00:00.000000Z\tnull\t10.0\n" +
-                            "2025-06-27T00:00:00.000000Z\t770.0\t18.0\n" +
-                            "2025-06-27T00:00:00.000000Z\t1320.0\t25.0\n",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts,array_sum]\n" +
-                            "      values: [sum(a)]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tango\n",
+                    """
+                            ts\tarray_sum\tsum
+                            2025-06-26T00:00:00.000000Z\t220.0\t1.0
+                            2025-06-26T00:00:00.000000Z\tnull\t10.0
+                            2025-06-27T00:00:00.000000Z\t770.0\t18.0
+                            2025-06-27T00:00:00.000000Z\t1320.0\t25.0
+                            """,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts,array_sum]
+                                  values: [sum(a)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """,
                     "select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d",
                     "ts",
                     true,
@@ -631,20 +701,24 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             assertQueryAndPlan(
-                    "ts\tdot_product\tfirst\n" +
-                            "2025-06-26T00:00:00.000000Z\t110.0\t1.0\n" +
-                            "2025-06-26T00:00:00.000000Z\tnull\t10.0\n" +
-                            "2025-06-27T00:00:00.000000Z\t310.0\t18.0\n" +
-                            "2025-06-27T00:00:00.000000Z\t510.0\t25.0\n",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts,dot_product]\n" +
-                            "      values: [first(a)]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tango\n",
+                    """
+                            ts\tdot_product\tfirst
+                            2025-06-26T00:00:00.000000Z\t110.0\t1.0
+                            2025-06-26T00:00:00.000000Z\tnull\t10.0
+                            2025-06-27T00:00:00.000000Z\t310.0\t18.0
+                            2025-06-27T00:00:00.000000Z\t510.0\t25.0
+                            """,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts,dot_product]
+                                  values: [first(a)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """,
                     "select ts, dot_product(arr, 2), first(a) from tango sample by 1d",
                     "ts",
                     true,
@@ -652,18 +726,22 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             assertQueryAndPlan(
-                    "ts\tsum\n" +
-                            "2025-06-26T00:00:00.000000Z\t147.5\n" +
-                            "2025-06-27T00:00:00.000000Z\t1045.0\n",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [ts]\n" +
-                            "      values: [sum(array_sum(arr*5+3-1/2))]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tango\n",
+                    """
+                            ts\tsum
+                            2025-06-26T00:00:00.000000Z\t147.5
+                            2025-06-27T00:00:00.000000Z\t1045.0
+                            """,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  values: [sum(array_sum(arr*5+3-1/2))]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tango
+                            """,
                     "select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d",
                     "ts",
                     true,
@@ -680,18 +758,24 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
                     "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
                     "(null, null)");
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                    "[6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]\n" +
-                    "[18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]\n" +
-                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0, b * 2.0, b[1] * 5.0, b[2:] * 10.0 FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[6.0,null]\t[[4.0,8.0],[6.0,10.0]]\n" +
-                    "[18.0,21.0]\t[[16.0],[18.0]]\n" +
-                    "null\tnull\n", "SELECT transpose(a) * 3.0, transpose(b) * 2.0 FROM tango");
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                    "[6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]\n" +
-                    "[18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]\n" +
-                    "null\tnull\tnull\tnull\n", "SELECT 3.0 * a, 2.0 * b, 5.0 * b[1], 10.0 * b[2:] FROM tango");
+            assertSql("""
+                    column\tcolumn1\tcolumn2\tcolumn3
+                    [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
+                    [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
+                    null\tnull\tnull\tnull
+                    """, "SELECT a * 3.0, b * 2.0, b[1] * 5.0, b[2:] * 10.0 FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [6.0,null]\t[[4.0,8.0],[6.0,10.0]]
+                    [18.0,21.0]\t[[16.0],[18.0]]
+                    null\tnull
+                    """, "SELECT transpose(a) * 3.0, transpose(b) * 2.0 FROM tango");
+            assertSql("""
+                    column\tcolumn1\tcolumn2\tcolumn3
+                    [6.0,null]\t[[4.0,6.0],[8.0,10.0]]\t[10.0,15.0]\t[[40.0,50.0]]
+                    [18.0,21.0]\t[[16.0,18.0]]\t[40.0,45.0]\t[]
+                    null\tnull\tnull\tnull
+                    """, "SELECT 3.0 * a, 2.0 * b, 5.0 * b[1], 10.0 * b[2:] FROM tango");
         });
     }
 
@@ -704,10 +788,12 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[null], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
-                            "5\t6\tnull\t1\n" +
-                            "null\t1\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
+            assertSql("""
+                            array_position\tarray_position1\tarray_position2\tarray_position3
+                            5\t6\tnull\t1
+                            null\t1\tnull\tnull
+                            null\tnull\tnull\tnull
+                            """,
                     "SELECT " +
                             "array_position(arr1, 8), " +
                             "array_position(arr1, null), " +
@@ -715,10 +801,12 @@ public class ArrayTest extends AbstractCairoTest {
                             "array_position(arr1[2:], 9) " +
                             "FROM tango");
 
-            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
-                            "5\t6\tnull\t1\n" +
-                            "null\t1\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
+            assertSql("""
+                            array_position\tarray_position1\tarray_position2\tarray_position3
+                            5\t6\tnull\t1
+                            null\t1\tnull\tnull
+                            null\tnull\tnull\tnull
+                            """,
                     "SELECT " +
                             "array_position(arr2[1], 8), " +
                             "array_position(arr2[1], null), " +
@@ -726,10 +814,12 @@ public class ArrayTest extends AbstractCairoTest {
                             "array_position(arr2[1][2:], 9) " +
                             "FROM tango");
 
-            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
-                            "1\t2\t3\t1\n" +
-                            "1\t1\t1\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
+            assertSql("""
+                            array_position\tarray_position1\tarray_position2\tarray_position3
+                            1\t2\t3\t1
+                            1\t1\t1\tnull
+                            null\tnull\tnull\tnull
+                            """,
                     "SELECT " +
                             "array_position(arr1, arr1[1]), " +
                             "array_position(arr1, arr1[2]), " +
@@ -748,8 +838,10 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0], [9], [10], [12], [8], [null], [20], [12]]) "
             );
-            assertSql("array_position\tarray_position1\tarray_position2\tarray_position3\n" +
-                            "5\t6\tnull\t1\n",
+            assertSql("""
+                            array_position\tarray_position1\tarray_position2\tarray_position3
+                            5\t6\tnull\t1
+                            """,
                     "SELECT " +
                             "array_position(transpose(arr)[1], 8), " +
                             "array_position(transpose(arr)[1], null), " +
@@ -778,18 +870,24 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, null], ARRAY[[2.0, 3], [4.0, 5]]), " +
                     "(ARRAY[6.0, 7], ARRAY[[8.0, 9]])," +
                     "(null, null)");
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                    "[5.0,null]\t[[3.0,5.0],[7.0,9.0]]\t[9.0,14.0]\t[[39.0,49.0]]\n" +
-                    "[17.0,20.0]\t[[15.0,17.0]]\t[39.0,44.0]\t[]\n" +
-                    "null\tnull\tnull\tnull\n", "SELECT a * 3.0 - 1.0, b * 2.0 - 1.0, b[1] * 5.0 - 1.0, b[2:] * 10.0 - 1.0 FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[-1.0,null]\t[[0.0,2.0],[1.0,3.0]]\n" +
-                    "[3.0,4.0]\t[[6.0],[7.0]]\n" +
-                    "null\tnull\n", "SELECT transpose(a) - 3.0, transpose(b) - 2.0 FROM tango");
-            assertSql("column\n" +
-                    "[null,null]\n" +
-                    "[null,null]\n" +
-                    "null\n", "SELECT a - null::double FROM tango");
+            assertSql("""
+                    column\tcolumn1\tcolumn2\tcolumn3
+                    [5.0,null]\t[[3.0,5.0],[7.0,9.0]]\t[9.0,14.0]\t[[39.0,49.0]]
+                    [17.0,20.0]\t[[15.0,17.0]]\t[39.0,44.0]\t[]
+                    null\tnull\tnull\tnull
+                    """, "SELECT a * 3.0 - 1.0, b * 2.0 - 1.0, b[1] * 5.0 - 1.0, b[2:] * 10.0 - 1.0 FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [-1.0,null]\t[[0.0,2.0],[1.0,3.0]]
+                    [3.0,4.0]\t[[6.0],[7.0]]
+                    null\tnull
+                    """, "SELECT transpose(a) - 3.0, transpose(b) - 2.0 FROM tango");
+            assertSql("""
+                    column
+                    [null,null]
+                    [null,null]
+                    null
+                    """, "SELECT a - null::double FROM tango");
         });
     }
 
@@ -802,16 +900,20 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[null], ARRAY[[null]])," +
                     "(null, null)"
             );
-            assertSql("array_sum\tarray_sum1\tarray_sum2\n" +
-                            "72.0\t71.0\t10.0\n" +
-                            "null\tnull\tnull\n" +
-                            "null\tnull\tnull\n",
+            assertSql("""
+                            array_sum\tarray_sum1\tarray_sum2
+                            72.0\t71.0\t10.0
+                            null\tnull\tnull
+                            null\tnull\tnull
+                            """,
                     "SELECT array_sum(arr1), array_sum(arr1[2:]), array_sum(arr1[1:3]) FROM tango");
 
-            assertSql("array_sum\tarray_sum1\tarray_sum2\tarray_sum3\tarray_sum4\n" +
-                            "72.0\t72.0\t72.0\t72.0\tnull\n" +
-                            "null\tnull\tnull\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\tnull\n",
+            assertSql("""
+                            array_sum\tarray_sum1\tarray_sum2\tarray_sum3\tarray_sum4
+                            72.0\t72.0\t72.0\t72.0\tnull
+                            null\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull
+                            """,
                     "SELECT array_sum(arr2), array_sum(transpose(arr2)), array_sum(arr2[1]), array_sum(arr2[1:]), array_sum(arr2[2:]) FROM tango");
         });
     }
@@ -819,37 +921,43 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testArraySumAndCumSumNullBehaviour() throws Exception {
         assertMemoryLeak(() -> {
-            assertSqlWithTypes("i\tarray_sum\n" +
-                            "[null,null]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[null,null]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[null,null,null]:DOUBLE[]\tnull:DOUBLE\n" +
-                            "[null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE\n",
+            assertSqlWithTypes("""
+                            i\tarray_sum
+                            [null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            """,
                     "select rnd_double_array(1,1) i, array_sum(i) from long_sequence(10);\n");
-            assertSqlWithTypes("i\tarray_cum_sum\n" +
-                            "[null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[null,null]:DOUBLE[]\tnull:DOUBLE[]\n" +
-                            "[null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]\n",
+            assertSqlWithTypes("""
+                            i\tarray_cum_sum
+                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            """,
                     "select rnd_double_array(1,1) i, array_cum_sum(i) from long_sequence(10);\n");
         });
     }
 
     @Test
     public void testArraySumKahan() throws Exception {
-        assertSqlWithTypes("array_sum\n" +
-                        "10005.85987:DOUBLE\n",
+        assertSqlWithTypes("""
+                        array_sum
+                        10005.85987:DOUBLE
+                        """,
                 "SELECT array_sum(array[10000d, 3.14159, 2.71828]);");
     }
 
@@ -860,8 +968,10 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]]);"
             );
-            assertSql("array_sum\tarray_sum1\n" +
-                            "45.0\t45.0\n",
+            assertSql("""
+                            array_sum\tarray_sum1
+                            45.0\t45.0
+                            """,
                     "SELECT array_sum(arr), array_sum(transpose(arr)) FROM tango");
         });
     }
@@ -925,11 +1035,15 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (a DOUBLE[][], b DOUBLE[])");
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[0.0, 0, 0], [10, 10, 10], [20, 20, 20], [30, 30, 30]], ARRAY[0, 1, 2])");
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                            "[[0.0,1.0,2.0],[10.0,11.0,12.0],[20.0,21.0,22.0],[30.0,31.0,32.0]]\t[[0.0,-1.0,-2.0],[10.0,9.0,8.0],[20.0,19.0,18.0],[30.0,29.0,28.0]]\t[[0.0,0.0,0.0],[0.0,10.0,20.0],[0.0,20.0,40.0],[0.0,30.0,60.0]]\t[[null,0.0,0.0],[null,10.0,5.0],[null,20.0,10.0],[null,30.0,15.0]]\n",
+            assertSql("""
+                            column\tcolumn1\tcolumn2\tcolumn3
+                            [[0.0,1.0,2.0],[10.0,11.0,12.0],[20.0,21.0,22.0],[30.0,31.0,32.0]]\t[[0.0,-1.0,-2.0],[10.0,9.0,8.0],[20.0,19.0,18.0],[30.0,29.0,28.0]]\t[[0.0,0.0,0.0],[0.0,10.0,20.0],[0.0,20.0,40.0],[0.0,30.0,60.0]]\t[[null,0.0,0.0],[null,10.0,5.0],[null,20.0,10.0],[null,30.0,15.0]]
+                            """,
                     "SELECT a + b, a - b, a * b, a / b FROM tango");
-            assertSql("column\n" +
-                            "[[0.0,-1.0,-4.0],[100.0,99.0,96.0],[400.0,399.0,396.0],[900.0,899.0,896.0]]\n",
+            assertSql("""
+                            column
+                            [[0.0,-1.0,-4.0],[100.0,99.0,96.0],[400.0,399.0,396.0],[900.0,899.0,896.0]]
+                            """,
                     "SELECT (a + b) * (a - b) from tango");
             execute("CREATE TABLE tango1 (a DOUBLE[][], b DOUBLE[])");
             execute("INSERT INTO tango1 VALUES " +
@@ -955,56 +1069,63 @@ public class ArrayTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertQuery("case\tts\ti\ta\n" +
-                            "[]\t2020-01-01T00:00:00.000000Z\t0\t[]\n" +
-                            "[1.0]\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]\n" +
-                            "[1.0,2.0]\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]\n" +
-                            "[1.0,2.0,3.0]\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]\n" +
-                            "[1.0,2.0,3.0,4.0]\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]\n" +
-                            "[-1.0,-2.0,-3.0,-4.0,-5.0]\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]\n",
-                    "select \n" +
-                            "  case \n" +
-                            "    when ts in '2020' then array[]::double[]\n" +
-                            "    when ts in '2021' then array[1.0] \n" +
-                            "    when ts in '2022' then '{1.0, 2.0}'::double[] \n" +
-                            "    when ts in '2023' then array[1.0, 2.0, 3.0] \n" +
-                            "    when ts in '2024' then array[1.0, 2.0, 3.0, 4.0] \n" +
-                            "    else a \n" +
-                            "  end, *\n" +
-                            "from tango;",
+            assertQuery("""
+                            case\tts\ti\ta
+                            []\t2020-01-01T00:00:00.000000Z\t0\t[]
+                            [1.0]\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]
+                            [1.0,2.0]\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]
+                            [1.0,2.0,3.0]\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]
+                            [1.0,2.0,3.0,4.0]\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]
+                            [-1.0,-2.0,-3.0,-4.0,-5.0]\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]
+                            """,
+                    """
+                            select\s
+                              case\s
+                                when ts in '2020' then array[]::double[]
+                                when ts in '2021' then array[1.0]\s
+                                when ts in '2022' then '{1.0, 2.0}'::double[]\s
+                                when ts in '2023' then array[1.0, 2.0, 3.0]\s
+                                when ts in '2024' then array[1.0, 2.0, 3.0, 4.0]\s
+                                else a\s
+                              end, *
+                            from tango;""",
                     null,
                     "ts",
                     true,
                     true);
 
-            assertQuery("case\tts\ti\ta\n" +
-                            "empty\t2020-01-01T00:00:00.000000Z\t0\t[]\n" +
-                            "literal\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]\n" +
-                            "casting\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]\n" +
-                            "whatever\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]\n" +
-                            "whatever\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]\n" +
-                            "whatever\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]\n",
-                    "select \n" +
-                            "  case \n" +
-                            "    when a = ARRAY[-1.0] then 'literal'\n" +
-                            "    when a = '{-1,-2}'::double[] then 'casting'\n" +
-                            "    when a = ARRAY[[1.0],[2.0]] then 'never'\n" +
-                            "    when a = ARRAY[]::double[] then 'empty'\n" +
-                            "    else 'whatever'\n" +
-                            "  end, *\n" +
-                            "from tango;",
+            assertQuery("""
+                            case\tts\ti\ta
+                            empty\t2020-01-01T00:00:00.000000Z\t0\t[]
+                            literal\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]
+                            casting\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]
+                            whatever\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]
+                            whatever\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]
+                            whatever\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]
+                            """,
+                    """
+                            select\s
+                              case\s
+                                when a = ARRAY[-1.0] then 'literal'
+                                when a = '{-1,-2}'::double[] then 'casting'
+                                when a = ARRAY[[1.0],[2.0]] then 'never'
+                                when a = ARRAY[]::double[] then 'empty'
+                                else 'whatever'
+                              end, *
+                            from tango;""",
                     null,
                     "ts",
                     true,
                     true);
 
-            assertException("select \n" +
-                            "  case \n" +
-                            "    when ts in '2021' then array[1.0] \n" +
-                            "    when ts in '2024' then 1 \n" +
-                            "    else a \n" +
-                            "  end, *\n" +
-                            "from tango;",
+            assertException("""
+                            select\s
+                              case\s
+                                when ts in '2021' then array[1.0]\s
+                                when ts in '2024' then 1\s
+                                else a\s
+                              end, *
+                            from tango;""",
                     82,
                     "inconvertible types: INT -> DOUBLE[]");
         });
@@ -1104,23 +1225,26 @@ public class ArrayTest extends AbstractCairoTest {
     public void testCreateAsSelectDoubleNoWAL() throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    "create table blah as (\n" +
-                            "select rnd_varchar() a, rnd_double_array(1, 0) arr, rnd_int() b from long_sequence(10)\n" +
-                            ");"
+                    """
+                            create table blah as (
+                            select rnd_varchar() a, rnd_double_array(1, 0) arr, rnd_int() b from long_sequence(10)
+                            );"""
             );
 
             assertQuery(
-                    "a\tarr\tb\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t[0.6778564558839208,0.3100545983862456,0.38539947865244994,0.8799634725391621]\t-2119387831\n" +
-                            "衞͛Ԉ龘\t[0.6761934857077543,0.8912587536603974]\t458818940\n" +
-                            "o#/ZUA\t[0.7763904674818695,0.05048190020054388,0.8847591603509142,0.0011075361080621349,0.931192737286751,0.8258367614088108,0.8001121139739173,0.38642336707855873,0.92050039469858,0.16381374773748514,0.456344569609078]\t1857212401\n" +
-                            "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t[0.9441658975532605,0.6806873134626418]\t-68027832\n" +
-                            "?hhV4|\t[0.3901731258748704,0.03993124821273464,0.10643046345788132]\t1238491107\n" +
-                            "7=\"+z\t[0.9759534636690222,0.5893398488053903]\t-246923735\n" +
-                            "p-鳓w\t[0.8593131480724349,0.021189232728939578,0.10527282622013212]\t-1613687261\n" +
-                            "qRӽ\t[0.6797562990945702,0.8189713915910615,0.10459352312331183,0.7365115215570027,0.20585069039325443,0.9418719455092096]\t-623471113\n" +
-                            "E\"+~M/8KS\t[0.17180291960857297,0.4416432347777828,0.2065823085842221,0.8584308438045006,0.2445295612285482]\t-1465751763\n" +
-                            "Gk珣zx6쪎\t[0.5780746276543334,0.40791879008699594,0.12663676991275652,0.21485589614090927]\t-365989785\n",
+                    """
+                            a\tarr\tb
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t[0.6778564558839208,0.3100545983862456,0.38539947865244994,0.8799634725391621]\t-2119387831
+                            衞͛Ԉ龘\t[0.6761934857077543,0.8912587536603974]\t458818940
+                            o#/ZUA\t[0.7763904674818695,0.05048190020054388,0.8847591603509142,0.0011075361080621349,0.931192737286751,0.8258367614088108,0.8001121139739173,0.38642336707855873,0.92050039469858,0.16381374773748514,0.456344569609078]\t1857212401
+                            \uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t[0.9441658975532605,0.6806873134626418]\t-68027832
+                            ?hhV4|\t[0.3901731258748704,0.03993124821273464,0.10643046345788132]\t1238491107
+                            7="+z\t[0.9759534636690222,0.5893398488053903]\t-246923735
+                            p-鳓w\t[0.8593131480724349,0.021189232728939578,0.10527282622013212]\t-1613687261
+                            qRӽ\t[0.6797562990945702,0.8189713915910615,0.10459352312331183,0.7365115215570027,0.20585069039325443,0.9418719455092096]\t-623471113
+                            E"+~M/8KS\t[0.17180291960857297,0.4416432347777828,0.2065823085842221,0.8584308438045006,0.2445295612285482]\t-1465751763
+                            Gk珣zx6쪎\t[0.5780746276543334,0.40791879008699594,0.12663676991275652,0.21485589614090927]\t-365989785
+                            """,
                     "select * from blah",
                     true
             );
@@ -1193,9 +1317,11 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (2, 2, ARRAY[6.0, 7, 8])");
             execute("INSERT INTO tango VALUES (1, 1, ARRAY[9.0, 10, 11])");
             drainWalQueue();
-            assertSql("ts\tuniq\tarr\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t[9.0,10.0,11.0]\n" +
-                            "1970-01-01T00:00:00.000002Z\t2\t[6.0,7.0,8.0]\n",
+            assertSql("""
+                            ts\tuniq\tarr
+                            1970-01-01T00:00:00.000001Z\t1\t[9.0,10.0,11.0]
+                            1970-01-01T00:00:00.000002Z\t2\t[6.0,7.0,8.0]
+                            """,
                     "tango");
         });
     }
@@ -1208,10 +1334,12 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, 3.0], ARRAY[4.0, 0]), " +
                     "(ARRAY[6.0, null], ARRAY[8.0, 9])," +
                     "(null, null)");
-            assertSql("div\n" +
-                    "[0.5,null]\n" +
-                    "[0.75,null]\n" +
-                    "null\n", "SELECT a / b div FROM tango");
+            assertSql("""
+                    div
+                    [0.5,null]
+                    [0.75,null]
+                    null
+                    """, "SELECT a / b div FROM tango");
         });
     }
 
@@ -1223,9 +1351,11 @@ public class ArrayTest extends AbstractCairoTest {
                     "( ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
                     "  ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 20] ]  ] ), " +
                     "( null, null )");
-            assertSql("div\n" +
-                            "[[[0.1]]]\n" +
-                            "null\n",
+            assertSql("""
+                            div
+                            [[[0.1]]]
+                            null
+                            """,
                     "SELECT a[1:2, 1:2, 1:2] / b[2:, 2:, 2:] div FROM tango");
         });
     }
@@ -1363,26 +1493,36 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastFromArrayToStr() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cast\n" +
-                            "[1.0]\n",
+            assertSql("""
+                            cast
+                            [1.0]
+                            """,
                     "SELECT ARRAY[1.0]::string FROM long_sequence(1)");
 
-            assertSql("cast\n" +
-                            "[1.0,2.0]\n",
+            assertSql("""
+                            cast
+                            [1.0,2.0]
+                            """,
                     "SELECT ARRAY[1.0, 2.0]::string FROM long_sequence(1)");
 
-            assertSql("cast\n" +
-                            "[[1.0,2.0],[3.0,4.0]]\n",
+            assertSql("""
+                            cast
+                            [[1.0,2.0],[3.0,4.0]]
+                            """,
                     "SELECT ARRAY[[1.0, 2.0], [3.0, 4.0]]::string FROM long_sequence(1)");
 
             // array with no elements is always printed as []
-            assertSql("cast\n" +
-                            "[]\n",
+            assertSql("""
+                            cast
+                            []
+                            """,
                     "SELECT ARRAY[[], []]::double[][]::string FROM long_sequence(1)");
 
             // null case, 'assertSql()' prints 'null' as an empty string
-            assertSql("cast\n" +
-                            "\n",
+            assertSql("""
+                            cast
+                            
+                            """,
                     "SELECT NULL::double[]::string FROM long_sequence(1)");
         });
     }
@@ -1390,26 +1530,36 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastFromArrayToVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cast\n" +
-                            "[1.0]\n",
+            assertSql("""
+                            cast
+                            [1.0]
+                            """,
                     "SELECT ARRAY[1.0]::varchar FROM long_sequence(1)");
 
-            assertSql("cast\n" +
-                            "[1.0,2.0]\n",
+            assertSql("""
+                            cast
+                            [1.0,2.0]
+                            """,
                     "SELECT ARRAY[1.0, 2.0]::varchar FROM long_sequence(1)");
 
-            assertSql("cast\n" +
-                            "[[1.0,2.0],[3.0,4.0]]\n",
+            assertSql("""
+                            cast
+                            [[1.0,2.0],[3.0,4.0]]
+                            """,
                     "SELECT ARRAY[[1.0, 2.0], [3.0, 4.0]]::varchar FROM long_sequence(1)");
 
             // array with no elements is always printed as []
-            assertSql("cast\n" +
-                            "[]\n",
+            assertSql("""
+                            cast
+                            []
+                            """,
                     "SELECT ARRAY[[], []]::double[][]::varchar FROM long_sequence(1)");
 
             // null case, 'assertSql()' prints 'null' as an empty string
-            assertSql("cast\n" +
-                            "\n",
+            assertSql("""
+                            cast
+                            
+                            """,
                     "SELECT NULL::double[]::varchar FROM long_sequence(1)");
         });
     }
@@ -1417,28 +1567,36 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastFromScalarToArray() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("cast\n" +
-                            "[1.0]\n",
+            assertQuery("""
+                            cast
+                            [1.0]
+                            """,
                     "SELECT 1.0::double[] FROM long_sequence(1)",
                     true
             );
 
             // null
-            assertQuery("cast\n" +
-                            "null\n",
+            assertQuery("""
+                            cast
+                            null
+                            """,
                     "SELECT NULL::double::double[] FROM long_sequence(1)",
                     true);
 
             // 2D
-            assertQuery("cast\n" +
-                            "[[1.0]]\n",
+            assertQuery("""
+                            cast
+                            [[1.0]]
+                            """,
                     "SELECT 1.0::double[][] FROM long_sequence(1)",
                     true
             );
 
             // 2D with null
-            assertQuery("cast\n" +
-                            "null\n",
+            assertQuery("""
+                            cast
+                            null
+                            """,
                     "SELECT NULL::double::double[][] FROM long_sequence(1)",
                     true);
         });
@@ -1447,49 +1605,73 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastFromStrToArray() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("cast\n" +
-                    "[1.0,2.0]\n", "SELECT '{1, 2}'::double[] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    [1.0,2.0]
+                    """, "SELECT '{1, 2}'::double[] FROM long_sequence(1)");
 
             // quoted elements
-            assertSql("cast\n" +
-                    "[1.0,2.0]\n", "SELECT '{\"1\", \"2\"}'::double[] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    [1.0,2.0]
+                    """, "SELECT '{\"1\", \"2\"}'::double[] FROM long_sequence(1)");
 
             // quoted elements with spaces, 2D array
-            assertSql("cast\n" +
-                    "[[1.0,2.0],[3.0,4.0]]\n", "SELECT '{{\"1\", \"2\"}, {\"3\", \"4\"}}'::double[][] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    [[1.0,2.0],[3.0,4.0]]
+                    """, "SELECT '{{\"1\", \"2\"}, {\"3\", \"4\"}}'::double[][] FROM long_sequence(1)");
 
             // 2D array
-            assertSql("cast\n" +
-                    "[[1.0,2.0],[3.0,4.0]]\n", "SELECT '{{1,2}, {3, 4}}'::double[][] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    [[1.0,2.0],[3.0,4.0]]
+                    """, "SELECT '{{1,2}, {3, 4}}'::double[][] FROM long_sequence(1)");
 
             // 2D array with null - nulls are not allowed, casting fails and explicit casting produces NULL on the output
-            assertSql("cast\n" +
-                    "null\n", "SELECT '{{1,2}, {3, NULL}}'::double[][] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    null
+                    """, "SELECT '{{1,2}, {3, NULL}}'::double[][] FROM long_sequence(1)");
 
             // empty arrays are always printed as [], regardless of dimensionality. at least of now. this may change.
-            assertSql("cast\n" +
-                    "[]\n", "SELECT '{{}, {}}'::double[][] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    []
+                    """, "SELECT '{{}, {}}'::double[][] FROM long_sequence(1)");
 
             // empty array can be cast to higher dimensionality -> empty array
-            assertSql("cast\n" +
-                    "[]\n", "SELECT '{}'::double[][] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    []
+                    """, "SELECT '{}'::double[][] FROM long_sequence(1)");
 
             // but empty array cannot cast to lower dimensionality -> NULL
-            assertSql("cast\n" +
-                    "null\n", "SELECT '{{},{}}'::double[] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    null
+                    """, "SELECT '{{},{}}'::double[] FROM long_sequence(1)");
 
-            assertSql("cast\n" +
-                    "null\n", "SELECT NULL::double[] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    null
+                    """, "SELECT NULL::double[] FROM long_sequence(1)");
 
-            assertSql("cast\n" +
-                    "null\n", "SELECT 'not an array'::double[] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    null
+                    """, "SELECT 'not an array'::double[] FROM long_sequence(1)");
 
             // 2D array explicitly cast to 1D array -> null
-            assertSql("cast\n" +
-                    "null\n", "SELECT '{{1,2}, {3, 4}}'::double[] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    null
+                    """, "SELECT '{{1,2}, {3, 4}}'::double[] FROM long_sequence(1)");
 
-            assertSql("cast\n" +
-                    "null\n", "SELECT '{nonsense, 2}'::double[] FROM long_sequence(1)");
+            assertSql("""
+                    cast
+                    null
+                    """, "SELECT '{nonsense, 2}'::double[] FROM long_sequence(1)");
 
         });
     }
@@ -1531,14 +1713,17 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], 0)");
             execute("INSERT INTO tango VALUES (null, 0)");
 
-            assertQuery("arr\tcount\n" +
-                            "[[1.0,2.0],[3.0,4.0]]\t2\n" +
-                            "[[1.0,2.0],[3.0,4.1]]\t1\n" +
-                            "[[1.0,2.0],[3.0,4.0],[5.0,6.0]]\t1\n" +
-                            "null\t1\n",
-                    "select arr, count(*)\n" +
-                            "from tango\n" +
-                            "group by arr;",
+            assertQuery("""
+                            arr\tcount
+                            [[1.0,2.0],[3.0,4.0]]\t2
+                            [[1.0,2.0],[3.0,4.1]]\t1
+                            [[1.0,2.0],[3.0,4.0],[5.0,6.0]]\t1
+                            null\t1
+                            """,
+                    """
+                            select arr, count(*)
+                            from tango
+                            group by arr;""",
                     true);
         });
     }
@@ -1551,11 +1736,15 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2.0], [33.0, 4.0]], 3)");
             execute("INSERT INTO tango VALUES (ARRAY[[2.0, 3.0], [1.0, 4.0]], 5)");
 
-            assertQuery("[]\tsum\n" +
-                            "[[1.0,2.0]]\t4\n" +
-                            "[[2.0,3.0]]\t5\n",
-                    "select arr[1:2], sum(i)\n" +
-                            "from tango\n",
+            assertQuery("""
+                            []\tsum
+                            [[1.0,2.0]]\t4
+                            [[2.0,3.0]]\t5
+                            """,
+                    """
+                            select arr[1:2], sum(i)
+                            from tango
+                            """,
                     true);
 
         });
@@ -1568,17 +1757,19 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO blah SELECT rnd_double_array(2, 2) FROM long_sequence(10)");
 
             assertQuery(
-                    "a\n" +
-                            "[[null,0.20447441837877756],[null,null]]\n" +
-                            "[[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131],[null,0.3100545983862456],[0.1985581797355932,0.33608255572515877],[0.690540444367637,null],[0.21583224269349388,0.15786635599554755],[null,null],[0.12503042190293423,null],[0.9687423276940171,null],[null,null],[null,null],[null,null],[0.7883065830055033,null],[0.4138164748227684,0.5522494170511608],[0.2459345277606021,null]]\n" +
-                            "[[0.7643643144642823,null],[null,null],[0.18769708157331322,0.16381374773748514],[0.6590341607692226,null],[null,null],[0.8837421918800907,0.05384400312338511],[null,0.7230015763133606],[0.12105630273556178,null],[0.5406709846540508,null],[0.9269068519549879,null],[null,null],[0.1202416087573498,null]]\n" +
-                            "[[null,null,0.4971342426836798,null],[0.5065228336156442,null,null,0.03167026265669903],[null,null,0.2879973939681931,null],[null,null,null,0.24008362859107102]]\n" +
-                            "[[0.2185865835029681,null],[0.24079155981438216,0.10643046345788132],[0.5244255672762055,0.0171850098561398],[0.09766834710724581,null],[0.053594208204197136,0.26369335635512836],[0.22895725920713628,0.9820662735672192],[null,0.32424562653969957],[0.8998921791869131,null],[null,null],[0.33746104579374825,0.18740488620384377],[0.10527282622013212,0.8291193369353376],[0.32673950830571696,null],[0.18336217509438513,0.9862476361578772],[0.8693768930398866,0.8189713915910615]]\n" +
-                            "[[0.29659296554924697,0.24642266252221556],[null,null],[null,0.13264292470570205],[0.38422543844715473,null],[null,null],[null,0.7668146556860689],[null,0.05158459929273784],[null,null]]\n" +
-                            "[[0.3568111021227658,0.05758228485190853,0.6729405590773638,null,0.5716129058692643],[0.05094182589333662,null,null,0.4609277382153818,0.5691053034055052],[0.12663676991275652,0.11371841836123953,null,null,0.7203170014947307],[null,null,null,null,0.7704949839249925],[0.8144207168582307,null,null,null,0.2836347139481469]]\n" +
-                            "[[0.08675950660182763,null],[0.741970173888595,0.25353478516307626],[0.2739985338660311,null],[0.8001632261203552,null],[0.7404912278395417,0.08909442703907178],[0.8439276969435359,null],[null,0.08712007604601191]]\n" +
-                            "[[0.5637742551872849,null],[null,null],[0.7195457109208119,null],[0.23493793601747937,null],[0.6334964081687151,0.6721404635638454]]\n" +
-                            "[[0.17405556853190263,0.823395724427589,null,0.8108032283138068,null,null,0.7530494527849502,0.49153268154777974,0.0024457698760806945,0.29168465906260244,0.3121271759430503,0.3004874521886858],[null,0.7653255982993546,null,null,null,null,0.37873228328689634,null,0.7272119755925095,null,0.7467013668130107,0.5794665369115236],[null,0.5308756766878475,0.03192108074989719,null,0.17498425722537903,null,0.34257201464152764,null,null,0.29242748475227853,null,0.11296257318851766],[null,0.23405440872043592,0.1479745625593103,null,0.8115426881784433,null,0.32093405888189597,null,0.04321289940104611,0.8217652538598936,0.6397125243912908,0.29419791719259025],[0.865629565918467,null,null,0.16923843067953104,0.7198854503668188,0.5174107449677378,0.38509066982448115,null,null,null,0.5475429391562822,0.6977332212252165],[null,null,0.4268921400209912,0.9997797234031688,0.5234892454427748,null,null,null,null,0.5169565007469263,0.7039785408034679,0.8461211697505234],[null,0.537020248377422,0.8766908646423737,null,null,0.31852531484741486,null,0.605050319285447,0.9683642405595932,0.3549235578142891,0.04211401699125483,null],[null,0.0032519916115479885,0.2703179181043681,0.729536610842768,0.3317641556575974,0.8895915828662114,null,null,null,null,0.1599211504269954,0.5251698097331752],[null,0.18442756220221035,null,0.48422587819911567,0.2970515836513553,null,0.7826107801293182,null,0.3218450864634881,0.8034049105590781,null,null],[0.40425101135606667,0.9412663583926286,null,null,0.8376764297590714,0.15241451173695408,null,0.743599174001969,null,null,0.9001273812517414,0.5629104624260136],[0.6001215594928115,0.8920252905736616,0.09977691656157406,null,0.2862717364877081,null,null,null,0.8853675629694284,4.945923013344178E-5,null,0.0016532800623808575]]\n",
+                    """
+                            a
+                            [[null,0.20447441837877756],[null,null]]
+                            [[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131],[null,0.3100545983862456],[0.1985581797355932,0.33608255572515877],[0.690540444367637,null],[0.21583224269349388,0.15786635599554755],[null,null],[0.12503042190293423,null],[0.9687423276940171,null],[null,null],[null,null],[null,null],[0.7883065830055033,null],[0.4138164748227684,0.5522494170511608],[0.2459345277606021,null]]
+                            [[0.7643643144642823,null],[null,null],[0.18769708157331322,0.16381374773748514],[0.6590341607692226,null],[null,null],[0.8837421918800907,0.05384400312338511],[null,0.7230015763133606],[0.12105630273556178,null],[0.5406709846540508,null],[0.9269068519549879,null],[null,null],[0.1202416087573498,null]]
+                            [[null,null,0.4971342426836798,null],[0.5065228336156442,null,null,0.03167026265669903],[null,null,0.2879973939681931,null],[null,null,null,0.24008362859107102]]
+                            [[0.2185865835029681,null],[0.24079155981438216,0.10643046345788132],[0.5244255672762055,0.0171850098561398],[0.09766834710724581,null],[0.053594208204197136,0.26369335635512836],[0.22895725920713628,0.9820662735672192],[null,0.32424562653969957],[0.8998921791869131,null],[null,null],[0.33746104579374825,0.18740488620384377],[0.10527282622013212,0.8291193369353376],[0.32673950830571696,null],[0.18336217509438513,0.9862476361578772],[0.8693768930398866,0.8189713915910615]]
+                            [[0.29659296554924697,0.24642266252221556],[null,null],[null,0.13264292470570205],[0.38422543844715473,null],[null,null],[null,0.7668146556860689],[null,0.05158459929273784],[null,null]]
+                            [[0.3568111021227658,0.05758228485190853,0.6729405590773638,null,0.5716129058692643],[0.05094182589333662,null,null,0.4609277382153818,0.5691053034055052],[0.12663676991275652,0.11371841836123953,null,null,0.7203170014947307],[null,null,null,null,0.7704949839249925],[0.8144207168582307,null,null,null,0.2836347139481469]]
+                            [[0.08675950660182763,null],[0.741970173888595,0.25353478516307626],[0.2739985338660311,null],[0.8001632261203552,null],[0.7404912278395417,0.08909442703907178],[0.8439276969435359,null],[null,0.08712007604601191]]
+                            [[0.5637742551872849,null],[null,null],[0.7195457109208119,null],[0.23493793601747937,null],[0.6334964081687151,0.6721404635638454]]
+                            [[0.17405556853190263,0.823395724427589,null,0.8108032283138068,null,null,0.7530494527849502,0.49153268154777974,0.0024457698760806945,0.29168465906260244,0.3121271759430503,0.3004874521886858],[null,0.7653255982993546,null,null,null,null,0.37873228328689634,null,0.7272119755925095,null,0.7467013668130107,0.5794665369115236],[null,0.5308756766878475,0.03192108074989719,null,0.17498425722537903,null,0.34257201464152764,null,null,0.29242748475227853,null,0.11296257318851766],[null,0.23405440872043592,0.1479745625593103,null,0.8115426881784433,null,0.32093405888189597,null,0.04321289940104611,0.8217652538598936,0.6397125243912908,0.29419791719259025],[0.865629565918467,null,null,0.16923843067953104,0.7198854503668188,0.5174107449677378,0.38509066982448115,null,null,null,0.5475429391562822,0.6977332212252165],[null,null,0.4268921400209912,0.9997797234031688,0.5234892454427748,null,null,null,null,0.5169565007469263,0.7039785408034679,0.8461211697505234],[null,0.537020248377422,0.8766908646423737,null,null,0.31852531484741486,null,0.605050319285447,0.9683642405595932,0.3549235578142891,0.04211401699125483,null],[null,0.0032519916115479885,0.2703179181043681,0.729536610842768,0.3317641556575974,0.8895915828662114,null,null,null,null,0.1599211504269954,0.5251698097331752],[null,0.18442756220221035,null,0.48422587819911567,0.2970515836513553,null,0.7826107801293182,null,0.3218450864634881,0.8034049105590781,null,null],[0.40425101135606667,0.9412663583926286,null,null,0.8376764297590714,0.15241451173695408,null,0.743599174001969,null,null,0.9001273812517414,0.5629104624260136],[0.6001215594928115,0.8920252905736616,0.09977691656157406,null,0.2862717364877081,null,null,null,0.8853675629694284,4.945923013344178E-5,null,0.0016532800623808575]]
+                            """,
                     "select * from blah",
                     true
             );
@@ -1656,10 +1847,12 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[1001.0, 1000, 100, 22, 22, 22, 20, 12, 10, 9], ARRAY[[1001.0, 1000, 100, 22, 22, 22, 20, 12, 10, 9]])," +
                     "(null, null)"
             );
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
-                            "1\t11\t2\t11\t4\t8\t10\n" +
-                            "11\t1\t11\t2\t8\t7\t3\n" +
-                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+            assertSql("""
+                            i1\ti2\ti3\ti4\ti5\ti6\ti7
+                            1\t11\t2\t11\t4\t8\t10
+                            11\t1\t11\t2\t8\t7\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull
+                            """,
                     "SELECT " +
                             "insertion_point(arr1, 8, false) i1, " +
                             "insertion_point(arr1, 2000, false) i2, " +
@@ -1669,10 +1862,12 @@ public class ArrayTest extends AbstractCairoTest {
                             "insertion_point(arr1, 22, false) i6, " +
                             "insertion_point(arr1[1:], 1000, false) i7, " +
                             "FROM tango");
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
-                            "1\t11\t1\t10\t4\t5\t9\n" +
-                            "11\t1\t10\t1\t8\t4\t2\n" +
-                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+            assertSql("""
+                            i1\ti2\ti3\ti4\ti5\ti6\ti7
+                            1\t11\t1\t10\t4\t5\t9
+                            11\t1\t10\t1\t8\t4\t2
+                            null\tnull\tnull\tnull\tnull\tnull\tnull
+                            """,
                     "SELECT " +
                             "insertion_point(arr1, 8, true) i1, " +
                             "insertion_point(arr1, 2000, true) i2, " +
@@ -1682,10 +1877,12 @@ public class ArrayTest extends AbstractCairoTest {
                             "insertion_point(arr1, 22, true) i6, " +
                             "insertion_point(arr1[1:], 1000, true) i7, " +
                             "FROM tango");
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
-                            "1\t11\t2\t11\t4\t8\t10\n" +
-                            "11\t1\t11\t2\t8\t7\t3\n" +
-                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+            assertSql("""
+                            i1\ti2\ti3\ti4\ti5\ti6\ti7
+                            1\t11\t2\t11\t4\t8\t10
+                            11\t1\t11\t2\t8\t7\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull
+                            """,
                     "SELECT " +
                             "insertion_point(arr2[1], 8) i1, " +
                             "insertion_point(arr2[1], 2000) i2, " +
@@ -1710,10 +1907,12 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[[1001.0], [1000], [100], [22], [22], [22], [20], [12], [10], [9]])," +
                     "(null)"
             );
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
-                            "1\t11\t2\t11\t4\t8\t10\n" +
-                            "11\t1\t11\t2\t8\t7\t3\n" +
-                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+            assertSql("""
+                            i1\ti2\ti3\ti4\ti5\ti6\ti7
+                            1\t11\t2\t11\t4\t8\t10
+                            11\t1\t11\t2\t8\t7\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull
+                            """,
                     "SELECT " +
                             "insertion_point(transpose(arr)[1], 8, false) i1, " +
                             "insertion_point(transpose(arr)[1], 2000, false) i2, " +
@@ -1723,10 +1922,12 @@ public class ArrayTest extends AbstractCairoTest {
                             "insertion_point(transpose(arr)[1], 22, false) i6, " +
                             "insertion_point(transpose(arr)[1, 1:], 1000, false) i7, " +
                             "FROM tango");
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
-                            "1\t11\t1\t10\t4\t5\t9\n" +
-                            "11\t1\t10\t1\t8\t4\t2\n" +
-                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+            assertSql("""
+                            i1\ti2\ti3\ti4\ti5\ti6\ti7
+                            1\t11\t1\t10\t4\t5\t9
+                            11\t1\t10\t1\t8\t4\t2
+                            null\tnull\tnull\tnull\tnull\tnull\tnull
+                            """,
                     "SELECT " +
                             "insertion_point(transpose(arr)[1], 8, true) i1, " +
                             "insertion_point(transpose(arr)[1], 2000, true) i2, " +
@@ -1736,10 +1937,12 @@ public class ArrayTest extends AbstractCairoTest {
                             "insertion_point(transpose(arr)[1], 22, true) i6, " +
                             "insertion_point(transpose(arr)[1][1:], 1000, true) i7, " +
                             "FROM tango");
-            assertSql("i1\ti2\ti3\ti4\ti5\ti6\ti7\n" +
-                            "1\t11\t2\t11\t4\t8\t10\n" +
-                            "11\t1\t11\t2\t8\t7\t3\n" +
-                            "null\tnull\tnull\tnull\tnull\tnull\tnull\n",
+            assertSql("""
+                            i1\ti2\ti3\ti4\ti5\ti6\ti7
+                            1\t11\t2\t11\t4\t8\t10
+                            11\t1\t11\t2\t8\t7\t3
+                            null\tnull\tnull\tnull\tnull\tnull\tnull
+                            """,
                     "SELECT " +
                             "insertion_point(transpose(arr)[1], 8) i1, " +
                             "insertion_point(transpose(arr)[1], 2000) i2, " +
@@ -1821,10 +2024,12 @@ public class ArrayTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             assertSql(
-                    "ts\tx\tv\n" +
-                            "2022-02-24T00:00:00.000000Z\t1\t[1.0,1.0]\n" +
-                            "2022-02-24T00:00:00.000000Z\t2\tnull\n" +
-                            "2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]\n",
+                    """
+                            ts\tx\tv
+                            2022-02-24T00:00:00.000000Z\t1\t[1.0,1.0]
+                            2022-02-24T00:00:00.000000Z\t2\tnull
+                            2022-02-24T00:00:00.000000Z\t3\t[2.0,2.0]
+                            """,
                     "test"
             );
         });
@@ -1847,8 +2052,10 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango AS (SELECT " +
                     "ARRAY[[2.0, 3.0],[4.0, 5.0], [6.0, 7.0]] left, ARRAY[1.0, 2.0] right " +
                     "FROM long_sequence(1))");
-            assertSql("product\n" +
-                    "[[8.0],[14.0],[20.0]]\n", "SELECT matmul(left, right) AS product FROM tango");
+            assertSql("""
+                    product
+                    [[8.0],[14.0],[20.0]]
+                    """, "SELECT matmul(left, right) AS product FROM tango");
         });
     }
 
@@ -1955,18 +2162,24 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[16.0, 0], ARRAY[[8.0, 4]])," +
                     "(null, null)");
 
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                    "[6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]\n" +
-                    "[-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]\n" +
-                    "null\tnull\tnull\tnull\n", "SELECT - a + 8, (- b + 4.0) * 2.0, - b[1] + 2.0, - b[2:] + 2.0 FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[14.0,null]\t[[14.0,12.0],[12.0,8.0]]\n" +
-                    "[0.0,16.0]\t[[8.0],[12.0]]\n" +
-                    "null\tnull\n", "SELECT - transpose(a) + 16.0, - transpose(b) + 16.0 FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[-2.0,null]\t[null,null]\n" +
-                    "[-16.0,0.0]\t[null,null]\n" +
-                    "null\tnull\n", "SELECT - a + 0.0, - a + null::double FROM tango");
+            assertSql("""
+                    column\tcolumn1\tcolumn2\tcolumn3
+                    [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
+                    [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
+                    null\tnull\tnull\tnull
+                    """, "SELECT - a + 8, (- b + 4.0) * 2.0, - b[1] + 2.0, - b[2:] + 2.0 FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
+                    [0.0,16.0]\t[[8.0],[12.0]]
+                    null\tnull
+                    """, "SELECT - transpose(a) + 16.0, - transpose(b) + 16.0 FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [-2.0,null]\t[null,null]
+                    [-16.0,0.0]\t[null,null]
+                    null\tnull
+                    """, "SELECT - a + 0.0, - a + null::double FROM tango");
         });
     }
 
@@ -2049,21 +2262,25 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES ('2001-03', 3, '{5.0, 6.0, 7.0}')");
             execute("INSERT INTO tango VALUES ('2001-04', 42, null)");
 
-            assertQuery("ts\ti\tarr\n" +
-                            "2001-04-01T00:00:00.000000Z\t42\tnull\n" +
-                            "2001-03-01T00:00:00.000000Z\t3\t[5.0,6.0,7.0]\n" +
-                            "2001-02-01T00:00:00.000000Z\t2\t[3.0,4.0]\n" +
-                            "2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]\n",
+            assertQuery("""
+                            ts\ti\tarr
+                            2001-04-01T00:00:00.000000Z\t42\tnull
+                            2001-03-01T00:00:00.000000Z\t3\t[5.0,6.0,7.0]
+                            2001-02-01T00:00:00.000000Z\t2\t[3.0,4.0]
+                            2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]
+                            """,
                     "select * from tango order by i desc",
                     true
             );
 
             // test also with no rowId - this simulates ordering output of a factory which does not support rowId
-            assertQuery("ts\ti\tarr\n" +
-                            "2001-04-01T00:00:00.000000Z\t42\tnull\n" +
-                            "2001-03-01T00:00:00.000000Z\t3\t[5.0,6.0,7.0]\n" +
-                            "2001-02-01T00:00:00.000000Z\t2\t[3.0,4.0]\n" +
-                            "2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]\n",
+            assertQuery("""
+                            ts\ti\tarr
+                            2001-04-01T00:00:00.000000Z\t42\tnull
+                            2001-03-01T00:00:00.000000Z\t3\t[5.0,6.0,7.0]
+                            2001-02-01T00:00:00.000000Z\t2\t[3.0,4.0]
+                            2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]
+                            """,
                     "select * from '*!*tango' order by i desc",
                     true
             );
@@ -2086,9 +2303,11 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES ('2001-01', 1, '{1.0, 2.0}')");
             execute("INSERT INTO tango VALUES ('2001-02', 1, '{1.0, 2.0}')");
 
-            final String expected = "ts\ti\tarr\n" +
-                    "2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]\n" +
-                    "2001-02-01T00:00:00.000000Z\t1\t[1.0,2.0]\n";
+            final String expected = """
+                    ts\ti\tarr
+                    2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]
+                    2001-02-01T00:00:00.000000Z\t1\t[1.0,2.0]
+                    """;
 
             execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET where ts in '2001-01';");
             assertQuery(
@@ -2119,9 +2338,11 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
 
             assertQuery(
-                    "a1\tb1\ta2\tb2\n" +
-                            "[2.0,3.0]\t[4.0,5.0]\t[2.0,3.0]\t[4.0,5.0]\n" +
-                            "[6.0,7.0]\t[8.0,9.0]\t[6.0,7.0]\t[8.0,9.0]\n",
+                    """
+                            a1\tb1\ta2\tb2
+                            [2.0,3.0]\t[4.0,5.0]\t[2.0,3.0]\t[4.0,5.0]
+                            [6.0,7.0]\t[8.0,9.0]\t[6.0,7.0]\t[8.0,9.0]
+                            """,
                     "select a as a1, b as b1, a as a2, b as b2 from 'tango' ",
                     true
             );
@@ -2228,24 +2449,30 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "rnd_double_array\n" +
-                            "[[null,0.9856290845874263],[null,0.5093827001617407]]\n",
+                    """
+                            rnd_double_array
+                            [[null,0.9856290845874263],[null,0.5093827001617407]]
+                            """,
                     "select rnd_double_array(2, 2, 0, 2, 2)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [rnd_double_array(2,1,ignored,2,2)]\n" +
-                            "    long_sequence count: 1\n",
+                    """
+                            QUERY PLAN
+                            VirtualRecord
+                              functions: [rnd_double_array(2,1,ignored,2,2)]
+                                long_sequence count: 1
+                            """,
                     "explain select rnd_double_array(2, 1, 0, 2, 2)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [rnd_double_array(3,1,4)]\n" +
-                            "    long_sequence count: 1\n",
+                    """
+                            QUERY PLAN
+                            VirtualRecord
+                              functions: [rnd_double_array(3,1,4)]
+                                long_sequence count: 1
+                            """,
                     "explain select rnd_double_array(3, 1, 4)"
             );
         });
@@ -2259,18 +2486,24 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, null], ARRAY[[2.0, 4], [4.0, 8]]), " +
                     "(ARRAY[16.0, 0], ARRAY[[8.0, 4]])," +
                     "(null, null)");
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                    "[4.0,null]\t[[4.0,2.0],[2.0,1.0]]\t[0.5,0.25]\t[[5.0,2.5]]\n" +
-                    "[0.5,null]\t[[1.0,2.0]]\t[0.125,0.25]\t[]\n" +
-                    "null\tnull\tnull\tnull\n", "SELECT 8.0 / a, 4.0 / b * 2.0, 2.0 / b[1] * 0.5, 2 / b[2:] * 10 FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[8.0,null]\t[[8.0,4.0],[4.0,2.0]]\n" +
-                    "[1.0,null]\t[[2.0],[4.0]]\n" +
-                    "null\tnull\n", "SELECT 16.0 / transpose(a), 16.0 / transpose(b)FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[0.0,null]\t[null,null]\n" +
-                    "[0.0,null]\t[null,null]\n" +
-                    "null\tnull\n", "SELECT 0.0 / a, null::double / a FROM tango");
+            assertSql("""
+                    column\tcolumn1\tcolumn2\tcolumn3
+                    [4.0,null]\t[[4.0,2.0],[2.0,1.0]]\t[0.5,0.25]\t[[5.0,2.5]]
+                    [0.5,null]\t[[1.0,2.0]]\t[0.125,0.25]\t[]
+                    null\tnull\tnull\tnull
+                    """, "SELECT 8.0 / a, 4.0 / b * 2.0, 2.0 / b[1] * 0.5, 2 / b[2:] * 10 FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [8.0,null]\t[[8.0,4.0],[4.0,2.0]]
+                    [1.0,null]\t[[2.0],[4.0]]
+                    null\tnull
+                    """, "SELECT 16.0 / transpose(a), 16.0 / transpose(b)FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [0.0,null]\t[null,null]
+                    [0.0,null]\t[null,null]
+                    null\tnull
+                    """, "SELECT 0.0 / a, null::double / a FROM tango");
         });
     }
 
@@ -2282,18 +2515,24 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[2.0, null], ARRAY[[2.0, 4], [4.0, 8]]), " +
                     "(ARRAY[16.0, 0], ARRAY[[8.0, 4]])," +
                     "(null, null)");
-            assertSql("column\tcolumn1\tcolumn2\tcolumn3\n" +
-                    "[6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]\n" +
-                    "[-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]\n" +
-                    "null\tnull\tnull\tnull\n", "SELECT 8.0 - a, (4.0 - b)* 2.0, 2.0 - b[1], 2 - b[2:] FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[14.0,null]\t[[14.0,12.0],[12.0,8.0]]\n" +
-                    "[0.0,16.0]\t[[8.0],[12.0]]\n" +
-                    "null\tnull\n", "SELECT 16.0 - transpose(a), 16.0 - transpose(b)FROM tango");
-            assertSql("column\tcolumn1\n" +
-                    "[-2.0,null]\t[null,null]\n" +
-                    "[-16.0,0.0]\t[null,null]\n" +
-                    "null\tnull\n", "SELECT 0.0 - a, null::double - a FROM tango");
+            assertSql("""
+                    column\tcolumn1\tcolumn2\tcolumn3
+                    [6.0,null]\t[[4.0,0.0],[0.0,-8.0]]\t[0.0,-2.0]\t[[-2.0,-6.0]]
+                    [-8.0,8.0]\t[[-8.0,0.0]]\t[-6.0,-2.0]\t[]
+                    null\tnull\tnull\tnull
+                    """, "SELECT 8.0 - a, (4.0 - b)* 2.0, 2.0 - b[1], 2 - b[2:] FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [14.0,null]\t[[14.0,12.0],[12.0,8.0]]
+                    [0.0,16.0]\t[[8.0],[12.0]]
+                    null\tnull
+                    """, "SELECT 16.0 - transpose(a), 16.0 - transpose(b)FROM tango");
+            assertSql("""
+                    column\tcolumn1
+                    [-2.0,null]\t[null,null]
+                    [-16.0,0.0]\t[null,null]
+                    null\tnull
+                    """, "SELECT 0.0 - a, null::double - a FROM tango");
         });
     }
 
@@ -2397,41 +2636,46 @@ public class ArrayTest extends AbstractCairoTest {
     public void testShardedMapCursorArrayAccess() throws Exception {
 
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE AAPL_orderbook (\n" +
-                    "\ttimestamp TIMESTAMP,\n" +
-                    "\tasks DOUBLE[][]\n" +
-                    ") timestamp(timestamp)\n" +
-                    "PARTITION BY HOUR WAL;");
-            execute("INSERT INTO AAPL_orderbook (timestamp, asks) \n" +
-                    "SELECT dateadd('s', x::int, '2023-08-25T08:00:02.264552Z') as timestamp, ARRAY[\n" +
-                    "  [176.8,177.27,182.0,182.3,183.7,185.0,190.0,null, null, null],\n" +
-                    "  [26.0,400.0,7.0,15.0,10.0,5.0,2.0,0.0,0.0,0.0],\n" +
-                    "  [1.0,1.0,1.0, 1.0,1.0,1.0,1.0,0.0,0.0,0.0]\n" +
-                    " ] as asks\n" +
-                    "\tFROM long_sequence(3_000_000)\n" +
-                    ";");
+            execute("""
+                    CREATE TABLE AAPL_orderbook (
+                    \ttimestamp TIMESTAMP,
+                    \tasks DOUBLE[][]
+                    ) timestamp(timestamp)
+                    PARTITION BY HOUR WAL;""");
+            execute("""
+                    INSERT INTO AAPL_orderbook (timestamp, asks)\s
+                    SELECT dateadd('s', x::int, '2023-08-25T08:00:02.264552Z') as timestamp, ARRAY[
+                      [176.8,177.27,182.0,182.3,183.7,185.0,190.0,null, null, null],
+                      [26.0,400.0,7.0,15.0,10.0,5.0,2.0,0.0,0.0,0.0],
+                      [1.0,1.0,1.0, 1.0,1.0,1.0,1.0,0.0,0.0,0.0]
+                     ] as asks
+                    \tFROM long_sequence(3_000_000)
+                    ;""");
 
             drainWalQueue();
 
             assertQueryNoLeakCheck(
-                    "timestamp\tavg_price\tbest_price\tdrift\n" +
-                            "2023-08-25T08:00:00.000000Z\t176.79999999999998\t176.8\t-2.8421709430404007E-14\n" +
-                            "2023-08-25T08:01:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14\n" +
-                            "2023-08-25T08:02:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14\n" +
-                            "2023-08-25T08:03:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14\n" +
-                            "2023-08-25T08:04:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14\n",
-                    "SELECT * FROM (DECLARE\n" +
-                            "\t@price := 1,\n" +
-                            "\t@size := 2,\n" +
-                            "\t@avg_price := avg(l2price(0.1, asks[@size], asks[@price])),\n" +
-                            "\t@best_price := asks[@price, 1]\n" +
-                            "\tSELECT \n" +
-                            "\t\ttimestamp,\n" +
-                            "\t\t@avg_price as avg_price,\n" +
-                            "\t\t@best_price as best_price,\n" +
-                            "\t\t@avg_price - @best_price as drift\n" +
-                            "\tFROM AAPL_orderbook\n" +
-                            "\tSAMPLE BY 1m) LIMIT 5;",
+                    """
+                            timestamp\tavg_price\tbest_price\tdrift
+                            2023-08-25T08:00:00.000000Z\t176.79999999999998\t176.8\t-2.842170943040401E-14
+                            2023-08-25T08:01:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
+                            2023-08-25T08:02:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
+                            2023-08-25T08:03:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
+                            2023-08-25T08:04:00.000000Z\t176.79999999999993\t176.8\t-8.526512829121202E-14
+                            """,
+                    """
+                            SELECT * FROM (DECLARE
+                            \t@price := 1,
+                            \t@size := 2,
+                            \t@avg_price := avg(l2price(0.1, asks[@size], asks[@price])),
+                            \t@best_price := asks[@price, 1]
+                            \tSELECT\s
+                            \t\ttimestamp,
+                            \t\t@avg_price as avg_price,
+                            \t\t@best_price as best_price,
+                            \t\t@avg_price - @best_price as drift
+                            \tFROM AAPL_orderbook
+                            \tSAMPLE BY 1m) LIMIT 5;""",
                     "timestamp",
                     true,
                     false);
@@ -2447,20 +2691,26 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[], ARRAY[[],[]])," +
                     "(null, null)"
             );
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[999.0,999.0,999.0,1.0,9.0,10.0,12.0,8.0]\t[999.0,9.0,10.0,12.0,8.0,null,20.0]\t[999.0,999.0]\t[null,null,null,1.0,9.0,10.0,12.0,8.0]\n" +
-                            "[]\t[]\t[]\t[]\n" +
-                            "null\tnull\tnull\tnull\n",
+            assertSql("""
+                            shift\tshift1\tshift2\tshift3
+                            [999.0,999.0,999.0,1.0,9.0,10.0,12.0,8.0]\t[999.0,9.0,10.0,12.0,8.0,null,20.0]\t[999.0,999.0]\t[null,null,null,1.0,9.0,10.0,12.0,8.0]
+                            []\t[]\t[]\t[]
+                            null\tnull\tnull\tnull
+                            """,
                     "SELECT shift(arr1, 3, 999.0), shift(arr1[2:], 1, 999.0), shift(arr1[1:3], 10, 999.0), shift(arr1, 3) FROM tango");
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[12.0,8.0,null,20.0,12.0,999.0,999.0,999.0]\t[10.0,12.0,8.0,null,20.0,12.0,999.0]\t[999.0,999.0]\t[12.0,8.0,null,20.0,12.0,null,null,null]\n" +
-                            "[]\t[]\t[]\t[]\n" +
-                            "null\tnull\tnull\tnull\n",
+            assertSql("""
+                            shift\tshift1\tshift2\tshift3
+                            [12.0,8.0,null,20.0,12.0,999.0,999.0,999.0]\t[10.0,12.0,8.0,null,20.0,12.0,999.0]\t[999.0,999.0]\t[12.0,8.0,null,20.0,12.0,null,null,null]
+                            []\t[]\t[]\t[]
+                            null\tnull\tnull\tnull
+                            """,
                     "SELECT shift(arr1, -3, 999.0), shift(arr1[2:], -1, 999.0), shift(arr1[1:3], -10, 999.0), shift(arr1, -3) FROM tango");
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[[999.0,1.0,9.0],[999.0,12.0,8.0]]\t[[9.0,10.0,999.0],[8.0,null,999.0]]\t[[999.0,999.0,999.0],[999.0,999.0,999.0]]\t[[10.0,null,null],[null,null,null]]\n" +
-                            "[]\t[]\t[]\t[]\n" +
-                            "null\tnull\tnull\tnull\n",
+            assertSql("""
+                            shift\tshift1\tshift2\tshift3
+                            [[999.0,1.0,9.0],[999.0,12.0,8.0]]\t[[9.0,10.0,999.0],[8.0,null,999.0]]\t[[999.0,999.0,999.0],[999.0,999.0,999.0]]\t[[10.0,null,null],[null,null,null]]
+                            []\t[]\t[]\t[]
+                            null\tnull\tnull\tnull
+                            """,
                     "SELECT shift(arr2, 1, 999.0), shift(arr2[1:], -1, 999.0), shift(arr2, 5, 999.0), shift(arr2, -2) FROM tango");
         });
     }
@@ -2483,27 +2733,35 @@ public class ArrayTest extends AbstractCairoTest {
                     "(ARRAY[[]])," +
                     "(null)"
             );
-            assertSql("transpose\n" +
-                            "[[1.0,10.0,8.0,20.0],[9.0,12.0,null,12.0]]\n" +
-                            "[]\n" +
-                            "null\n",
+            assertSql("""
+                            transpose
+                            [[1.0,10.0,8.0,20.0],[9.0,12.0,null,12.0]]
+                            []
+                            null
+                            """,
                     "SELECT transpose(arr) FROM tango");
 
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[999.0,999.0,1.0,10.0]\t[999.0,10.0,8.0]\t[999.0,999.0]\t[null,null,null,1.0]\n" +
-                            "null\tnull\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
+            assertSql("""
+                            shift\tshift1\tshift2\tshift3
+                            [999.0,999.0,1.0,10.0]\t[999.0,10.0,8.0]\t[999.0,999.0]\t[null,null,null,1.0]
+                            null\tnull\tnull\tnull
+                            null\tnull\tnull\tnull
+                            """,
                     "SELECT shift(transpose(arr)[1], 2, 999.0), shift(transpose(arr)[1, 2:], 1, 999.0), shift(transpose(arr)[1, 1:3], 10, 999.0), shift(transpose(arr)[1], 3) FROM tango");
 
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[8.0,20.0,999.0,999.0]\t[8.0,20.0,999.0]\t[999.0,999.0]\t[20.0,null,null,null]\n" +
-                            "null\tnull\tnull\tnull\n" +
-                            "null\tnull\tnull\tnull\n",
+            assertSql("""
+                            shift\tshift1\tshift2\tshift3
+                            [8.0,20.0,999.0,999.0]\t[8.0,20.0,999.0]\t[999.0,999.0]\t[20.0,null,null,null]
+                            null\tnull\tnull\tnull
+                            null\tnull\tnull\tnull
+                            """,
                     "SELECT shift(transpose(arr)[1], -2, 999.0), shift(transpose(arr)[1, 2:], -1, 999.0), shift(transpose(arr)[1, 1:3], -10, 999.0), shift(transpose(arr)[1], -3) FROM tango");
-            assertSql("shift\tshift1\tshift2\tshift3\n" +
-                            "[[999.0,1.0,10.0,8.0],[999.0,9.0,12.0,null]]\t[[10.0,8.0,20.0,999.0],[12.0,null,12.0,999.0]]\t[[999.0,999.0,999.0,999.0],[999.0,999.0,999.0,999.0]]\t[[8.0,20.0,null,null],[null,12.0,null,null]]\n" +
-                            "[]\t[]\t[]\t[]\n" +
-                            "null\tnull\tnull\tnull\n",
+            assertSql("""
+                            shift\tshift1\tshift2\tshift3
+                            [[999.0,1.0,10.0,8.0],[999.0,9.0,12.0,null]]\t[[10.0,8.0,20.0,999.0],[12.0,null,12.0,999.0]]\t[[999.0,999.0,999.0,999.0],[999.0,999.0,999.0,999.0]]\t[[8.0,20.0,null,null],[null,12.0,null,null]]
+                            []\t[]\t[]\t[]
+                            null\tnull\tnull\tnull
+                            """,
                     "SELECT shift(transpose(arr), 1, 999.0), shift(transpose(arr)[1:], -1, 999.0), shift(transpose(arr), 5, 999.0), shift(transpose(arr), -2) FROM tango");
         });
     }
@@ -2604,11 +2862,13 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n[[8.0]]\n", "SELECT arr[2,3-1:,2:] x FROM tango");
             assertPlanNoLeakCheck(
                     "SELECT arr[2,3-1:,2:] x FROM tango",
-                    "VirtualRecord\n" +
-                            "  functions: [arr[2,3-1:,2:]]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tango\n"
+                    """
+                            VirtualRecord
+                              functions: [arr[2,3-1:,2:]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
+                            """
             );
         });
     }
@@ -2708,41 +2968,51 @@ public class ArrayTest extends AbstractCairoTest {
             execute("insert into tango values (null)");
 
             // 2 arrays of the same type and dimensionality
-            assertQuery("ARRAY\n" +
-                            "[1.0,2.0]\n" +
-                            "[3.0,4.0,5.0]\n",
+            assertQuery("""
+                            ARRAY
+                            [1.0,2.0]
+                            [3.0,4.0,5.0]
+                            """,
                     "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT ARRAY[3.0, 4.0, 5.0] FROM long_sequence(1)",
                     null, null, false, true
             );
 
             // with scalar double
-            assertQuery("ARRAY\n" +
-                            "[1.0,2.0]\n" +
-                            "[3.0]\n",
+            assertQuery("""
+                            ARRAY
+                            [1.0,2.0]
+                            [3.0]
+                            """,
                     "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 3.0 FROM long_sequence(1)",
                     null, null, false, true
             );
 
             // with double::null
-            assertQuery("ARRAY\n" +
-                            "[1.0,2.0]\n" +
-                            "null\n",
+            assertQuery("""
+                            ARRAY
+                            [1.0,2.0]
+                            null
+                            """,
                     "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT * from tango",
                     null, null, false, true
             );
 
             // with string
-            assertQuery("ARRAY\n" +
-                            "[1.0,2.0]\n" +
-                            "foo\n",
+            assertQuery("""
+                            ARRAY
+                            [1.0,2.0]
+                            foo
+                            """,
                     "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 'foo' FROM long_sequence(1)",
                     null, null, false, true
             );
 
             // 1D and 2D arrays
-            assertQuery("ARRAY\n" +
-                            "[[1.0,2.0]]\n" +
-                            "[[3.0,4.0],[5.0,6.0]]\n",
+            assertQuery("""
+                            ARRAY
+                            [[1.0,2.0]]
+                            [[3.0,4.0],[5.0,6.0]]
+                            """,
                     "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT ARRAY[[3.0, 4.0], [5.0, 6.0]] FROM long_sequence(1)",
                     null, null, false, true
             );
@@ -2774,27 +3044,29 @@ public class ArrayTest extends AbstractCairoTest {
             execute("create table z as (x union all y)");
 
             assertSql(
-                    "ts\tarr\n" +
-                            "1970-01-06T18:53:20.000000Z\t[[null,0.20447441837877756],[null,null]]\n" +
-                            "1970-01-06T18:53:21.000000Z\t[[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131],[null,0.3100545983862456],[0.1985581797355932,0.33608255572515877],[0.690540444367637,null],[0.21583224269349388,0.15786635599554755],[null,null],[0.12503042190293423,null],[0.9687423276940171,null],[null,null],[null,null],[null,null],[0.7883065830055033,null],[0.4138164748227684,0.5522494170511608],[0.2459345277606021,null]]\n" +
-                            "1970-01-06T18:53:22.000000Z\t[[0.7643643144642823,null],[null,null],[0.18769708157331322,0.16381374773748514],[0.6590341607692226,null],[null,null],[0.8837421918800907,0.05384400312338511],[null,0.7230015763133606],[0.12105630273556178,null],[0.5406709846540508,null],[0.9269068519549879,null],[null,null],[0.1202416087573498,null]]\n" +
-                            "1970-01-06T18:53:23.000000Z\t[[null,null,0.4971342426836798,null],[0.5065228336156442,null,null,0.03167026265669903],[null,null,0.2879973939681931,null],[null,null,null,0.24008362859107102]]\n" +
-                            "1970-01-06T18:53:24.000000Z\t[[0.2185865835029681,null],[0.24079155981438216,0.10643046345788132],[0.5244255672762055,0.0171850098561398],[0.09766834710724581,null],[0.053594208204197136,0.26369335635512836],[0.22895725920713628,0.9820662735672192],[null,0.32424562653969957],[0.8998921791869131,null],[null,null],[0.33746104579374825,0.18740488620384377],[0.10527282622013212,0.8291193369353376],[0.32673950830571696,null],[0.18336217509438513,0.9862476361578772],[0.8693768930398866,0.8189713915910615]]\n" +
-                            "1970-01-06T18:53:25.000000Z\t[[0.29659296554924697,0.24642266252221556],[null,null],[null,0.13264292470570205],[0.38422543844715473,null],[null,null],[null,0.7668146556860689],[null,0.05158459929273784],[null,null]]\n" +
-                            "1970-01-06T18:53:26.000000Z\t[[0.3568111021227658,0.05758228485190853,0.6729405590773638,null,0.5716129058692643],[0.05094182589333662,null,null,0.4609277382153818,0.5691053034055052],[0.12663676991275652,0.11371841836123953,null,null,0.7203170014947307],[null,null,null,null,0.7704949839249925],[0.8144207168582307,null,null,null,0.2836347139481469]]\n" +
-                            "1970-01-06T18:53:27.000000Z\t[[0.08675950660182763,null],[0.741970173888595,0.25353478516307626],[0.2739985338660311,null],[0.8001632261203552,null],[0.7404912278395417,0.08909442703907178],[0.8439276969435359,null],[null,0.08712007604601191]]\n" +
-                            "1970-01-06T18:53:28.000000Z\t[[0.5637742551872849,null],[null,null],[0.7195457109208119,null],[0.23493793601747937,null],[0.6334964081687151,0.6721404635638454]]\n" +
-                            "1970-01-06T18:53:29.000000Z\t[[0.17405556853190263,0.823395724427589,null,0.8108032283138068,null,null,0.7530494527849502,0.49153268154777974,0.0024457698760806945,0.29168465906260244,0.3121271759430503,0.3004874521886858],[null,0.7653255982993546,null,null,null,null,0.37873228328689634,null,0.7272119755925095,null,0.7467013668130107,0.5794665369115236],[null,0.5308756766878475,0.03192108074989719,null,0.17498425722537903,null,0.34257201464152764,null,null,0.29242748475227853,null,0.11296257318851766],[null,0.23405440872043592,0.1479745625593103,null,0.8115426881784433,null,0.32093405888189597,null,0.04321289940104611,0.8217652538598936,0.6397125243912908,0.29419791719259025],[0.865629565918467,null,null,0.16923843067953104,0.7198854503668188,0.5174107449677378,0.38509066982448115,null,null,null,0.5475429391562822,0.6977332212252165],[null,null,0.4268921400209912,0.9997797234031688,0.5234892454427748,null,null,null,null,0.5169565007469263,0.7039785408034679,0.8461211697505234],[null,0.537020248377422,0.8766908646423737,null,null,0.31852531484741486,null,0.605050319285447,0.9683642405595932,0.3549235578142891,0.04211401699125483,null],[null,0.0032519916115479885,0.2703179181043681,0.729536610842768,0.3317641556575974,0.8895915828662114,null,null,null,null,0.1599211504269954,0.5251698097331752],[null,0.18442756220221035,null,0.48422587819911567,0.2970515836513553,null,0.7826107801293182,null,0.3218450864634881,0.8034049105590781,null,null],[0.40425101135606667,0.9412663583926286,null,null,0.8376764297590714,0.15241451173695408,null,0.743599174001969,null,null,0.9001273812517414,0.5629104624260136],[0.6001215594928115,0.8920252905736616,0.09977691656157406,null,0.2862717364877081,null,null,null,0.8853675629694284,4.945923013344178E-5,null,0.0016532800623808575]]\n" +
-                            "1970-01-01T00:00:00.000000Z\t[[0.3489278573518253,null,null,0.07383464174908916,0.8791439438812569]]\n" +
-                            "1970-01-01T00:01:40.000000Z\t[[null,0.10820602386069589,null,null,0.11286092606280262,0.7370823954391381,null,0.533524384058538,0.6749208267946962,null,0.3124458010612313,null]]\n" +
-                            "1970-01-01T00:03:20.000000Z\t[[0.4137003695612732,null,null,0.32449127848036263,0.41886400558338654,0.8409080254825717,0.06001827721556019,null,null,null]]\n" +
-                            "1970-01-01T00:05:00.000000Z\t[[null,null]]\n" +
-                            "1970-01-01T00:06:40.000000Z\t[[null,null,null,0.5815065874358148,null]]\n" +
-                            "1970-01-01T00:08:20.000000Z\t[[0.020390884194626757,null,null]]\n" +
-                            "1970-01-01T00:10:00.000000Z\t[[0.42044603754797416,0.47603861281459736,0.9815126662068089,0.22252546562577824]]\n" +
-                            "1970-01-01T00:11:40.000000Z\t[[null,0.8869397617459538,null,null,null,null,null]]\n" +
-                            "1970-01-01T00:13:20.000000Z\t[[null,null,0.6993909595959196]]\n" +
-                            "1970-01-01T00:15:00.000000Z\t[[0.8148792629172324,null,0.9926343068414145,null,0.8303845449546206,null,null,null,0.7636347764664544,0.2195743166842714,null,null,null,0.5823910118974169,0.05942010834028011]]\n",
+                    """
+                            ts\tarr
+                            1970-01-06T18:53:20.000000Z\t[[null,0.20447441837877756],[null,null]]
+                            1970-01-06T18:53:21.000000Z\t[[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131],[null,0.3100545983862456],[0.1985581797355932,0.33608255572515877],[0.690540444367637,null],[0.21583224269349388,0.15786635599554755],[null,null],[0.12503042190293423,null],[0.9687423276940171,null],[null,null],[null,null],[null,null],[0.7883065830055033,null],[0.4138164748227684,0.5522494170511608],[0.2459345277606021,null]]
+                            1970-01-06T18:53:22.000000Z\t[[0.7643643144642823,null],[null,null],[0.18769708157331322,0.16381374773748514],[0.6590341607692226,null],[null,null],[0.8837421918800907,0.05384400312338511],[null,0.7230015763133606],[0.12105630273556178,null],[0.5406709846540508,null],[0.9269068519549879,null],[null,null],[0.1202416087573498,null]]
+                            1970-01-06T18:53:23.000000Z\t[[null,null,0.4971342426836798,null],[0.5065228336156442,null,null,0.03167026265669903],[null,null,0.2879973939681931,null],[null,null,null,0.24008362859107102]]
+                            1970-01-06T18:53:24.000000Z\t[[0.2185865835029681,null],[0.24079155981438216,0.10643046345788132],[0.5244255672762055,0.0171850098561398],[0.09766834710724581,null],[0.053594208204197136,0.26369335635512836],[0.22895725920713628,0.9820662735672192],[null,0.32424562653969957],[0.8998921791869131,null],[null,null],[0.33746104579374825,0.18740488620384377],[0.10527282622013212,0.8291193369353376],[0.32673950830571696,null],[0.18336217509438513,0.9862476361578772],[0.8693768930398866,0.8189713915910615]]
+                            1970-01-06T18:53:25.000000Z\t[[0.29659296554924697,0.24642266252221556],[null,null],[null,0.13264292470570205],[0.38422543844715473,null],[null,null],[null,0.7668146556860689],[null,0.05158459929273784],[null,null]]
+                            1970-01-06T18:53:26.000000Z\t[[0.3568111021227658,0.05758228485190853,0.6729405590773638,null,0.5716129058692643],[0.05094182589333662,null,null,0.4609277382153818,0.5691053034055052],[0.12663676991275652,0.11371841836123953,null,null,0.7203170014947307],[null,null,null,null,0.7704949839249925],[0.8144207168582307,null,null,null,0.2836347139481469]]
+                            1970-01-06T18:53:27.000000Z\t[[0.08675950660182763,null],[0.741970173888595,0.25353478516307626],[0.2739985338660311,null],[0.8001632261203552,null],[0.7404912278395417,0.08909442703907178],[0.8439276969435359,null],[null,0.08712007604601191]]
+                            1970-01-06T18:53:28.000000Z\t[[0.5637742551872849,null],[null,null],[0.7195457109208119,null],[0.23493793601747937,null],[0.6334964081687151,0.6721404635638454]]
+                            1970-01-06T18:53:29.000000Z\t[[0.17405556853190263,0.823395724427589,null,0.8108032283138068,null,null,0.7530494527849502,0.49153268154777974,0.0024457698760806945,0.29168465906260244,0.3121271759430503,0.3004874521886858],[null,0.7653255982993546,null,null,null,null,0.37873228328689634,null,0.7272119755925095,null,0.7467013668130107,0.5794665369115236],[null,0.5308756766878475,0.03192108074989719,null,0.17498425722537903,null,0.34257201464152764,null,null,0.29242748475227853,null,0.11296257318851766],[null,0.23405440872043592,0.1479745625593103,null,0.8115426881784433,null,0.32093405888189597,null,0.04321289940104611,0.8217652538598936,0.6397125243912908,0.29419791719259025],[0.865629565918467,null,null,0.16923843067953104,0.7198854503668188,0.5174107449677378,0.38509066982448115,null,null,null,0.5475429391562822,0.6977332212252165],[null,null,0.4268921400209912,0.9997797234031688,0.5234892454427748,null,null,null,null,0.5169565007469263,0.7039785408034679,0.8461211697505234],[null,0.537020248377422,0.8766908646423737,null,null,0.31852531484741486,null,0.605050319285447,0.9683642405595932,0.3549235578142891,0.04211401699125483,null],[null,0.0032519916115479885,0.2703179181043681,0.729536610842768,0.3317641556575974,0.8895915828662114,null,null,null,null,0.1599211504269954,0.5251698097331752],[null,0.18442756220221035,null,0.48422587819911567,0.2970515836513553,null,0.7826107801293182,null,0.3218450864634881,0.8034049105590781,null,null],[0.40425101135606667,0.9412663583926286,null,null,0.8376764297590714,0.15241451173695408,null,0.743599174001969,null,null,0.9001273812517414,0.5629104624260136],[0.6001215594928115,0.8920252905736616,0.09977691656157406,null,0.2862717364877081,null,null,null,0.8853675629694284,4.945923013344178E-5,null,0.0016532800623808575]]
+                            1970-01-01T00:00:00.000000Z\t[[0.3489278573518253,null,null,0.07383464174908916,0.8791439438812569]]
+                            1970-01-01T00:01:40.000000Z\t[[null,0.10820602386069589,null,null,0.11286092606280262,0.7370823954391381,null,0.533524384058538,0.6749208267946962,null,0.3124458010612313,null]]
+                            1970-01-01T00:03:20.000000Z\t[[0.4137003695612732,null,null,0.32449127848036263,0.41886400558338654,0.8409080254825717,0.06001827721556019,null,null,null]]
+                            1970-01-01T00:05:00.000000Z\t[[null,null]]
+                            1970-01-01T00:06:40.000000Z\t[[null,null,null,0.5815065874358148,null]]
+                            1970-01-01T00:08:20.000000Z\t[[0.020390884194626757,null,null]]
+                            1970-01-01T00:10:00.000000Z\t[[0.42044603754797416,0.47603861281459736,0.9815126662068089,0.22252546562577824]]
+                            1970-01-01T00:11:40.000000Z\t[[null,0.8869397617459538,null,null,null,null,null]]
+                            1970-01-01T00:13:20.000000Z\t[[null,null,0.6993909595959196]]
+                            1970-01-01T00:15:00.000000Z\t[[0.8148792629172324,null,0.9926343068414145,null,0.8303845449546206,null,null,null,0.7636347764664544,0.2195743166842714,null,null,null,0.5823910118974169,0.05942010834028011]]
+                            """,
                     "z"
             );
         });
@@ -2825,9 +3097,11 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             execute("insert into alpha values (ARRAY[1.0, 2.0, 3.0])");
-            assertQuery("arr\n" +
-                            "[1.0,2.0]\n" +
-                            "[1.0,2.0,3.0]\n",
+            assertQuery("""
+                            arr
+                            [1.0,2.0]
+                            [1.0,2.0,3.0]
+                            """,
                     "select * from alpha union select * from bravo",
                     null,
                     null,
@@ -2836,9 +3110,11 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             execute("insert into bravo values (ARRAY[1.0, 2.0, 3.0])");
-            assertQuery("arr\n" +
-                            "[1.0,2.0]\n" +
-                            "[1.0,2.0,3.0]\n",
+            assertQuery("""
+                            arr
+                            [1.0,2.0]
+                            [1.0,2.0,3.0]
+                            """,
                     "select * from alpha union select * from bravo",
                     null,
                     null,
@@ -2847,10 +3123,12 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             execute("insert into alpha values (ARRAY[])");
-            assertQuery("arr\n" +
-                            "[1.0,2.0]\n" +
-                            "[1.0,2.0,3.0]\n" +
-                            "[]\n",
+            assertQuery("""
+                            arr
+                            [1.0,2.0]
+                            [1.0,2.0,3.0]
+                            []
+                            """,
                     "select * from alpha union select * from bravo",
                     null,
                     null,
@@ -2859,10 +3137,12 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             execute("insert into bravo values (ARRAY[])");
-            assertQuery("arr\n" +
-                            "[1.0,2.0]\n" +
-                            "[1.0,2.0,3.0]\n" +
-                            "[]\n",
+            assertQuery("""
+                            arr
+                            [1.0,2.0]
+                            [1.0,2.0,3.0]
+                            []
+                            """,
                     "select * from alpha union select * from bravo",
                     null,
                     null,
@@ -2871,11 +3151,13 @@ public class ArrayTest extends AbstractCairoTest {
             );
 
             execute("insert into alpha values (null)");
-            assertQuery("arr\n" +
-                            "[1.0,2.0]\n" +
-                            "[1.0,2.0,3.0]\n" +
-                            "[]\n" +
-                            "null\n",
+            assertQuery("""
+                            arr
+                            [1.0,2.0]
+                            [1.0,2.0,3.0]
+                            []
+                            null
+                            """,
                     "select * from alpha union select * from bravo",
                     null,
                     null,

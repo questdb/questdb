@@ -192,6 +192,11 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getComplexity() {
+            return COMPLEXITY_GEO;
+        }
+
+        @Override
         public double getDouble(Record rec) {
             final double lat2 = lat2Func.getDouble(rec);
             final double lon2 = lon2Func.getDouble(rec);
@@ -312,6 +317,11 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
             lon1Func.cursorClosed();
             lat2Func.cursorClosed();
             lon2Func.cursorClosed();
+        }
+
+        @Override
+        public int getComplexity() {
+            return COMPLEXITY_GEO;
         }
 
         @Override

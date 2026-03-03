@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
@@ -50,7 +49,6 @@ import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -65,13 +63,13 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
  * Since Date type does not support being used as a designated timestamp,
  * some related methods are not implemented and will throw UnsupportedOperationException.
  */
-public class MillsTimestampDriver implements TimestampDriver {
-    public static final TimestampDriver INSTANCE = new MillsTimestampDriver();
+public class MillisTimestampDriver implements TimestampDriver {
+    public static final TimestampDriver INSTANCE = new MillisTimestampDriver();
+    private final Clock clock = MillisecondClockImpl.INSTANCE;
     private final ColumnTypeConverter.Fixed2VarConverter converterDate2Str = this::append;
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Date = this::appendToMem;
-    private Clock clock = MillisecondClockImpl.INSTANCE;
 
-    private MillsTimestampDriver() {
+    private MillisTimestampDriver() {
     }
 
     public static long floor(CharSequence value) throws NumericException {
@@ -474,11 +472,11 @@ public class MillsTimestampDriver implements TimestampDriver {
     @Override
     public TimestampCeilMethod getPartitionCeilMethod(int partitionBy) {
         return switch (partitionBy) {
-            case DAY -> MillsTimestampDriver::partitionCeilDD;
-            case MONTH -> MillsTimestampDriver::partitionCeilMM;
-            case YEAR -> MillsTimestampDriver::partitionCeilYYYY;
-            case HOUR -> MillsTimestampDriver::partitionCeilHH;
-            case WEEK -> MillsTimestampDriver::partitionCeilWW;
+            case DAY -> MillisTimestampDriver::partitionCeilDD;
+            case MONTH -> MillisTimestampDriver::partitionCeilMM;
+            case YEAR -> MillisTimestampDriver::partitionCeilYYYY;
+            case HOUR -> MillisTimestampDriver::partitionCeilHH;
+            case WEEK -> MillisTimestampDriver::partitionCeilWW;
             default -> null;
         };
     }
@@ -557,7 +555,7 @@ public class MillsTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
+    public TimestampSampler getTimestampSampler(long interval, char timeUnit, int position) {
         throw new UnsupportedOperationException();
     }
 
@@ -957,11 +955,6 @@ public class MillsTimestampDriver implements TimestampDriver {
     @Override
     public long parsePartitionDirName(@NotNull CharSequence partitionName, int partitionBy, int lo, int hi) {
         throw new UnsupportedOperationException();
-    }
-
-    @TestOnly
-    public void setTicker(Clock clock) {
-        this.clock = clock;
     }
 
     @Override

@@ -27,12 +27,11 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
 /**
  * Abstract base class for functions that cast values to boolean.
  */
-public abstract class AbstractCastToBooleanFunction extends BooleanFunction implements UnaryFunction {
+public abstract class AbstractCastToBooleanFunction extends BooleanFunction implements CastFunction {
     /**
      * The function argument to cast.
      */

@@ -53,6 +53,11 @@ public class CursorFunction implements Function {
     }
 
     @Override
+    public int getComplexity() {
+        return COMPLEXITY_SUBQUERY;
+    }
+
+    @Override
     public ArrayView getArray(Record rec) {
         throw new UnsupportedOperationException();
     }
