@@ -2230,11 +2230,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
                         markColumnRemoved(index, type);
 
-                        if (securityContext != null) {
-                            ddlListener.onColumnDropped(metadata.getTableToken(), columnName, cascadePermissions);
+                        try {
+                            if (securityContext != null) {
+                                ddlListener.onColumnDropped(metadata.getTableToken(), columnName, cascadePermissions);
+                            }
+                        } finally {
+                            path.trimTo(pathSize);
                         }
-
-                        path.trimTo(pathSize);
                         LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName).I$();
                     } else {
@@ -2285,11 +2287,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
 
-                        if (securityContext != null) {
-                            ddlListener.onColumnRenamed(metadata.getTableToken(), columnName, newColumnName);
+                        try {
+                            if (securityContext != null) {
+                                ddlListener.onColumnRenamed(metadata.getTableToken(), columnName, newColumnName);
+                            }
+                        } finally {
+                            path.trimTo(pathSize);
                         }
-
-                        path.trimTo(pathSize);
                         LOG.info().$("renamed column in WAL [path=")
                                 .$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").$safe(columnName)

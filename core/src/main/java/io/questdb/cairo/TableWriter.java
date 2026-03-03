@@ -711,10 +711,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            if (securityContext != null) {
-                ddlListener.onColumnAdded(securityContext, tableToken, columnName);
-            }
-
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
@@ -722,6 +718,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw err;
         } catch (Throwable th) {
             throwDistressException(th);
+        }
+
+        if (securityContext != null) {
+            ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
     }
 
@@ -2729,10 +2729,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishColumnPurge();
 
-            if (securityContext != null) {
-                ddlListener.onColumnDropped(tableToken, columnName, cascadePermissions);
-            }
-
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
@@ -2741,6 +2737,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw err;
         } catch (Throwable th) {
             throwDistressException(th);
+        }
+
+        if (securityContext != null) {
+            ddlListener.onColumnDropped(tableToken, columnName, cascadePermissions);
         }
     }
 
@@ -2831,10 +2831,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 designatedTimestampColumnName = newColumnName;
             }
 
-            if (securityContext != null) {
-                ddlListener.onColumnRenamed(tableToken, columnName, newColumnName);
-            }
-
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
@@ -2842,6 +2838,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("RENAMED column '").$safe(columnName).$("' to '").$safe(newColumnName).$("' from ").$substr(pathRootSize, path).$();
         } catch (Throwable e) {
             handleHousekeepingException(e);
+        }
+
+        if (securityContext != null) {
+            ddlListener.onColumnRenamed(tableToken, columnName, newColumnName);
         }
     }
 
