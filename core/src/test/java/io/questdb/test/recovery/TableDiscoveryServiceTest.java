@@ -105,6 +105,9 @@ public class TableDiscoveryServiceTest extends AbstractCairoTest {
             String tableName = "disc_corrupt_meta";
             createTableWithRows(tableName, false, 1);
 
+            // release all engine pools so files can be truncated on Windows
+            engine.clear();
+
             try (Path metaPath = tablePathOf(tableName)) {
                 metaPath.concat(TableUtils.META_FILE_NAME);
                 long fd = FF.openRW(metaPath.$(), CairoConfiguration.O_NONE);

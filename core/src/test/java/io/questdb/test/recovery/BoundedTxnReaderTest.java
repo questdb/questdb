@@ -370,6 +370,9 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
             final String tableName = "txn_truncated";
             createTableWithTxnPartitions(tableName, 5);
 
+            // release all engine pools so files can be truncated on Windows
+            engine.clear();
+
             try (Path txnPath = new Path()) {
                 Path path = txnPathOf(tableName, txnPath);
                 long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
@@ -391,6 +394,9 @@ public class BoundedTxnReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String tableName = "txn_short";
             createTableWithTxnPartitions(tableName, 2);
+
+            // release all engine pools so files can be truncated on Windows
+            engine.clear();
 
             try (Path txnPath = new Path()) {
                 Path path = txnPathOf(tableName, txnPath);

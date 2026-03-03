@@ -584,6 +584,9 @@ public class RecoverySessionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTableWithRows("nav_corrupt_meta", 2);
 
+            // release all engine pools so files can be truncated on Windows
+            engine.clear();
+
             // truncate _meta to 10 bytes
             try (Path path = new Path()) {
                 TableToken token = engine.verifyTableName("nav_corrupt_meta");
@@ -5633,6 +5636,8 @@ public class RecoverySessionTest extends AbstractCairoTest {
     }
 
     private static void truncateColumnFileTo(String tableName, String partitionDirName, String columnFileName, long targetSize) {
+        // release all engine pools so files can be truncated on Windows
+        engine.clear();
         TableToken token = engine.verifyTableName(tableName);
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(token).concat(partitionDirName).concat(columnFileName);
@@ -5685,8 +5690,8 @@ public class RecoverySessionTest extends AbstractCairoTest {
         }
 
         return new String[]{
-                outBytes.toString(StandardCharsets.UTF_8),
-                errBytes.toString(StandardCharsets.UTF_8)
+                outBytes.toString(StandardCharsets.UTF_8).replace("\r\n", "\n"),
+                errBytes.toString(StandardCharsets.UTF_8).replace("\r\n", "\n")
         };
     }
 

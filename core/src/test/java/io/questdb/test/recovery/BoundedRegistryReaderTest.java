@@ -358,6 +358,10 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             execute("create table trunc_entry (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
             drainWalQueue(engine);
 
+            // release all engine pools and close name registry so files can be truncated on Windows
+            engine.clear();
+            engine.closeNameRegistry();
+
             // truncate file mid-entry (after header but before first entry completes)
             String registryPath = findRegistryPath();
             long fd = FF.openRW(Path.getThreadLocal(registryPath).$(), CairoConfiguration.O_NONE);
@@ -380,6 +384,10 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
             execute("create table trunc_hdr (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
             drainWalQueue(engine);
 
+            // release all engine pools and close name registry so files can be truncated on Windows
+            engine.clear();
+            engine.closeNameRegistry();
+
             // truncate file to 4 bytes (header needs 8)
             String registryPath = findRegistryPath();
             long fd = FF.openRW(Path.getThreadLocal(registryPath).$(), CairoConfiguration.O_NONE);
@@ -400,6 +408,10 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table trunc_str (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
             drainWalQueue(engine);
+
+            // release all engine pools and close name registry so files can be truncated on Windows
+            engine.clear();
+            engine.closeNameRegistry();
 
             // set a large char count for the tableName but truncate file so data isn't there
             String registryPath = findRegistryPath();
@@ -475,6 +487,10 @@ public class BoundedRegistryReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table zero_len (val long, ts timestamp) timestamp(ts) partition by DAY WAL");
             drainWalQueue(engine);
+
+            // release all engine pools and close name registry so files can be truncated on Windows
+            engine.clear();
+            engine.closeNameRegistry();
 
             String registryPath = findRegistryPath();
             long fd = FF.openRW(Path.getThreadLocal(registryPath).$(), CairoConfiguration.O_NONE);

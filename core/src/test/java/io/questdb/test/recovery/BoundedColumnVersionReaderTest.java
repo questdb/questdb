@@ -101,6 +101,9 @@ public class BoundedColumnVersionReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSimpleTable("cv_trunc", 2);
 
+            // release all engine pools so files can be truncated on Windows
+            engine.clear();
+
             try (Path path = new Path()) {
                 TableToken token = engine.verifyTableName("cv_trunc");
                 path.of(configuration.getDbRoot()).concat(token).concat("_cv");

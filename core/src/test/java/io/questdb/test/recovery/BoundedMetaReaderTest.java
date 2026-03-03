@@ -90,6 +90,9 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTableWithTypes("meta_empty");
 
+            // release all engine pools so files can be truncated on Windows
+            engine.clear();
+
             try (Path metaPath = new Path()) {
                 Path path = metaPathOf("meta_empty", metaPath);
                 long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
@@ -122,6 +125,9 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTableWithTypes("meta_short_names");
 
+            // release all engine pools so files can be truncated on Windows
+            engine.clear();
+
             try (Path metaPath = new Path()) {
                 Path path = metaPathOf("meta_short_names", metaPath);
                 long fd = FF.openRW(path.$(), CairoConfiguration.O_NONE);
@@ -146,6 +152,9 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
     public void testReadMetaFileTooShortForColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithTypes("meta_short_types");
+
+            // release all engine pools so files can be truncated on Windows
+            engine.clear();
 
             try (Path metaPath = new Path()) {
                 Path path = metaPathOf("meta_short_types", metaPath);
@@ -173,6 +182,9 @@ public class BoundedMetaReaderTest extends AbstractCairoTest {
     public void testReadMetaFileTooShortForHeader() throws Exception {
         assertMemoryLeak(() -> {
             createTableWithTypes("meta_short_hdr");
+
+            // release all engine pools so files can be truncated on Windows
+            engine.clear();
 
             try (Path metaPath = new Path()) {
                 Path path = metaPathOf("meta_short_hdr", metaPath);

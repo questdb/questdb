@@ -520,6 +520,9 @@ public class BoundedSeqTxnLogReaderTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(tableName);
             CharSequence dbRoot = engine.getConfiguration().getDbRoot();
 
+            // release all engine pools so directories can be renamed on Windows
+            engine.clear();
+
             // rename txn_seq -> seq to simulate an older database layout
             try (Path src = new Path(); Path dst = new Path()) {
                 LPSZ srcLpsz = src.of(dbRoot).concat(tableToken).concat(WalUtils.SEQ_DIR).$();
