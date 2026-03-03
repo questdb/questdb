@@ -206,7 +206,12 @@ impl DataPageSlicer for DataPageDynSlicer<'_> {
 
 impl<'a> DataPageDynSlicer<'a> {
     pub fn new(data: &'a [u8], row_count: usize, elem_size: usize) -> Self {
-        Self { data, pos: 0, sliced_row_count: row_count, elem_size }
+        Self {
+            data,
+            pos: 0,
+            sliced_row_count: row_count,
+            elem_size,
+        }
     }
 }
 

@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
@@ -242,6 +243,18 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     public void recordAtRowIndex(Record record, long rowIndex) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryRecord.setRowIndex(rowIndex);
+    }
+
+    @Override
+    public void seekEstimate(long timestamp) {
+        TimeFrameCursor.findSeekEstimate(
+                timestamp,
+                frameCount,
+                framePartitionIndexes,
+                partitionCeilings,
+                partitionTimestamps,
+                timeFrame
+        );
     }
 
     @Override

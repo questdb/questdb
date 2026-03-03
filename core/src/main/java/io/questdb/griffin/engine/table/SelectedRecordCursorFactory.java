@@ -334,6 +334,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void seekEstimate(long timestamp) {
+            delegate.seekEstimate(timestamp);
+        }
+
+        @Override
         public void toTop() {
             delegate.toTop();
         }
@@ -619,6 +624,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         public void recordAtRowIndex(Record record, long rowIndex) {
             record = ((SelectedRecord) record).getBaseRecord();
             baseCursor.recordAtRowIndex(record, rowIndex);
+        }
+
+        @Override
+        public void seekEstimate(long timestamp) {
+            baseCursor.seekEstimate(timestamp);
         }
 
         @Override
