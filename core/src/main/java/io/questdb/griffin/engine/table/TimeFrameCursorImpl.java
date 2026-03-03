@@ -299,9 +299,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         if (result == -1) {
             timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
         } else {
-            timeFrame.ofEstimate(result,
+            timeFrame.ofEstimate(
+                    result,
                     partitionTimestamps.getQuick(result),
-                    partitionCeilings.getQuick(result));
+                    partitionCeilings.getQuick(result)
+            );
         }
     }
 
