@@ -29,101 +29,15 @@ steps:
   - bash: git clone --depth 1 https://github.com/questdb/java-questdb-client.git client-main
     displayName: "Clone java-questdb-client main"
 
-  # --- Default config: start server, run tests, stop server ---
-  - bash: |
-      set -e
-      mkdir -p questdb-data
-      cp -r client-main/ci/confs/default questdb-data/conf
-      mkdir -p logs
+  - template: run-client-tests.yml
+    parameters:
+      configName: default
+      authEnabled: "false"
 
-      java -p core/target/questdb-*-SNAPSHOT.jar \
-        -m io.questdb/io.questdb.ServerMain \
-        -d questdb-data > logs/questdb.log 2>&1 &
-      echo $! > questdb.pid
-
-      echo "Waiting for QuestDB to start..."
-      for i in {1..30}; do
-        if grep -q "server-main enjoy" logs/questdb.log; then
-          echo "Server started."
-          break
-        fi
-        echo "Waiting..."
-        sleep 2
-      done
-
-      if ! grep -q "server-main enjoy" logs/questdb.log; then
-        echo "QuestDB failed to start:"
-        cat logs/questdb.log
-        exit 1
-      fi
-    displayName: "Start QuestDB (default config)"
-
-  - task: Maven@3
-    displayName: "Run client tests (default config)"
-    inputs:
-      mavenPomFile: "client-main/core/pom.xml"
-      jdkVersionOption: "1.17"
-      goals: "test"
-      options: "--batch-mode -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-    env:
-      QUESTDB_RUNNING: "true"
-      QUESTDB_ILP_TCP_AUTH_ENABLE: "false"
-
-  - bash: |
-      echo "Stopping QuestDB server..."
-      kill -TERM "$(cat questdb.pid)" || true
-      rm -f questdb.pid
-      rm -rf questdb-data
-    displayName: "Stop QuestDB (default config)"
-    condition: always()
-
-  # --- Authenticated config: start server, run tests, stop server ---
-  - bash: |
-      set -e
-      mkdir -p questdb-data
-      cp -r client-main/ci/confs/authenticated questdb-data/conf
-      mkdir -p logs
-
-      java -p core/target/questdb-*-SNAPSHOT.jar \
-        -m io.questdb/io.questdb.ServerMain \
-        -d questdb-data > logs/questdb-auth.log 2>&1 &
-      echo $! > questdb.pid
-
-      echo "Waiting for QuestDB to start..."
-      for i in {1..30}; do
-        if grep -q "server-main enjoy" logs/questdb-auth.log; then
-          echo "Server started."
-          break
-        fi
-        echo "Waiting..."
-        sleep 2
-      done
-
-      if ! grep -q "server-main enjoy" logs/questdb-auth.log; then
-        echo "QuestDB failed to start:"
-        cat logs/questdb-auth.log
-        exit 1
-      fi
-    displayName: "Start QuestDB (authenticated config)"
-
-  - task: Maven@3
-    displayName: "Run client tests (authenticated config)"
-    inputs:
-      mavenPomFile: "client-main/core/pom.xml"
-      jdkVersionOption: "1.17"
-      goals: "test"
-      options: "--batch-mode -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-    env:
-      QUESTDB_RUNNING: "true"
-      QUESTDB_ILP_TCP_AUTH_ENABLE: "true"
-
-  - bash: |
-      echo "Stopping QuestDB server..."
-      kill -TERM "$(cat questdb.pid)" || true
-      rm -f questdb.pid
-      rm -rf questdb-data
-    displayName: "Stop QuestDB (authenticated config)"
-    condition: always()
+  - template: run-client-tests.yml
+    parameters:
+      configName: authenticated
+      authEnabled: "true"
 
   # --- On failure: archive logs ---
   - task: ArchiveFiles@2
