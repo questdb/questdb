@@ -34,8 +34,8 @@ pub const DECIMAL128_NULL: [u8; 16] = {
     let hi = i64::MIN.to_le_bytes();
     let lo = 0i64.to_le_bytes();
     [
-        hi[0], hi[1], hi[2], hi[3], hi[4], hi[5], hi[6], hi[7], lo[0], lo[1], lo[2], lo[3],
-        lo[4], lo[5], lo[6], lo[7],
+        hi[0], hi[1], hi[2], hi[3], hi[4], hi[5], hi[6], hi[7], lo[0], lo[1], lo[2], lo[3], lo[4],
+        lo[5], lo[6], lo[7],
     ]
 };
 pub const DECIMAL256_NULL: [u8; 32] = {
@@ -44,9 +44,9 @@ pub const DECIMAL256_NULL: [u8; 32] = {
     let lo = 0i64.to_le_bytes();
     let ll = 0i64.to_le_bytes();
     [
-        hh[0], hh[1], hh[2], hh[3], hh[4], hh[5], hh[6], hh[7], hi[0], hi[1], hi[2], hi[3],
-        hi[4], hi[5], hi[6], hi[7], lo[0], lo[1], lo[2], lo[3], lo[4], lo[5], lo[6], lo[7],
-        ll[0], ll[1], ll[2], ll[3], ll[4], ll[5], ll[6], ll[7],
+        hh[0], hh[1], hh[2], hh[3], hh[4], hh[5], hh[6], hh[7], hi[0], hi[1], hi[2], hi[3], hi[4],
+        hi[5], hi[6], hi[7], lo[0], lo[1], lo[2], lo[3], lo[4], lo[5], lo[6], lo[7], ll[0], ll[1],
+        ll[2], ll[3], ll[4], ll[5], ll[6], ll[7],
     ]
 };
 
