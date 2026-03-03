@@ -22,23 +22,23 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.groupby;
+package io.questdb.test.griffin.engine.functions.groupby.arrayelem;
 
 import org.junit.Test;
 
-public class DoubleArrayElemMaxParallelGroupByTest extends AbstractDoubleArrayElemParallelGroupByTest {
+public class DoubleArrayElemMinParallelGroupByTest extends AbstractDoubleArrayElemParallelGroupByTest {
 
     @Override
     protected String funcName() {
-        return "array_elem_max";
+        return "array_elem_min";
     }
 
     @Test
     public void testParallelMergeDifferentShapes() throws Exception {
         assertKeyedParallelGroupBy(
                 "grp\tarr\n" +
-                        "1\t[[13.0,14.0],[15.0,16.0]]\n" +
-                        "2\t[[150.0,160.0,170.0],[180.0,190.0,200.0]]\n",
+                        "1\t[[1.0,2.0],[3.0,4.0]]\n" +
+                        "2\t[[10.0,20.0,70.0],[30.0,40.0,100.0]]\n",
                 new String[][]{
                         {"2024-01-01T00:00:00", "1", "ARRAY[[1.0, 2.0], [3.0, 4.0]]"},
                         {"2024-01-01T01:00:00", "2", "ARRAY[[10.0, 20.0], [30.0, 40.0]]"},
@@ -56,8 +56,8 @@ public class DoubleArrayElemMaxParallelGroupByTest extends AbstractDoubleArrayEl
     public void testParallelMergeSameShape() throws Exception {
         assertKeyedParallelGroupBy(
                 "grp\tarr\n" +
-                        "1\t[[13.0,14.0],[15.0,16.0]]\n" +
-                        "2\t[[130.0,140.0],[150.0,160.0]]\n",
+                        "1\t[[1.0,2.0],[3.0,4.0]]\n" +
+                        "2\t[[10.0,20.0],[30.0,40.0]]\n",
                 new String[][]{
                         {"2024-01-01T00:00:00", "1", "ARRAY[[1.0, 2.0], [3.0, 4.0]]"},
                         {"2024-01-01T01:00:00", "2", "ARRAY[[10.0, 20.0], [30.0, 40.0]]"},
@@ -74,7 +74,7 @@ public class DoubleArrayElemMaxParallelGroupByTest extends AbstractDoubleArrayEl
     @Test
     public void testParallelDifferentShapes() throws Exception {
         assertParallelGroupBy("DOUBLE[][]",
-                "[[10.0,20.0,3.0],[30.0,40.0,6.0],[50.0,60.0,null],[70.0,80.0,null]]",
+                "[[1.0,2.0,3.0],[4.0,5.0,6.0],[50.0,60.0,null],[70.0,80.0,null]]",
                 new String[][]{
                         {"2024-01-01T00:00:00", "ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]"},
                         {"2024-01-02T00:00:00", "ARRAY[[10.0, 20.0], [30.0, 40.0], [50.0, 60.0], [70.0, 80.0]]"}
@@ -85,7 +85,7 @@ public class DoubleArrayElemMaxParallelGroupByTest extends AbstractDoubleArrayEl
     @Test
     public void testParallelOneGroupNull() throws Exception {
         assertParallelGroupBy("DOUBLE[][]",
-                "[[10.0,20.0,30.0],[40.0,50.0,60.0],[70.0,80.0,90.0]]",
+                "[[1.0,2.0,3.0],[4.0,5.0,6.0],[7.0,8.0,9.0]]",
                 new String[][]{
                         {"2024-01-01T00:00:00", "null"},
                         {"2024-01-02T00:00:00", "null"},
@@ -98,7 +98,7 @@ public class DoubleArrayElemMaxParallelGroupByTest extends AbstractDoubleArrayEl
     @Test
     public void testParallelSameShapes() throws Exception {
         assertParallelGroupBy("DOUBLE[][]",
-                "[[100.0,200.0,300.0],[400.0,500.0,600.0],[700.0,800.0,900.0]]",
+                "[[1.0,2.0,3.0],[4.0,5.0,6.0],[7.0,8.0,9.0]]",
                 new String[][]{
                         {"2024-01-01T00:00:00", "ARRAY[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]"},
                         {"2024-01-02T00:00:00", "ARRAY[[10.0, 20.0, 30.0], [40.0, 50.0, 60.0], [70.0, 80.0, 90.0]]"},

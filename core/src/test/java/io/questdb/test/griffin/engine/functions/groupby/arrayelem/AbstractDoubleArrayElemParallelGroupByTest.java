@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.groupby;
+package io.questdb.test.griffin.engine.functions.groupby.arrayelem;
 
 import io.questdb.PropertyKey;
 import io.questdb.mp.WorkerPool;
