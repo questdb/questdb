@@ -64,31 +64,18 @@ pub struct PlainBooleanDecoder<'a> {
 }
 
 impl<'a> PlainBooleanDecoder<'a> {
-    pub fn try_new(
-        values: &'a [u8],
-        row_count: usize,
-        buffers: &'a mut ColumnChunkBuffers,
-        null_value: u8,
-    ) -> ParquetResult<Self> {
-        if values.len() * 8 < row_count {
-            return Err(fmt_err!(
-                Layout,
-                "not enough bytes for plain boolean values: {} bytes * 8 < {} bits",
-                values.len(),
-                row_count
-            ));
-        }
+    pub fn new(values: &'a [u8], buffers: &'a mut ColumnChunkBuffers, null_value: u8) -> Self {
         let buffers_offset = buffers.data_vec.len();
-        Ok(Self {
+        Self {
             values,
             bit_offset: 0,
-            total_bits: row_count,
+            total_bits: values.len() * 8,
             buffers_ptr: buffers.data_vec.as_mut_ptr(),
             buffers,
             buffers_offset,
             null_value,
             error: Ok(()),
-        })
+        }
     }
 
     #[inline]
@@ -449,7 +436,7 @@ mod tests {
         // Bits (LSB-first): [1,0,1,1,0,0,1,0,1,1]
         let values = [0x4D, 0x03];
         let result = {
-            let mut decoder = PlainBooleanDecoder::try_new(&values, 10, &mut buffers, 0).unwrap();
+            let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
             decoder.reserve(10).unwrap();
             decoder.push_slice(10).unwrap();
             decoder.result()
@@ -468,7 +455,7 @@ mod tests {
         // Bits (LSB-first): [0,1,1,0,1,0]
         let values = [0x16];
         let result = {
-            let mut decoder = PlainBooleanDecoder::try_new(&values, 6, &mut buffers, 0).unwrap();
+            let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
             decoder.reserve(6).unwrap();
             decoder.skip(1).unwrap();
             decoder.push_slice(3).unwrap();
@@ -489,10 +476,11 @@ mod tests {
 
         let values = [0x05];
         let result = {
-            let mut decoder = PlainBooleanDecoder::try_new(&values, 3, &mut buffers, 0).unwrap();
-            decoder.reserve(4).unwrap();
-            decoder.push_slice(2).unwrap();
-            decoder.push_slice(2).unwrap();
+            let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
+            decoder.reserve(9).unwrap();
+            decoder.push_slice(4).unwrap();
+            decoder.push_slice(4).unwrap();
+            decoder.push_slice(1).unwrap();
             decoder.result()
         };
 

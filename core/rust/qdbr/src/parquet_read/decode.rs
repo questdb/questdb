@@ -1492,7 +1492,7 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
-                &mut PlainBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
+                &mut PlainBooleanDecoder::new(values_buffer, bufs, 0),
             )?;
             Ok(true)
         }
