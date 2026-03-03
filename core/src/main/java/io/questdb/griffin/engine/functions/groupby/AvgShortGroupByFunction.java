@@ -163,6 +163,11 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     }
 
     @Override
+    public boolean supportsBatchComputation() {
+        return true;
+    }
+
+    @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }

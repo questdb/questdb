@@ -46,63 +46,31 @@ import java.util.Collections;
 public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
 
     // SqlCompiler.isAssignableFrom
-    private static final int[] EQUIVALENT_NULL_TYPES = {
-            ColumnType.NULL,
-            ColumnType.BOOLEAN,
-            ColumnType.BYTE,
-            ColumnType.CHAR,
-            ColumnType.INT,
-            ColumnType.LONG,
-            ColumnType.DATE,
-            ColumnType.TIMESTAMP,
-            ColumnType.FLOAT,
-            ColumnType.DOUBLE,
-            ColumnType.SHORT,
-            ColumnType.STRING,
-            ColumnType.LONG256,
-            ColumnType.BINARY
-    };
-    private static final int[] EQUIVALENT_NULL_TYPES_NON_NULLABLE = {
-    };
-    private static final FunctionFactory[] EQ_FUNCS = {
-            new EqBinaryFunctionFactory(),
-            new EqBooleanFunctionFactory(),
-            new EqByteFunctionFactory(),
-            new EqCharCharFunctionFactory(),
-            new EqDoubleFunctionFactory(),
-            new EqIntFunctionFactory(),
-            new EqIntStrCFunctionFactory(),
-            new EqLong256FunctionFactory(),
-            new EqLong256StrFunctionFactory(),
-            new EqLongFunctionFactory(),
-            new EqShortFunctionFactory(),
-            new EqStrCharFunctionFactory(),
-            new EqStrFunctionFactory(),
-            new EqSymCharFunctionFactory(),
-            new EqSymStrFunctionFactory(),
-            new EqTimestampFunctionFactory()
-    };
-    private static final Record ILLEGAL_ACCESS_RECORD = (Record) Proxy.newProxyInstance(
-            Record.class.getClassLoader(),
-            new Class[]{Record.class},
-            (proxy, method, args) -> {
+    private static final int[] EQUIVALENT_NULL_TYPES = { ColumnType.NULL, ColumnType.BOOLEAN, ColumnType.BYTE,
+            ColumnType.CHAR, ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.FLOAT,
+            ColumnType.DOUBLE, ColumnType.SHORT, ColumnType.STRING, ColumnType.LONG256, ColumnType.BINARY };
+    private static final int[] EQUIVALENT_NULL_TYPES_NON_NULLABLE = {};
+    private static final FunctionFactory[] EQ_FUNCS = { new EqBinaryFunctionFactory(), new EqBooleanFunctionFactory(),
+            new EqByteFunctionFactory(), new EqCharCharFunctionFactory(), new EqDoubleFunctionFactory(),
+            new EqIntFunctionFactory(), new EqIntStrCFunctionFactory(), new EqLong256FunctionFactory(),
+            new EqLong256StrFunctionFactory(), new EqLongFunctionFactory(), new EqShortFunctionFactory(),
+            new EqStrCharFunctionFactory(), new EqStrFunctionFactory(), new EqSymCharFunctionFactory(),
+            new EqSymStrFunctionFactory(), new EqTimestampFunctionFactory() };
+    private static final Record ILLEGAL_ACCESS_RECORD = (Record) Proxy.newProxyInstance(Record.class.getClassLoader(),
+            new Class[] { Record.class }, (proxy, method, args) -> {
                 throw new IllegalAccessException();
-            }
-    );
-    private static final Object[] NULL_RECORD_ARG = {null};
-    private static final Class<?>[] RECORD_SIG = {Record.class};
-    private static final Record NULL_RECORD = (Record) Proxy.newProxyInstance(
-            Record.class.getClassLoader(),
-            new Class[]{Record.class},
-            (proxy, method, args) -> {
+            });
+    private static final Object[] NULL_RECORD_ARG = { null };
+    private static final Class<?>[] RECORD_SIG = { Record.class };
+    private static final Record NULL_RECORD = (Record) Proxy.newProxyInstance(Record.class.getClassLoader(),
+            new Class[] { Record.class }, (proxy, method, args) -> {
                 try {
                     Method constMethod = NullConstant.class.getMethod(method.getName(), RECORD_SIG);
                     return constMethod.invoke(NullConstant.NULL, NULL_RECORD_ARG);
                 } catch (UndeclaredThrowableException undeclared) {
                     return method.invoke(proxy, args);
                 }
-            }
-    );
+            });
 
     @Test
     public void testEqFunctionResolutionNonNullArgsForNonNullableTypes() throws SqlException {
@@ -171,22 +139,35 @@ public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
 
                 function = parseFunction("col0 = null", metadata, functionParser);
                 Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-                Assert.assertTrue("col0 = null " + ctx + " func=" + function.getClass().getName(), function.getBool(NULL_RECORD));
+                Assert.assertTrue("col0 = null " + ctx + " func=" + function.getClass().getName(),
+                        function.getBool(NULL_RECORD));
 
                 function = parseFunction("col1 = null", metadata, functionParser);
                 Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-                Assert.assertTrue("col1 = null " + ctx + " func=" + function.getClass().getName(), function.getBool(NULL_RECORD));
+                Assert.assertTrue("col1 = null " + ctx + " func=" + function.getClass().getName(),
+                        function.getBool(NULL_RECORD));
 
                 function = parseFunction("col0 = col0", metadata, functionParser);
                 Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-                Assert.assertTrue("col0 = col0 " + ctx + " func=" + function.getClass().getName(), function.getBool(NULL_RECORD));
+                // Bitmap-null types (BOOLEAN, BYTE, SHORT) correctly return false
+                // for NULL = NULL (SQL standard), unlike sentinel-based types where
+                // sentinel == sentinel is true.
+                if (ColumnType.needsNullBitmap(col0Type)) {
+                    Assert.assertFalse("col0 = col0 " + ctx + " func=" + function.getClass().getName(),
+                            function.getBool(NULL_RECORD));
+                } else {
+                    Assert.assertTrue("col0 = col0 " + ctx + " func=" + function.getClass().getName(),
+                            function.getBool(NULL_RECORD));
+                }
 
                 function = parseFunction("null = col0", metadata, functionParser);
                 Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-                Assert.assertTrue("null = col0 " + ctx + " func=" + function.getClass().getName(), function.getBool(NULL_RECORD));
+                Assert.assertTrue("null = col0 " + ctx + " func=" + function.getClass().getName(),
+                        function.getBool(NULL_RECORD));
                 function = parseFunction("null = col1", metadata, functionParser);
                 Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
-                Assert.assertTrue("null = col1 " + ctx + " func=" + function.getClass().getName(), function.getBool(NULL_RECORD));
+                Assert.assertTrue("null = col1 " + ctx + " func=" + function.getClass().getName(),
+                        function.getBool(NULL_RECORD));
             }
         }
     }

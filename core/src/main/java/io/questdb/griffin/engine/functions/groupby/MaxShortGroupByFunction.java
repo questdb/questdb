@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxShortGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +42,13 @@ public class MaxShortGroupByFunction extends IntFunction implements GroupByFunct
 
     public MaxShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putInt(valueIndex, Vect.maxShort(ptr, count));
+        }
     }
 
     @Override
@@ -61,6 +69,11 @@ public class MaxShortGroupByFunction extends IntFunction implements GroupByFunct
                 mapValue.putInt(valueIndex, val);
             }
         }
+    }
+
+    @Override
+    public int getComputeBatchArgType() {
+        return ColumnType.SHORT;
     }
 
     @Override
@@ -126,6 +139,11 @@ public class MaxShortGroupByFunction extends IntFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, Numbers.INT_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

@@ -104,8 +104,8 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);    // row id
-        columnTypes.add(ColumnType.SHORT);   // value
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.SHORT); // value
         columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
@@ -143,6 +143,11 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putShort(valueIndex + 1, value);
         mapValue.putBool(valueIndex + 2, false);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

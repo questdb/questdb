@@ -28,23 +28,18 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
- * Tests that aggregate functions (SUM, AVG, MIN, MAX, COUNT) produce correct
- * results for UINT16, UINT32, and UINT64 columns.
+ * Tests that aggregate functions (SUM, AVG, MIN, MAX, COUNT) produce correct results for UINT16, UINT32, and UINT64
+ * columns.
  * <p>
- * These types use bitmap-based null support (not sentinel values), and their
- * unsigned value ranges include bit patterns that coincide with the signed
- * null sentinels (INT_NULL = 0x80000000, LONG_NULL = 0x8000000000000000).
+ * These types use bitmap-based null support (not sentinel values), and their unsigned value ranges include bit patterns
+ * that coincide with the signed null sentinels (INT_NULL = 0x80000000, LONG_NULL = 0x8000000000000000).
  * <p>
- * Known issues these tests expose:
- * 1. SUM/AVG use signed getShort()/getInt()/getLong() without unsigned promotion
- * 2. SumIntGroupByFunction checks value != INT_NULL (sentinel), which misidentifies
- *    the valid UINT32 value 2_147_483_648 as null
- * 3. SumLongGroupByFunction checks value != LONG_NULL (sentinel), which misidentifies
- *    the valid UINT64 value 9_223_372_036_854_775_808 as null
- * 4. MinIntGroupByFunction/MaxIntGroupByFunction use signed comparison, giving
- *    wrong results for UINT32 values above 2^31-1
- * 5. SumShortGroupByFunction calls getShort() which sign-extends UINT16 values
- *    above 32_767, corrupting the accumulator
+ * Known issues these tests expose: 1. SUM/AVG use signed getShort()/getInt()/getLong() without unsigned promotion 2.
+ * SumIntGroupByFunction checks value != INT_NULL (sentinel), which misidentifies the valid UINT32 value 2_147_483_648
+ * as null 3. SumLongGroupByFunction checks value != LONG_NULL (sentinel), which misidentifies the valid UINT64 value
+ * 9_223_372_036_854_775_808 as null 4. MinIntGroupByFunction/MaxIntGroupByFunction use signed comparison, giving wrong
+ * results for UINT32 values above 2^31-1 5. SumShortGroupByFunction calls getShort() which sign-extends UINT16 values
+ * above 32_767, corrupting the accumulator
  */
 public class UnsignedAggregateTest extends AbstractCairoTest {
 
@@ -145,7 +140,7 @@ public class UnsignedAggregateTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (10), (3000000000::UINT32)");
             // Correct unsigned MIN: 10
             // Bug: signed comparison → min(10, -1_294_967_296) = -1_294_967_296
-            //      displayed as INT, so shows as "-1294967296"
+            // displayed as INT, so shows as "-1294967296"
             assertSql("m\n10\n", "SELECT MIN(val) AS m FROM t");
         });
     }
@@ -196,7 +191,7 @@ public class UnsignedAggregateTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (NULL), (100), (NULL), (50)");
             // Nulls should be skipped; MIN of non-null values = 50
             // Bug: MinIntGroupByFunction.computeFirst() doesn't check isNull(),
-            //      so NULL rows contribute 0 (raw data value) → min becomes 0
+            // so NULL rows contribute 0 (raw data value) → min becomes 0
             assertSql("m\n50\n", "SELECT MIN(val) AS m FROM t");
         });
     }
@@ -213,7 +208,7 @@ public class UnsignedAggregateTest extends AbstractCairoTest {
 
     // ================================================================
     // UINT64 — Sentinel collision: LONG_NULL = 0x8000000000000000
-    //          = 9_223_372_036_854_775_808 unsigned
+    // = 9_223_372_036_854_775_808 unsigned
     // SumLongGroupByFunction checks: if (value != Numbers.LONG_NULL)
     // Also: signed long arithmetic gives wrong results for values > 2^63-1
     // ================================================================
@@ -230,7 +225,7 @@ public class UnsignedAggregateTest extends AbstractCairoTest {
                     """);
             // If sentinel collision: SUM = 1 (9_223_372_036_854_775_808 treated as null)
             // Correct: SUM = 9_223_372_036_854_775_808 + 1 = 9_223_372_036_854_775_809
-            //          (as signed long = -9_223_372_036_854_775_807)
+            // (as signed long = -9_223_372_036_854_775_807)
             // The exact representation depends on whether SUM returns signed long.
             // Key assertion: result must NOT be 1 (proving no sentinel collision).
             assertSql("s\n-9223372036854775807\n", "SELECT SUM(val) AS s FROM t");
@@ -315,14 +310,11 @@ public class UnsignedAggregateTest extends AbstractCairoTest {
                     """);
             // Group 1: 100 + 4_294_967_295 = 4_294_967_395
             // Group 2: 2_147_483_648 + 1 = 2_147_483_649
-            assertSql(
-                    """
-                            grp\ts
-                            1\t4294967395
-                            2\t2147483649
-                            """,
-                    "SELECT grp, SUM(val) AS s FROM t ORDER BY grp"
-            );
+            assertSql("""
+                    grp\ts
+                    1\t4294967395
+                    2\t2147483649
+                    """, "SELECT grp, SUM(val) AS s FROM t ORDER BY grp");
         });
     }
 
@@ -339,14 +331,11 @@ public class UnsignedAggregateTest extends AbstractCairoTest {
                     """);
             // Group 1 unsigned: MIN=10, MAX=3_000_000_000
             // Group 2 unsigned: MIN=100, MAX=4_294_967_295
-            assertSql(
-                    """
-                            grp\tmi\tma
-                            1\t10\t3000000000
-                            2\t100\t4294967295
-                            """,
-                    "SELECT grp, MIN(val) AS mi, MAX(val) AS ma FROM t ORDER BY grp"
-            );
+            assertSql("""
+                    grp\tmi\tma
+                    1\t10\t3000000000
+                    2\t100\t4294967295
+                    """, "SELECT grp, MIN(val) AS mi, MAX(val) AS ma FROM t ORDER BY grp");
         });
     }
 
@@ -363,14 +352,11 @@ public class UnsignedAggregateTest extends AbstractCairoTest {
                     """);
             // Group 1: 1 + 65_535 = 65_536
             // Group 2: 32_768 + 32_768 = 65_536
-            assertSql(
-                    """
-                            grp\ts
-                            1\t65536
-                            2\t65536
-                            """,
-                    "SELECT grp, SUM(val) AS s FROM t ORDER BY grp"
-            );
+            assertSql("""
+                    grp\ts
+                    1\t65536
+                    2\t65536
+                    """, "SELECT grp, SUM(val) AS s FROM t ORDER BY grp");
         });
     }
 
