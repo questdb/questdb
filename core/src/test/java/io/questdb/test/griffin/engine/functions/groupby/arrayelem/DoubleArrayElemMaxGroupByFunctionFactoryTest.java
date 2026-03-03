@@ -28,11 +28,6 @@ import org.junit.Test;
 
 public class DoubleArrayElemMaxGroupByFunctionFactoryTest extends AbstractDoubleArrayElemGroupByFunctionTest {
 
-    @Override
-    protected String funcName() {
-        return "array_elem_max";
-    }
-
     @Test
     public void test2dAllSameShape() throws Exception {
         assertGroupByTyped("DOUBLE[][]", "[[9.0,10.0],[11.0,12.0]]",
@@ -280,6 +275,23 @@ public class DoubleArrayElemMaxGroupByFunctionFactoryTest extends AbstractDouble
     }
 
     @Test
+    public void testTransposedWithNanGroupBy() throws Exception {
+        // Non-vanilla input (transpose) with NaN → exercises coord-path NaN skip in accumulateInput
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[][])");
+            // Row 1: (2,3) transposed → (3,2), contains NaN at positions (1,0) and (2,1)
+            execute("INSERT INTO tab VALUES (ARRAY[[1.0, null, 3.0], [4.0, 5.0, null]])");
+            // Row 2: (2,2) transposed → (2,2), transpose makes it non-vanilla → coord path
+            execute("INSERT INTO tab VALUES (ARRAY[[10.0, 20.0], [30.0, 40.0]])");
+            assertQueryNoLeakCheck(
+                    "arr\n[[10.0,30.0],[20.0,40.0],[3.0,null]]\n",
+                    "SELECT array_elem_max(transpose(arr)) arr FROM tab",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testVariableLengthArrays() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
@@ -295,5 +307,10 @@ public class DoubleArrayElemMaxGroupByFunctionFactoryTest extends AbstractDouble
                 "ARRAY[1.0, 2.0]",
                 "ARRAY[null, 4.0, 5.0]"
         );
+    }
+
+    @Override
+    protected String funcName() {
+        return "array_elem_max";
     }
 }

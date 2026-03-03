@@ -28,11 +28,6 @@ import org.junit.Test;
 
 public class DoubleArrayElemMaxFunctionFactoryTest extends AbstractDoubleArrayElemFunctionTest {
 
-    @Override
-    protected String funcName() {
-        return "array_elem_max";
-    }
-
     @Test
     public void test2dBothDimsDiffer() throws Exception {
         assertElemWise(
@@ -126,6 +121,16 @@ public class DoubleArrayElemMaxFunctionFactoryTest extends AbstractDoubleArrayEl
                 "SELECT array_elem_max(null::double[], null::double[])",
                 null, true, true
         ));
+    }
+
+    @Test
+    public void testCoordPathWithNullArg() throws Exception {
+        // NULL arg + non-vanilla (transposed) arg → coord path with null entry in cachedViews
+        assertElemWise(
+                "[[1.0,3.0],[2.0,4.0]]",
+                "null::double[][]",
+                "transpose(ARRAY[[1.0, 2.0], [3.0, 4.0]])"
+        );
     }
 
     @Test
@@ -270,5 +275,10 @@ public class DoubleArrayElemMaxFunctionFactoryTest extends AbstractDoubleArrayEl
                 "SELECT array_elem_max(ARRAY[1.0, 5.0], ARRAY[3.0, 2.0])",
                 null, true, true
         ));
+    }
+
+    @Override
+    protected String funcName() {
+        return "array_elem_max";
     }
 }
