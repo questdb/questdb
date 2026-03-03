@@ -142,8 +142,6 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
 
     @Override
     public long minTimestampExact() {
-        final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
-        assert rowGroupCount > 0;
         return partitionDecoder.rowGroupMinTimestamp(0, timestampIdAndType.get(0));
     }
 
