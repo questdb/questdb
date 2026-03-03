@@ -140,7 +140,7 @@ public class QwpBitReader {
             return 0;
         }
         if (numBits > 64) {
-            throw new IllegalArgumentException("Cannot read more than 64 bits at once");
+            throw new AssertionError("Asked to read more than 64 bits into a long");
         }
         if (totalBitsRead + numBits > totalBitsAvailable) {
             throw QwpParseException.bitReadOverflow();
