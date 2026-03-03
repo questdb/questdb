@@ -860,6 +860,266 @@ fn array_primitive_type(parquet_type: ParquetType) -> Option<PrimitiveType> {
     primitive_type.cloned()
 }
 
+/// Dispatch to the appropriate dict encoder for a column chunk with RleDictionary encoding.
+/// This handles all types except Symbol (handled earlier) and Varchar (handled earlier).
+fn column_chunk_to_dict_pages(
+    column: Column,
+    primitive_type: PrimitiveType,
+    chunk_offset: usize,
+    chunk_length: usize,
+    options: WriteOptions,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let orig_column_top = column.column_top;
+
+    let mut adjusted_column_top = 0;
+    let lower_bound = if chunk_offset < orig_column_top {
+        adjusted_column_top = orig_column_top - chunk_offset;
+        0
+    } else {
+        chunk_offset - orig_column_top
+    };
+    let upper_bound = if chunk_offset + chunk_length < orig_column_top {
+        adjusted_column_top = chunk_length;
+        0
+    } else {
+        chunk_offset + chunk_length - orig_column_top
+    };
+
+    match column.data_type.tag() {
+        ColumnTypeTag::Int => {
+            let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::slice_to_dict_pages_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Long | ColumnTypeTag::Date => {
+            let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::slice_to_dict_pages_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Timestamp => {
+            let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
+            if column.designated_timestamp {
+                // Designated timestamp is NOT NULL; treat as nullable with 0 nulls
+                // since the dict encoder handles optional repetition.
+                // Fall back to the notnull int encoder approach.
+                primitive::int_slice_to_dict_pages_notnull::<i64, i64>(
+                    &data[lower_bound..upper_bound],
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                )
+            } else {
+                primitive::slice_to_dict_pages_simd(
+                    &data[lower_bound..upper_bound],
+                    adjusted_column_top,
+                    options,
+                    primitive_type,
+                )
+            }
+        }
+        ColumnTypeTag::Float => {
+            let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::slice_to_dict_pages_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Double => {
+            let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::slice_to_dict_pages_simd(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Byte => {
+            let data: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_notnull::<i8, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Short => {
+            let data: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_notnull::<i16, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Char => {
+            let data: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_notnull::<u16, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::IPv4 => {
+            let data: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<IPv4, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::GeoByte => {
+            let data: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<GeoByte, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::GeoShort => {
+            let data: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<GeoShort, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::GeoInt => {
+            let data: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<GeoInt, i32>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::GeoLong => {
+            let data: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_dict_pages_nullable::<GeoLong, i64>(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::String => {
+            let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
+            let data = column.primary_data;
+            string::string_to_dict_pages(
+                &aux[lower_bound..upper_bound],
+                data,
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Binary => {
+            let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
+            let data = column.primary_data;
+            binary::binary_to_dict_pages(
+                &aux[lower_bound..upper_bound],
+                data,
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
+            let reversed = column.data_type.tag() == ColumnTypeTag::Uuid;
+            let data: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
+            fixed_len_bytes::bytes_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                reversed,
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Long256 => {
+            let data: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
+            fixed_len_bytes::bytes_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                false,
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal8 => {
+            let data: &[Decimal8] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal16 => {
+            let data: &[Decimal16] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal32 => {
+            let data: &[Decimal32] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal64 => {
+            let data: &[Decimal64] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal128 => {
+            let data: &[Decimal128] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        ColumnTypeTag::Decimal256 => {
+            let data: &[Decimal256] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::decimal_slice_to_dict_pages(
+                &data[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+            )
+        }
+        _ => Err(fmt_err!(
+            Unsupported,
+            "RleDictionary encoding not supported for column type {:?}",
+            column.data_type.tag()
+        )),
+    }
+}
+
 fn column_chunk_to_primitive_pages(
     column: Column,
     primitive_type: PrimitiveType,
@@ -951,6 +1211,16 @@ fn column_chunk_to_primitive_pages(
                 bloom_hashes,
             ),
         };
+    }
+
+    if encoding == Encoding::RleDictionary {
+        return column_chunk_to_dict_pages(
+            column,
+            primitive_type,
+            chunk_offset,
+            chunk_length,
+            options,
+        );
     }
 
     let number_of_rows = chunk_length;
