@@ -3211,7 +3211,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
 
                 final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
-                        && (!model.isUpdate() || executionContext.isWalApplication()) && false;
+                        && (!model.isUpdate() || executionContext.isWalApplication());
                 final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
                 if (useJit && canCompile) {
                     CompiledFilter compiledFilter = null;
