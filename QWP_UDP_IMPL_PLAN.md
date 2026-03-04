@@ -22,29 +22,35 @@ tableCount=1, full schema (mode 0x00), per-column symbol dictionaries. No
 encoder fork is needed for the first iterations.
 
 
-## Iteration 1: Vertical slice -- sender, receiver, and integration test `[ ]`
+## Iteration 1: Vertical slice -- sender, receiver, and integration test `[x]`
 
 **Goal:** A working sender-to-table pipeline over real UDP loopback. The
 thinnest possible slice: explicit `flush()` only, no auto-flush, no size
 estimation, no builder integration, no server config wiring.
 
-### Client: `QwpUdpSender` `[ ]`
+### Client: `QwpUdpSender` `[x]`
 
 Minimal `Sender` implementation. Internally holds:
 - `QwpWebSocketEncoder` (Gorilla disabled) -- reused as-is.
-- `QwpTableBuffer` for the current table.
+- `Map<String, QwpTableBuffer>` for multi-table accumulation.
 - `UdpLineChannel` (reused as-is) for socket I/O.
 
 Behavior:
-- `table(name)`: if a different table is already buffered, flush it first.
+- `table(name)`: switches to (or creates) a named table buffer in the map.
+  Does not flush on table switch -- multiple tables accumulate in memory.
+  `flush()` encodes each table as a separate datagram (one datagram per table).
 - `symbol()`, `doubleColumn()`, `longColumn()`, etc.: delegate to
   `QwpTableBuffer`.
 - `at()`/`atNow()`: commit the row via `tableBuffer.nextRow()`.
-- `flush()`: encode via `QwpWebSocketEncoder.encode()`, send via
-  `UdpLineChannel.send()`. Reset the table buffer. If `sendToRaw()` fails,
-  log at WARN and swallow (fire-and-forget).
+- `flush()`: iterate all buffered tables, encode each via
+  `QwpWebSocketEncoder.encode()`, and send each as its own datagram via
+  `UdpLineChannel.send()`. Reset all table buffers. If `send()` fails, log at
+  WARN and swallow (fire-and-forget).
 - `close()`: flush remaining buffer, close socket.
-- `cancelRow()`, `bufferView()`: throw `LineSenderException` (not supported).
+- `cancelRow()`: delegates to `QwpTableBuffer.cancelCurrentRow()`, which
+  truncates each column buffer back to the committed row count. This is needed
+  for Iteration 3 auto-flush.
+- `bufferView()`: throws `LineSenderException` (not supported).
 
 No size estimation, no MTU checking, no auto-flush. Caller is responsible for
 keeping datagrams small by calling `flush()` before exceeding MTU.
@@ -54,7 +60,7 @@ java-questdb-client/core/src/main/java/io/questdb/client/cutlass/qwp/client/
   QwpUdpSender.java    NEW
 ```
 
-### Server: `QwpUdpReceiver` `[ ]`
+### Server: `QwpUdpReceiver` `[x]`
 
 Thin class modeled on `LineUdpReceiver`. Does NOT extend
 `AbstractLineProtoUdpReceiver` (that class hardwires `LineUdpLexer` +
@@ -89,36 +95,33 @@ The receiver constructor takes a simple configuration interface
 (`defaultColumnTypeForFloat`, `timestampUnit`, etc.).
 
 ```
-core/src/main/java/io/questdb/cutlass/qwp/udp/
+core/src/main/java/io/questdb/cutlass/qwp/server/
   QwpUdpReceiver.java                NEW
   QwpUdpReceiverConfiguration.java   NEW (interface)
 ```
 
-### Tests `[ ]`
+### Tests `[x]`
 
 All tests in `core/src/test/` (server module), using `AbstractCairoTest` for
 engine access or `AbstractBootstrapTest` for full-server tests.
 
-- `[ ]` **Integration test -- sender to table:** Construct a `QwpUdpReceiver`
-  with a test `CairoEngine` on a random loopback port. Construct a
-  `QwpUdpSender` targeting that port. Send:
-  `table("cpu").symbol("host", "srv-1").doubleColumn("usage", 73.2).at(ts, MICROS)`.
-  Call `flush()`. Wait briefly for the receiver to process + commit. Query:
-  `SELECT host, usage, timestamp FROM cpu`. Assert values match.
-- `[ ]` **Multi-row integration:** Send 10 rows for the same table in one
-  `flush()`. Query `SELECT count() FROM t`. Assert 10. Query
-  `SELECT sum(value) FROM t`. Assert correct sum.
-- `[ ]` **Multi-table integration:** Send rows for table "a", then
-  `table("b")`, then `flush()`. Assert both tables exist with correct data.
-- `[ ]` **SYMBOL column round-trip:** Send rows with 5 distinct symbol values
-  (same column). Flush. Query. Verify all 5 distinct values present.
-- `[ ]` **Nullable column round-trip:** Use the fast-path API
-  (`getTableBuffer()` / `getOrCreateColumn()`) to send a nullable DOUBLE
-  column with some rows null and some non-null. Query. Verify NULLs and values.
-- `[ ]` **Close flushes:** Send rows without calling `flush()`. Call `close()`.
-  Verify data arrived.
-- `[ ]` **Multiple datagrams:** Send + flush 3 times (3 separate datagrams).
-  Verify all data accumulated.
+- `[x]` **Integration test -- sender to table** (`testSingleRow`).
+- `[x]` **Multi-row integration** (`testMultiRow`).
+- `[x]` **Multi-table integration** (`testMultiTable`).
+- `[x]` **SYMBOL column round-trip** (`testSymbolRoundTrip`).
+- `[x]` **Nullable STRING column** (`testNullableColumn`).
+- `[x]` **Close flushes** (`testCloseFlushes`).
+- `[x]` **Multiple datagrams** (`testMultipleDatagrams`).
+- `[x]` **cancelRow -- discard partial row** (`testCancelRowDiscardsPartialRow`).
+- `[x]` **cancelRow -- between complete rows** (`testCancelRowBetweenCompleteRows`).
+- `[x]` **cancelRow -- no-op when no row in progress** (`testCancelRowNoOpWhenNoRowInProgress`).
+- `[x]` **Multi-table interleaved rows** (`testMultiTableInterleavedRows`).
+- `[x]` **Multi-table different schemas** (`testMultiTableDifferentSchemas`).
+- `[x]` **Multi-table switch back to same table** (`testMultiTableSwitchBackToSameTable`).
+- `[x]` **Multi-table separate flushes** (`testMultiTableSeparateFlushes`).
+- `[x]` **Many datagrams with low commit rate** (`testManyDatagramsWithLowCommitRate`).
+- `[x]` **Nullable DOUBLE column** (`testNullableDouble`).
+- `[x]` **Nullable LONG column** (`testNullableLong`).
 
 
 ## Iteration 2: Malformed datagram resilience `[ ]`

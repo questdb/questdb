@@ -43,6 +43,23 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
     private static final int PORT = 19002;
 
+    private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
+        @Override
+        public int getCommitRate() {
+            return 1;
+        }
+
+        @Override
+        public int getPort() {
+            return PORT;
+        }
+
+        @Override
+        public boolean ownThread() {
+            return false;
+        }
+    };
+
     private static final QwpUdpReceiverConfiguration RCVR_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -59,6 +76,92 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             return false;
         }
     };
+
+    @Test
+    public void testCancelRowBetweenCompleteRows() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    // Row 1 -- complete
+                    sender.table("cancel_between")
+                            .longColumn("id", 1L)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    // Row 2 -- partial, then cancelled
+                    sender.table("cancel_between")
+                            .longColumn("id", 99L)
+                            .doubleColumn("noise", 123.456);
+                    sender.cancelRow();
+                    // Row 3 -- complete
+                    sender.table("cancel_between")
+                            .longColumn("id", 3L)
+                            .at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "id\n" +
+                            "1\n" +
+                            "3\n",
+                    "SELECT id FROM cancel_between ORDER BY timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testCancelRowDiscardsPartialRow() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    // Partial row -- cancelled
+                    sender.table("cancel_partial")
+                            .longColumn("id", 42L)
+                            .stringColumn("note", "discard me");
+                    sender.cancelRow();
+                    // Complete row
+                    sender.table("cancel_partial")
+                            .longColumn("id", 1L)
+                            .stringColumn("note", "keep me")
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "id\tnote\n" +
+                            "1\tkeep me\n",
+                    "SELECT id, note FROM cancel_partial ORDER BY timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testCancelRowNoOpWhenNoRowInProgress() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("cancel_noop");
+                    sender.cancelRow();
+                    // Normal row after no-op cancel
+                    sender.table("cancel_noop")
+                            .longColumn("id", 1L)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "id\n1\n",
+                    "SELECT id FROM cancel_noop"
+            );
+        });
+    }
 
     @Test
     public void testCloseFlushes() throws Exception {
@@ -82,6 +185,29 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             assertSql(
                     "count\n2\n",
                     "SELECT count() FROM close_flush"
+            );
+        });
+    }
+
+    @Test
+    public void testManyDatagramsWithLowCommitRate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    for (int i = 0; i < 20; i++) {
+                        sender.table("low_commit")
+                                .longColumn("v", i)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\tsum\n20\t190\n",
+                    "SELECT count(), sum(v) FROM low_commit"
             );
         });
     }
@@ -137,6 +263,146 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             assertSql(
                     "count\n5\n",
                     "SELECT count() FROM table_b"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiTableDifferentSchemas() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("schema_a")
+                            .symbol("region", "us-east")
+                            .doubleColumn("temp", 22.5)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("schema_b")
+                            .longColumn("count", 42L)
+                            .stringColumn("label", "alpha")
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "region\ttemp\n" +
+                            "us-east\t22.5\n",
+                    "SELECT region, temp FROM schema_a"
+            );
+            assertSql(
+                    "count\tlabel\n" +
+                            "42\talpha\n",
+                    "SELECT count, label FROM schema_b"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiTableInterleavedRows() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("interleave_a")
+                            .longColumn("x", 1L)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("interleave_b")
+                            .longColumn("y", 10L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.table("interleave_a")
+                            .longColumn("x", 2L)
+                            .at(3_000_000L, ChronoUnit.MICROS);
+                    sender.table("interleave_b")
+                            .longColumn("y", 20L)
+                            .at(4_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "x\n" +
+                            "1\n" +
+                            "2\n",
+                    "SELECT x FROM interleave_a ORDER BY timestamp"
+            );
+            assertSql(
+                    "y\n" +
+                            "10\n" +
+                            "20\n",
+                    "SELECT y FROM interleave_b ORDER BY timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiTableSeparateFlushes() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("sep_flush_a")
+                            .longColumn("v", 1L)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("sep_flush_a")
+                            .longColumn("v", 2L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    sender.table("sep_flush_b")
+                            .longColumn("v", 10L)
+                            .at(3_000_000L, ChronoUnit.MICROS);
+                    sender.table("sep_flush_b")
+                            .longColumn("v", 20L)
+                            .at(4_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\tsum\n2\t3\n",
+                    "SELECT count(), sum(v) FROM sep_flush_a"
+            );
+            assertSql(
+                    "count\tsum\n2\t30\n",
+                    "SELECT count(), sum(v) FROM sep_flush_b"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiTableSwitchBackToSameTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("switchback_a")
+                            .longColumn("x", 1L)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("switchback_b")
+                            .longColumn("y", 10L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    // Switch back to table_a
+                    sender.table("switchback_a")
+                            .longColumn("x", 2L)
+                            .at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "x\n" +
+                            "1\n" +
+                            "2\n",
+                    "SELECT x FROM switchback_a ORDER BY timestamp"
+            );
+            assertSql(
+                    "count\n1\n",
+                    "SELECT count() FROM switchback_b"
             );
         });
     }
@@ -206,6 +472,70 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                             "2\t\n" +
                             "3\tworld\n",
                     "SELECT id, note FROM nullable_test ORDER BY timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testNullableDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("nullable_double")
+                            .longColumn("id", 1L)
+                            .doubleColumn("temperature", 36.6)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("nullable_double")
+                            .longColumn("id", 2L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.table("nullable_double")
+                            .longColumn("id", 3L)
+                            .doubleColumn("temperature", 38.1)
+                            .at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "id\ttemperature\n" +
+                            "1\t36.6\n" +
+                            "2\tnull\n" +
+                            "3\t38.1\n",
+                    "SELECT id, temperature FROM nullable_double ORDER BY timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testNullableLong() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("nullable_long")
+                            .longColumn("id", 1L)
+                            .longColumn("count", 100L)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("nullable_long")
+                            .longColumn("id", 2L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.table("nullable_long")
+                            .longColumn("id", 3L)
+                            .longColumn("count", 300L)
+                            .at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "id\tcount\n" +
+                            "1\t100\n" +
+                            "2\tnull\n" +
+                            "3\t300\n",
+                    "SELECT id, count FROM nullable_long ORDER BY timestamp"
             );
         });
     }

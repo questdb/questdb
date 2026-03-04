@@ -249,7 +249,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             ran = true;
             processDatagram(buf, count);
             totalCount++;
-            if (totalCount > commitRate) {
+            if (totalCount >= commitRate) {
                 totalCount = 0;
                 try {
                     tudCache.commitAll();
