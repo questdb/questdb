@@ -26,14 +26,12 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 
 /**
  * Generates null bitmap (.n) files from sentinel values in .d data files.
@@ -87,19 +85,7 @@ public class NullBitmapMigrator {
                 scanForSentinels(columnType, dataAddr, bitmapAddr, columnTop, dataRowCount);
             }
 
-            // Write to a temp file first, then rename atomically to avoid
-            // corruption when concurrent TableReaders migrate the same partition.
-            LPSZ tmpPath = Path.getThreadLocal2("").of(nFilePath).put(".tmp").$();
-            writeNFile(ff, tmpPath, bitmapAddr, expectedBitmapSize);
-            if (ff.rename(tmpPath, nFilePath) != Files.FILES_RENAME_OK) {
-                // Rename failed — another reader probably won the race. Clean up temp file
-                // and verify the final .n file is valid.
-                ff.remove(tmpPath);
-                if (!ff.exists(nFilePath) || ff.length(nFilePath) < expectedBitmapSize) {
-                    throw CairoException.critical(ff.errno())
-                            .put("failed to create null bitmap [path=").put(nFilePath).put(']');
-                }
-            }
+            writeNFile(ff, nFilePath, bitmapAddr, expectedBitmapSize);
         } finally {
             Unsafe.free(bitmapAddr, expectedBitmapSize, MemoryTag.NATIVE_DEFAULT);
         }
