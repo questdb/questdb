@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -370,6 +371,15 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private class FillRangeRecord implements Record {
+
+            @Override
+            public ArrayView getArray(int col, int columnType) {
+                if (gapFilling) {
+                    return getFillFunction(col).getArray(null);
+                } else {
+                    return baseRecord.getArray(col, columnType);
+                }
+            }
 
             @Override
             public BinarySequence getBin(int col) {
