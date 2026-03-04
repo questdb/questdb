@@ -346,7 +346,7 @@ public final class ColumnType {
         return switch (tagOf(columnType)) {
             case STRING -> StringTypeDriver.INSTANCE;
             case BINARY -> BinaryTypeDriver.INSTANCE;
-            case VARCHAR -> VarcharTypeDriver.INSTANCE;
+            case VARCHAR, VARCHAR_SLICE -> VarcharTypeDriver.INSTANCE;
             case ARRAY -> ArrayTypeDriver.INSTANCE;
             default -> throw CairoException.critical(0).put("no driver for type: ").put(columnType);
         };

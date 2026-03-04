@@ -229,6 +229,16 @@ public class ColumnTypeTest {
     }
 
     @Test
+    public void testGetDriverVarcharSlice() {
+        // VARCHAR_SLICE is a transient in-memory type from read_parquet().
+        // getDriver() must return the same VarcharTypeDriver as for VARCHAR.
+        Assert.assertSame(
+                ColumnType.getDriver(ColumnType.VARCHAR),
+                ColumnType.getDriver(ColumnType.VARCHAR_SLICE)
+        );
+    }
+
+    @Test
     public void testIsDecimalInvalid() {
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.BOOLEAN));
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.DOUBLE));
