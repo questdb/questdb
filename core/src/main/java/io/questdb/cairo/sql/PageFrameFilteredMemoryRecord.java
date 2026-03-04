@@ -48,39 +48,37 @@ import org.jetbrains.annotations.Nullable;
  * A specialized {@link PageFrameMemoryRecord} for late materialization scenarios where some columns
  * contain only filtered (compacted) data while others contain full unfiltered data.
  * <p>
- * <b>Important:</b> This record only supports sequential access for performance reasons.
- * The internal cursor is incremented on each {@link #setRowIndex(long)} call, regardless of
- * the actual rowIndex value passed. This design enables O(1) row index translation for filtered
- * columns without the overhead of binary search or index lookup.
- * <p>
  * <b>Column types:</b>
  * <ul>
- *   <li><b>Filtered columns</b> (marked in {@code filterIndexes}): contain compacted data where
- *       only rows passing the filter are present. These columns use the original {@code rowIndex}
- *       for data access.</li>
- *   <li><b>Non-filtered columns</b>: contain data corresponding to the filtered row set. These
- *       columns use the internal sequential {@code cursor} for data access.</li>
+ *   <li><b>Filter columns</b> (marked in {@code filterIndexes}): contain full unfiltered data.
+ *       These columns use the absolute {@code rowIndex} set via {@link #setRowIndex(long)}.</li>
+ *   <li><b>Non-filter columns</b>: contain compacted data for filtered rows only. These columns
+ *       use an internal {@code cursor} for data access.</li>
  * </ul>
  * <p>
- * <b>Usage constraints:</b>
+ * <b>Access modes:</b>
  * <ul>
- *   <li>Rows must be accessed sequentially in ascending order</li>
- *   <li>Random access (e.g., jumping to arbitrary row positions) is NOT supported and will
- *       result in incorrect data being read</li>
+ *   <li><b>Sequential access:</b> The cursor auto-increments on each {@link #setRowIndex(long)}
+ *       call, matching the sequential iteration order over the filtered rows list. Used by the
+ *       GROUP BY path.</li>
+ *   <li><b>Random access:</b> The compact index can be set explicitly via
+ *       {@link #setRowIndex(long, long)} to a position within the filtered rows list. Used by
+ *       the HORIZON JOIN path where the K-way merge iterator accesses rows in horizon-timestamp
+ *       order rather than filtered-list order.</li>
  * </ul>
  * <p>
- * For scenarios requiring random access, use {@link PageFrameMemoryRecord} instead.
+ * For scenarios requiring full random access, use {@link PageFrameMemoryRecord} instead.
  *
  * @see PageFrameMemoryRecord
  */
-public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemoryRecord {
+public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     private final BoolList filteredColumns = new BoolList();
-    private long cursor = -2;
+    private long compactRowIndex = -2;
 
     @Override
     public void clear() {
         super.clear();
-        cursor = -2;
+        compactRowIndex = -2;
         filteredColumns.clear();
     }
 
@@ -396,7 +394,7 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
         return NullMemoryCMR.INSTANCE.getStrLen(0);
     }
 
-    // Note: Currently not used because PageFrameFilteredNoRandomAccessMemoryRecord
+    // Note: Currently not used because PageFrameFilteredMemoryRecord
     // is only used by aggregate functions, which access symbols via getInt() + SymbolTable.
     @Override
     public CharSequence getSymA(int columnIndex) {
@@ -408,7 +406,7 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
         return null;
     }
 
-    // Note: Currently not used because PageFrameFilteredNoRandomAccessMemoryRecord
+    // Note: Currently not used because PageFrameFilteredMemoryRecord
     // is only used by aggregate functions, which access symbols via getInt() + SymbolTable.
     @Override
     public CharSequence getSymB(int columnIndex) {
@@ -429,14 +427,14 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
         return TableUtils.NULL_LEN;
     }
 
-    public PageFrameFilteredNoRandomAccessMemoryRecord of(PageFrameMemory memory, PageFrameMemoryRecord other, IntHashSet filterIndexes) {
+    public PageFrameFilteredMemoryRecord of(PageFrameMemory memory, PageFrameMemoryRecord other, IntHashSet filterIndexes) {
         super.init(memory);
         this.symbolTableSource = other.symbolTableSource;
         this.rowIndex = other.rowIndex;
         this.letter = other.letter;
         this.stableStrings = other.stableStrings;
         filteredColumns.clear();
-        cursor = -2;
+        compactRowIndex = -2;
         for (int i = 0, n = memory.getColumnCount(); i < n; i++) {
             filteredColumns.add(filterIndexes.contains(i));
         }
@@ -446,14 +444,20 @@ public class PageFrameFilteredNoRandomAccessMemoryRecord extends PageFrameMemory
     @Override
     public void setRowIndex(long rowIndex) {
         this.rowIndex = rowIndex;
-        cursor++;
+        compactRowIndex++;
+    }
+
+    @Override
+    public void setRowIndex(long rowIndex, long compactRowIndex) {
+        this.rowIndex = rowIndex;
+        this.compactRowIndex = compactRowIndex;
     }
 
     private long rowIndex(int columnIndex) {
         if (filteredColumns.get(columnIndex)) {
             return rowIndex;
         }
-        return cursor;
+        return compactRowIndex;
     }
 
     @Override

@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -40,7 +39,6 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCloseable {
     private final PartitionDecoder partitionDecoder; // the decoder is managed externally
     private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-    private final RowGroupStatBuffers statBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
     private final DirectIntList timestampIdAndType = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT);
     private long maxTimestampApprox;
     private long minTimestampApprox;
@@ -62,7 +60,6 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     @Override
     public void close() {
         Misc.free(rowGroupBuffers);
-        Misc.free(statBuffers);
         Misc.free(timestampIdAndType);
         clear();
     }
@@ -133,11 +130,9 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
 
     @Override
     public long maxTimestampExact() {
-        // Read the min value from the stats to avoid decoding.
         final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
         assert rowGroupCount > 0;
-        partitionDecoder.readRowGroupStats(statBuffers, timestampIdAndType, rowGroupCount - 1);
-        return statBuffers.getMaxValueLong(0);
+        return partitionDecoder.rowGroupMaxTimestamp(rowGroupCount - 1, timestampIdAndType.get(0));
     }
 
     @Override
@@ -147,9 +142,7 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
 
     @Override
     public long minTimestampExact() {
-        // Read the min value from the stats to avoid decoding.
-        partitionDecoder.readRowGroupStats(statBuffers, timestampIdAndType, 0);
-        return statBuffers.getMinValueLong(0);
+        return partitionDecoder.rowGroupMinTimestamp(0, timestampIdAndType.get(0));
     }
 
     public ParquetTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex) {
@@ -167,7 +160,6 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(partitionIndex);
         partitionDecoder.of(decoder);
         rowGroupBuffers.reopen();
-        statBuffers.reopen();
 
         int parquetTimestampIndex = findTimestampIndex(partitionDecoder, timestampIndex);
         if (parquetTimestampIndex == -1) {

@@ -39,6 +39,8 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -104,6 +106,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             if (intervalSearch) {
                 Function rightFn = args.getQuick(1);
                 CharSequence right = rightFn.getStrA(null);
+                if (right != null && containsDateVariable(right)) {
+                    TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+                    CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                            driver, configuration, right, 0, right.length(), argPositions.getQuick(1));
+                    return new EqTimestampCompiledTickExprFunction(args.getQuick(0), compiled);
+                }
                 return new EqTimestampStrConstantFunction(args.getQuick(0), timestampType, right, argPositions.getQuick(1), configuration);
             }
             return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(timestampType, args, argPositions));
@@ -128,6 +136,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         // have to copy, args is mutable
         return new InTimestampVarFunction(new ObjList<>(args), timestampType);
+    }
+
+    private static boolean containsDateVariable(CharSequence seq) {
+        int lim = seq.length();
+        for (int i = 0; i < lim - 1; i++) {
+            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isIntervalSearch(ObjList<Function> args) {
@@ -195,6 +213,49 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return driver.parseFloorLiteral(seq);
         } catch (NumericException e) {
             throw SqlException.invalidDate(seq, position);
+        }
+    }
+
+    private static class EqTimestampCompiledTickExprFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final CompiledTickExpression compiledExpr;
+        private final LongList intervals = new LongList();
+        private final Function left;
+
+        public EqTimestampCompiledTickExprFunction(Function left, CompiledTickExpression compiledExpr) {
+            this.left = left;
+            this.compiledExpr = compiledExpr;
+        }
+
+        @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            intervals.clear();
+            compiledExpr.init(symbolTableSource, executionContext);
+            compiledExpr.evaluate(intervals);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(intervals);
         }
     }
 

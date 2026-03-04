@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -53,7 +53,7 @@ public class BitwiseNotIPv4FunctionFactory implements FunctionFactory {
         return new BitwiseNotIPv4FunctionFactory.BitwiseNotIPv4Function(args.getQuick(0));
     }
 
-    public static final class BitwiseNotIPv4Function extends IPv4Function implements UnaryFunction {
+    public static final class BitwiseNotIPv4Function extends IPv4Function implements ArithmeticUnaryFunction {
         private final Function value;
 
         public BitwiseNotIPv4Function(Function value) {

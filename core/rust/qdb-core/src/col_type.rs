@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
+use num_traits::AsPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
@@ -241,6 +242,10 @@ const ARRAY_ELEMTYPE_FIELD_POS: i32 = 8;
 const ARRAY_NDIMS_LIMIT: i32 = 32; // inclusive
 const ARRAY_NDIMS_FIELD_MASK: i32 = ARRAY_NDIMS_LIMIT - 1;
 const ARRAY_NDIMS_FIELD_POS: i32 = 14;
+const DECIMAL_SCALE_FIELD_MASK: i32 = 0xFF;
+const DECIMAL_SCALE_FIELD_POS: i32 = 18;
+const DECIMAL_PRECISION_FIELD_MASK: i32 = 0xFF;
+const DECIMAL_PRECISION_FIELD_POS: i32 = 8;
 
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Serialize, Ord, PartialOrd, Eq)]
@@ -255,6 +260,27 @@ impl ColumnType {
         let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
             .expect("column type code should never be zero");
         Self { code }
+    }
+
+    pub const fn new_decimal(precision: u8, scale: u8) -> Option<Self> {
+        if scale > precision {
+            return None;
+        }
+        let extra_type_info = (((precision as i32) & DECIMAL_PRECISION_FIELD_MASK)
+            << DECIMAL_PRECISION_FIELD_POS)
+            | (((scale as i32) & DECIMAL_SCALE_FIELD_MASK) << DECIMAL_SCALE_FIELD_POS);
+        let tag = match precision {
+            1..=2 => ColumnTypeTag::Decimal8,
+            3..=4 => ColumnTypeTag::Decimal16,
+            5..=9 => ColumnTypeTag::Decimal32,
+            10..=18 => ColumnTypeTag::Decimal64,
+            19..=38 => ColumnTypeTag::Decimal128,
+            39..=76 => ColumnTypeTag::Decimal256,
+            _ => return None,
+        };
+        Some(Self {
+            code: NonZeroI32::new(tag as i32 | extra_type_info).unwrap(),
+        })
     }
 
     pub fn code(&self) -> i32 {
@@ -346,6 +372,38 @@ impl ColumnType {
         self.code.get() & flag_shifted == flag_shifted
     }
 
+    pub fn decimal_scale(&self) -> u8 {
+        debug_assert!(
+            matches!(
+                self.tag(),
+                ColumnTypeTag::Decimal8
+                    | ColumnTypeTag::Decimal16
+                    | ColumnTypeTag::Decimal32
+                    | ColumnTypeTag::Decimal64
+                    | ColumnTypeTag::Decimal128
+                    | ColumnTypeTag::Decimal256
+            ),
+            "decimal_scale() should only be called on decimal column types"
+        );
+        ((self.code.get() >> DECIMAL_SCALE_FIELD_POS) & DECIMAL_SCALE_FIELD_MASK) as u8
+    }
+
+    pub fn decimal_precision(&self) -> u8 {
+        debug_assert!(
+            matches!(
+                self.tag(),
+                ColumnTypeTag::Decimal8
+                    | ColumnTypeTag::Decimal16
+                    | ColumnTypeTag::Decimal32
+                    | ColumnTypeTag::Decimal64
+                    | ColumnTypeTag::Decimal128
+                    | ColumnTypeTag::Decimal256
+            ),
+            "decimal_precision() should only be called on decimal column types"
+        );
+        ((self.code.get() >> DECIMAL_PRECISION_FIELD_POS) & DECIMAL_PRECISION_FIELD_MASK) as u8
+    }
+
     pub fn is_symbol(&self) -> bool {
         self.tag() == ColumnTypeTag::Symbol
     }
@@ -409,6 +467,78 @@ pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<Colum
         << (ARRAY_NDIMS_FIELD_POS - ARRAY_ELEMTYPE_FIELD_POS)
         | ((elem_type as i32) & ARRAY_ELEMTYPE_FIELD_MASK);
     Ok(ColumnType::new(ColumnTypeTag::Array, extra))
+}
+
+pub mod nulls {
+    pub const BYTE: i8 = 0;
+    pub const SHORT: i16 = 0;
+    pub const INT: i32 = i32::MIN;
+    pub const LONG: i64 = i64::MIN;
+    pub const IPV4: i32 = 0;
+    pub const FLOAT: f32 = f32::NAN;
+    pub const DOUBLE: f64 = f64::NAN;
+    pub const GEOHASH_BYTE: i8 = -1;
+    pub const GEOHASH_SHORT: i16 = -1;
+    pub const GEOHASH_INT: i32 = -1;
+    pub const GEOHASH_LONG: i64 = -1;
+    pub const SYMBOL: i32 = i32::MIN;
+    pub const TIMESTAMP: i64 = i64::MIN;
+    pub const UUID: u128 =
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128]);
+    pub const DECIMAL8: i8 = i8::MIN;
+    pub const DECIMAL16: i16 = i16::MIN;
+    pub const DECIMAL32: i32 = i32::MIN;
+    pub const DECIMAL64: i64 = i64::MIN;
+    pub const DECIMAL128: u128 =
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0]);
+    pub const DECIMAL256: [u128; 2] = [
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0]),
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+    ];
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Long128 {
+    pub lo: i64,
+    pub hi: i64,
+}
+
+impl Long128 {
+    pub const NULL: Self = Self {
+        lo: i64::MIN,
+        hi: i64::MIN,
+    };
+}
+
+impl AsPrimitive<Long128> for Long128 {
+    fn as_(self) -> Long128 {
+        self
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Long256 {
+    pub l0: i64,
+    pub l1: i64,
+    pub l2: i64,
+    pub l3: i64,
+}
+
+impl Long256 {
+    pub const NULL: Self = Self {
+        l0: i64::MIN,
+        l1: i64::MIN,
+        l2: i64::MIN,
+        l3: i64::MIN,
+    };
+}
+
+impl AsPrimitive<Long256> for Long256 {
+    fn as_(self) -> Long256 {
+        self
+    }
 }
 
 #[cfg(test)]

@@ -1,45 +1,33 @@
-use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::qdb_metadata::QdbMeta;
-use nonmax::NonMaxU32;
-use parquet2::metadata::FileMetaData;
+use crate::allocator::AcVec;
 use qdb_core::col_type::ColumnType;
 
-mod column_sink;
-mod decode;
-mod jni;
-mod meta;
-mod slicer;
+pub mod column_sink;
+pub mod decode;
+pub mod decoders;
+pub mod jni;
+pub mod meta;
+pub mod page;
+pub mod row_groups;
+pub mod slicer;
 
-// The metadata fields are accessed from Java.
-// This struct contains only immutable metadata.
-// The reader is passed as a parameter to decode methods.
-#[repr(C)]
-pub struct ParquetDecoder {
-    pub allocator: QdbAllocator,
-    pub col_count: u32,
-    pub row_count: usize,
-    pub row_group_count: u32,
-    pub row_group_sizes_ptr: *const u32,
-    pub row_group_sizes: AcVec<u32>,
-    // None (stored as zero, which is equal to ~u32::MAX) means no designated timestamp
-    pub timestamp_index: Option<NonMaxU32>,
-    pub columns_ptr: *const ColumnMeta,
-    pub columns: AcVec<ColumnMeta>,
-    pub(crate) metadata: FileMetaData,
-    pub(crate) qdb_meta: Option<QdbMeta>,
-    pub(crate) row_group_sizes_acc: AcVec<usize>,
-}
+pub use row_groups::{ParquetDecoder, RowGroupBuffers};
 
 #[repr(C)]
 pub struct DecodeContext {
-    pub(crate) file_ptr: *const u8,
-    pub(crate) file_size: u64,
-    pub(crate) decompress_buffer: Vec<u8>,
+    pub file_ptr: *const u8,
+    pub file_size: u64,
+    pub dict_decompress_buffer: Vec<u8>,
+    pub decompress_buffer: Vec<u8>,
 }
 
 impl DecodeContext {
     pub fn new(file_ptr: *const u8, file_size: u64) -> Self {
-        Self { file_ptr, file_size, decompress_buffer: Vec::new() }
+        Self {
+            file_ptr,
+            file_size,
+            dict_decompress_buffer: Vec::new(),
+            decompress_buffer: Vec::new(),
+        }
     }
 }
 
@@ -52,19 +40,6 @@ pub struct ColumnMeta {
     pub name_size: i32,
     pub name_ptr: *const u16,
     pub name_vec: AcVec<u16>,
-}
-
-// The fields are accessed from Java.
-#[repr(C)]
-pub struct RowGroupBuffers {
-    column_bufs_ptr: *const ColumnChunkBuffers,
-    column_bufs: AcVec<ColumnChunkBuffers>,
-}
-
-impl RowGroupBuffers {
-    pub fn column_buffers(&self) -> &AcVec<ColumnChunkBuffers> {
-        &self.column_bufs
-    }
 }
 
 #[repr(C)]

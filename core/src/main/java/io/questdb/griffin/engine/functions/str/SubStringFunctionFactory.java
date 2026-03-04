@@ -92,6 +92,11 @@ public class SubStringFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_STRING_OP, TernaryFunction.super.getComplexity());
+        }
+
+        @Override
         public Function getCenter() {
             return startFunc;
         }

@@ -332,7 +332,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             }
                         }
                     } catch (Throwable e) {
-                        TestUtils.assertContains(e.getMessage(), "unexpected filter error");
+                        TestUtils.assertContains(e.getMessage(), "unexpected reduce error");
                     }
 
                     assertSql(
@@ -1323,6 +1323,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isParallelHorizonJoinEnabled() {
+            return sqlExecutionContext.isParallelHorizonJoinEnabled();
+        }
+
+        @Override
         public boolean isParallelWindowJoinEnabled() {
             return sqlExecutionContext.isParallelWindowJoinEnabled();
         }
@@ -1436,6 +1441,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
             sqlExecutionContext.setParallelTopKEnabled(parallelTopKEnabled);
+        }
+
+        @Override
+        public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(parallelHorizonJoinEnabled);
         }
 
         @Override

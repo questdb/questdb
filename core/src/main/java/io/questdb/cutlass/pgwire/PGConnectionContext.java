@@ -583,19 +583,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         int r;
         try {
-            r = authenticator.handleIO();
-            if (r == SocketAuthenticator.OK) {
-                try {
+            try {
+                r = authenticator.handleIO();
+                if (r == SocketAuthenticator.OK) {
                     final SecurityContext securityContext = securityContextFactory.getInstance(
                             authenticator, SecurityContextFactory.PGWIRE
                     );
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
-                } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
-                    r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
+            } catch (CairoException e) {
+                LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
+                r = authenticator.denyAccess(e.getFlyweightMessage());
             }
         } catch (AuthenticatorException e) {
             throw PeerDisconnectedException.INSTANCE;
