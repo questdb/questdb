@@ -626,8 +626,9 @@ fn make_varchar_data_sized(row_count: usize, null_pct: u8, str_len: usize) -> Va
         let value = &values[i % values.len()];
         let size = value.len();
         if size <= VARCHAR_MAX_BYTES_FULLY_INLINED {
-            let header =
-                ((size as u8) << HEADER_FLAGS_WIDTH as u8) | HEADER_FLAG_INLINED | HEADER_FLAG_ASCII;
+            let header = ((size as u8) << HEADER_FLAGS_WIDTH as u8)
+                | HEADER_FLAG_INLINED
+                | HEADER_FLAG_ASCII;
             aux_bytes.push(header);
             aux_bytes.extend_from_slice(value);
             if size < VARCHAR_MAX_BYTES_FULLY_INLINED {
@@ -1856,15 +1857,16 @@ fn build_cases() -> Vec<BenchCase> {
             let primitive_type = primitive_type_for(column_type);
             let mut dict = None;
             let mut data_page = None;
-            let iter = varchar_to_dict_pages(
-                &data.aux, &data.data, 0, options, primitive_type,
-            )
-            .expect("varchar dict pages");
+            let iter = varchar_to_dict_pages(&data.aux, &data.data, 0, options, primitive_type)
+                .expect("varchar dict pages");
             for page in iter {
                 let page = page.expect("page");
                 match page {
                     Page::Dict(p) => dict = Some(p),
-                    Page::Data(p) => data_page = Some(p),
+                    Page::Data(p) => {
+                        assert!(data_page.is_none(), "multiple data pages");
+                        data_page = Some(p)
+                    }
                 }
             }
             cases.push(build_case(
@@ -1886,10 +1888,8 @@ fn build_cases() -> Vec<BenchCase> {
             let primitive_type = primitive_type_for(varchar_type);
             let mut dict = None;
             let mut data_page = None;
-            let iter = varchar_to_dict_pages(
-                &data.aux, &data.data, 0, options, primitive_type,
-            )
-            .expect("varchar dict pages");
+            let iter = varchar_to_dict_pages(&data.aux, &data.data, 0, options, primitive_type)
+                .expect("varchar dict pages");
             for page in iter {
                 let page = page.expect("page");
                 match page {
