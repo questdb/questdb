@@ -595,7 +595,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT" +
                     " x AS id," +
-                    " CAST(NULL AS VARCHAR) AS v" +
+                    " NULL::VARCHAR AS v" +
                     " FROM long_sequence(100))");
 
             try (
