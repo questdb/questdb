@@ -259,6 +259,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * Returns the size in bytes of a VarcharSlice value, or TableUtils.NULL_LEN for null.
      */
     public static int getSliceValueSize(long auxAddr, long rowNum) {
+        if (rowNum < 0) {
+            return TableUtils.NULL_LEN;
+        }
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int header = Unsafe.getUnsafe().getInt(auxEntry);
         if ((header & VARCHAR_HEADER_FLAG_NULL) != 0) {
