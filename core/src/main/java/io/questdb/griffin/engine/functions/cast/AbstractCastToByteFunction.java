@@ -47,6 +47,11 @@ public abstract class AbstractCastToByteFunction extends ByteFunction implements
     }
 
     @Override
+    public boolean isNullConstant() {
+        return isConstant() && arg.isNullConstant();
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(getArg()).val("::byte");
     }

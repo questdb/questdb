@@ -47,6 +47,11 @@ public abstract class AbstractCastToShortFunction extends ShortFunction implemen
     }
 
     @Override
+    public boolean isNullConstant() {
+        return isConstant() && arg.isNullConstant();
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val(getArg()).val("::short");
     }

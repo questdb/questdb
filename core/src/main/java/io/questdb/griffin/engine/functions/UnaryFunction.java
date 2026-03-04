@@ -81,11 +81,6 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default boolean isNullConstant() {
-        return isConstant() && getArg().isNullConstant();
-    }
-
-    @Override
     default boolean isRandom() {
         return getArg().isRandom();
     }
