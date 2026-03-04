@@ -257,6 +257,7 @@ public final class Unsafe {
                     .put(", size=").putSize(size)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
+                    .put(oom.getMessage())
                     .put("]");
         }
     }
