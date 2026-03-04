@@ -9164,8 +9164,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sumConstructors.put(INT, SumIntVectorAggregateFunction::new);
         sumConstructors.put(LONG, SumLongVectorAggregateFunction::new);
         sumConstructors.put(LONG256, SumLong256VectorAggregateFunction::new);
-        // SHORT vector aggregates disabled: native SIMD path does not check null bitmaps
-        // sumConstructors.put(SHORT, SumShortVectorAggregateFunction::new);
+        sumConstructors.put(SHORT, SumShortVectorAggregateFunction::new);
         sumConstructors.put(UINT16, SumUInt16VectorAggregateFunction::new);
         sumConstructors.put(UINT32, SumUInt32VectorAggregateFunction::new);
         sumConstructors.put(UINT64, SumUInt64VectorAggregateFunction::new);
@@ -9176,7 +9175,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         avgConstructors.put(DOUBLE, AvgDoubleVectorAggregateFunction::new);
         avgConstructors.put(LONG, AvgLongVectorAggregateFunction::new);
         avgConstructors.put(INT, AvgIntVectorAggregateFunction::new);
-        // avgConstructors.put(SHORT, AvgShortVectorAggregateFunction::new);
+        avgConstructors.put(SHORT, AvgShortVectorAggregateFunction::new);
 
         minConstructors.put(DOUBLE, MinDoubleVectorAggregateFunction::new);
         minConstructors.put(LONG, MinLongVectorAggregateFunction::new);
@@ -9184,7 +9183,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         minConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_MICRO, timestampIndex));
         minConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MinTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         minConstructors.put(INT, MinIntVectorAggregateFunction::new);
-        // minConstructors.put(SHORT, MinShortVectorAggregateFunction::new);
+        minConstructors.put(SHORT, MinShortVectorAggregateFunction::new);
         minConstructors.put(UINT32, MinUInt32VectorAggregateFunction::new);
 
         maxConstructors.put(DOUBLE, MaxDoubleVectorAggregateFunction::new);
@@ -9193,7 +9192,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         maxConstructors.put(TIMESTAMP_MICRO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_MICRO, timestampIndex));
         maxConstructors.put(TIMESTAMP_NANO, (int keyKind, int columnIndex, int timestampIndex, int workerCount) -> new MaxTimestampVectorAggregateFunction(keyKind, columnIndex, TIMESTAMP_NANO, timestampIndex));
         maxConstructors.put(INT, MaxIntVectorAggregateFunction::new);
-        // maxConstructors.put(SHORT, MaxShortVectorAggregateFunction::new);
+        maxConstructors.put(SHORT, MaxShortVectorAggregateFunction::new);
         maxConstructors.put(UINT32, MaxUInt32VectorAggregateFunction::new);
     }
 }
