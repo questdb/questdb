@@ -52,6 +52,9 @@ pub const FILTER_OP_GE: u8 = 4;
 pub const FILTER_OP_IS_NULL: u8 = 5;
 pub const FILTER_OP_IS_NOT_NULL: u8 = 6;
 
+/// Milliseconds per day, used to convert QuestDB DATE (millis) to Parquet DATE (days).
+pub(crate) const MILLIS_PER_DAY: i64 = 86_400_000;
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ColumnFilterPacked {

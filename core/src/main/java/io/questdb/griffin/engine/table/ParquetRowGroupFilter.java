@@ -85,6 +85,11 @@ public final class ParquetRowGroupFilter {
         }
     }
 
+    @TestOnly
+    public static int getRowGroupsSkipped() {
+        return rowGroupsSkipped;
+    }
+
     /**
      * Prepare the filter list from pushdown filter conditions. This resolves column indices
      * and serializes filter values into the provided buffers. Call once per partition, then
@@ -343,27 +348,7 @@ public final class ParquetRowGroupFilter {
                             filterValues.putLong(hi);
                         }
                         break;
-                    case ColumnType.STRING:
-                    case ColumnType.SYMBOL:
-                        // Skip range comparisons for String/Symbol types because Parquet min/max
-                        // statistics use UTF-8 byte order, which differs from Java's UTF-16 char
-                        // comparison semantics for characters outside BMP (e.g., emoji).
-                        if (opType != PushdownFilterExtractor.OP_EQ) {
-                            supported = false;
-                            break;
-                        }
-                        for (int j = 0; j < valueCount; j++) {
-                            Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
-                            if (utf8 != null) {
-                                int len = utf8.size();
-                                filterValues.putInt(len);
-                                filterValues.putVarchar(utf8);
-                            } else {
-                                filterValues.putInt(-1);
-                            }
-                        }
-                        break;
-                    case ColumnType.VARCHAR:
+                    case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR:
                         for (int j = 0; j < valueCount; j++) {
                             Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
                             if (utf8 != null) {
@@ -405,11 +390,6 @@ public final class ParquetRowGroupFilter {
             LOG.error().$("error during filter list preparation [msg=").$(e).$(']').$();
             return false;
         }
-    }
-
-    @TestOnly
-    public static int getRowGroupsSkipped() {
-        return rowGroupsSkipped;
     }
 
     @TestOnly

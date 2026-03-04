@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -74,21 +75,50 @@ public class PushdownFilterExtractor implements Mutable {
         conditions.clear();
     }
 
-    public ObjList<PushdownFilterCondition> extract(
+    public ObjList<PushdownFilterCondition> extractAndCompile(
             ArrayDeque<ExpressionNode> stack,
             ArrayDeque<ExpressionNode> stack2,
             ExpressionNode filterExpr,
-            RecordMetadata metadata
-    ) {
+            RecordMetadata metadata,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         conditions.clear();
         if (filterExpr != null) {
             traverse(stack, stack2, filterExpr, metadata);
         }
-        return conditions;
-    }
 
-    public ObjList<PushdownFilterCondition> getConditions() {
-        return conditions;
+        ObjList<PushdownFilterCondition> result = null;
+        PushdownFilterCondition condition = null;
+        try {
+            for (int i = 0, n = conditions.size(); i < n; i++) {
+                condition = conditions.getQuick(i);
+                ObjList<ExpressionNode> values = condition.getValues();
+                boolean allConstant = true;
+                for (int j = 0, m = values.size(); j < m; j++) {
+                    Function f = functionParser.parseFunction(values.getQuick(j), metadata, executionContext);
+                    condition.addValueFunction(f);
+                    if (!f.isConstantOrRuntimeConstant()) {
+                        allConstant = false;
+                        break;
+                    }
+                }
+                if (allConstant) {
+                    if (result == null) {
+                        result = new ObjList<>();
+                    }
+                    result.add(condition);
+                } else {
+                    Misc.free(condition);
+                }
+            }
+        } catch (Throwable e) {
+            Misc.free(condition);
+            Misc.freeObjList(result);
+            throw e;
+        }
+
+        return result;
     }
 
     private static int flipComparison(int opType) {
@@ -374,7 +404,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         public PushdownFilterCondition(CharSequence columnName, int columnType, int operationType) {
-            this.columnName = columnName;
+            this.columnName = Chars.toString(columnName);
             this.columnType = columnType;
             this.operationType = operationType;
         }

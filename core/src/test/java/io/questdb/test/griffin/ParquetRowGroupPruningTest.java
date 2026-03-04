@@ -3745,7 +3745,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeFilterStringNotPruningRowGroup() throws Exception {
+    public void testRangeFilterString() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -3763,7 +3763,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT name FROM x WHERE name > 'zzz'",
                     null, true, false
             );
-            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "name\n",
+                    "SELECT name FROM x WHERE name < 'A'",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 

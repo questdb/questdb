@@ -30,8 +30,10 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -45,6 +47,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final boolean updateQuery;
     private final String viewName;
     private final int viewPosition;
+    private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     AbstractPartitionFrameCursorFactory(
             TableToken tableToken,
@@ -64,11 +67,17 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
 
     @Override
     public void close() {
+        Misc.freeObjList(pushdownFilterConditions);
     }
 
     @Override
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    @Override
+    public @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions() {
+        return pushdownFilterConditions;
     }
 
     @Override
@@ -82,6 +91,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             CairoTable table = metadataRO.getTable(tableToken);
             return table != null && table.hasParquetPartitions();
         }
+    }
+
+    @Override
+    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+        this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
     @Override
