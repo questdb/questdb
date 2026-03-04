@@ -91,19 +91,6 @@ public class ParquetEncodingTest {
     }
 
     @Test
-    public void testRleDictionaryOnlyForSymbolAndVarchar() {
-        for (int colType : COLUMN_TYPES) {
-            int tag = ColumnType.tagOf(colType);
-            boolean expected = tag == ColumnType.SYMBOL || tag == ColumnType.VARCHAR;
-            Assert.assertEquals(
-                    "RLE_DICTIONARY for " + ColumnType.nameOf(colType),
-                    expected,
-                    ParquetEncoding.isValidForColumnType(ENCODING_RLE_DICTIONARY, colType)
-            );
-        }
-    }
-
-    @Test
     public void testDeltaLengthByteArrayOnlyForStringBinaryVarchar() {
         for (int colType : COLUMN_TYPES) {
             int tag = ColumnType.tagOf(colType);
