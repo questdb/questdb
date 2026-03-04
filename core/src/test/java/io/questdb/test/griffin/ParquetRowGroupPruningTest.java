@@ -3126,6 +3126,14 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT count() AS cnt FROM x WHERE val BETWEEN 50 AND 60",
                     null, false, true
             );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n10\n",
+                    "SELECT count() AS cnt FROM x WHERE val BETWEEN 110 AND 101",
+                    null, false, true
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 

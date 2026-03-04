@@ -374,17 +374,17 @@ impl ParquetDecoder {
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                                .with_context(|_| {
-                                    format!(
-                                        "could not decode page for column {:?} in row group {}",
-                                        self.metadata.schema_descr.columns()[column_index]
-                                            .descriptor
-                                            .primitive_type
-                                            .field_info
-                                            .name,
-                                        row_group_index,
-                                    )
-                                })?;
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
                         } else if page_filter_start < filter_idx {
                             let page = decompress_sliced_data(&page, decompress_buffer)?;
                             decode_page_filtered::<false>(
@@ -399,17 +399,17 @@ impl ParquetDecoder {
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                                .with_context(|_| {
-                                    format!(
-                                        "could not decode page for column {:?} in row group {}",
-                                        self.metadata.schema_descr.columns()[column_index]
-                                            .descriptor
-                                            .primitive_type
-                                            .field_info
-                                            .name,
-                                        row_group_index,
-                                    )
-                                })?;
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
                         }
                         page_row_start = page_end;
                     } else {
@@ -454,17 +454,17 @@ impl ParquetDecoder {
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                                .with_context(|_| {
-                                    format!(
-                                        "could not decode page for column {:?} in row group {}",
-                                        self.metadata.schema_descr.columns()[column_index]
-                                            .descriptor
-                                            .primitive_type
-                                            .field_info
-                                            .name,
-                                        row_group_index,
-                                    )
-                                })?;
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
                         } else if page_filter_start < filter_idx {
                             decode_page_filtered::<false>(
                                 &page,
@@ -478,17 +478,17 @@ impl ParquetDecoder {
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                                .with_context(|_| {
-                                    format!(
-                                        "could not decode page for column {:?} in row group {}",
-                                        self.metadata.schema_descr.columns()[column_index]
-                                            .descriptor
-                                            .primitive_type
-                                            .field_info
-                                            .name,
-                                        row_group_index,
-                                    )
-                                })?;
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
                         }
                         page_row_start = page_end;
                     }
@@ -563,17 +563,17 @@ impl ParquetDecoder {
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
                             )
-                                .with_context(|_| {
-                                    format!(
-                                        "could not decode page for column {:?} in row group {}",
-                                        self.metadata.schema_descr.columns()[column_index]
-                                            .descriptor
-                                            .primitive_type
-                                            .field_info
-                                            .name,
-                                        row_group_index,
-                                    )
-                                })?;
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
                         }
                         row_count += page_row_count;
                     } else {
@@ -589,17 +589,17 @@ impl ParquetDecoder {
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
                             )
-                                .with_context(|_| {
-                                    format!(
-                                        "could not decode page for column {:?} in row group {}",
-                                        self.metadata.schema_descr.columns()[column_index]
-                                            .descriptor
-                                            .primitive_type
-                                            .field_info
-                                            .name,
-                                        row_group_index,
-                                    )
-                                })?;
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {:?} in row group {}",
+                                    self.metadata.schema_descr.columns()[column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
                         }
                         row_count += page_row_count;
                     }
@@ -779,15 +779,15 @@ impl ParquetDecoder {
                         !is_qdb_unsigned && Self::is_unsigned_int_type(column_metadata);
                     if !is_third_party_unsigned
                         && Self::all_values_outside_min_max_with_stats(
-                        &physical_type,
-                        &filter_desc,
-                        has_nulls,
-                        is_decimal,
-                        is_ipv4,
-                        is_date,
-                        min_bytes,
-                        max_bytes,
-                    )?
+                            &physical_type,
+                            &filter_desc,
+                            has_nulls,
+                            is_decimal,
+                            is_ipv4,
+                            is_date,
+                            min_bytes,
+                            max_bytes,
+                        )?
                     {
                         return Ok(true);
                     }
@@ -805,15 +805,15 @@ impl ParquetDecoder {
 
                     if !is_third_party_unsigned
                         && Self::value_outside_range(
-                        &physical_type,
-                        &filter_desc,
-                        is_decimal,
-                        is_ipv4,
-                        is_date,
-                        op,
-                        min_bytes,
-                        max_bytes,
-                    )?
+                            &physical_type,
+                            &filter_desc,
+                            is_decimal,
+                            is_ipv4,
+                            is_date,
+                            op,
+                            min_bytes,
+                            max_bytes,
+                        )?
                     {
                         return Ok(true);
                     }

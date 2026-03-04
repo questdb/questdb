@@ -132,9 +132,9 @@ mod tests {
     use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::{
-        ColumnFilterPacked, DecodeContext, ParquetDecoder, RowGroupBuffers, FILTER_OP_EQ,
-        FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE,
-        FILTER_OP_LT,
+        ColumnFilterPacked, DecodeContext, ParquetDecoder, RowGroupBuffers, FILTER_OP_BETWEEN,
+        FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL,
+        FILTER_OP_LE, FILTER_OP_LT,
     };
     use parquet::basic::{ConvertedType, LogicalType, Type as PhysicalType};
     use parquet::data_type::{ByteArray, ByteArrayType};
@@ -839,6 +839,452 @@ mod tests {
             1,
             filter_buf.as_ptr() as u64,
             FILTER_OP_GT,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    // Helper functions for additional type coverage
+    fn gen_i32_parquet_with_stats(values: &[i32]) -> ParquetResult<Vec<u8>> {
+        let col = Arc::new(
+            Type::primitive_type_builder("val", PhysicalType::INT32)
+                .with_id(Some(0))
+                .with_repetition(parquet::basic::Repetition::REQUIRED)
+                .build()?,
+        );
+        let schema = Arc::new(
+            Type::group_type_builder("schema")
+                .with_fields(vec![col])
+                .build()?,
+        );
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_bloom_filter_enabled(false)
+                .set_statistics_enabled(parquet::file::properties::EnabledStatistics::Chunk)
+                .build(),
+        );
+        let mut cursor = Cursor::new(Vec::new());
+        let mut fw = SerializedFileWriter::new(&mut cursor, schema, props)?;
+        let mut rg = fw.next_row_group()?;
+        if let Some(mut cw) = rg.next_column()? {
+            let tw = cw.typed::<parquet::data_type::Int32Type>();
+            tw.write_batch(values, None, None)?;
+            cw.close()?;
+        }
+        rg.close()?;
+        fw.close()?;
+        Ok(cursor.into_inner())
+    }
+
+    fn gen_f64_parquet_with_stats(values: &[f64]) -> ParquetResult<Vec<u8>> {
+        let col = Arc::new(
+            Type::primitive_type_builder("val", PhysicalType::DOUBLE)
+                .with_id(Some(0))
+                .with_repetition(parquet::basic::Repetition::REQUIRED)
+                .build()?,
+        );
+        let schema = Arc::new(
+            Type::group_type_builder("schema")
+                .with_fields(vec![col])
+                .build()?,
+        );
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_bloom_filter_enabled(false)
+                .set_statistics_enabled(parquet::file::properties::EnabledStatistics::Chunk)
+                .build(),
+        );
+        let mut cursor = Cursor::new(Vec::new());
+        let mut fw = SerializedFileWriter::new(&mut cursor, schema, props)?;
+        let mut rg = fw.next_row_group()?;
+        if let Some(mut cw) = rg.next_column()? {
+            let tw = cw.typed::<parquet::data_type::DoubleType>();
+            tw.write_batch(values, None, None)?;
+            cw.close()?;
+        }
+        rg.close()?;
+        fw.close()?;
+        Ok(cursor.into_inner())
+    }
+
+    fn make_filter_with_op_and_type(
+        column_index: u32,
+        count: usize,
+        ptr: u64,
+        op: u8,
+        column_type: i32,
+    ) -> ColumnFilterPacked {
+        ColumnFilterPacked {
+            col_idx_and_count: (column_index as u64)
+                | (((count as u64) & 0x00FFFFFF) << 32)
+                | ((op as u64) << 56),
+            ptr,
+            column_type: column_type as u64,
+        }
+    }
+
+    #[test]
+    fn skip_row_group_range_i32() -> ParquetResult<()> {
+        let data: Vec<i32> = (10..20).collect(); // min=10, max=19
+        let buf = gen_i32_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // col < 10: min=10 >= 10 → skip
+        let v: Vec<i32> = vec![10];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_LT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        let v: Vec<i32> = vec![19];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_GT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        let v: Vec<i32> = vec![20];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_GE)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        let v: Vec<i32> = vec![9];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_LE)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        let v: Vec<i32> = vec![15];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_GT)];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_range_f64() -> ParquetResult<()> {
+        let data: Vec<f64> = vec![1.0, 2.5, 5.0, 7.5, 10.0]; // min=1.0, max=10.0
+        let buf = gen_f64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // col < 1.0: min=1.0 >= 1.0 → skip
+        let v: Vec<f64> = vec![1.0];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_LT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // col > 10.0: max=10.0 <= 10.0 → skip
+        let v: Vec<f64> = vec![10.0];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_GT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // col >= 5.0: max=10.0 >= 5.0 → cannot skip
+        let v: Vec<f64> = vec![5.0];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_GE)];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_range_date_millis_to_days() -> ParquetResult<()> {
+        // Parquet stores DATE as INT32 days. Filter values arrive as i64 millis.
+        let day_values: Vec<i32> = vec![100, 150, 200]; // min=100, max=200 days
+        let buf = gen_i32_parquet_with_stats(&day_values)?;
+        let decoder = read_decoder(&buf)?;
+
+        let millis_per_day: i64 = 86_400_000;
+
+        // col > day 200: max=200 <= 200 → skip
+        let v: Vec<i64> = vec![200 * millis_per_day];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_GT,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // col < day 100: min=100 >= 100 → skip
+        let v: Vec<i64> = vec![100 * millis_per_day];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_LT,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // col >= day 150: max=200 >= 150 → cannot skip
+        let v: Vec<i64> = vec![150 * millis_per_day];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_GE,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN day 250 AND day 300: [250,300] doesn't overlap [100,200] → skip
+        let v: Vec<i64> = vec![250 * millis_per_day, 300 * millis_per_day];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN day 120 AND day 180: overlaps [100,200] → cannot skip
+        let v: Vec<i64> = vec![120 * millis_per_day, 180 * millis_per_day];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_between_i64() -> ParquetResult<()> {
+        let data: Vec<i64> = (100..110).collect(); // min=100, max=109
+        let buf = gen_i64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // BETWEEN 200 AND 300: [200,300] doesn't overlap [100,109] → skip
+        let v: Vec<i64> = vec![200, 300];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 50 AND 80: [50,80] doesn't overlap [100,109] → skip
+        let v: Vec<i64> = vec![50, 80];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 95 AND 105: overlaps [100,109] → cannot skip
+        let v: Vec<i64> = vec![95, 105];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_between_reversed_bounds() -> ParquetResult<()> {
+        // Reversed bounds (lo > hi): auto-swap must still produce correct results.
+        let data: Vec<i64> = (100..110).collect(); // min=100, max=109
+        let buf = gen_i64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // BETWEEN 300 AND 200 (reversed): swaps to [200,300] → skip
+        let v: Vec<i64> = vec![300, 200];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 80 AND 50 (reversed): swaps to [50,80] → skip
+        let v: Vec<i64> = vec![80, 50];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 105 AND 95 (reversed): swaps to [95,105] → overlaps → cannot skip
+        let v: Vec<i64> = vec![105, 95];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_range_all_equal_boundary() -> ParquetResult<()> {
+        // All values equal: min=max=42
+        let data: Vec<i64> = vec![42, 42, 42, 42];
+        let buf = gen_i64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // col < 42: min=42 >= 42 → skip
+        let v: Vec<i64> = vec![42];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_LT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // col > 42: max=42 <= 42 → skip
+        let v: Vec<i64> = vec![42];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_GT)];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // col <= 42: min=42 > 42 is false → cannot skip (42 matches)
+        let v: Vec<i64> = vec![42];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_LE)];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // col >= 42: max=42 < 42 is false → cannot skip (42 matches)
+        let v: Vec<i64> = vec![42];
+        let filters = [make_filter_with_op(0, 1, v.as_ptr() as u64, FILTER_OP_GE)];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 42 AND 42: [42,42] overlaps [42,42] → cannot skip
+        let v: Vec<i64> = vec![42, 42];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 43 AND 50: [43,50] doesn't overlap [42,42] → skip
+        let v: Vec<i64> = vec![43, 50];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_between_string() -> ParquetResult<()> {
+        let data = vec!["alice", "bob", "charlie"]; // min="alice", max="charlie"
+        let buf = gen_string_parquet_with_bloom(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // BETWEEN "dog" AND "zebra": ["dog","zebra"] doesn't overlap ["alice","charlie"] → skip
+        let filter_buf = make_string_filter_buf(&["dog", "zebra"]);
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            filter_buf.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN "aaa" AND "bbb": overlaps ["alice","charlie"] → cannot skip
+        let filter_buf = make_string_filter_buf(&["aaa", "bbb"]);
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            filter_buf.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN "zebra" AND "dog" (reversed): swaps to ["dog","zebra"] → skip
+        let filter_buf = make_string_filter_buf(&["zebra", "dog"]);
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            filter_buf.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_between_f64() -> ParquetResult<()> {
+        let data: Vec<f64> = vec![1.0, 2.5, 5.0, 7.5, 10.0]; // min=1.0, max=10.0
+        let buf = gen_f64_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // BETWEEN 20.0 AND 30.0: [20,30] doesn't overlap [1,10] → skip
+        let v: Vec<f64> = vec![20.0, 30.0];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 30.0 AND 20.0 (reversed): swaps to [20,30] → skip
+        let v: Vec<f64> = vec![30.0, 20.0];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 3.0 AND 8.0: overlaps [1,10] → cannot skip
+        let v: Vec<f64> = vec![3.0, 8.0];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_between_i32() -> ParquetResult<()> {
+        let data: Vec<i32> = (10..20).collect(); // min=10, max=19
+        let buf = gen_i32_parquet_with_stats(&data)?;
+        let decoder = read_decoder(&buf)?;
+
+        // BETWEEN 30 AND 50: [30,50] doesn't overlap [10,19] → skip
+        let v: Vec<i32> = vec![30, 50];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 50 AND 30 (reversed): swaps to [30,50] → skip
+        let v: Vec<i32> = vec![50, 30];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN 5 AND 15: overlaps [10,19] → cannot skip
+        let v: Vec<i32> = vec![5, 15];
+        let filters = [make_filter_with_op(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
         )];
         assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
