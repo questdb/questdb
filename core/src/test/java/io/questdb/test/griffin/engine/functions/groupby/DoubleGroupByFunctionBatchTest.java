@@ -58,9 +58,10 @@ public class DoubleGroupByFunctionBatchTest {
     }
 
     // Verify that computeBatch is consistent with computeNext: when the running sum
-    // overflows to +Infinity, the next finite batch overwrites it (resets the accumulator).
+    // overflows to +Infinity, it is preserved. AvgDouble's computeNext uses addDouble
+    // with no inner guard, so Infinity + finite = Infinity naturally.
     @Test
-    public void testAvgDoubleBatchAccumulatedInfinityIsOverwritten() {
+    public void testAvgDoubleBatchAccumulatedInfinityIsPreserved() {
         AvgDoubleGroupByFunction function = new AvgDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             // Batch 1: running sum = MAX_VALUE (finite)
@@ -71,12 +72,12 @@ public class DoubleGroupByFunctionBatchTest {
             ptr = allocateDoubles(Double.MAX_VALUE);
             function.computeBatch(value, ptr, 1, 0);
 
-            // Batch 3: Infinity is not finite, so the accumulator resets to 1.0
+            // Batch 3: Infinity is preserved, not overwritten
             ptr = allocateDoubles(1.0);
             function.computeBatch(value, ptr, 1, 0);
 
-            // avg = 1.0 / 3 (count is still 3)
-            Assert.assertEquals(1.0 / 3.0, function.getDouble(value), 1e-15);
+            // avg = Infinity / 3 = Infinity
+            Assert.assertTrue(Double.isInfinite(function.getDouble(value)));
         }
     }
 
