@@ -110,37 +110,70 @@ where
     }
 
     pub(crate) fn get_end_pointer(&self) -> ParquetResult<*const u8> {
-        let mut block_remaining = self.blocks_remaining;
+        let mut blocks_remaining = self.blocks_remaining;
         let mut page_data = self.page_data;
-        let miniblocks_per_block = self.miniblocks_per_block as usize;
-        let mut miniblock_index = self.miniblock_index as usize;
+        let miniblocks_per_block = self.miniblocks_per_block;
+        let mut miniblock_index = self.miniblock_index;
         let block_bitwidths_offset = self.block_bitwidths_offset;
         let mut miniblock_offset = self.miniblock_offset;
         let miniblock_size = self.miniblock_size;
 
         // Skip the remaining miniblocks in the current block
         while miniblock_index < miniblocks_per_block {
-            let num_bits = page_data[block_bitwidths_offset + miniblock_index] as u8;
-            miniblock_offset += (self.miniblock_size * num_bits as usize) / 8;
+            let bitwidth_idx = block_bitwidths_offset
+                .checked_add(miniblock_index)
+                .ok_or_else(|| fmt_err!(Layout, "delta binary packed bit width index overflow"))?;
+            let num_bits = *page_data
+                .get(bitwidth_idx)
+                .ok_or_else(|| fmt_err!(Layout, "delta binary packed bit width out of bounds"))?;
+            let miniblock_bytes =
+                miniblock_size
+                    .checked_mul(num_bits as usize)
+                    .ok_or_else(|| {
+                        fmt_err!(Layout, "delta binary packed miniblock byte size overflow")
+                    })?
+                    / 8;
+            miniblock_offset = miniblock_offset
+                .checked_add(miniblock_bytes)
+                .ok_or_else(|| fmt_err!(Layout, "delta binary packed miniblock offset overflow"))?;
             miniblock_index += 1;
         }
 
         // Skip the remaining blocks
-        while block_remaining > 0 {
-            page_data = &page_data[miniblock_offset..];
+        while blocks_remaining > 0 {
+            page_data = page_data.get(miniblock_offset..).ok_or_else(|| {
+                fmt_err!(Layout, "delta binary packed block offset out of bounds")
+            })?;
             let (_min_delta, offset) = zigzag_leb128::decode(page_data)
                 .map_err(|_| fmt_err!(Layout, "failed to decode min delta"))?;
             page_data = &page_data[offset..];
             miniblock_offset = miniblocks_per_block;
-            block_remaining -= 1;
+            blocks_remaining -= 1;
 
             for i in 0..miniblocks_per_block {
-                let num_bits = page_data[i] as u8;
-                miniblock_offset += (miniblock_size * num_bits as usize) / 8;
+                let num_bits = *page_data.get(i).ok_or_else(|| {
+                    fmt_err!(Layout, "delta binary packed bit width out of bounds")
+                })?;
+                let miniblock_bytes =
+                    miniblock_size
+                        .checked_mul(num_bits as usize)
+                        .ok_or_else(|| {
+                            fmt_err!(Layout, "delta binary packed miniblock byte size overflow")
+                        })?
+                        / 8;
+                miniblock_offset =
+                    miniblock_offset
+                        .checked_add(miniblock_bytes)
+                        .ok_or_else(|| {
+                            fmt_err!(Layout, "delta binary packed miniblock offset overflow")
+                        })?;
             }
         }
 
-        Ok(unsafe { page_data.as_ptr().add(miniblock_offset) })
+        let end = page_data
+            .get(miniblock_offset..)
+            .ok_or_else(|| fmt_err!(Layout, "delta binary packed block exceeds page size"))?;
+        Ok(end.as_ptr())
     }
 
     #[inline]
