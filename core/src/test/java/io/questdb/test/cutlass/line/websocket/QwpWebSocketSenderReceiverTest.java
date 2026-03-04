@@ -642,6 +642,117 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Tests that auto-flush triggers based on byte threshold.
+     * <p>
+     * Disables row-count and interval triggers, sets a low byte threshold (1024),
+     * and sends rows with large string payloads. Verifies that data reaches the
+     * server before any explicit flush() or close() — proving the byte threshold
+     * triggered the auto-flush. If auto-flush is broken, awaitTable() times out.
+     */
+    @Test
+    public void testAutoFlushByBytes() throws Exception {
+        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // 1024 byte threshold; row-count and interval triggers disabled
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                        "localhost", httpPort, false,
+                        Integer.MAX_VALUE,                      // autoFlushRows: disabled
+                        1024,                                   // autoFlushBytes: 1 KB
+                        TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
+                        windowSize
+                )) {
+                    // ~200 bytes per row; 20 rows = ~4 KB >> 1 KB threshold
+                    String largePayload = "A".repeat(180);
+                    for (int i = 0; i < 20; i++) {
+                        sender.table("ws_autoflush_bytes")
+                                .longColumn("value", i)
+                                .stringColumn("payload", largePayload)
+                                .at(1_000_000_000_000L + i * 1_000_000L, ChronoUnit.MICROS);
+                    }
+
+                    // Verify data arrived BEFORE flush()/close().
+                    // If auto-flush by bytes didn't trigger, the table won't exist
+                    // and awaitTable() times out, failing the test.
+                    serverMain.awaitTable("ws_autoflush_bytes");
+
+                    // Flush remaining buffered rows
+                    sender.flush();
+                }
+
+                serverMain.assertSql("select count() from ws_autoflush_bytes", "count\n20\n");
+            }
+        });
+    }
+
+    /**
+     * Tests that auto-flush triggers based on time interval.
+     * <p>
+     * Disables row-count and byte triggers, sets a short interval (50 ms),
+     * sends one row, sleeps past the interval, then sends another row which
+     * triggers the interval check. Verifies the first row reached the server
+     * before any explicit flush() or close() — proving the interval trigger
+     * fired. If auto-flush is broken, awaitTable() times out.
+     */
+    @Test
+    public void testAutoFlushByInterval() throws Exception {
+        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // 50 ms interval; row-count and byte triggers disabled
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                        "localhost", httpPort, false,
+                        Integer.MAX_VALUE,                      // autoFlushRows: disabled
+                        Integer.MAX_VALUE,                      // autoFlushBytes: disabled
+                        TimeUnit.MILLISECONDS.toNanos(50),      // autoFlushInterval: 50 ms
+                        windowSize
+                )) {
+                    // Send first row — stays buffered (interval hasn't elapsed yet)
+                    sender.table("ws_autoflush_interval")
+                            .longColumn("value", 1)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    // Sleep well past the 50 ms interval
+                    Thread.sleep(150);
+
+                    // Second row triggers the interval check, auto-flushing row 1
+                    sender.table("ws_autoflush_interval")
+                            .longColumn("value", 2)
+                            .at(1_000_000_001_000L, ChronoUnit.MICROS);
+
+                    // Verify row 1 arrived BEFORE flush()/close().
+                    // If the interval trigger didn't fire, the table won't exist
+                    // and awaitTable() times out, failing the test.
+                    serverMain.awaitTable("ws_autoflush_interval");
+
+                    // Flush the second row
+                    sender.flush();
+                }
+
+                serverMain.assertSql("select count() from ws_autoflush_interval", "count\n2\n");
+                serverMain.assertSql(
+                        "SELECT value FROM ws_autoflush_interval ORDER BY timestamp",
+                        """
+                                value
+                                1
+                                2
+                                """
+                );
+            }
+        });
+    }
+
     @Test
     public void testBatchInsertion() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
