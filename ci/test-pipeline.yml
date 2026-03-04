@@ -274,20 +274,32 @@ stages:
               llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
 
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
-              OBJECTS="--object $COVERAGE_DIR/libquestdbr.so --object $COVERAGE_DIR/questdbr-test-binary"
+              if [ ! -d "$COVERAGE_DIR/deps" ]; then
+                echo "##vso[task.logissue type=error]Rust coverage objects directory not found: $COVERAGE_DIR/deps"
+                exit 1
+              fi
+              mapfile -d '' -t RUST_TEST_OBJECTS < <(find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -executable -print0 | sort -z)
+              OBJECT_ARGS=(--object "$COVERAGE_DIR/libquestdbr.so")
+              for rust_test_object in "${RUST_TEST_OBJECTS[@]}"; do
+                OBJECT_ARGS+=(--object "$rust_test_object")
+              done
+              if [ ${#OBJECT_ARGS[@]} -le 1 ]; then
+                echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
+                exit 1
+              fi
               ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
               if [ -z "$ORIG_PATH" ]; then
                 echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
                 exit 1
               fi
               PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
-              echo "Objects args: $OBJECTS"
+              echo "Using ${#OBJECT_ARGS[@]} object files for llvm-cov"
 
               # Export the merged coverage report to LCOV format
               llvm-cov export \
               --format=lcov \
               --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-              $OBJECTS \
+              "${OBJECT_ARGS[@]}" \
               --instr-profile=questdbr.profdata \
               > questdbr.lcov.dat
 
@@ -296,7 +308,7 @@ stages:
                 --format=html \
                 --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
                 $PATH_EQUIV_ARGS \
-                $OBJECTS \
+                "${OBJECT_ARGS[@]}" \
                 --instr-profile=questdbr.profdata \
                 --output-dir $(Build.SourcesDirectory)/rust-coverage
 

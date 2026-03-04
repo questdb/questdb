@@ -42,7 +42,7 @@ etc. calls.
 ### Tests
 
 - write all tests using assertMemoryLeak(). This isn't needed for narrow unit
-  tests that provably don't allocate any native memory.
+  tests that doesn't allocate native memory.
 - resource leaks are a pain point in QuestDB. Always think carefully about all
   possible code paths, especially error paths, and write tests that ensure
   correct resource cleanup on each path.
