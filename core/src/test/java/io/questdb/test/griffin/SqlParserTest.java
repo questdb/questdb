@@ -4094,12 +4094,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableParquetRleDictionaryRejectedForInt() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT PARQUET ENCODING RLE_DICTIONARY, " +
+                        "a INT PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY, " +
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY",
                 39,
-                "encoding 'RLE_DICTIONARY' is not valid for column type"
+                "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
         );
     }
 
