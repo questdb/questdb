@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
@@ -174,7 +176,26 @@ public class CairoColumn implements Sinkable {
         sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
         sink.put("isIndexed=").put(isIndexed()).put(", ");
         sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
-        sink.put("parquetEncodingConfig=").put(getParquetEncodingConfig()).put(", ");
+        int config = getParquetEncodingConfig();
+        if (config == 0) {
+            sink.put("parquetEncoding=Default, parquetCompression=Default, ");
+        } else {
+            int encoding = TableUtils.getParquetConfigEncoding(config);
+            int compression = TableUtils.getParquetConfigCompression(config);
+            int level = TableUtils.getParquetConfigCompressionLevel(config);
+            sink.put("parquetEncoding=");
+            sink.put(encoding == 0 ? "Default" : ParquetEncoding.getEncodingName(encoding));
+            sink.put(", parquetCompression=");
+            if (compression == 0) {
+                sink.put("Default");
+            } else {
+                sink.put(ParquetCompression.getCompressionName(compression - 1));
+                if (level > 0) {
+                    sink.put(' ').put(level);
+                }
+            }
+            sink.put(", ");
+        }
         sink.put("writerIndex=").put(getWriterIndex()).put("]");
     }
 }
