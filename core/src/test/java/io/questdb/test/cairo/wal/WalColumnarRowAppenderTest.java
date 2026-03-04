@@ -3591,7 +3591,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                         appender.beginColumnarWrite(rowCount);
                         appender.putFixedColumn(0, valuesAddr, rowCount, 4, 0, rowCount);
-                        appender.putTimestampColumn(tsIndex, tsAddr, valueCount, nullBitmapAddr, rowCount, 0);
+                        appender.putTimestampColumn(tsIndex, tsAddr, valueCount, nullBitmapAddr, rowCount, 0, Numbers.LONG_NULL);
                         appender.endColumnarWrite(timestampValues[0], timestampValues[2], false);
 
                         walWriter.commit();
@@ -4014,7 +4014,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             for (int i = 0; i < rowCount; i++) {
                 Unsafe.getUnsafe().putLong(tsAddr + (long) i * 8, timestamps[i]);
             }
-            appender.putTimestampColumn(tsIndex, tsAddr, rowCount, 0, rowCount, startRowId);
+            appender.putTimestampColumn(tsIndex, tsAddr, rowCount, 0, rowCount, startRowId, Numbers.LONG_NULL);
         } finally {
             Unsafe.free(tsAddr, (long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
         }

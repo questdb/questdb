@@ -2022,7 +2022,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int valueCount,
             long nullBitmapAddress,
             int rowCount,
-            long startRowId
+            long startRowId,
+            long serverTimestampMicros
     ) {
         checkInColumnarWrite();
 
@@ -2036,7 +2037,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             for (int row = 0; row < rowCount; row++) {
                 long timestamp;
                 if (nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                    timestamp = Numbers.LONG_NULL;
+                    // Null designated timestamp means server-assigned (atNow)
+                    timestamp = serverTimestampMicros != Numbers.LONG_NULL ? serverTimestampMicros : Numbers.LONG_NULL;
                 } else {
                     timestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8);
                     valueIdx++;
@@ -2066,7 +2068,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     @Override
     public void putTimestampColumnWithConversion(int columnIndex, QwpTimestampColumnCursor cursor,
                                                  int rowCount, byte ilpType, int columnType,
-                                                 boolean isDesignated, long startRowId) throws QwpParseException {
+                                                 boolean isDesignated, long startRowId,
+                                                 long serverTimestampMicros) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -2083,7 +2086,16 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
             long timestamp;
             if (cursor.isNull()) {
-                timestamp = Numbers.LONG_NULL;
+                // Null designated timestamp means server-assigned (atNow)
+                if (isDesignated && serverTimestampMicros != Numbers.LONG_NULL) {
+                    timestamp = serverTimestampMicros;
+                    // Apply precision conversion if column stores nanos
+                    if (columnIsNanos) {
+                        timestamp = timestamp * 1000;
+                    }
+                } else {
+                    timestamp = Numbers.LONG_NULL;
+                }
             } else {
                 timestamp = cursor.getTimestamp();
 
