@@ -1367,18 +1367,24 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {
                     return function;
+                } else if (function.isNullConstant() || function.isNull(null)) {
+                    return BooleanConstant.NULL;
                 } else {
                     return BooleanConstant.of(function.getBool(null));
                 }
             case ColumnType.BYTE:
                 if (function instanceof ByteConstant) {
                     return function;
+                } else if (function.isNullConstant() || function.isNull(null)) {
+                    return ByteConstant.NULL;
                 } else {
                     return ByteConstant.newInstance(function.getByte(null));
                 }
             case ColumnType.SHORT:
                 if (function instanceof ShortConstant) {
                     return function;
+                } else if (function.isNullConstant() || function.isNull(null)) {
+                    return ShortConstant.NULL;
                 } else {
                     return ShortConstant.newInstance(function.getShort(null));
                 }

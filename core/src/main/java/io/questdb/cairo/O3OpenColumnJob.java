@@ -2884,7 +2884,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataNullFd = ff.openRO(nFile(pathToOldPartition.trimTo(pOldLen), columnName, columnNameTxn));
                         if (srcDataNullFd > -1) {
                             srcDataNullSize = (srcDataMax + 7) >> 3;
-                            srcDataNullAddr = mapRO(ff, srcDataNullFd, srcDataNullSize, MemoryTag.MMAP_O3);
+                            long actualFileLen = ff.length(srcDataNullFd);
+                            if (actualFileLen >= srcDataNullSize) {
+                                srcDataNullAddr = mapRO(ff, srcDataNullFd, srcDataNullSize, MemoryTag.MMAP_O3);
+                            }
                         }
                     }
                     writeNullBitmapForMerge(
