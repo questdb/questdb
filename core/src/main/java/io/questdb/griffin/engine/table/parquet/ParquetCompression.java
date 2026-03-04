@@ -39,7 +39,7 @@ public class ParquetCompression {
     public static final int COMPRESSION_ZSTD = COMPRESSION_BROTLI + 1; // 4
     public static final int COMPRESSION_LZ4_RAW = COMPRESSION_ZSTD + 1; // 5
     static final int MAX_ENUM_INT = COMPRESSION_LZ4_RAW + 1;
-    public static final int GZIP_MAX_COMPRESSION_LEVEL = 10;
+    public static final int GZIP_MAX_COMPRESSION_LEVEL = 9;
     public static final int GZIP_MIN_COMPRESSION_LEVEL = 0;
     public static final int WRITER_COMPRESSION_UNCOMPRESSED = 0; // 0
     public static final int WRITER_COMPRESSION_SNAPPY = WRITER_COMPRESSION_UNCOMPRESSED + 1; // 1
