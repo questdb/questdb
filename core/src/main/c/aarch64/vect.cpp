@@ -129,6 +129,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_sumShortBitmapNull(JNIEnv *env,
     return sumShortBitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_minShortBitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
+    return minShortBitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_maxShortBitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
+    return maxShortBitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_sumUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
     return sumUInt16BitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
 }

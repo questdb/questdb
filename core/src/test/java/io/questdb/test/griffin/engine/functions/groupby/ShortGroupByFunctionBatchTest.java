@@ -32,18 +32,36 @@ import io.questdb.griffin.engine.functions.groupby.FirstShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumShortGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ShortGroupByFunctionBatchTest {
     private static final int COLUMN_INDEX = 789;
+    private long lastAllocated;
+    private long lastSize;
+
+    @After
+    public void tearDown() {
+        if (lastAllocated != 0) {
+            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
+            lastAllocated = 0;
+            lastSize = 0;
+        }
+    }
 
     @Test
-    public void testAvgShortBatchNotSupported() {
+    public void testAvgShortBatch() {
         AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            Assert.assertFalse(function.supportsBatchComputation());
+            long ptr = allocateShorts((short) 2, (short) 4, (short) 6);
+            function.computeBatch(value, ptr, 3);
+
+            Assert.assertEquals(4.0, function.getDouble(value), 0.0);
+            Assert.assertTrue(function.supportsBatchComputation());
         }
     }
 
@@ -56,10 +74,37 @@ public class ShortGroupByFunctionBatchTest {
     }
 
     @Test
-    public void testFirstShortBatchNotSupported() {
+    public void testFirstShortBatch() {
         FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            Assert.assertFalse(function.supportsBatchComputation());
+            long ptr = allocateShorts((short) 5, (short) 6, (short) 7);
+            function.computeBatch(value, ptr, 3);
+
+            Assert.assertEquals(5, function.getShort(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testFirstShortBatchAllNull() {
+        FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateShorts(Short.MIN_VALUE, (short) 1);
+            function.computeBatch(value, ptr, 2);
+
+            Assert.assertEquals(Short.MIN_VALUE, function.getShort(value));
+        }
+    }
+
+    @Test
+    public void testFirstShortBatchEmpty() {
+        FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            function.computeBatch(value, 0, 0);
+
+            Assert.assertEquals(0, function.getShort(value));
         }
     }
 
@@ -72,10 +117,30 @@ public class ShortGroupByFunctionBatchTest {
     }
 
     @Test
-    public void testLastShortBatchNotSupported() {
+    public void testLastShortBatch() {
         LastShortGroupByFunction function = new LastShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            Assert.assertFalse(function.supportsBatchComputation());
+            function.setNull(value);
+
+            long ptr = allocateShorts((short) 11, (short) 22, (short) 33);
+            function.computeBatch(value, ptr, 3);
+
+            Assert.assertEquals(Numbers.LONG_NULL, value.getLong(0));
+            Assert.assertEquals(33, function.getShort(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testLastShortBatchAllNull() {
+        LastShortGroupByFunction function = new LastShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            long ptr = allocateShorts((short) 11, Short.MIN_VALUE);
+            function.computeBatch(value, ptr, 2);
+
+            Assert.assertEquals(Short.MIN_VALUE, function.getShort(value));
         }
     }
 
@@ -88,10 +153,39 @@ public class ShortGroupByFunctionBatchTest {
     }
 
     @Test
-    public void testSumShortBatchNotSupported() {
+    public void testSumShortBatch() {
         SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            Assert.assertFalse(function.supportsBatchComputation());
+            value.putLong(0, 10);
+
+            long ptr = allocateShorts((short) 1, (short) 2, (short) 3, (short) 4);
+            function.computeBatch(value, ptr, 4);
+
+            Assert.assertEquals(10L, function.getLong(value));
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testSumShortBatchAllZero() {
+        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateShorts((short) 0, (short) 0);
+            function.computeBatch(value, ptr, 2);
+
+            Assert.assertEquals(0L, function.getLong(value));
+        }
+    }
+
+    @Test
+    public void testSumShortBatchZeroCountKeepsExistingValue() {
+        SumShortGroupByFunction function = new SumShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            value.putLong(0, 55);
+
+            function.computeBatch(value, 0, 0);
+
+            Assert.assertEquals(55L, function.getLong(value));
         }
     }
 
@@ -101,6 +195,18 @@ public class ShortGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
         }
+    }
+
+    private long allocateShorts(short... values) {
+        if (lastAllocated != 0) {
+            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
+        }
+        lastSize = (long) values.length * Short.BYTES;
+        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < values.length; i++) {
+            Unsafe.getUnsafe().putShort(lastAllocated + (long) i * Short.BYTES, values[i]);
+        }
+        return lastAllocated;
     }
 
     private SimpleMapValue prepare(GroupByFunction function) {

@@ -5941,9 +5941,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x+42) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum+COUNT*42]
-                        Async Group By workers: 1
+                        GroupBy vectorized: true workers: 1
                           values: [sum(x),count(*)]
-                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5952,9 +5951,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(42+x) FROM tab", """
                     VirtualRecord
                       functions: [sum,COUNT*42+sum]
-                        Async Group By workers: 1
+                        GroupBy vectorized: true workers: 1
                           values: [sum(x),count(*)]
-                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5970,9 +5968,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum*10]
-                        Async Group By workers: 1
+                        GroupBy vectorized: true workers: 1
                           values: [sum(x)]
-                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5981,9 +5978,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
                     VirtualRecord
                       functions: [sum,10*sum]
-                        Async Group By workers: 1
+                        GroupBy vectorized: true workers: 1
                           values: [sum(x)]
-                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5999,9 +5995,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum-COUNT*10]
-                        Async Group By workers: 1
+                        GroupBy vectorized: true workers: 1
                           values: [sum(x),count(*)]
-                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -6010,9 +6005,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
                     VirtualRecord
                       functions: [sum,COUNT*10-sum]
-                        Async Group By workers: 1
+                        GroupBy vectorized: true workers: 1
                           values: [sum(x),count(*)]
-                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
