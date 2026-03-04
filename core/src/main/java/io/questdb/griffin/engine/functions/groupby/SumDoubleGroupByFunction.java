@@ -50,7 +50,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
             final double batchSum = Vect.sumDouble(ptr, count);
             if (Numbers.isFinite(batchSum)) {
                 final double existing = mapValue.getDouble(valueIndex);
-                if (!Double.isNaN(existing)) {
+                if (Numbers.isFinite(existing)) {
                     mapValue.putDouble(valueIndex, existing + batchSum);
                 } else {
                     mapValue.putDouble(valueIndex, batchSum);

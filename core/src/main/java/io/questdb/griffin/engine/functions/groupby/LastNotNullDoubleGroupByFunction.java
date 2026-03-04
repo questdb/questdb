@@ -60,7 +60,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Numbers.isFinite(arg.getDouble(record))) {
+        if (!Numbers.isNull(arg.getDouble(record))) {
             if (Numbers.isNull(mapValue.getDouble(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
                 computeFirst(mapValue, record, rowId);
             }

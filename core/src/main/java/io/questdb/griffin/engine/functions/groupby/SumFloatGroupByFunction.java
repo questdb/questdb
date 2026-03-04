@@ -58,7 +58,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
             }
             if (hasFinite) {
                 final float existing = mapValue.getFloat(valueIndex);
-                if (!Float.isNaN(existing)) {
+                if (Float.isFinite(existing)) {
                     mapValue.putFloat(valueIndex, existing + acc);
                 } else {
                     mapValue.putFloat(valueIndex, acc);

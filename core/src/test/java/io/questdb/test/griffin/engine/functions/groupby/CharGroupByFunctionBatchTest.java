@@ -241,7 +241,7 @@ public class CharGroupByFunctionBatchTest {
             value.putChar(function.getValueIndex(), CharConstant.ZERO.getChar(null));
 
             long ptr = allocateChars('d', 'b', 'c');
-            function.computeBatch(value, ptr, 4, 0);
+            function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals('b', function.getChar(value));
             Assert.assertTrue(function.supportsBatchComputation());

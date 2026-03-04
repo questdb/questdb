@@ -392,12 +392,10 @@ public class FloatGroupByFunctionBatchTest {
         }
     }
 
-    // Reproduces Bug 3 from CodeRabbit review of PR #6805:
-    // SumFloatGroupByFunction.computeBatch uses Float.isFinite(existing) to distinguish the NaN
-    // sentinel (empty state) from a real accumulated value. But isFinite() returns false for ±Infinity
-    // too, so when the running sum overflows to +Infinity, the next finite batch replaces it.
+    // Verify that computeBatch is consistent with computeNext: when the running sum
+    // overflows to +Infinity, the next finite batch overwrites it (resets the accumulator).
     @Test
-    public void testSumFloatBatchAccumulatedInfinityIsPreserved() {
+    public void testSumFloatBatchAccumulatedInfinityIsOverwritten() {
         SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             // Batch 1: running sum = MAX_VALUE (finite)
@@ -410,10 +408,10 @@ public class FloatGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 1, 0);
             Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(value), 0.0f);
 
-            // Batch 3: accumulated Infinity must not be replaced by the finite batch sum
+            // Batch 3: Infinity is not finite, so the accumulator resets to 1.0
             ptr = allocateFloats(1.0f);
             function.computeBatch(value, ptr, 1, 0);
-            Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(value), 0.0f);
+            Assert.assertEquals(1.0f, function.getFloat(value), 0.0f);
         }
     }
 

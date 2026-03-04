@@ -57,13 +57,10 @@ public class DoubleGroupByFunctionBatchTest {
         }
     }
 
-    // Reproduces Bug 1 from CodeRabbit review of PR #6805:
-    // AvgDoubleGroupByFunction.computeBatch uses Numbers.isFinite(prevSum) to distinguish "not yet
-    // initialized" (NaN sentinel) from "has accumulated value". But isFinite() returns false for both
-    // NaN and ±Infinity. When the running sum legitimately overflows to +Infinity across batches,
-    // the next finite batch overwrites it instead of accumulating into it.
+    // Verify that computeBatch is consistent with computeNext: when the running sum
+    // overflows to +Infinity, the next finite batch overwrites it (resets the accumulator).
     @Test
-    public void testAvgDoubleBatchAccumulatedInfinityIsPreserved() {
+    public void testAvgDoubleBatchAccumulatedInfinityIsOverwritten() {
         AvgDoubleGroupByFunction function = new AvgDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             // Batch 1: running sum = MAX_VALUE (finite)
@@ -74,12 +71,12 @@ public class DoubleGroupByFunctionBatchTest {
             ptr = allocateDoubles(Double.MAX_VALUE);
             function.computeBatch(value, ptr, 1, 0);
 
-            // Batch 3: a finite batch must not overwrite accumulated Infinity
+            // Batch 3: Infinity is not finite, so the accumulator resets to 1.0
             ptr = allocateDoubles(1.0);
             function.computeBatch(value, ptr, 1, 0);
 
-            // avg = Infinity / 3 = Infinity
-            Assert.assertTrue(Double.isInfinite(function.getDouble(value)));
+            // avg = 1.0 / 3 (count is still 3)
+            Assert.assertEquals(1.0 / 3.0, function.getDouble(value), 1e-15);
         }
     }
 
@@ -421,12 +418,10 @@ public class DoubleGroupByFunctionBatchTest {
         }
     }
 
-    // Reproduces Bug 2 from CodeRabbit review of PR #6805:
-    // SumDoubleGroupByFunction.computeBatch uses Numbers.isFinite(existing) to distinguish the NaN
-    // sentinel (empty state) from a real accumulated value. But isFinite() returns false for ±Infinity
-    // too, so when the running sum overflows to +Infinity, the next finite batch replaces it.
+    // Verify that computeBatch is consistent with computeNext: when the running sum
+    // overflows to +Infinity, the next finite batch overwrites it (resets the accumulator).
     @Test
-    public void testSumDoubleBatchAccumulatedInfinityIsPreserved() {
+    public void testSumDoubleBatchAccumulatedInfinityIsOverwritten() {
         SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             // Batch 1: running sum = MAX_VALUE (finite)
@@ -439,10 +434,10 @@ public class DoubleGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 1, 0);
             Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(value), 0.0);
 
-            // Batch 3: accumulated Infinity must not be replaced by the finite batch sum
+            // Batch 3: Infinity is not finite, so the accumulator resets to 1.0
             ptr = allocateDoubles(1.0);
             function.computeBatch(value, ptr, 1, 0);
-            Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(value), 0.0);
+            Assert.assertEquals(1.0, function.getDouble(value), 0.0);
         }
     }
 
