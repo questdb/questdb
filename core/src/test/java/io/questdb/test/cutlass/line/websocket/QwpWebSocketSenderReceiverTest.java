@@ -113,8 +113,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== Basic Data Type Tests ====================
-
     @Test
     public void test1000Rows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -164,8 +162,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== UUID and LONG256 Tests ====================
-
     @Test
     public void test10Rows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -210,8 +206,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== Timestamp Precision Conversion Tests ====================
-
     @Test
     public void test2DDoubleArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -255,8 +249,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== CHAR Column Tests ====================
 
     @Test
     public void testAllDataTypes() throws Exception {
@@ -354,8 +346,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Timestamp Tests ====================
 
     @Test
     public void testAtNowServerAssignedTimestamp() throws Exception {
@@ -521,8 +511,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Batch Insertion Tests ====================
 
     /**
      * Tests that auto-created columns are correctly mapped when writer index differs from column index.
@@ -821,8 +809,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== Boolean Tests ====================
-
     @Test
     public void testBooleanValues() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -1062,8 +1048,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== Symbol Tests ====================
-
     @Test
     public void testColumnNameWithUnderscore() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -1152,8 +1136,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== String Tests ====================
 
     @Test
     public void testComplexSchema2() throws Exception {
@@ -1255,8 +1237,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Numeric Edge Cases ====================
 
     @Test
     public void testDecimal64() throws Exception {
@@ -1408,8 +1388,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Type Narrowing Tests ====================
 
     @Test
     public void testDecimalWithScalarColumns() throws Exception {
@@ -1581,8 +1559,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== Column Name Tests ====================
-
     /**
      * Tests high volume ingestion with many unique symbols.
      * <p>
@@ -1689,8 +1665,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Complex Schema Tests ====================
 
     /**
      * Tests long symbol strings with delta encoding.
@@ -1963,8 +1937,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== Flush Patterns ====================
-
     /**
      * Tests rapid reconnection cycles with delta dictionary.
      * <p>
@@ -2134,8 +2106,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== Interleaved Tables ====================
-
     @Test
     public void testDoubleSpecialValues() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -2273,8 +2243,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== Array Tests ====================
-
     @Test
     public void testFiveBoolsAllTrue() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -2410,8 +2378,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Decimal Tests ====================
 
     @Test
     public void testFlushEvery10Rows() throws Exception {
@@ -3035,8 +3001,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    // ==================== Wide Table Test ====================
-
     /**
      * Tests all narrowing paths together in a single table with multiple rows.
      */
@@ -3084,8 +3048,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== ACK Handling Tests ====================
 
     /**
      * Tests DOUBLE to FLOAT narrowing by pre-creating a table with FLOAT column
@@ -3175,8 +3137,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Delta Symbol Dictionary Tests ====================
 
     /**
      * Tests LONG to INT narrowing by pre-creating a table with INT column
@@ -4247,8 +4207,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Symbol Cache Tests ====================
     // These tests exercise the server-side symbol ID cache optimization
     // which maps clientSymbolId → tableSymbolId to bypass string lookups.
 
@@ -4415,8 +4373,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Symbol Interleaving Tests ====================
     // These tests exercise various interleavings of server-side commits,
     // WAL apply jobs, and sender batches.
 
@@ -4917,8 +4873,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Symbol Cache Fast Path Tests ====================
     // These tests specifically exercise the cache hit (fast path) in writeSymbolWithCache().
     // The fast path requires:
     // 1. Symbols committed to table (WAL applied)
