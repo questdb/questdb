@@ -37,7 +37,6 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
