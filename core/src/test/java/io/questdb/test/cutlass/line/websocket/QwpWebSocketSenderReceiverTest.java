@@ -286,6 +286,47 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Tests sending all narrow types (BYTE, SHORT, INT, FLOAT, CHAR) in a single row
+     * using the direct narrow-type methods on QwpWebSocketSender.
+     */
+    @Test
+    public void testAllNarrowTypes_mixedRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_narrow_mixed_direct (" +
+                        "b BYTE, " +
+                        "s SHORT, " +
+                        "i INT, " +
+                        "f FLOAT, " +
+                        "c CHAR, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_narrow_mixed_direct")
+                            .byteColumn("b", (byte) 42)
+                            .shortColumn("s", (short) 1000)
+                            .intColumn("i", 100_000)
+                            .floatColumn("f", 1.5f)
+                            .charColumn("c", 'A')
+                            .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_narrow_mixed_direct");
+                serverMain.assertSql(
+                        "SELECT b, s, i, f, c FROM ws_narrow_mixed_direct",
+                        "b\ts\ti\tf\tc\n42\t1000\t100000\t1.5\tA\n"
+                );
+            }
+        });
+    }
+
     @Test
     public void testAllNumericTypes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -297,9 +338,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     for (int i = 0; i < 100; i++) {
                         sender.table("ws_all_numeric")
-                                .longColumn("byte_col", (long) (i % 128))
-                                .longColumn("short_col", (long) (i * 100))
-                                .longColumn("int_col", (long) (i * 10000))
+                                .longColumn("byte_col", i % 128)
+                                .longColumn("short_col", i * 100)
+                                .longColumn("int_col", i * 10000)
                                 .longColumn("long_col", (long) i * 100000000L)
                                 .doubleColumn("float_col", i * 1.1)
                                 .doubleColumn("double_col", i * 1.111111)
@@ -704,6 +745,49 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Tests the QWP-specific byteColumn() method that encodes a native BYTE wire type.
+     * Pre-creates a BYTE column to verify the client sends the correct type code.
+     */
+    @Test
+    public void testByteColumn_directWrite() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_byte_direct (" +
+                        "value BYTE, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_byte_direct")
+                            .byteColumn("value", (byte) 0)
+                            .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
+                    sender.table("ws_byte_direct")
+                            .byteColumn("value", (byte) 127)
+                            .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
+                    sender.table("ws_byte_direct")
+                            .byteColumn("value", (byte) -128)
+                            .at(1_704_067_200_000_002L, ChronoUnit.MICROS);
+                    sender.table("ws_byte_direct")
+                            .byteColumn("value", (byte) -1)
+                            .at(1_704_067_200_000_003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_byte_direct");
+                serverMain.assertSql("SELECT count() FROM ws_byte_direct", "count\n4\n");
+                serverMain.assertSql(
+                        "SELECT value FROM ws_byte_direct ORDER BY ts",
+                        "value\n0\n127\n-128\n-1\n"
+                );
+            }
+        });
+    }
+
     @Test
     public void testByteRangeLong() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -802,6 +886,46 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 serverMain.awaitTable("ws_char_test");
                 serverMain.assertSql("select count() from ws_char_test", "count\n1\n");
                 serverMain.assertSql("select x from ws_char_test", "x\nA\n");
+            }
+        });
+    }
+
+    /**
+     * Tests the QWP-specific charColumn() method that encodes a native CHAR wire type.
+     * Pre-creates a CHAR column to verify the client sends the correct type code.
+     */
+    @Test
+    public void testCharColumn_directWrite() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_char_direct (" +
+                        "value CHAR, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_char_direct")
+                            .charColumn("value", 'Z')
+                            .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
+                    sender.table("ws_char_direct")
+                            .charColumn("value", 'a')
+                            .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
+                    sender.table("ws_char_direct")
+                            .charColumn("value", '0')
+                            .at(1_704_067_200_000_002L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_char_direct");
+                serverMain.assertSql("SELECT count() FROM ws_char_direct", "count\n3\n");
+                serverMain.assertSql(
+                        "SELECT value FROM ws_char_direct ORDER BY ts",
+                        "value\nZ\na\n0\n"
+                );
             }
         });
     }
@@ -1977,6 +2101,49 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Tests the QWP-specific floatColumn() method that encodes a native FLOAT wire type.
+     * Pre-creates a FLOAT column to verify the client sends the correct type code.
+     */
+    @Test
+    public void testFloatColumn_directWrite() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_float_direct (" +
+                        "value FLOAT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_float_direct")
+                            .floatColumn("value", 0.0f)
+                            .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
+                    sender.table("ws_float_direct")
+                            .floatColumn("value", 1.5f)
+                            .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
+                    sender.table("ws_float_direct")
+                            .floatColumn("value", -3.75f)
+                            .at(1_704_067_200_000_002L, ChronoUnit.MICROS);
+                    sender.table("ws_float_direct")
+                            .floatColumn("value", 1000.5f)
+                            .at(1_704_067_200_000_003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_float_direct");
+                serverMain.assertSql("SELECT count() FROM ws_float_direct", "count\n4\n");
+                serverMain.assertSql(
+                        "SELECT value FROM ws_float_direct ORDER BY ts",
+                        "value\n0.0\n1.5\n-3.75\n1000.5\n"
+                );
+            }
+        });
+    }
+
     @Test
     public void testFlushAfterEveryRow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -2090,19 +2257,28 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         "ts TIMESTAMP" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
+                String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
+
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_byte");
                     QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
 
-                    geoCol.addGeoHash(GeoHashes.fromString("s"), 5);
-                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    for (int i = 0; i < 30; i++) {
+                        geoCol.addGeoHash(GeoHashes.fromString(String.valueOf(geoAlphabet.charAt(i))), 5);
+                        sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
                     sender.flush();
                 }
 
                 serverMain.awaitTable("ws_geohash_byte");
+                serverMain.assertSql("SELECT count() FROM ws_geohash_byte", "count\n30\n");
                 serverMain.assertSql(
-                        "SELECT geo FROM ws_geohash_byte",
-                        "geo\ns\n"
+                        "SELECT geo FROM ws_geohash_byte ORDER BY ts LIMIT 3",
+                        "geo\n0\n1\n2\n"
+                );
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_byte ORDER BY ts DESC LIMIT 3",
+                        "geo\nx\nw\nv\n"
                 );
             }
         });
@@ -2124,19 +2300,29 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         "ts TIMESTAMP" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
+                String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
+
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_int");
                     QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
 
-                    geoCol.addGeoHash(GeoHashes.fromString("s24se0"), 30);
-                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    for (int i = 0; i < 30; i++) {
+                        String hash = String.valueOf(geoAlphabet.charAt(i)).repeat(6);
+                        geoCol.addGeoHash(GeoHashes.fromString(hash), 30);
+                        sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
                     sender.flush();
                 }
 
                 serverMain.awaitTable("ws_geohash_int");
+                serverMain.assertSql("SELECT count() FROM ws_geohash_int", "count\n30\n");
                 serverMain.assertSql(
-                        "SELECT geo FROM ws_geohash_int",
-                        "geo\ns24se0\n"
+                        "SELECT geo FROM ws_geohash_int ORDER BY ts LIMIT 3",
+                        "geo\n000000\n111111\n222222\n"
+                );
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_int ORDER BY ts DESC LIMIT 3",
+                        "geo\nxxxxxx\nwwwwww\nvvvvvv\n"
                 );
             }
         });
@@ -2158,19 +2344,29 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         "ts TIMESTAMP" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
+                String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
+
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_long");
                     QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
 
-                    geoCol.addGeoHash(GeoHashes.fromString("s24se0g8k2bj"), 60);
-                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    for (int i = 0; i < 30; i++) {
+                        String hash = String.valueOf(geoAlphabet.charAt(i)).repeat(12);
+                        geoCol.addGeoHash(GeoHashes.fromString(hash), 60);
+                        sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
                     sender.flush();
                 }
 
                 serverMain.awaitTable("ws_geohash_long");
+                serverMain.assertSql("SELECT count() FROM ws_geohash_long", "count\n30\n");
                 serverMain.assertSql(
-                        "SELECT geo FROM ws_geohash_long",
-                        "geo\ns24se0g8k2bj\n"
+                        "SELECT geo FROM ws_geohash_long ORDER BY ts LIMIT 3",
+                        "geo\n000000000000\n111111111111\n222222222222\n"
+                );
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_long ORDER BY ts DESC LIMIT 3",
+                        "geo\nxxxxxxxxxxxx\nwwwwwwwwwwww\nvvvvvvvvvvvv\n"
                 );
             }
         });
@@ -2193,23 +2389,33 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         "ts TIMESTAMP" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
+                String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
+
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_multi");
                     QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
 
-                    String[] geoValues = {"s24se0", "u33dc0", "9v1s8h", "hp4muv", "zfuqd3"};
-                    for (int i = 0; i < geoValues.length; i++) {
-                        geoCol.addGeoHash(GeoHashes.fromString(geoValues[i]), 30);
+                    for (int i = 0; i < 30; i++) {
+                        // Build 6-char geohash rotating through the alphabet
+                        StringBuilder hash = new StringBuilder(6);
+                        for (int j = 0; j < 6; j++) {
+                            hash.append(geoAlphabet.charAt((i + j) % 32));
+                        }
+                        geoCol.addGeoHash(GeoHashes.fromString(hash.toString()), 30);
                         sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                     }
                     sender.flush();
                 }
 
                 serverMain.awaitTable("ws_geohash_multi");
-                serverMain.assertSql("SELECT count() FROM ws_geohash_multi", "count\n5\n");
+                serverMain.assertSql("SELECT count() FROM ws_geohash_multi", "count\n30\n");
                 serverMain.assertSql(
-                        "SELECT geo FROM ws_geohash_multi ORDER BY ts",
-                        "geo\ns24se0\nu33dc0\n9v1s8h\nhp4muv\nzfuqd3\n"
+                        "SELECT geo FROM ws_geohash_multi ORDER BY ts LIMIT 3",
+                        "geo\n012345\n123456\n234567\n"
+                );
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_multi ORDER BY ts DESC LIMIT 3",
+                        "geo\nxyz012\nwxyz01\nvwxyz0\n"
                 );
             }
         });
@@ -2232,30 +2438,34 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         "ts TIMESTAMP" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
+                String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
+
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_null");
                     QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, true);
 
-                    geoCol.addGeoHash(GeoHashes.fromString("s24se0"), 30);
-                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                    geoCol.addNull();
-                    sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
-
-                    geoCol.addGeoHash(GeoHashes.fromString("u33dc0"), 30);
-                    sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
-
-                    geoCol.addNull();
-                    sender.at(1_000_000_000_003L, ChronoUnit.MICROS);
-
+                    // 30 rows: even-indexed rows get a geohash, odd-indexed rows get null
+                    for (int i = 0; i < 30; i++) {
+                        if (i % 2 == 0) {
+                            String hash = String.valueOf(geoAlphabet.charAt(i / 2)).repeat(6);
+                            geoCol.addGeoHash(GeoHashes.fromString(hash), 30);
+                        } else {
+                            geoCol.addNull();
+                        }
+                        sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
                     sender.flush();
                 }
 
                 serverMain.awaitTable("ws_geohash_null");
-                serverMain.assertSql("SELECT count() FROM ws_geohash_null", "count\n4\n");
+                serverMain.assertSql("SELECT count() FROM ws_geohash_null", "count\n30\n");
                 serverMain.assertSql(
-                        "SELECT geo FROM ws_geohash_null ORDER BY ts",
-                        "geo\ns24se0\n\nu33dc0\n\n"
+                        "SELECT count() FROM ws_geohash_null WHERE geo IS NULL",
+                        "count\n15\n"
+                );
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_null ORDER BY ts LIMIT 4",
+                        "geo\n000000\n\n111111\n\n"
                 );
             }
         });
@@ -2277,19 +2487,29 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         "ts TIMESTAMP" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
+                String geoAlphabet = "0123456789bcdefghjkmnpqrstuvwxyz";
+
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     QwpTableBuffer buf = sender.getTableBuffer("ws_geohash_short");
                     QwpTableBuffer.ColumnBuffer geoCol = buf.getOrCreateColumn("geo", TYPE_GEOHASH, false);
 
-                    geoCol.addGeoHash(GeoHashes.fromString("s24s"), 20);
-                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    for (int i = 0; i < 30; i++) {
+                        String hash = String.valueOf(geoAlphabet.charAt(i)).repeat(4);
+                        geoCol.addGeoHash(GeoHashes.fromString(hash), 20);
+                        sender.at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
                     sender.flush();
                 }
 
                 serverMain.awaitTable("ws_geohash_short");
+                serverMain.assertSql("SELECT count() FROM ws_geohash_short", "count\n30\n");
                 serverMain.assertSql(
-                        "SELECT geo FROM ws_geohash_short",
-                        "geo\ns24s\n"
+                        "SELECT geo FROM ws_geohash_short ORDER BY ts LIMIT 3",
+                        "geo\n0000\n1111\n2222\n"
+                );
+                serverMain.assertSql(
+                        "SELECT geo FROM ws_geohash_short ORDER BY ts DESC LIMIT 3",
+                        "geo\nxxxx\nwwww\nvvvv\n"
                 );
             }
         });
@@ -2383,6 +2603,49 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                                     e.getMessage().contains("Processing failed") ||
                                     e.getMessage().contains("Server error"));
                 }
+            }
+        });
+    }
+
+    /**
+     * Tests the QWP-specific intColumn() method that encodes a native INT wire type.
+     * Pre-creates an INT column to verify the client sends the correct type code.
+     */
+    @Test
+    public void testIntColumn_directWrite() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_int_direct (" +
+                        "value INT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_int_direct")
+                            .intColumn("value", 0)
+                            .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
+                    sender.table("ws_int_direct")
+                            .intColumn("value", 2_147_483_647)
+                            .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
+                    sender.table("ws_int_direct")
+                            .intColumn("value", -1)
+                            .at(1_704_067_200_000_002L, ChronoUnit.MICROS);
+                    sender.table("ws_int_direct")
+                            .intColumn("value", 123_456_789)
+                            .at(1_704_067_200_000_003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_int_direct");
+                serverMain.assertSql("SELECT count() FROM ws_int_direct", "count\n4\n");
+                serverMain.assertSql(
+                        "SELECT value FROM ws_int_direct ORDER BY ts",
+                        "value\n0\n2147483647\n-1\n123456789\n"
+                );
             }
         });
     }
@@ -2848,6 +3111,49 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Tests the QWP-specific shortColumn() method that encodes a native SHORT wire type.
+     * Pre-creates a SHORT column to verify the client sends the correct type code.
+     */
+    @Test
+    public void testShortColumn_directWrite() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE ws_short_direct (" +
+                        "value SHORT, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_short_direct")
+                            .shortColumn("value", (short) 0)
+                            .at(1_704_067_200_000_000L, ChronoUnit.MICROS);
+                    sender.table("ws_short_direct")
+                            .shortColumn("value", (short) 32_767)
+                            .at(1_704_067_200_000_001L, ChronoUnit.MICROS);
+                    sender.table("ws_short_direct")
+                            .shortColumn("value", (short) -32_768)
+                            .at(1_704_067_200_000_002L, ChronoUnit.MICROS);
+                    sender.table("ws_short_direct")
+                            .shortColumn("value", (short) -1)
+                            .at(1_704_067_200_000_003L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_short_direct");
+                serverMain.assertSql("SELECT count() FROM ws_short_direct", "count\n4\n");
+                serverMain.assertSql(
+                        "SELECT value FROM ws_short_direct ORDER BY ts",
+                        "value\n0\n32767\n-32768\n-1\n"
+                );
+            }
+        });
+    }
+
     @Test
     public void testSpecialCharactersInString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -2948,9 +3254,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 serverMain.assertSql("select count() from ws_stac_q", "count\n2\n");
                 serverMain.assertSql(
                         "select s, x, b, a, v, w, m from ws_stac_q order by T",
-                        "s\tx\tb\ta\tv\tw\tm\n" +
-                                "AAPL\tN\t150.25\t150.5\t100\t200\ttrue\n" +
-                                "MSFT\tQ\t380.1\t380.3\t50\t75\tfalse\n"
+                        """
+                                s\tx\tb\ta\tv\tw\tm
+                                AAPL\tN\t150.25\t150.5\t100\t200\ttrue
+                                MSFT\tQ\t380.1\t380.3\t50\t75\tfalse
+                                """
                 );
             }
         });
@@ -4215,7 +4523,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
                 // Send microsecond timestamp to nanos column
                 long tsMicros = 1704067200000000L;  // 2024-01-01 00:00:00 in micros
-                long expectedNanos = tsMicros * 1000;  // 1704067200000000000
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     sender.table("ws_ts_convert_nano")
@@ -4230,8 +4537,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 // Verify the timestamp was correctly converted to nanos
                 serverMain.assertSql(
                         "select ts_field from ws_ts_convert_nano",
-                        "ts_field\n" +
-                                "2024-01-01T00:00:00.000000000Z\n"
+                        """
+                                ts_field
+                                2024-01-01T00:00:00.000000000Z
+                                """
                 );
             }
         });
@@ -4262,7 +4571,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 // Send nanosecond timestamp to micros column
                 // 1704067200000000000 nanos = 1704067200000000 micros = 2024-01-01 00:00:00 UTC
                 long tsNanos = 1704067200000000000L;
-                long expectedMicros = tsNanos / 1000;  // 1704067200000000
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     sender.table("ws_ts_convert")
@@ -4279,8 +4587,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 // If fixed: value will be 1704067200000000 (micros, 2024-01-01)
                 serverMain.assertSql(
                         "select ts_field from ws_ts_convert",
-                        "ts_field\n" +
-                                "2024-01-01T00:00:00.000000Z\n"
+                        """
+                                ts_field
+                                2024-01-01T00:00:00.000000Z
+                                """
                 );
             }
         });
@@ -4357,17 +4667,24 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_varchar_test")
-                            .symbol("tag", "test")
-                            .stringColumn("v", "hello varchar")
-                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    for (int i = 0; i < 30; i++) {
+                        sender.table("ws_varchar_test")
+                                .symbol("tag", "t" + i)
+                                .stringColumn("v", "varchar-value-" + i)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
                     sender.flush();
                 }
 
                 serverMain.awaitTable("ws_varchar_test");
+                serverMain.assertSql("SELECT count() FROM ws_varchar_test", "count\n30\n");
                 serverMain.assertSql(
-                        "SELECT tag, v FROM ws_varchar_test",
-                        "tag\tv\ntest\thello varchar\n"
+                        "SELECT tag, v FROM ws_varchar_test ORDER BY timestamp LIMIT 3",
+                        "tag\tv\nt0\tvarchar-value-0\nt1\tvarchar-value-1\nt2\tvarchar-value-2\n"
+                );
+                serverMain.assertSql(
+                        "SELECT tag, v FROM ws_varchar_test ORDER BY timestamp DESC LIMIT 3",
+                        "tag\tv\nt29\tvarchar-value-29\nt28\tvarchar-value-28\nt27\tvarchar-value-27\n"
                 );
             }
         });
@@ -4377,7 +4694,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     public void testVarcharLargeValue() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "262144"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
@@ -4388,30 +4705,39 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         "timestamp TIMESTAMP" +
                         ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-                // Build a 10k-character string
-                StringBuilder sb = new StringBuilder(10_000);
-                for (int i = 0; i < 10_000; i++) {
-                    sb.append((char) ('a' + (i % 26)));
-                }
-                String largeValue = sb.toString();
-
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_varchar_large_test")
-                            .symbol("tag", "row1")
-                            .stringColumn("v", largeValue)
-                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    for (int i = 0; i < 30; i++) {
+                        int len = 500 + i * 300;
+                        StringBuilder sb = new StringBuilder(len);
+                        for (int j = 0; j < len; j++) {
+                            sb.append((char) ('a' + (j % 26)));
+                        }
+                        sender.table("ws_varchar_large_test")
+                                .symbol("tag", "r" + i)
+                                .stringColumn("v", sb.toString())
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                        if ((i + 1) % 5 == 0) {
+                            sender.flush();
+                        }
+                    }
                     sender.flush();
                 }
 
                 serverMain.awaitTable("ws_varchar_large_test");
+                serverMain.assertSql("SELECT count() FROM ws_varchar_large_test", "count\n30\n");
+                // First row: len=500, last row: len=500+29*300=9200
                 serverMain.assertSql(
-                        "SELECT length(v) FROM ws_varchar_large_test",
-                        "length\n10000\n"
+                        "SELECT length(v) FROM ws_varchar_large_test ORDER BY timestamp LIMIT 1",
+                        "length\n500\n"
                 );
-                // Verify first and last characters survived the round-trip
                 serverMain.assertSql(
-                        "SELECT left(v, 5), right(v, 5) FROM ws_varchar_large_test",
-                        "left\tright\nabcde\tlmnop\n"
+                        "SELECT length(v) FROM ws_varchar_large_test ORDER BY timestamp DESC LIMIT 1",
+                        "length\n9200\n"
+                );
+                // Verify first row starts with 'abcde'
+                serverMain.assertSql(
+                        "SELECT left(v, 5) FROM ws_varchar_large_test ORDER BY timestamp LIMIT 1",
+                        "left\nabcde\n"
                 );
             }
         });
@@ -4433,7 +4759,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    for (int i = 0; i < 10; i++) {
+                    for (int i = 0; i < 30; i++) {
                         sender.table("ws_varchar_multi_test")
                                 .symbol("tag", "r" + i)
                                 .stringColumn("v", "row-" + i)
@@ -4445,11 +4771,15 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 serverMain.awaitTable("ws_varchar_multi_test");
                 serverMain.assertSql(
                         "SELECT count() FROM ws_varchar_multi_test",
-                        "count\n10\n"
+                        "count\n30\n"
                 );
                 serverMain.assertSql(
                         "SELECT v FROM ws_varchar_multi_test ORDER BY timestamp LIMIT 3",
                         "v\nrow-0\nrow-1\nrow-2\n"
+                );
+                serverMain.assertSql(
+                        "SELECT v FROM ws_varchar_multi_test ORDER BY timestamp DESC LIMIT 3",
+                        "v\nrow-29\nrow-28\nrow-27\n"
                 );
             }
         });
@@ -4470,38 +4800,51 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         "timestamp TIMESTAMP" +
                         ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
+                // 10 distinct unicode templates, each used 3 times for 30 total rows
+                String[] unicodeValues = {
+                        "こんにちは世界",
+                        "😀🚀🌍",
+                        "abc-éèê-üöä-АБВ",
+                        "你好世界",
+                        "안녕하세요",
+                        "مرحبا",
+                        "שלום",
+                        "สวัสดี",
+                        "ÀÁÂÃÄÅ",
+                        "☃❤★♫☂"
+                };
+                String[] tags = {
+                        "cjk", "emoji", "mixed", "chinese", "korean",
+                        "arabic", "hebrew", "thai", "latin", "symbol"
+                };
+
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    sender.table("ws_varchar_unicode_test")
-                            .symbol("tag", "cjk")
-                            .stringColumn("v", "\u3053\u3093\u306b\u3061\u306f\u4e16\u754c")
-                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                    sender.table("ws_varchar_unicode_test")
-                            .symbol("tag", "emoji")
-                            .stringColumn("v", "\uD83D\uDE00\uD83D\uDE80\uD83C\uDF0D")
-                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                    sender.table("ws_varchar_unicode_test")
-                            .symbol("tag", "mixed")
-                            .stringColumn("v", "abc-\u00E9\u00E8\u00EA-\u00FC\u00F6\u00E4-\u0410\u0411\u0412")
-                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                    for (int i = 0; i < 30; i++) {
+                        int idx = i % 10;
+                        sender.table("ws_varchar_unicode_test")
+                                .symbol("tag", tags[idx] + "_" + (i / 10))
+                                .stringColumn("v", unicodeValues[idx] + "-" + i)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
                     sender.flush();
                 }
 
                 serverMain.awaitTable("ws_varchar_unicode_test");
                 serverMain.assertSql(
                         "SELECT count() FROM ws_varchar_unicode_test",
-                        "count\n3\n"
+                        "count\n30\n"
                 );
                 serverMain.assertSql(
-                        "SELECT v FROM ws_varchar_unicode_test WHERE tag = 'cjk'",
-                        "v\n\u3053\u3093\u306b\u3061\u306f\u4e16\u754c\n"
+                        "SELECT v FROM ws_varchar_unicode_test WHERE tag = 'cjk_0'",
+                        "v\nこんにちは世界-0\n"
                 );
                 serverMain.assertSql(
-                        "SELECT v FROM ws_varchar_unicode_test WHERE tag = 'emoji'",
-                        "v\n\uD83D\uDE00\uD83D\uDE80\uD83C\uDF0D\n"
+                        "SELECT v FROM ws_varchar_unicode_test WHERE tag = 'emoji_1'",
+                        "v\n😀🚀🌍-11\n"
                 );
                 serverMain.assertSql(
-                        "SELECT v FROM ws_varchar_unicode_test WHERE tag = 'mixed'",
-                        "v\nabc-\u00E9\u00E8\u00EA-\u00FC\u00F6\u00E4-\u0410\u0411\u0412\n"
+                        "SELECT v FROM ws_varchar_unicode_test WHERE tag = 'mixed_2'",
+                        "v\nabc-éèê-üöä-АБВ-22\n"
                 );
             }
         });
@@ -4555,8 +4898,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== Non-WAL Table Tests ====================
 
     /**
      * Creates a sender with the appropriate window size.
