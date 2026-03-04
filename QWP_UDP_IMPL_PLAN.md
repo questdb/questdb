@@ -211,12 +211,12 @@ Inside `at()`/`atNow()`, after committing the row:
   (without explicit flush). Verify table "a" received its rows.
 
 
-## Iteration 4: Builder integration and server registration `[ ]`
+## Iteration 4: Builder integration and server registration `[x]`
 
 **Goal:** Users can create UDP senders via `Sender.fromConfig("udp::...")` and
 the server starts the QWP UDP receiver from configuration properties.
 
-### Client: `LineSenderBuilder` changes `[ ]`
+### Client: `LineSenderBuilder` changes `[x]`
 
 In `Sender.java`:
 - Add `UDP` to `enum Transport`.
@@ -226,32 +226,33 @@ In `Sender.java`:
 - Default port: 9007.
 - `enableTls()` with UDP -> throw.
 
-### Server: configuration and registration `[ ]`
+### Server: configuration and registration `[x]`
 
 - `QwpUdpReceiverConfiguration` defaults via `PropServerConfiguration`.
 - `PropertyKey` entries for `qwp.udp.*` properties.
-- `Services.createQwpUdpReceiver()` factory (Linux -> recvmmsg variant).
+- `Services.createQwpUdpReceiver()` factory (recvmmsg variant deferred to
+  iteration 6).
 - `ServerMain` registers with `freeOnExit()`, independently of TCP ILP.
 
 ### Tests
 
 **Config parsing (client):**
 
-- `[ ]` `"udp::addr=localhost:9007;"` -> builds `QwpUdpSender`, default MTU
+- `[x]` `"udp::addr=localhost:9007;"` -> builds `QwpUdpSender`, default MTU
   1400.
-- `[ ]` `"udp::addr=10.0.0.1:5555;max_datagram_size=500;"` -> custom MTU.
-- `[ ]` `"udp::"` (no addr) -> throws.
-- `[ ]` `"udps::"` -> throws (no TLS for UDP).
+- `[x]` `"udp::addr=10.0.0.1:5555;max_datagram_size=500;"` -> custom MTU.
+- `[x]` `"udp::"` (no addr) -> throws.
+- `[x]` `"udps::"` -> throws (no TLS for UDP).
 
 **`TestServerMain` E2E:**
 
-- `[ ]` Start `TestServerMain` with `qwp.udp.enabled=true`. Use
+- `[x]` Start `TestServerMain` with `qwp.udp.enabled=true`. Use
   `Sender.fromConfig("udp::addr=localhost:PORT;")` to send 100 rows. Call
   `serverMain.awaitTable(...)`. Assert row count and values via
   `serverMain.assertSql(...)`. Same pattern as
   `QwpWebSocketSenderReceiverTest`.
-- `[ ]` Start with `qwp.udp.enabled=false`. Verify no socket opened.
-- `[ ]` Graceful shutdown: send data, shut down server, no crash or resource
+- `[x]` Start with `qwp.udp.enabled=false`. Verify no socket opened.
+- `[x]` Graceful shutdown: send data, shut down server, no crash or resource
   leak.
 
 
@@ -296,6 +297,65 @@ it. This is a pure refactoring -- behavior is unchanged.
   each with its own dictionary. Receiver ingests all rows correctly.
 
 
+## Iteration 6: Linux `recvmmsg` receiver variant `[ ]`
+
+**Goal:** On Linux, receive multiple datagrams per syscall for significantly
+higher throughput. The `recvmmsg(2)` syscall returns up to N datagrams in a
+single kernel transition, eliminating per-datagram syscall overhead that
+dominates at high packet rates. This mirrors the existing
+`LinuxMMLineUdpReceiver` pattern used by the ILP text-based UDP receiver.
+
+### Background
+
+`QwpUdpReceiver` currently calls `nf.recvRaw()` (maps to `recv(2)`) which
+returns one datagram per syscall. Under high throughput (e.g., 100K+ datagrams
+per second), the user-kernel transition cost per datagram becomes the bottleneck.
+
+`recvmmsg(2)` is a Linux-specific syscall that receives up to `vlen` datagrams
+in one call, returning them in a pre-allocated `mmsghdr` vector. The existing
+ILP UDP receiver uses this with a batch size of 10,000 (`msgCount` config
+property) and sees substantial throughput improvement on Linux.
+
+### What to build `[ ]`
+
+**`LinuxMMQwpUdpReceiver`** -- extends or parallels `QwpUdpReceiver`:
+
+- Constructor allocates the `mmsghdr` vector via `nf.msgHeaders(bufSize, msgCount)`.
+- `runSerially()` calls `nf.recvmmsgRaw(fd, msgVec, msgCount)` instead of
+  `nf.recvRaw()`. Iterates returned messages, extracting each datagram's buffer
+  and length via `nf.getMMsgBuf(p)` / `nf.getMMsgBufLen(p)`, and processes each
+  through the same `processDatagram()` path.
+- `close()` frees the `mmsghdr` vector via `nf.freeMsgHeaders(msgVec)`.
+- Follow the `LinuxMMLineUdpReceiver` implementation closely.
+
+**`Services.createQwpUdpReceiver()` dispatch:**
+
+```java
+if (Os.isLinux()) {
+    return new LinuxMMQwpUdpReceiver(config, cairoEngine);
+}
+return new QwpUdpReceiver(config, cairoEngine);
+```
+
+**Configuration:** Add `qwp.udp.msg.count` property (default 10,000) for the
+`recvmmsg` batch size. Only used on Linux; ignored on other platforms.
+
+```
+core/src/main/java/io/questdb/cutlass/qwp/server/
+  LinuxMMQwpUdpReceiver.java   NEW
+```
+
+### Tests
+
+- `[ ]` All existing `QwpUdpInsertTest` and `QwpUdpMalformedTest` tests pass
+  with the Linux variant (run on Linux CI).
+- `[ ]` `QwpUdpServerMainTest` E2E passes on Linux with the `recvmmsg` variant
+  auto-selected.
+- `[ ]` Throughput micro-benchmark: send 100K datagrams over loopback, compare
+  wall-clock time for `QwpUdpReceiver` vs `LinuxMMQwpUdpReceiver`. The
+  `recvmmsg` variant should show measurable improvement.
+
+
 ## Dependency Graph
 
 ```
@@ -315,6 +375,10 @@ Iteration 2              Iteration 3
                ▼
          Iteration 5
          (encoder extraction + all-types E2E + stress)
+               │
+               ▼
+         Iteration 6
+         (Linux recvmmsg receiver variant)
 ```
 
 Iterations 2 and 3 are independent and can proceed in parallel after 1.

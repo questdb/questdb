@@ -50,6 +50,8 @@ import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjHashSet;
@@ -276,5 +278,15 @@ public class Services {
                         cairoEngine,
                         workerPoolManager.getSharedQueryWorkerCount()
                 ));
+    }
+
+    public QwpUdpReceiver createQwpUdpReceiver(
+            QwpUdpReceiverConfiguration config,
+            CairoEngine cairoEngine
+    ) {
+        // TODO: on Linux, use LinuxMMQwpUdpReceiver with recvmmsg (see QWP_UDP_DESIGN.md)
+        QwpUdpReceiver receiver = new QwpUdpReceiver(config, cairoEngine);
+        receiver.start();
+        return receiver;
     }
 }

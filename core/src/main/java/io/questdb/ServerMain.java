@@ -39,6 +39,7 @@ import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGServer;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.SqlExecutionContext;
@@ -467,6 +468,15 @@ public class ServerMain implements Closeable {
                     config.getLineUdpReceiverConfiguration(),
                     engine,
                     workerPoolManager
+            ));
+        }
+
+        QwpUdpReceiverConfiguration qwpUdpConfig = config.getQwpUdpReceiverConfiguration();
+        if (!isReadOnly && qwpUdpConfig != null && qwpUdpConfig.isEnabled()) {
+            // qwp/udp
+            freeOnExit(services().createQwpUdpReceiver(
+                    qwpUdpConfig,
+                    engine
             ));
         }
 

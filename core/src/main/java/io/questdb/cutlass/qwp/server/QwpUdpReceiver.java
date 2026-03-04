@@ -227,16 +227,19 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     @Override
     public void close() {
         if (fd > -1) {
-            if (running.compareAndSet(true, false)) {
-                started.await();
-                halted.await();
-            }
+            // Close socket first to unblock any blocking recvRaw() call
             if (nf.close(fd) != 0) {
                 LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
             } else {
                 LOG.info().$("closed [fd=").$(fd).$(']').$();
             }
             fd = -1;
+
+            if (running.compareAndSet(true, false)) {
+                started.await();
+                halted.await();
+            }
+
             try {
                 tudCache.commitAll();
             } catch (Throwable t) {
