@@ -648,6 +648,87 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testMixedTimestampModesNano() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create table with TIMESTAMP_NS designated timestamp
+                serverMain.execute("CREATE TABLE mixed_ts_nano (" +
+                        "sym SYMBOL, " +
+                        "val LONG, " +
+                        "timestamp TIMESTAMP_NS" +
+                        ") TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                long ts1 = 1_645_747_200_000_000_000L; // 2022-02-25T00:00:00Z in nanos
+                long ts2 = 1_645_747_300_000_000_000L; // 2022-02-25T00:01:40Z in nanos
+                long ts3 = 1_645_747_400_000_000_000L; // 2022-02-25T00:03:20Z in nanos
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    // Gorilla enabled by default. Need >= 3 explicit timestamps
+                    // so Gorilla encoding kicks in and the conversion path is used
+                    // in putTimestampColumnWithConversion. That path incorrectly
+                    // multiplies the server timestamp (already in nanos) by 1000.
+
+                    // row 1: explicit nano timestamp
+                    sender.table("mixed_ts_nano")
+                            .symbol("sym", "explicit1")
+                            .longColumn("val", 1)
+                            .at(ts1, ChronoUnit.NANOS);
+                    // row 2: explicit nano timestamp
+                    sender.table("mixed_ts_nano")
+                            .symbol("sym", "explicit2")
+                            .longColumn("val", 2)
+                            .at(ts2, ChronoUnit.NANOS);
+                    // row 3: explicit nano timestamp
+                    sender.table("mixed_ts_nano")
+                            .symbol("sym", "explicit3")
+                            .longColumn("val", 3)
+                            .at(ts3, ChronoUnit.NANOS);
+                    // row 4: server-assigned timestamp
+                    sender.table("mixed_ts_nano")
+                            .symbol("sym", "server1")
+                            .longColumn("val", 4)
+                            .atNow();
+                    // row 5: server-assigned timestamp
+                    sender.table("mixed_ts_nano")
+                            .symbol("sym", "server2")
+                            .longColumn("val", 5)
+                            .atNow();
+                }
+
+                serverMain.awaitTable("mixed_ts_nano");
+                serverMain.assertSql(
+                        "SELECT count() FROM mixed_ts_nano",
+                        "count\n5\n"
+                );
+                // verify explicit timestamps are exact
+                serverMain.assertSql(
+                        "SELECT sym, val, timestamp FROM mixed_ts_nano WHERE sym = 'explicit1'",
+                        """
+                                sym\tval\ttimestamp
+                                explicit1\t1\t2022-02-25T00:00:00.000000000Z
+                                """
+                );
+                serverMain.assertSql(
+                        "SELECT sym, val, timestamp FROM mixed_ts_nano WHERE sym = 'explicit3'",
+                        """
+                                sym\tval\ttimestamp
+                                explicit3\t3\t2022-02-25T00:03:20.000000000Z
+                                """
+                );
+                // verify server-assigned rows have recent timestamps (not epoch or explicit ones)
+                serverMain.assertSql(
+                        "SELECT count() FROM mixed_ts_nano WHERE sym IN ('server1', 'server2') AND timestamp > '2024-01-01'",
+                        "count\n2\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testNullDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
