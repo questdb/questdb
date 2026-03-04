@@ -2466,21 +2466,77 @@ mod tests {
         let array_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
 
         let expected_buffs: Vec<(ColumnBuffers, ColumnType)> = vec![
-            (create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes()), ColumnTypeTag::Int.into_type()),
-            (create_col_data_buff::<i64, 8, _>(row_count, LONG_NULL, |int| int.to_le_bytes()), ColumnTypeTag::Long.into_type()),
-            (create_col_data_buff_string(row_count, 3), ColumnTypeTag::String.into_type()),
-            (create_col_data_buff_varchar(row_count, 3), ColumnTypeTag::Varchar.into_type()),
-            (create_col_data_buff_symbol(row_count, 10), ColumnTypeTag::Varchar.into_type()),
+            (
+                create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes()),
+                ColumnTypeTag::Int.into_type(),
+            ),
+            (
+                create_col_data_buff::<i64, 8, _>(row_count, LONG_NULL, |int| int.to_le_bytes()),
+                ColumnTypeTag::Long.into_type(),
+            ),
+            (
+                create_col_data_buff_string(row_count, 3),
+                ColumnTypeTag::String.into_type(),
+            ),
+            (
+                create_col_data_buff_varchar(row_count, 3),
+                ColumnTypeTag::Varchar.into_type(),
+            ),
+            (
+                create_col_data_buff_symbol(row_count, 10),
+                ColumnTypeTag::Varchar.into_type(),
+            ),
             (create_col_data_buff_array(row_count, 3), array_type),
         ];
 
         let columns = vec![
-            create_fix_column(0, row_count, "int_col", expected_buffs[0].0.data_vec.as_ref(), ColumnTypeTag::Int.into_type()),
-            create_fix_column(1, row_count, "long_col", expected_buffs[1].0.data_vec.as_ref(), ColumnTypeTag::Long.into_type()),
-            create_var_column(2, row_count, "string_col", expected_buffs[2].0.data_vec.as_ref(), expected_buffs[2].0.aux_vec.as_ref().unwrap(), ColumnTypeTag::String.into_type()),
-            create_var_column(3, row_count, "varchar_col", expected_buffs[3].0.data_vec.as_ref(), expected_buffs[3].0.aux_vec.as_ref().unwrap(), ColumnTypeTag::Varchar.into_type()),
-            create_symbol_column(4, row_count, "symbol_col", expected_buffs[4].0.data_vec.as_ref(), expected_buffs[4].0.sym_chars.as_ref().unwrap(), expected_buffs[4].0.sym_offsets.as_ref().unwrap(), ColumnTypeTag::Symbol.into_type()),
-            create_var_column(5, row_count, "array_col", expected_buffs[5].0.data_vec.as_ref(), expected_buffs[5].0.aux_vec.as_ref().unwrap(), array_type),
+            create_fix_column(
+                0,
+                row_count,
+                "int_col",
+                expected_buffs[0].0.data_vec.as_ref(),
+                ColumnTypeTag::Int.into_type(),
+            ),
+            create_fix_column(
+                1,
+                row_count,
+                "long_col",
+                expected_buffs[1].0.data_vec.as_ref(),
+                ColumnTypeTag::Long.into_type(),
+            ),
+            create_var_column(
+                2,
+                row_count,
+                "string_col",
+                expected_buffs[2].0.data_vec.as_ref(),
+                expected_buffs[2].0.aux_vec.as_ref().unwrap(),
+                ColumnTypeTag::String.into_type(),
+            ),
+            create_var_column(
+                3,
+                row_count,
+                "varchar_col",
+                expected_buffs[3].0.data_vec.as_ref(),
+                expected_buffs[3].0.aux_vec.as_ref().unwrap(),
+                ColumnTypeTag::Varchar.into_type(),
+            ),
+            create_symbol_column(
+                4,
+                row_count,
+                "symbol_col",
+                expected_buffs[4].0.data_vec.as_ref(),
+                expected_buffs[4].0.sym_chars.as_ref().unwrap(),
+                expected_buffs[4].0.sym_offsets.as_ref().unwrap(),
+                ColumnTypeTag::Symbol.into_type(),
+            ),
+            create_var_column(
+                5,
+                row_count,
+                "array_col",
+                expected_buffs[5].0.data_vec.as_ref(),
+                expected_buffs[5].0.aux_vec.as_ref().unwrap(),
+                array_type,
+            ),
         ];
 
         assert_columns(
@@ -2501,17 +2557,59 @@ mod tests {
         let version = Version::V2;
 
         let expected_buffs: Vec<(ColumnBuffers, ColumnType)> = vec![
-            (create_col_data_buff_bool(row_count), ColumnTypeTag::Boolean.into_type()),
-            (create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| short.to_le_bytes()), ColumnTypeTag::Short.into_type()),
-            (create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| short.to_le_bytes()), ColumnTypeTag::Char.into_type()),
-            (create_col_data_buff::<i128, 16, _>(row_count, UUID_NULL, |uuid| uuid.to_le_bytes()), ColumnTypeTag::Uuid.into_type()),
+            (
+                create_col_data_buff_bool(row_count),
+                ColumnTypeTag::Boolean.into_type(),
+            ),
+            (
+                create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| {
+                    short.to_le_bytes()
+                }),
+                ColumnTypeTag::Short.into_type(),
+            ),
+            (
+                create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| {
+                    short.to_le_bytes()
+                }),
+                ColumnTypeTag::Char.into_type(),
+            ),
+            (
+                create_col_data_buff::<i128, 16, _>(row_count, UUID_NULL, |uuid| {
+                    uuid.to_le_bytes()
+                }),
+                ColumnTypeTag::Uuid.into_type(),
+            ),
         ];
 
         let columns = vec![
-            create_fix_column(0, row_count, "bool_col", expected_buffs[0].0.data_vec.as_ref(), ColumnTypeTag::Boolean.into_type()),
-            create_fix_column(1, row_count, "short_col", expected_buffs[1].0.data_vec.as_ref(), ColumnTypeTag::Short.into_type()),
-            create_fix_column(2, row_count, "char_col", expected_buffs[2].0.data_vec.as_ref(), ColumnTypeTag::Char.into_type()),
-            create_fix_column(3, row_count, "uuid_col", expected_buffs[3].0.data_vec.as_ref(), ColumnTypeTag::Uuid.into_type()),
+            create_fix_column(
+                0,
+                row_count,
+                "bool_col",
+                expected_buffs[0].0.data_vec.as_ref(),
+                ColumnTypeTag::Boolean.into_type(),
+            ),
+            create_fix_column(
+                1,
+                row_count,
+                "short_col",
+                expected_buffs[1].0.data_vec.as_ref(),
+                ColumnTypeTag::Short.into_type(),
+            ),
+            create_fix_column(
+                2,
+                row_count,
+                "char_col",
+                expected_buffs[2].0.data_vec.as_ref(),
+                ColumnTypeTag::Char.into_type(),
+            ),
+            create_fix_column(
+                3,
+                row_count,
+                "uuid_col",
+                expected_buffs[3].0.data_vec.as_ref(),
+                ColumnTypeTag::Uuid.into_type(),
+            ),
         ];
 
         assert_columns(

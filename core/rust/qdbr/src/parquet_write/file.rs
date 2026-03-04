@@ -304,8 +304,7 @@ pub fn create_row_group<'a>(
                 length,
                 options,
                 *encoding,
-            )
-            .expect("encoded_column");
+            )?;
             let compressed_pages = encoded_column
                 .into_iter()
                 .map(|page| {
@@ -344,8 +343,7 @@ pub fn create_row_group<'a>(
                 length,
                 options,
                 *encoding,
-            )
-            .expect("encoded_column");
+            )?;
             let compression_iter = Compressor::new(encoded_column, options.compression, vec![]);
             Ok(DynStreamingIterator::new(compression_iter))
         };

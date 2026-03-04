@@ -70,11 +70,14 @@ impl ParquetUpdater {
         row_group_size: Option<usize>,
         data_page_size: Option<usize>,
     ) -> ParquetResult<Self> {
-        fn from(value: i32) -> Version {
+        fn version_from(value: i32) -> ParquetResult<Version> {
             match value {
-                1 => Version::V1,
-                2 => Version::V2,
-                _ => panic!("Invalid version number: {value}"),
+                1 => Ok(Version::V1),
+                2 => Ok(Version::V2),
+                _ => Err(fmt_err!(
+                    InvalidLayout,
+                    "invalid parquet version number: {value}"
+                )),
             }
         }
 
@@ -128,7 +131,7 @@ impl ParquetUpdater {
             }
         }
 
-        let version = from(metadata.version);
+        let version = version_from(metadata.version)?;
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
         let options = write::WriteOptions { write_statistics, version };
