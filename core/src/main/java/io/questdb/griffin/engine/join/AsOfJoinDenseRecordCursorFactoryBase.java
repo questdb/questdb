@@ -261,14 +261,21 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 if (backwardRowId > frameRowLo) {
                     backwardRowId--;
                 } else {
-                    if (!slaveTimeFrameCursor.prev()) {
+                    boolean found = false;
+                    while (slaveTimeFrameCursor.prev()) {
+                        slaveTimeFrameCursor.open();
+                        int frameIndex = slaveTimeFrame.getFrameIndex();
+                        if (slaveTimeFrame.getRowHi() > slaveTimeFrame.getRowLo()) {
+                            frameRowLo = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
+                            backwardRowId = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
                         backwardScanExhausted = true;
                         break;
                     }
-                    slaveTimeFrameCursor.open();
-                    int frameIndex = slaveTimeFrame.getFrameIndex();
-                    frameRowLo = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
-                    backwardRowId = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
@@ -317,7 +324,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     value.putLong(0, slaveRecB.getRowId());
                 }
                 forwardRowId++;
-                if (forwardRowId == frameRowHi) {
+                while (forwardRowId == frameRowHi) {
                     if (!slaveTimeFrameCursor.next()) {
                         forwardScanExhausted = true;
                         break;
@@ -326,6 +333,9 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     int frameIndex = slaveTimeFrame.getFrameIndex();
                     frameRowHi = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowHi());
                     forwardRowId = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
+                }
+                if (forwardScanExhausted) {
+                    break;
                 }
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
