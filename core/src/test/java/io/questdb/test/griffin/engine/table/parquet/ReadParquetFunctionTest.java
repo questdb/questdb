@@ -943,10 +943,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 PartitionEncoder.encode(partitionDescriptor, path);
                 Assert.assertTrue(Files.exists(path.$()));
 
-                // Filter on integer column (avoids JIT varchar comparison issue in page frame mode).
                 sink.clear();
-                sink.put("SELECT * FROM read_parquet('x.parquet') WHERE id > 500 ORDER BY id");
-                assertSqlCursors0("SELECT * FROM x WHERE id > 500 ORDER BY id");
+                sink.put("SELECT * FROM read_parquet('x.parquet') WHERE v IS NOT NULL ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x WHERE v IS NOT NULL ORDER BY id");
             }
         });
     }

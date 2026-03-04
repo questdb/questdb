@@ -604,9 +604,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private int getExecHint(boolean forceScalar) {
         final TypesObserver typesObserver = predicateContext.globalTypesObserver;
         if (!forceScalar && !forceScalarMode) {
-            if (typesObserver.requiresScalar()) {
-                return EXEC_HINT_SCALAR;
-            }
             return typesObserver.hasMixedSizes() ? EXEC_HINT_MIXED_SIZE_TYPE : EXEC_HINT_SINGLE_SIZE_TYPE;
         }
         return EXEC_HINT_SCALAR;
@@ -1518,14 +1515,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
             }
             return UNDEFINED_CODE;
-        }
-
-        /**
-         * Returns true if any observed type requires scalar execution
-         * (i.e., has no AVX2 vectorized memory read implementation).
-         */
-        public boolean requiresScalar() {
-            return false;
         }
 
         public boolean hasMixedSizes() {
