@@ -45,14 +45,30 @@ public class CastFloatToBooleanFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToBooleanFunction {
+        private float cachedSrc;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            float flt = arg.getFloat(rec);
+            float flt;
+            if (srcCached) {
+                flt = cachedSrc;
+                srcCached = false;
+            } else {
+                flt = arg.getFloat(rec);
+            }
             return !Numbers.isNull(flt) && Math.signum(flt) != 0;
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedSrc = arg.getFloat(rec);
+            srcCached = true;
+            return Numbers.isNull(cachedSrc);
         }
     }
 }

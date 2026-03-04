@@ -45,14 +45,30 @@ public class CastTimestampToByteFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToByteFunction {
+        private long cachedSrc;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public byte getByte(Record rec) {
-            final long value = arg.getTimestamp(rec);
+            long value;
+            if (srcCached) {
+                value = cachedSrc;
+                srcCached = false;
+            } else {
+                value = arg.getTimestamp(rec);
+            }
             return value != Numbers.LONG_NULL ? (byte) value : 0;
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedSrc = arg.getTimestamp(rec);
+            srcCached = true;
+            return cachedSrc == Numbers.LONG_NULL;
         }
     }
 }

@@ -45,14 +45,30 @@ public class CastDoubleToByteFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToByteFunction {
+        private double cachedSrc;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public byte getByte(Record rec) {
-            final double value = arg.getDouble(rec);
+            double value;
+            if (srcCached) {
+                value = cachedSrc;
+                srcCached = false;
+            } else {
+                value = arg.getDouble(rec);
+            }
             return Numbers.isNull(value) || value > Byte.MAX_VALUE || value < Byte.MIN_VALUE ? 0 : (byte) value;
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedSrc = arg.getDouble(rec);
+            srcCached = true;
+            return Numbers.isNull(cachedSrc);
         }
     }
 }

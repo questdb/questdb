@@ -45,14 +45,30 @@ public class CastTimestampToBooleanFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToBooleanFunction {
+        private long cachedSrc;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long timestamp = arg.getTimestamp(rec);
+            long timestamp;
+            if (srcCached) {
+                timestamp = cachedSrc;
+                srcCached = false;
+            } else {
+                timestamp = arg.getTimestamp(rec);
+            }
             return timestamp != Numbers.LONG_NULL && timestamp != 0;
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedSrc = arg.getTimestamp(rec);
+            srcCached = true;
+            return cachedSrc == Numbers.LONG_NULL;
         }
     }
 }
