@@ -7,8 +7,8 @@ use crate::parquet_read::decode::{
 };
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
-    RowGroupStatBuffers, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL,
-    FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
+    RowGroupStatBuffers, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
+    FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
 };
 use nonmax::NonMaxU32;
 use parquet2::metadata::FileMetaData;
@@ -374,17 +374,17 @@ impl ParquetDecoder {
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                         } else if page_filter_start < filter_idx {
                             let page = decompress_sliced_data(&page, decompress_buffer)?;
                             decode_page_filtered::<false>(
@@ -399,17 +399,17 @@ impl ParquetDecoder {
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                         }
                         page_row_start = page_end;
                     } else {
@@ -454,17 +454,17 @@ impl ParquetDecoder {
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                         } else if page_filter_start < filter_idx {
                             decode_page_filtered::<false>(
                                 &page,
@@ -478,17 +478,17 @@ impl ParquetDecoder {
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                         }
                         page_row_start = page_end;
                     }
@@ -563,17 +563,17 @@ impl ParquetDecoder {
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                         }
                         row_count += page_row_count;
                     } else {
@@ -589,17 +589,17 @@ impl ParquetDecoder {
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                         }
                         row_count += page_row_count;
                     }
@@ -779,20 +779,20 @@ impl ParquetDecoder {
                         !is_qdb_unsigned && Self::is_unsigned_int_type(column_metadata);
                     if !is_third_party_unsigned
                         && Self::all_values_outside_min_max_with_stats(
-                            &physical_type,
-                            &filter_desc,
-                            has_nulls,
-                            is_decimal,
-                            is_ipv4,
-                            is_date,
-                            min_bytes,
-                            max_bytes,
-                        )?
+                        &physical_type,
+                        &filter_desc,
+                        has_nulls,
+                        is_decimal,
+                        is_ipv4,
+                        is_date,
+                        min_bytes,
+                        max_bytes,
+                    )?
                     {
                         return Ok(true);
                     }
                 }
-                FILTER_OP_LT | FILTER_OP_LE | FILTER_OP_GT | FILTER_OP_GE => {
+                FILTER_OP_LT | FILTER_OP_LE | FILTER_OP_GT | FILTER_OP_GE | FILTER_OP_BETWEEN => {
                     let is_decimal = Self::is_decimal_type(column_metadata);
                     let qdb_column_type = packed_filter.qdb_column_type();
                     let col_type_tag = qdb_column_type & 0xFF;
@@ -805,15 +805,15 @@ impl ParquetDecoder {
 
                     if !is_third_party_unsigned
                         && Self::value_outside_range(
-                            &physical_type,
-                            &filter_desc,
-                            is_decimal,
-                            is_ipv4,
-                            is_date,
-                            op,
-                            min_bytes,
-                            max_bytes,
-                        )?
+                        &physical_type,
+                        &filter_desc,
+                        is_decimal,
+                        is_ipv4,
+                        is_date,
+                        op,
+                        min_bytes,
+                        max_bytes,
+                    )?
                     {
                         return Ok(true);
                     }
@@ -1295,12 +1295,14 @@ impl ParquetDecoder {
         }
     }
 
-    /// Check if a range filter value proves that the row group can be skipped.
-    /// For a single filter value and a given comparison op, checks:
-    ///   LT (col < val): skip if min >= val
-    ///   LE (col <= val): skip if min > val
-    ///   GT (col > val): skip if max <= val
-    ///   GE (col >= val): skip if max < val
+    /// Check if a range/between filter proves the row group can be skipped.
+    ///
+    /// For LT/LE/GT/GE (count=1):
+    ///   LT: skip if min >= val, LE: skip if min > val,
+    ///   GT: skip if max <= val, GE: skip if max < val.
+    ///
+    /// For BETWEEN (count=2): auto-swaps bounds, so we compute
+    ///   lo=min(a,b), hi=max(a,b) and skip if max_stat < lo || min_stat > hi.
     #[allow(clippy::too_many_arguments)]
     fn value_outside_range(
         physical_type: &PhysicalType,
@@ -1313,9 +1315,12 @@ impl ParquetDecoder {
         max_bytes: Option<&[u8]>,
     ) -> ParquetResult<bool> {
         let count = filter_desc.count as usize;
-        // Range operations (LT/LE/GT/GE) expect exactly one value.
-        // If not, conservatively don't skip.
-        if count != 1 {
+        let is_between = op == FILTER_OP_BETWEEN;
+        if is_between {
+            if count != 2 {
+                return Ok(false);
+            }
+        } else if count != 1 {
             return Ok(false);
         }
         let ptr = filter_desc.ptr as *const u8;
@@ -1329,17 +1334,26 @@ impl ParquetDecoder {
                     ),
                     _ => return Ok(false),
                 };
-                let v = unsafe { (ptr as *const u32).read_unaligned() };
-                if v == 0 {
-                    return Ok(false);
+                if is_between {
+                    let a = unsafe { (ptr as *const u32).read_unaligned() };
+                    let b = unsafe { (ptr.add(4) as *const u32).read_unaligned() };
+                    if a == 0 || b == 0 {
+                        return Ok(false);
+                    }
+                    Ok(max_val < a.min(b) || min_val > a.max(b))
+                } else {
+                    let v = unsafe { (ptr as *const u32).read_unaligned() };
+                    if v == 0 {
+                        return Ok(false);
+                    }
+                    Ok(match op {
+                        FILTER_OP_LT => min_val >= v,
+                        FILTER_OP_LE => min_val > v,
+                        FILTER_OP_GT => max_val <= v,
+                        FILTER_OP_GE => max_val < v,
+                        _ => false,
+                    })
                 }
-                Ok(match op {
-                    FILTER_OP_LT => min_val >= v,
-                    FILTER_OP_LE => min_val > v,
-                    FILTER_OP_GT => max_val <= v,
-                    FILTER_OP_GE => max_val < v,
-                    _ => false,
-                })
             }
             // Signed Int32 (Byte, Short, Char, Int, Date).
             // DATE: filter value is i64 millis, converted to i32 days.
@@ -1352,27 +1366,50 @@ impl ParquetDecoder {
                     ),
                     _ => return Ok(false),
                 };
-                let (v, is_null) = if is_date {
-                    let millis = unsafe { (ptr as *const i64).read_unaligned() };
-                    if millis == i64::MIN {
-                        (0, true)
+                if is_date {
+                    if is_between {
+                        let a_ms = unsafe { (ptr as *const i64).read_unaligned() };
+                        let b_ms = unsafe { (ptr.add(8) as *const i64).read_unaligned() };
+                        if a_ms == i64::MIN || b_ms == i64::MIN {
+                            return Ok(false);
+                        }
+                        let a = (a_ms / MILLIS_PER_DAY) as i32;
+                        let b = (b_ms / MILLIS_PER_DAY) as i32;
+                        Ok(max_val < a.min(b) || min_val > a.max(b))
                     } else {
-                        ((millis / MILLIS_PER_DAY) as i32, false)
+                        let millis = unsafe { (ptr as *const i64).read_unaligned() };
+                        if millis == i64::MIN {
+                            return Ok(false);
+                        }
+                        let v = (millis / MILLIS_PER_DAY) as i32;
+                        Ok(match op {
+                            FILTER_OP_LT => min_val >= v,
+                            FILTER_OP_LE => min_val > v,
+                            FILTER_OP_GT => max_val <= v,
+                            FILTER_OP_GE => max_val < v,
+                            _ => false,
+                        })
                     }
+                } else if is_between {
+                    let a = unsafe { (ptr as *const i32).read_unaligned() };
+                    let b = unsafe { (ptr.add(4) as *const i32).read_unaligned() };
+                    if a == i32::MIN || b == i32::MIN {
+                        return Ok(false);
+                    }
+                    Ok(max_val < a.min(b) || min_val > a.max(b))
                 } else {
                     let v = unsafe { (ptr as *const i32).read_unaligned() };
-                    (v, v == i32::MIN)
-                };
-                if is_null {
-                    return Ok(false);
+                    if v == i32::MIN {
+                        return Ok(false);
+                    }
+                    Ok(match op {
+                        FILTER_OP_LT => min_val >= v,
+                        FILTER_OP_LE => min_val > v,
+                        FILTER_OP_GT => max_val <= v,
+                        FILTER_OP_GE => max_val < v,
+                        _ => false,
+                    })
                 }
-                Ok(match op {
-                    FILTER_OP_LT => min_val >= v,
-                    FILTER_OP_LE => min_val > v,
-                    FILTER_OP_GT => max_val <= v,
-                    FILTER_OP_GE => max_val < v,
-                    _ => false,
-                })
             }
             // Signed Int64 (Long, Timestamp, Date): NULL = i64::MIN
             PhysicalType::Int64 => {
@@ -1383,17 +1420,26 @@ impl ParquetDecoder {
                     ),
                     _ => return Ok(false),
                 };
-                let v = unsafe { (ptr as *const i64).read_unaligned() };
-                if v == i64::MIN {
-                    return Ok(false);
+                if is_between {
+                    let a = unsafe { (ptr as *const i64).read_unaligned() };
+                    let b = unsafe { (ptr.add(8) as *const i64).read_unaligned() };
+                    if a == i64::MIN || b == i64::MIN {
+                        return Ok(false);
+                    }
+                    Ok(max_val < a.min(b) || min_val > a.max(b))
+                } else {
+                    let v = unsafe { (ptr as *const i64).read_unaligned() };
+                    if v == i64::MIN {
+                        return Ok(false);
+                    }
+                    Ok(match op {
+                        FILTER_OP_LT => min_val >= v,
+                        FILTER_OP_LE => min_val > v,
+                        FILTER_OP_GT => max_val <= v,
+                        FILTER_OP_GE => max_val < v,
+                        _ => false,
+                    })
                 }
-                Ok(match op {
-                    FILTER_OP_LT => min_val >= v,
-                    FILTER_OP_LE => min_val > v,
-                    FILTER_OP_GT => max_val <= v,
-                    FILTER_OP_GE => max_val < v,
-                    _ => false,
-                })
             }
             PhysicalType::Float => {
                 let (min_val, max_val) = match (min_bytes, max_bytes) {
@@ -1407,17 +1453,26 @@ impl ParquetDecoder {
                     }
                     _ => return Ok(false),
                 };
-                let v = unsafe { (ptr as *const f32).read_unaligned() };
-                if v.is_nan() {
-                    return Ok(false);
+                if is_between {
+                    let a = unsafe { (ptr as *const f32).read_unaligned() };
+                    let b = unsafe { (ptr.add(4) as *const f32).read_unaligned() };
+                    if a.is_nan() || b.is_nan() {
+                        return Ok(false);
+                    }
+                    Ok(max_val < a.min(b) || min_val > a.max(b))
+                } else {
+                    let v = unsafe { (ptr as *const f32).read_unaligned() };
+                    if v.is_nan() {
+                        return Ok(false);
+                    }
+                    Ok(match op {
+                        FILTER_OP_LT => min_val >= v,
+                        FILTER_OP_LE => min_val > v,
+                        FILTER_OP_GT => max_val <= v,
+                        FILTER_OP_GE => max_val < v,
+                        _ => false,
+                    })
                 }
-                Ok(match op {
-                    FILTER_OP_LT => min_val >= v,
-                    FILTER_OP_LE => min_val > v,
-                    FILTER_OP_GT => max_val <= v,
-                    FILTER_OP_GE => max_val < v,
-                    _ => false,
-                })
             }
             PhysicalType::Double => {
                 let (min_val, max_val) = match (min_bytes, max_bytes) {
@@ -1431,17 +1486,26 @@ impl ParquetDecoder {
                     }
                     _ => return Ok(false),
                 };
-                let v = unsafe { (ptr as *const f64).read_unaligned() };
-                if v.is_nan() {
-                    return Ok(false);
+                if is_between {
+                    let a = unsafe { (ptr as *const f64).read_unaligned() };
+                    let b = unsafe { (ptr.add(8) as *const f64).read_unaligned() };
+                    if a.is_nan() || b.is_nan() {
+                        return Ok(false);
+                    }
+                    Ok(max_val < a.min(b) || min_val > a.max(b))
+                } else {
+                    let v = unsafe { (ptr as *const f64).read_unaligned() };
+                    if v.is_nan() {
+                        return Ok(false);
+                    }
+                    Ok(match op {
+                        FILTER_OP_LT => min_val >= v,
+                        FILTER_OP_LE => min_val > v,
+                        FILTER_OP_GT => max_val <= v,
+                        FILTER_OP_GE => max_val < v,
+                        _ => false,
+                    })
                 }
-                Ok(match op {
-                    FILTER_OP_LT => min_val >= v,
-                    FILTER_OP_LE => min_val > v,
-                    FILTER_OP_GT => max_val <= v,
-                    FILTER_OP_GE => max_val < v,
-                    _ => false,
-                })
             }
             PhysicalType::ByteArray => {
                 let (min_b, max_b) = match (min_bytes, max_bytes) {
@@ -1467,27 +1531,68 @@ impl ParquetDecoder {
                         "filter values buffer out of bounds"
                     ));
                 }
-                let bytes = unsafe { slice::from_raw_parts(ptr.add(size_of::<i32>()), len) };
+                let bytes1 = unsafe { slice::from_raw_parts(ptr.add(size_of::<i32>()), len) };
 
-                Ok(if is_decimal {
-                    let cmp_min = compare_signed_be_varlen(min_b, bytes);
-                    let cmp_max = compare_signed_be_varlen(max_b, bytes);
-                    match op {
-                        FILTER_OP_LT => cmp_min != cmp::Ordering::Less, // min >= val
-                        FILTER_OP_LE => cmp_min == cmp::Ordering::Greater, // min > val
-                        FILTER_OP_GT => cmp_max != cmp::Ordering::Greater, // max <= val
-                        FILTER_OP_GE => cmp_max == cmp::Ordering::Less, // max < val
-                        _ => false,
+                if is_between {
+                    let ptr2 = unsafe { ptr.add(size_of::<i32>() + len) };
+                    let base2 = ptr2 as usize;
+                    if base2 + size_of::<i32>() > buf_end {
+                        return Err(fmt_err!(
+                            InvalidLayout,
+                            "filter values buffer out of bounds"
+                        ));
                     }
+                    let len2 = unsafe { (ptr2 as *const i32).read_unaligned() };
+                    if len2 < 0 {
+                        return Ok(false);
+                    }
+                    let len2 = len2 as usize;
+                    if base2 + size_of::<i32>() + len2 > buf_end {
+                        return Err(fmt_err!(
+                            InvalidLayout,
+                            "filter values buffer out of bounds"
+                        ));
+                    }
+                    let bytes2 = unsafe { slice::from_raw_parts(ptr2.add(size_of::<i32>()), len2) };
+
+                    Ok(if is_decimal {
+                        let ord = compare_signed_be_varlen(bytes1, bytes2);
+                        let (lo, hi) = if ord == cmp::Ordering::Greater {
+                            (bytes2, bytes1)
+                        } else {
+                            (bytes1, bytes2)
+                        };
+                        compare_signed_be_varlen(max_b, lo) == cmp::Ordering::Less
+                            || compare_signed_be_varlen(min_b, hi) == cmp::Ordering::Greater
+                    } else {
+                        let (lo, hi) = if bytes1 > bytes2 {
+                            (bytes2, bytes1)
+                        } else {
+                            (bytes1, bytes2)
+                        };
+                        max_b < lo || min_b > hi
+                    })
                 } else {
-                    match op {
-                        FILTER_OP_LT => min_b >= bytes,
-                        FILTER_OP_LE => min_b > bytes,
-                        FILTER_OP_GT => max_b <= bytes,
-                        FILTER_OP_GE => max_b < bytes,
-                        _ => false,
-                    }
-                })
+                    Ok(if is_decimal {
+                        let cmp_min = compare_signed_be_varlen(min_b, bytes1);
+                        let cmp_max = compare_signed_be_varlen(max_b, bytes1);
+                        match op {
+                            FILTER_OP_LT => cmp_min != cmp::Ordering::Less,
+                            FILTER_OP_LE => cmp_min == cmp::Ordering::Greater,
+                            FILTER_OP_GT => cmp_max != cmp::Ordering::Greater,
+                            FILTER_OP_GE => cmp_max == cmp::Ordering::Less,
+                            _ => false,
+                        }
+                    } else {
+                        match op {
+                            FILTER_OP_LT => min_b >= bytes1,
+                            FILTER_OP_LE => min_b > bytes1,
+                            FILTER_OP_GT => max_b <= bytes1,
+                            FILTER_OP_GE => max_b < bytes1,
+                            _ => false,
+                        }
+                    })
+                }
             }
             PhysicalType::FixedLenByteArray(size) => {
                 let size = *size;
@@ -1499,41 +1604,72 @@ impl ParquetDecoder {
                 };
                 let buf_end = filter_desc.buf_end as usize;
                 let base = ptr as usize;
-                if base + size > buf_end {
-                    return Err(fmt_err!(
-                        InvalidLayout,
-                        "filter values buffer out of bounds"
-                    ));
-                }
-                let bytes = unsafe { slice::from_raw_parts(ptr, size) };
                 let null_check = if is_decimal {
                     is_fixed_len_null_be
                 } else {
                     is_fixed_len_null
                 };
-                if null_check(bytes) {
-                    return Ok(false);
-                }
 
-                Ok(if is_decimal {
-                    let cmp_min = compare_signed_be(min_b, bytes);
-                    let cmp_max = compare_signed_be(max_b, bytes);
-                    match op {
-                        FILTER_OP_LT => cmp_min != cmp::Ordering::Less,
-                        FILTER_OP_LE => cmp_min == cmp::Ordering::Greater,
-                        FILTER_OP_GT => cmp_max != cmp::Ordering::Greater,
-                        FILTER_OP_GE => cmp_max == cmp::Ordering::Less,
-                        _ => false,
+                if is_between {
+                    if base + size * 2 > buf_end {
+                        return Err(fmt_err!(
+                            InvalidLayout,
+                            "filter values buffer out of bounds"
+                        ));
                     }
+                    let bytes1 = unsafe { slice::from_raw_parts(ptr, size) };
+                    let bytes2 = unsafe { slice::from_raw_parts(ptr.add(size), size) };
+                    if null_check(bytes1) || null_check(bytes2) {
+                        return Ok(false);
+                    }
+                    Ok(if is_decimal {
+                        let ord = compare_signed_be(bytes1, bytes2);
+                        let (lo, hi) = if ord == cmp::Ordering::Greater {
+                            (bytes2, bytes1)
+                        } else {
+                            (bytes1, bytes2)
+                        };
+                        compare_signed_be(max_b, lo) == cmp::Ordering::Less
+                            || compare_signed_be(min_b, hi) == cmp::Ordering::Greater
+                    } else {
+                        let (lo, hi) = if bytes1 > bytes2 {
+                            (bytes2, bytes1)
+                        } else {
+                            (bytes1, bytes2)
+                        };
+                        max_b < lo || min_b > hi
+                    })
                 } else {
-                    match op {
-                        FILTER_OP_LT => min_b >= bytes,
-                        FILTER_OP_LE => min_b > bytes,
-                        FILTER_OP_GT => max_b <= bytes,
-                        FILTER_OP_GE => max_b < bytes,
-                        _ => false,
+                    if base + size > buf_end {
+                        return Err(fmt_err!(
+                            InvalidLayout,
+                            "filter values buffer out of bounds"
+                        ));
                     }
-                })
+                    let bytes = unsafe { slice::from_raw_parts(ptr, size) };
+                    if null_check(bytes) {
+                        return Ok(false);
+                    }
+                    Ok(if is_decimal {
+                        let cmp_min = compare_signed_be(min_b, bytes);
+                        let cmp_max = compare_signed_be(max_b, bytes);
+                        match op {
+                            FILTER_OP_LT => cmp_min != cmp::Ordering::Less,
+                            FILTER_OP_LE => cmp_min == cmp::Ordering::Greater,
+                            FILTER_OP_GT => cmp_max != cmp::Ordering::Greater,
+                            FILTER_OP_GE => cmp_max == cmp::Ordering::Less,
+                            _ => false,
+                        }
+                    } else {
+                        match op {
+                            FILTER_OP_LT => min_b >= bytes,
+                            FILTER_OP_LE => min_b > bytes,
+                            FILTER_OP_GT => max_b <= bytes,
+                            FILTER_OP_GE => max_b < bytes,
+                            _ => false,
+                        }
+                    })
+                }
             }
             _ => Ok(false),
         }

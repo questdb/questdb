@@ -38,6 +38,7 @@ pub const FILTER_OP_GT: u8 = 3;
 pub const FILTER_OP_GE: u8 = 4;
 pub const FILTER_OP_IS_NULL: u8 = 5;
 pub const FILTER_OP_IS_NOT_NULL: u8 = 6;
+pub const FILTER_OP_BETWEEN: u8 = 7;
 
 /// Milliseconds per day, used to convert QuestDB DATE (millis) to Parquet DATE (days).
 pub(crate) const MILLIS_PER_DAY: i64 = 86_400_000;
@@ -355,7 +356,7 @@ mod tests {
         let decoder = read_decoder(&buf)?;
         let filter_vals: Vec<i64> = vec![0, 1, 2, 999];
         let filters = [make_i64_filter(&filter_vals)];
-        let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
+        let can_skip = decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?;
         assert!(
             can_skip,
             "should skip: none of the filter values are in the row group"
@@ -370,7 +371,7 @@ mod tests {
         let decoder = read_decoder(&buf)?;
         let filter_vals: Vec<i64> = vec![0, 105, 999];
         let filters = [make_i64_filter(&filter_vals)];
-        let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
+        let can_skip = decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?;
         assert!(!can_skip, "should not skip: 105 is in the row group");
         Ok(())
     }
@@ -413,13 +414,13 @@ mod tests {
         // All filter values are outside [100, 109].
         let filter_vals: Vec<i64> = vec![0, 50, 200];
         let filters = [make_i64_filter(&filter_vals)];
-        let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
+        let can_skip = decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?;
         assert!(can_skip);
 
         // One filter value is inside [100, 109].
         let filter_vals: Vec<i64> = vec![0, 105, 200];
         let filters = [make_i64_filter(&filter_vals)];
-        let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
+        let can_skip = decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?;
         assert!(!can_skip);
 
         Ok(())
@@ -433,7 +434,7 @@ mod tests {
 
         let filter_buf = make_string_filter_buf(&["xyz", "unknown"]);
         let filters = [make_filter(0, 2, filter_buf.as_ptr() as u64)];
-        let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
+        let can_skip = decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?;
         assert!(
             can_skip,
             "should skip: none of the filter strings are in the row group"
@@ -449,7 +450,7 @@ mod tests {
 
         let filter_buf = make_string_filter_buf(&["xyz", "bob"]);
         let filters = [make_filter(0, 2, filter_buf.as_ptr() as u64)];
-        let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
+        let can_skip = decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?;
         assert!(!can_skip, "should not skip: 'bob' is in the row group");
         Ok(())
     }
@@ -517,7 +518,7 @@ mod tests {
             make_filter(0, fa.len(), fa.as_ptr() as u64),
             make_filter(1, fb.len(), fb.as_ptr() as u64),
         ];
-        let can_skip = decoder.can_skip_row_group(0, &buf, &filters)?;
+        let can_skip = decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?;
         assert!(can_skip);
 
         // Both columns have matching values → cannot skip.
@@ -527,7 +528,7 @@ mod tests {
             make_filter(0, fa2.len(), fa2.as_ptr() as u64),
             make_filter(1, fb2.len(), fb2.as_ptr() as u64),
         ];
-        let can_skip = decoder.can_skip_row_group(0, &buf, &filters2)?;
+        let can_skip = decoder.can_skip_row_group(0, &buf, &filters2, u64::MAX)?;
         assert!(!can_skip,);
         Ok(())
     }
@@ -540,7 +541,7 @@ mod tests {
 
         let filter_vals: Vec<i64> = vec![0];
         let filters = [make_i64_filter(&filter_vals)];
-        let result = decoder.can_skip_row_group(99, &buf, &filters);
+        let result = decoder.can_skip_row_group(99, &buf, &filters, u64::MAX);
         assert!(result.is_err(), "should error on invalid row group index");
     }
 
@@ -620,7 +621,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_LT,
         )];
-        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         // col < 99: min=100 >= 99 → skip
         let filter_vals: Vec<i64> = vec![99];
@@ -630,7 +631,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_LT,
         )];
-        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         // col < 101: min=100 < 101 → cannot skip
         let filter_vals: Vec<i64> = vec![101];
@@ -640,7 +641,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_LT,
         )];
-        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         Ok(())
     }
@@ -659,7 +660,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_LE,
         )];
-        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         // col <= 100: min=100 > 100 is false → cannot skip
         let filter_vals: Vec<i64> = vec![100];
@@ -669,7 +670,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_LE,
         )];
-        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         Ok(())
     }
@@ -688,7 +689,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_GT,
         )];
-        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         // col > 110: max=109 <= 110 → skip
         let filter_vals: Vec<i64> = vec![110];
@@ -698,7 +699,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_GT,
         )];
-        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         // col > 108: max=109 <= 108 is false → cannot skip
         let filter_vals: Vec<i64> = vec![108];
@@ -708,7 +709,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_GT,
         )];
-        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         Ok(())
     }
@@ -727,7 +728,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_GE,
         )];
-        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         // col >= 109: max=109 < 109 is false → cannot skip
         let filter_vals: Vec<i64> = vec![109];
@@ -737,7 +738,7 @@ mod tests {
             filter_vals.as_ptr() as u64,
             FILTER_OP_GE,
         )];
-        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         Ok(())
     }
@@ -751,7 +752,7 @@ mod tests {
 
         let filters = [make_filter_with_op(0, 0, 0, FILTER_OP_IS_NULL)];
         assert!(
-            decoder.can_skip_row_group(0, &buf, &filters)?,
+            decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
             "IS NULL should skip when null_count=0"
         );
         Ok(())
@@ -767,7 +768,7 @@ mod tests {
 
         let filters = [make_filter_with_op(0, 0, 0, FILTER_OP_IS_NULL)];
         assert!(
-            !decoder.can_skip_row_group(0, &buf, &filters)?,
+            !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
             "IS NULL should not skip when nulls exist"
         );
         Ok(())
@@ -783,7 +784,7 @@ mod tests {
 
         let filters = [make_filter_with_op(0, 0, 0, FILTER_OP_IS_NOT_NULL)];
         assert!(
-            decoder.can_skip_row_group(0, &buf, &filters)?,
+            decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
             "IS NOT NULL should skip when all values are null"
         );
         Ok(())
@@ -799,7 +800,7 @@ mod tests {
 
         let filters = [make_filter_with_op(0, 0, 0, FILTER_OP_IS_NOT_NULL)];
         assert!(
-            !decoder.can_skip_row_group(0, &buf, &filters)?,
+            !decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?,
             "IS NOT NULL should not skip when some non-nulls exist"
         );
         Ok(())
@@ -819,7 +820,7 @@ mod tests {
             filter_buf.as_ptr() as u64,
             FILTER_OP_GT,
         )];
-        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         // col < "aaa": min is "alice", "alice" >= "aaa" → skip
         let filter_buf = make_string_filter_buf(&["aaa"]);
@@ -829,7 +830,7 @@ mod tests {
             filter_buf.as_ptr() as u64,
             FILTER_OP_LT,
         )];
-        assert!(decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         // col > "bob": max is "charlie", "charlie" > "bob" → cannot skip
         let filter_buf = make_string_filter_buf(&["bob"]);
@@ -839,7 +840,7 @@ mod tests {
             filter_buf.as_ptr() as u64,
             FILTER_OP_GT,
         )];
-        assert!(!decoder.can_skip_row_group(0, &buf, &filters)?);
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         Ok(())
     }

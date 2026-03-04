@@ -845,7 +845,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(
             can_skip,
@@ -860,7 +860,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 105 is in the row group");
     }
@@ -936,7 +936,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(
             can_skip,
@@ -1107,7 +1107,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(
             can_skip,
@@ -1121,7 +1121,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 15 is in the row group");
     }
@@ -1198,7 +1198,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(
             can_skip,
@@ -1212,7 +1212,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 105 is in the row group");
     }
@@ -1287,7 +1287,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(
             can_skip,
@@ -1301,7 +1301,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 10005 is in the row group");
     }
@@ -1376,7 +1376,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(
             can_skip,
@@ -1390,7 +1390,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 105 is in the row group");
     }
@@ -1484,7 +1484,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(
             can_skip,
@@ -1503,7 +1503,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 105 is in the row group");
     }
@@ -1565,7 +1565,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(can_skip, "should skip: all values outside [10, 19]");
 
@@ -1577,7 +1577,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 15 is inside [10, 19]");
     }
@@ -1637,7 +1637,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(can_skip, "should skip: all values outside [100, 109]");
 
@@ -1649,7 +1649,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 105 is inside [100, 109]");
     }
@@ -1709,7 +1709,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(can_skip, "should skip: all values outside [10000, 10009]");
 
@@ -1721,7 +1721,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 10005 is inside [10000, 10009]");
     }
@@ -1781,7 +1781,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(can_skip, "should skip: all values outside [100, 109]");
 
@@ -1793,7 +1793,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 105 is inside [100, 109]");
     }
@@ -1868,7 +1868,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(can_skip, "should skip: all values outside [100, 109]");
 
@@ -1883,7 +1883,7 @@ mod tests {
             column_type: 0,
         }];
         let can_skip = decoder
-            .can_skip_row_group(0, &data, &filters)
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
             .expect("can_skip");
         assert!(!can_skip, "should not skip: 105 is inside [100, 109]");
     }

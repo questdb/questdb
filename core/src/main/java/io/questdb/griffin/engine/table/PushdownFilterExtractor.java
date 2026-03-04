@@ -59,6 +59,7 @@ import java.util.ArrayDeque;
  */
 public class PushdownFilterExtractor implements Mutable {
 
+    public static final int OP_BETWEEN = 7;
     public static final int OP_EQ = 0;
     public static final int OP_GE = 4;
     public static final int OP_GT = 3;
@@ -216,14 +217,10 @@ public class PushdownFilterExtractor implements Mutable {
         ExpressionNode hiNode = node.args.getQuick(0);
 
         int columnType = metadata.getColumnType(columnIndex);
-
-        PushdownFilterCondition geCond = new PushdownFilterCondition(colNode.token, columnType, OP_GE);
-        geCond.addValue(loNode);
-        conditions.add(geCond);
-
-        PushdownFilterCondition leCond = new PushdownFilterCondition(colNode.token, columnType, OP_LE);
-        leCond.addValue(hiNode);
-        conditions.add(leCond);
+        PushdownFilterCondition cond = new PushdownFilterCondition(colNode.token, columnType, OP_BETWEEN);
+        cond.addValue(loNode);
+        cond.addValue(hiNode);
+        conditions.add(cond);
     }
 
     private void tryExtractComparison(ExpressionNode node, RecordMetadata metadata, int opType) {

@@ -24,8 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
@@ -44,6 +42,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Utility class for Parquet row group bloom filter pushdown.
@@ -208,27 +208,33 @@ public final class ParquetRowGroupFilter {
                         }
                         break;
                     case ColumnType.TIMESTAMP: {
-                        boolean allCompatible = true;
-                        for (int j = 0; j < valueCount; j++) {
-                            int vType = valueFunctions.getQuick(j).getType();
-                            if (!ColumnType.isTimestamp(vType) && vType != ColumnType.DATE) {
-                                allCompatible = false;
+                        if (opType == PushdownFilterExtractor.OP_EQ) {
+                            boolean allCompatible = true;
+                            for (int j = 0; j < valueCount; j++) {
+                                int vType = valueFunctions.getQuick(j).getType();
+                                if (!ColumnType.isTimestamp(vType) && vType != ColumnType.DATE) {
+                                    allCompatible = false;
+                                    break;
+                                }
+                            }
+                            if (!allCompatible) {
+                                supported = false;
                                 break;
                             }
-                        }
-                        if (!allCompatible) {
-                            supported = false;
-                            break;
                         }
 
                         TimestampDriver driver = ColumnType.getTimestampDriver(columnType);
                         for (int j = 0; j < valueCount; j++) {
                             Function f = valueFunctions.getQuick(j);
                             int vType = f.getType();
-                            if (columnType == vType) {
-                                filterValues.putLong(f.getTimestamp(null));
+                            if (ColumnType.isTimestamp(vType) || vType == ColumnType.DATE) {
+                                if (columnType == vType) {
+                                    filterValues.putLong(f.getTimestamp(null));
+                                } else {
+                                    filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
+                                }
                             } else {
-                                filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
+                                filterValues.putLong(f.getLong(null));
                             }
                         }
                         break;
