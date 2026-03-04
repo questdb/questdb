@@ -43,7 +43,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
             ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.BOOLEAN,
             ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO,
-            ColumnType.UINT16, ColumnType.UINT32, ColumnType.UINT64,
             ColumnType.STRING, ColumnType.VARCHAR
     };
     private static final int[] varSizeConvertableColumnTypes = {
@@ -97,9 +96,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.DOUBLE:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
-            case ColumnType.UINT16:
-            case ColumnType.UINT32:
-            case ColumnType.UINT64:
                 return true;
         }
         return false;
@@ -121,9 +117,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.TIMESTAMP:
             case ColumnType.TIMESTAMP_NANO:
             case ColumnType.DOUBLE:
-            case ColumnType.UINT16:
-            case ColumnType.UINT32:
-            case ColumnType.UINT64:
                 return generateNextType(columnType, numericConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
             default:
                 throw new UnsupportedOperationException("Unsupported column type to generate type change: " + columnType);
@@ -230,9 +223,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.SHORT:
-            case ColumnType.UINT16:
-            case ColumnType.UINT32:
-            case ColumnType.UINT64:
                 return false;
             default:
                 return true;
