@@ -568,6 +568,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walTxnNotificationQueueCapacity;
     private final long walWriterDataAppendPageSize;
     private final long walWriterEventAppendPageSize;
+    private final int walWriterMadviseMode;
     private final int walWriterPoolMaxSegments;
     private final long workStealTimeoutNanos;
     private final long writerAsyncCommandBusyWaitTimeout;
@@ -1473,6 +1474,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
             this.poolSegmentSize = getIntSize(properties, env, PropertyKey.DEBUG_CAIRO_POOL_SEGMENT_SIZE, 32);
+            this.walWriterMadviseMode = getWalWriterMadviseMode(properties, env, PropertyKey.CAIRO_WAL_WRITER_MADVISE_MODE);
             this.walWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS, 10);
             this.viewWalWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_VIEW_WAL_WRITER_POOL_MAX_SEGMENTS, 4);
             this.spinLockTimeout = getMillis(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000);
@@ -2257,6 +2259,27 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return SqlJitMode.JIT_MODE_ENABLED;
+    }
+
+    private int getWalWriterMadviseMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) throws ServerConfigurationException {
+        final String mode = getString(properties, env, key, "none");
+
+        // must not be null because we provided non-null default value
+        assert mode != null;
+
+        if (Chars.equalsLowerCaseAscii(mode, "none")) {
+            return -1;
+        }
+
+        if (Chars.equalsLowerCaseAscii(mode, "sequential")) {
+            return Files.POSIX_MADV_SEQUENTIAL;
+        }
+
+        if (Chars.equalsLowerCaseAscii(mode, "random")) {
+            return Files.POSIX_MADV_RANDOM;
+        }
+
+        throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), mode);
     }
 
     // The enterprise version needs to add tcps and https
@@ -4480,6 +4503,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWalTxnNotificationQueueCapacity() {
             return walTxnNotificationQueueCapacity;
+        }
+
+        @Override
+        public int getWalWriterMadviseMode() {
+            return walWriterMadviseMode;
         }
 
         @Override

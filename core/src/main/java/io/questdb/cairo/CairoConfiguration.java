@@ -780,6 +780,8 @@ public interface CairoConfiguration {
 
     int getWalTxnNotificationQueueCapacity();
 
+    int getWalWriterMadviseMode();
+
     int getWalWriterPoolMaxSegments();
 
     int getWindowColumnPoolCapacity();

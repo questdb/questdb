@@ -190,6 +190,8 @@ public class PartitionDecoder implements QuietCloseable {
         assert ptr != 0;
         return findRowGroupByTimestamp( // throws CairoException on error
                 ptr,
+                fileAddr,
+                fileSize,
                 timestamp,
                 rowLo,
                 rowHi,
@@ -270,6 +272,16 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
+    public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
+        assert ptr != 0;
+        return rowGroupMaxTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
+    }
+
+    public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
+        assert ptr != 0;
+        return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
+    }
+
     private static native long columnCountOffset();
 
     private static native long columnIdsOffset();
@@ -329,11 +341,13 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long findRowGroupByTimestamp(
             long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            long timestamp,
             long rowLo,
             long rowHi,
-            long timestamp,
             int timestampIndex
-    );
+    ) throws CairoException;
 
     private static native long readRowGroupStats(
             long decoderPtr,
@@ -341,6 +355,22 @@ public class PartitionDecoder implements QuietCloseable {
             long columnsPtr,
             int columnCount,
             int rowGroup
+    ) throws CairoException;
+
+    private static native long rowGroupMaxTimestamp(
+            long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            int rowGroupIndex,
+            int timestampColumnIndex
+    ) throws CairoException;
+
+    private static native long rowGroupMinTimestamp(
+            long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            int rowGroupIndex,
+            int timestampColumnIndex
     ) throws CairoException;
 
     private static native long rowCountOffset();
