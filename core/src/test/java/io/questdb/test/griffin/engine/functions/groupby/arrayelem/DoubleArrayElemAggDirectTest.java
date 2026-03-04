@@ -25,6 +25,9 @@
 package io.questdb.test.griffin.engine.functions.groupby.arrayelem;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
@@ -42,6 +45,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -51,9 +55,6 @@ import org.junit.Test;
  * by instantiating functions directly and feeding them programmatic arrays.
  */
 public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
-
-    // ======================== overallocation cap ========================
-
     @Test
     public void testAvg2dMiddleDimGrowth() throws Exception {
         // Same shape growth as sum, verify counts are correct
@@ -119,8 +120,6 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
         });
     }
 
-    // ======================== avg with large arrays ========================
-
     @Test
     public void testAvgParallelMerge2dRemap() throws Exception {
         // Merge two partitions with incompatible 2D shapes → remap
@@ -153,6 +152,50 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
                             Assert.assertEquals("row=" + row + ",col=" + col, expected, actual, 1e-10);
                         }
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCombinedShapeExceedsMaxElementCount() throws Exception {
+        // Two small 2D arrays whose per-dimension maximums exceed the configured limit.
+        // Array 1: shape [11, 1] → 11 elements
+        // Array 2: shape [1, 11] → 11 elements
+        // Combined: shape [11, 11] → 121 elements (exceeds the 100-element limit)
+        CairoConfiguration smallLimitConfig = new CairoConfigurationWrapper(configuration) {
+            @Override
+            public int maxArrayElementCount() {
+                return 100;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (Harness h = createHarness(new DoubleArrayElemSumGroupByFunctionFactory(), 2, smallLimitConfig)) {
+                h.computeFirst(buildArray2D(11, 1, (r, c) -> 1.0));
+                try {
+                    h.computeNext(buildArray2D(1, 11, (r, c) -> 2.0));
+                    Assert.fail("Expected CairoException for exceeding max array element count");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "array element count exceeds max");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCombinedShapeOverflowsIntCardinality() throws Exception {
+        // Two small 2D arrays whose per-dimension maximums overflow int when multiplied.
+        // Array 1: shape [50_000, 1] → 50_000 elements
+        // Array 2: shape [1, 50_000] → 50_000 elements
+        // Combined: shape [50_000, 50_000] → 2_500_000_000 (overflows int)
+        assertMemoryLeak(() -> {
+            try (Harness h = createSumHarness(2)) {
+                h.computeFirst(buildArray2D(50_000, 1, (r, c) -> 1.0));
+                try {
+                    h.computeNext(buildArray2D(1, 50_000, (r, c) -> 2.0));
+                    Assert.fail("Expected CairoException for cardinality overflow");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "array cardinality overflow");
                 }
             }
         });
@@ -203,6 +246,24 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeOverflowsIntCardinality() throws Exception {
+        // Same overflow scenario triggered via parallel merge instead of computeNext.
+        assertMemoryLeak(() -> {
+            try (Harness h1 = createSumHarness(2);
+                 Harness h2 = createSumHarness(2)) {
+                h1.computeFirst(buildArray2D(50_000, 1, (r, c) -> 1.0));
+                h2.computeFirst(buildArray2D(1, 50_000, (r, c) -> 2.0));
+                try {
+                    h1.merge(h2);
+                    Assert.fail("Expected CairoException for cardinality overflow");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "array cardinality overflow");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMin2dMiddleDimGrowth() throws Exception {
         // Shape (2,3) then (2,5): inner dim grows → remap, min picks smaller value per position
         assertMemoryLeak(() -> {
@@ -229,8 +290,6 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ======================== min/max large arrays ========================
 
     @Test
     public void testMinLargeArray() throws Exception {
@@ -304,8 +363,6 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
         });
     }
 
-    // ======================== 2D middle-dimension growth ========================
-
     @Test
     public void testSumKahanPrecisionLargeArray() throws Exception {
         // Accumulate many rows of small values on top of a large base — Kahan should preserve precision
@@ -342,8 +399,6 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ======================== parallel merge with large arrays ========================
 
     @Test
     public void testSumOverallocCapAboveThreshold() throws Exception {
@@ -391,8 +446,6 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
         });
     }
 
-    // ======================== null / empty edge cases ========================
-
     @Test
     public void testSumParallelMergeLargeArrays() throws Exception {
         assertMemoryLeak(() -> {
@@ -422,8 +475,6 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
         });
     }
 
-    // ======================== Kahan precision with large accumulation ========================
-
     private static DirectArray buildArray1D(int size, DoubleIndexFunction filler) {
         DirectArray array = new DirectArray();
         array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
@@ -434,8 +485,6 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
         }
         return array;
     }
-
-    // ======================== helpers ========================
 
     private static DirectArray buildArray2D(int rows, int cols, Double2DFunction filler) {
         DirectArray array = new DirectArray();
@@ -472,13 +521,17 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
     }
 
     private Harness createHarness(io.questdb.griffin.FunctionFactory factory, int nDims) throws Exception {
+        return createHarness(factory, nDims, configuration);
+    }
+
+    private Harness createHarness(io.questdb.griffin.FunctionFactory factory, int nDims, CairoConfiguration config) throws Exception {
         int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
         StubArrayFunction stub = new StubArrayFunction(arrayType);
         ObjList<Function> args = new ObjList<>();
         args.add(stub);
         IntList argPositions = new IntList();
         argPositions.add(0);
-        Function func = factory.newInstance(0, args, argPositions, configuration, null);
+        Function func = factory.newInstance(0, args, argPositions, config, null);
         return new Harness((GroupByFunction) func, stub);
     }
 
@@ -534,17 +587,23 @@ public class DoubleArrayElemAggDirectTest extends AbstractCairoTest {
 
         void computeFirst(DirectArray array) {
             stub.setCurrent(array);
-            func.computeFirst(mapValue, null, 0);
-            if (array != null) {
-                array.close();
+            try {
+                func.computeFirst(mapValue, null, 0);
+            } finally {
+                if (array != null) {
+                    array.close();
+                }
             }
         }
 
         void computeNext(DirectArray array) {
             stub.setCurrent(array);
-            func.computeNext(mapValue, null, 0);
-            if (array != null) {
-                array.close();
+            try {
+                func.computeNext(mapValue, null, 0);
+            } finally {
+                if (array != null) {
+                    array.close();
+                }
             }
         }
 

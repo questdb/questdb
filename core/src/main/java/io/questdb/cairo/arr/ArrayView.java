@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
@@ -142,19 +143,23 @@ public abstract class ArrayView implements QuietCloseable {
      * For shape {@code {3, 4}}: strides = {@code {4, 1}}, returns 12.
      * <p>
      * Unlike {@link MutableArray#resetToDefaultStrides}, this is a pure function on
-     * plain arrays — no overflow checking, no instance mutation.
+     * plain arrays — no instance mutation.
      *
      * @param shape   dimension lengths (read)
      * @param strides destination for computed strides (written, same length as shape)
      * @return flat cardinality (product of all dimension lengths)
+     * @throws ArithmeticException if the product of dimensions overflows {@code int}
      */
     public static int computeRowMajorStrides(int[] shape, int[] strides) {
-        int stride = 1;
+        long stride = 1;
         for (int d = shape.length - 1; d >= 0; d--) {
-            strides[d] = stride;
+            strides[d] = (int) stride;
             stride *= shape[d];
+            if (stride > Integer.MAX_VALUE) {
+                throw CairoException.nonCritical().put("array cardinality overflow");
+            }
         }
-        return stride;
+        return (int) stride;
     }
 
     /**
