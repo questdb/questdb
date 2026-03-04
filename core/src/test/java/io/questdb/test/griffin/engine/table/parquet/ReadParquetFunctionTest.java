@@ -975,6 +975,70 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVarcharSliceUnionAllWithVarchar() throws Exception {
+        // VARCHAR_SLICE (from read_parquet) UNION ALL with native VARCHAR must not
+        // trigger an assertion in generateCastFunctions().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('hello', 'world', NULL) AS v" +
+                    " FROM long_sequence(10))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // VARCHAR_SLICE (read_parquet) UNION ALL VARCHAR (native table)
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') UNION ALL SELECT * FROM x");
+                assertSqlCursors0("SELECT * FROM x UNION ALL SELECT * FROM x");
+
+                // VARCHAR (native table) UNION ALL VARCHAR_SLICE (read_parquet)
+                sink.clear();
+                sink.put("SELECT * FROM x UNION ALL SELECT * FROM read_parquet('x.parquet')");
+                assertSqlCursors0("SELECT * FROM x UNION ALL SELECT * FROM x");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceUnionAllWithString() throws Exception {
+        // VARCHAR_SLICE (from read_parquet) UNION ALL with STRING column. The
+        // matrix resolves this to STRING, requiring a VARCHAR_SLICE→STRING cast.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE vc AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('hello', 'world', NULL) AS v" +
+                    " FROM long_sequence(10))");
+            execute("CREATE TABLE str AS (SELECT" +
+                    " x AS id," +
+                    " rnd_str(3, 6, 0) AS v" +
+                    " FROM long_sequence(10))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("vc")
+            ) {
+                path.of(root).concat("vc.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('vc.parquet') UNION ALL SELECT * FROM str");
+                assertSqlCursors0("SELECT * FROM vc UNION ALL SELECT * FROM str");
+            }
+        });
+    }
+
     private static void assertSqlCursors0(CharSequence expectedSql) throws SqlException {
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(

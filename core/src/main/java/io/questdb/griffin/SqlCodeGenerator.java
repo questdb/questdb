@@ -2210,6 +2210,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int fromType = castFromMetadata.getColumnType(i);
             int toTag = tagOf(toType);
             int fromTag = tagOf(fromType);
+            // VARCHAR_SLICE is a transient in-memory type (from read_parquet) accessed
+            // through the same getVarcharA() interface as VARCHAR. Normalize it so that
+            // the cast switch below handles it identically to VARCHAR.
+            if (fromTag == ColumnType.VARCHAR_SLICE) {
+                fromTag = VARCHAR;
+            }
             if (fromTag == NULL) {
                 castFunctions.add(NullConstant.NULL);
             } else {
