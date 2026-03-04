@@ -1,13 +1,13 @@
 use std::convert::TryInto;
 use std::io::Cursor;
 
-use parquet_format_safe::thrift::protocol::TCompactInputProtocol;
-
 use crate::compression::Compression;
 use crate::error::{Error, Result};
 use crate::metadata::{ColumnChunkMetaData, Descriptor};
 use crate::page::{DataPageHeader, PageType, ParquetPageHeader};
+use crate::parquet_bridge::DataPageHeaderExt;
 use crate::parquet_bridge::Encoding;
+use parquet_format_safe::thrift::protocol::TCompactInputProtocol;
 
 use super::reader::get_page_header;
 
@@ -33,6 +33,13 @@ impl SlicedDataPage<'_> {
     pub fn num_values(&self) -> usize {
         self.header.num_values()
     }
+
+    pub fn encoding(&self) -> Encoding {
+        match &self.header {
+            DataPageHeader::V1(d) => d.encoding(),
+            DataPageHeader::V2(d) => d.encoding(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -53,11 +60,7 @@ pub struct SlicePageReader<'a> {
 }
 
 impl<'a> SlicePageReader<'a> {
-    pub fn new(
-        data: &'a [u8],
-        column: &ColumnChunkMetaData,
-        max_page_size: usize,
-    ) -> Result<Self> {
+    pub fn new(data: &'a [u8], column: &ColumnChunkMetaData, max_page_size: usize) -> Result<Self> {
         let (col_start, col_len) = column.byte_range();
         let col_start = col_start as usize;
         let col_end = col_start + col_len as usize;
