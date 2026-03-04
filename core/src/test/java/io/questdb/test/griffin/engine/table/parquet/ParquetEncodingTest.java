@@ -159,7 +159,7 @@ public class ParquetEncodingTest {
         return switch (encoding) {
             case ENCODING_DEFAULT -> true;
             case ENCODING_PLAIN -> tag != ColumnType.SYMBOL && tag != ColumnType.VARCHAR;
-            case ENCODING_RLE_DICTIONARY -> tag == ColumnType.SYMBOL || tag == ColumnType.VARCHAR;
+            case ENCODING_RLE_DICTIONARY -> tag != ColumnType.BOOLEAN;
             case ENCODING_DELTA_LENGTH_BYTE_ARRAY -> tag == ColumnType.STRING
                     || tag == ColumnType.BINARY
                     || tag == ColumnType.VARCHAR;
