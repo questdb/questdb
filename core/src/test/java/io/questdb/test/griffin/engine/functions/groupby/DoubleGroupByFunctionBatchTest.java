@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
+import io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullDoubleGroupByFunction;
@@ -37,7 +38,6 @@ import io.questdb.griffin.engine.functions.groupby.MinDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.junit.After;
 import org.junit.Assert;
@@ -54,6 +54,32 @@ public class DoubleGroupByFunctionBatchTest {
             Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
             lastAllocated = 0;
             lastSize = 0;
+        }
+    }
+
+    // Reproduces Bug 1 from CodeRabbit review of PR #6805:
+    // AvgDoubleGroupByFunction.computeBatch uses Numbers.isFinite(prevSum) to distinguish "not yet
+    // initialized" (NaN sentinel) from "has accumulated value". But isFinite() returns false for both
+    // NaN and ±Infinity. When the running sum legitimately overflows to +Infinity across batches,
+    // the next finite batch overwrites it instead of accumulating into it.
+    @Test
+    public void testAvgDoubleBatchAccumulatedInfinityIsPreserved() {
+        AvgDoubleGroupByFunction function = new AvgDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // Batch 1: running sum = MAX_VALUE (finite)
+            long ptr = allocateDoubles(Double.MAX_VALUE);
+            function.computeBatch(value, ptr, 1, 0);
+
+            // Batch 2: running sum = MAX_VALUE + MAX_VALUE = +Infinity
+            ptr = allocateDoubles(Double.MAX_VALUE);
+            function.computeBatch(value, ptr, 1, 0);
+
+            // Batch 3: a finite batch must not overwrite accumulated Infinity
+            ptr = allocateDoubles(1.0);
+            function.computeBatch(value, ptr, 1, 0);
+
+            // avg = Infinity / 3 = Infinity
+            Assert.assertTrue(Double.isInfinite(function.getDouble(value)));
         }
     }
 
@@ -392,6 +418,31 @@ public class DoubleGroupByFunctionBatchTest {
 
             Assert.assertEquals(7.0, function.getDouble(value), 0.0);
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    // Reproduces Bug 2 from CodeRabbit review of PR #6805:
+    // SumDoubleGroupByFunction.computeBatch uses Numbers.isFinite(existing) to distinguish the NaN
+    // sentinel (empty state) from a real accumulated value. But isFinite() returns false for ±Infinity
+    // too, so when the running sum overflows to +Infinity, the next finite batch replaces it.
+    @Test
+    public void testSumDoubleBatchAccumulatedInfinityIsPreserved() {
+        SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // Batch 1: running sum = MAX_VALUE (finite)
+            long ptr = allocateDoubles(Double.MAX_VALUE);
+            function.computeBatch(value, ptr, 1, 0);
+            Assert.assertEquals(Double.MAX_VALUE, function.getDouble(value), 0.0);
+
+            // Batch 2: running sum = MAX_VALUE + MAX_VALUE = +Infinity
+            ptr = allocateDoubles(Double.MAX_VALUE);
+            function.computeBatch(value, ptr, 1, 0);
+            Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(value), 0.0);
+
+            // Batch 3: accumulated Infinity must not be replaced by the finite batch sum
+            ptr = allocateDoubles(1.0);
+            function.computeBatch(value, ptr, 1, 0);
+            Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(value), 0.0);
         }
     }
 

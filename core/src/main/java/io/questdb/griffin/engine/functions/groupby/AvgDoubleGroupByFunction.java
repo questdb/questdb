@@ -52,7 +52,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
             final double batchSum = Vect.sumDoubleAcc(ptr, count, countPtr);
             if (!Numbers.isNull(batchSum)) {
                 final double prevSum = mapValue.getDouble(valueIndex);
-                if (Numbers.isFinite(prevSum)) {
+                if (!Double.isNaN(prevSum)) {
                     mapValue.putDouble(valueIndex, prevSum + batchSum);
                 } else {
                     mapValue.putDouble(valueIndex, batchSum);

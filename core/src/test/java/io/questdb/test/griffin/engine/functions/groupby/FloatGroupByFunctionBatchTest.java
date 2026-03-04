@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.junit.After;
 import org.junit.Assert;
@@ -390,6 +389,31 @@ public class FloatGroupByFunctionBatchTest {
 
             Assert.assertEquals(7.0f, function.getFloat(value), 0.000001f);
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    // Reproduces Bug 3 from CodeRabbit review of PR #6805:
+    // SumFloatGroupByFunction.computeBatch uses Float.isFinite(existing) to distinguish the NaN
+    // sentinel (empty state) from a real accumulated value. But isFinite() returns false for ±Infinity
+    // too, so when the running sum overflows to +Infinity, the next finite batch replaces it.
+    @Test
+    public void testSumFloatBatchAccumulatedInfinityIsPreserved() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // Batch 1: running sum = MAX_VALUE (finite)
+            long ptr = allocateFloats(Float.MAX_VALUE);
+            function.computeBatch(value, ptr, 1, 0);
+            Assert.assertEquals(Float.MAX_VALUE, function.getFloat(value), 0.0f);
+
+            // Batch 2: running sum = MAX_VALUE + MAX_VALUE = +Infinity
+            ptr = allocateFloats(Float.MAX_VALUE);
+            function.computeBatch(value, ptr, 1, 0);
+            Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(value), 0.0f);
+
+            // Batch 3: accumulated Infinity must not be replaced by the finite batch sum
+            ptr = allocateFloats(1.0f);
+            function.computeBatch(value, ptr, 1, 0);
+            Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(value), 0.0f);
         }
     }
 
