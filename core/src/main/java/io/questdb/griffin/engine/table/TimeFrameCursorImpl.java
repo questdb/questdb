@@ -274,7 +274,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     @Override
     public void recordAtRowIndex(Record record, long rowIndex) {
         if (rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi) {
-            ((PageFrameMemoryRecord) record).setRowIndex(rowIndex - currentPageFrameRowLo);
+            ((TimeFrameMemoryRecord) record).setRowIndex(rowIndex, currentPageFrameRowLo);
             return;
         }
         navigateToRow(record, timeFrame.getFrameIndex(), rowIndex);
@@ -404,7 +404,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         final long pageFrameRowHi = pageFrameCumulativeRows.getQuick(pageFrameIndex);
 
         frameMemoryPool.navigateTo(pageFrameIndex, (PageFrameMemoryRecord) record);
-        ((PageFrameMemoryRecord) record).setRowIndex(rowInPartition - pageFrameRowLo);
+        ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, pageFrameRowLo);
 
         currentPageFrameRowLo = pageFrameRowLo;
         currentPageFrameRowHi = pageFrameRowHi;

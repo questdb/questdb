@@ -258,7 +258,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public void recordAtRowIndex(Record record, long rowIndex) {
         if (rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi) {
-            ((PageFrameMemoryRecord) record).setRowIndex(rowIndex - currentPageFrameRowLo);
+            ((TimeFrameMemoryRecord) record).setRowIndex(rowIndex, currentPageFrameRowLo);
             return;
         }
         navigateToRow(record, timeFrame.getFrameIndex(), rowIndex);
@@ -332,7 +332,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
 
         // Navigate using partition-local page frame index (the pool has per-partition cache)
         frameMemoryPool.navigateTo(lo, (PageFrameMemoryRecord) record);
-        ((PageFrameMemoryRecord) record).setRowIndex(rowInPartition - pfRowLo);
+        ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, pfRowLo);
 
         currentPageFrameRowLo = pfRowLo;
         currentPageFrameRowHi = pfRowHi;

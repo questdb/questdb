@@ -27,12 +27,16 @@ package io.questdb.cairo.sql;
 import io.questdb.std.Rows;
 
 /**
- * A {@link PageFrameMemoryRecord} whose {@link #getRowId()} includes the
- * {@link TimeFrameCursor#TIME_FRAME_ROW_ID_MARKER} bits. Use this record
- * type in time frame cursor implementations so that callers that store
- * and later replay row IDs get correctly marked values.
+ * A {@link PageFrameMemoryRecord} whose {@link #getRowId()} encodes
+ * the partition index and row-in-partition (not page frame index and
+ * row-in-page-frame) with the {@link TimeFrameCursor#TIME_FRAME_ROW_ID_MARKER}
+ * bits set. Use this record type in time frame cursor implementations so
+ * that callers that store and later replay row IDs get correctly marked
+ * partition-level values.
  */
 public class TimeFrameMemoryRecord extends PageFrameMemoryRecord {
+    private int partitionIndex;
+    private long partitionLocalRow;
 
     public TimeFrameMemoryRecord(byte letter) {
         super(letter);
@@ -40,6 +44,25 @@ public class TimeFrameMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public long getRowId() {
-        return Rows.toRowID(frameIndex, rowIndex) | TimeFrameCursor.TIME_FRAME_ROW_ID_MARKER;
+        return Rows.toRowID(partitionIndex, partitionLocalRow) | TimeFrameCursor.TIME_FRAME_ROW_ID_MARKER;
+    }
+
+    /**
+     * Sets the row index within the page frame and updates partition-local row.
+     * Does not change the partition index.
+     */
+    public void setRowIndex(long partitionRowIndex, long pageFrameRowLo) {
+        super.setRowIndex(partitionRowIndex - pageFrameRowLo);
+        this.partitionLocalRow = partitionRowIndex;
+    }
+
+    /**
+     * Sets the row index within the page frame and updates both partition index
+     * and partition-local row.
+     */
+    public void setRowIndex(int partitionIndex, long partitionRowIndex, long pageFrameRowLo) {
+        super.setRowIndex(partitionRowIndex - pageFrameRowLo);
+        this.partitionIndex = partitionIndex;
+        this.partitionLocalRow = partitionRowIndex;
     }
 }

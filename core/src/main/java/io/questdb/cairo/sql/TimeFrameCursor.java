@@ -33,15 +33,17 @@ import io.questdb.std.Rows;
  * and random row access.
  */
 public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
-    // Marker bits set on all TimeFrameCursor row IDs (bits 63 and 43). Bit 63
-    // makes row IDs negative, so misuse against PageFrameMemoryPool (which
-    // expects page frame indices in the upper bits) causes immediate array
-    // index out of bounds. Bit 43 ensures toRowID(0, 0) != Long.MIN_VALUE,
-    // avoiding collisions with Long.MIN_VALUE sentinels in ASOF join helpers.
-    long TIME_FRAME_ROW_ID_MARKER = Long.MIN_VALUE | (1L << 43);
+    // Marker bit set on all TimeFrameCursor row IDs (bit 43). This bit falls
+    // within the local row ID range (bits 0-43) of the Rows encoding, so it
+    // does not affect the partition index (bits 44-62). It reduces the max
+    // rows per partition from 2^44 to 2^43 (~8.8T), which is more than enough.
+    // Bit 43 ensures toRowID(0, 0) != Long.MIN_VALUE, avoiding collisions
+    // with Long.MIN_VALUE sentinels in join helpers. Row IDs stay positive,
+    // preserving the sign-based found/not-found convention in memoized cursors.
+    long TIME_FRAME_ROW_ID_MARKER = 1L << 43;
 
     static boolean isTimeFrameRowID(long rowId) {
-        return rowId < 0;
+        return (rowId & TIME_FRAME_ROW_ID_MARKER) != 0;
     }
 
     static long toLocalRowID(long timeFrameRowId) {
@@ -54,9 +56,7 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
 
     /**
      * Encodes a time frame index and row index into a row ID with the
-     * {@link #TIME_FRAME_ROW_ID_MARKER} bit set. The resulting row ID is
-     * always negative, ensuring misuse against non-time-frame APIs causes
-     * immediate failure.
+     * {@link #TIME_FRAME_ROW_ID_MARKER} bit set.
      *
      * @param frameIndex time frame index (partition index)
      * @param rowIndex   row index within the time frame
