@@ -40,6 +40,13 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
 
         let mut dict_aux = Vec::with_capacity(dict_decoder.dict_values.len());
         for &value in &dict_decoder.dict_values {
+            if value.len() >= (1usize << 28) {
+                return Err(fmt_err!(
+                    Layout,
+                    "dictionary value length {} exceeds 28-bit header capacity",
+                    value.len()
+                ));
+            }
             let len = value.len() as u32;
             let header: u32 = (len << 4) | if ascii || len == 0 { 3 } else { 1 };
             let ptr = value.as_ptr() as u64;
