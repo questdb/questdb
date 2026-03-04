@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -105,7 +104,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         ) {
             long parquetAddr = 0;
             try (
-                    RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
                     PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
                     PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()
             ) {
@@ -205,11 +203,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 long mergeRangeLo = srcOooLo;
                 for (int rowGroup = 1; rowGroup < rowGroupCount; rowGroup++) {
-                    parquetColumns.clear();
-                    parquetColumns.add(timestampIndex);
-                    parquetColumns.add(timestampColumnType);
-                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, parquetColumns, rowGroup);
-                    final long min = rowGroupStatBuffers.getMinValueLong(0);
+                    final long min = partitionDecoder.rowGroupMinTimestamp(rowGroup, timestampIndex);
                     final long mergeRangeHi = Vect.boundedBinarySearchIndexT(
                             sortedTimestampsAddr,
                             min,

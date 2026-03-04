@@ -18,6 +18,12 @@ pub struct MaxMin<T> {
     pub min: Option<T>,
 }
 
+impl<T: Copy + NativeType> Default for MaxMin<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Copy + NativeType> MaxMin<T> {
     pub fn new() -> Self {
         MaxMin { max: None, min: None }

@@ -1381,6 +1381,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalWriterMadviseMode() {
+        return -1;
+    }
+
+    @Override
     public int getWalWriterPoolMaxSegments() {
         return 5;
     }

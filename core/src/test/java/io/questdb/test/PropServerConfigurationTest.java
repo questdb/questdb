@@ -501,6 +501,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1048576, configuration.getCairoConfiguration().getWalDataAppendPageSize());
         Assert.assertEquals(262144, configuration.getCairoConfiguration().getSystemWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
+        Assert.assertEquals(-1, configuration.getCairoConfiguration().getWalWriterMadviseMode());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getWalWriterPoolMaxSegments());
         Assert.assertTrue(configuration.getCairoConfiguration().isWalApplyParallelSqlEnabled());
 
@@ -2099,6 +2100,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isWalApplyEnabled());
         Assert.assertEquals(23, configuration.getWalApplyLookAheadTransactionCount());
         Assert.assertFalse(configuration.isTableTypeConversionEnabled());
+        Assert.assertEquals(Files.POSIX_MADV_RANDOM, configuration.getWalWriterMadviseMode());
         Assert.assertEquals(100, configuration.getWalWriterPoolMaxSegments());
         Assert.assertEquals(50, configuration.getViewWalWriterPoolMaxSegments());
         Assert.assertEquals(120, configuration.getO3LagCalculationWindowsSize());
