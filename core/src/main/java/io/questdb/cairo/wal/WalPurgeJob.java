@@ -57,6 +57,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 
 import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
@@ -71,7 +72,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final MillisecondClock millisecondClock;
     private final IntHashSet onDiskWalIDSet = new IntHashSet();
     private final Path path = new Path();
-    private final SimpleWaitingLock runLock = new SimpleWaitingLock();
     private final long spinLockTimeout;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final TxReader txReader;
@@ -118,10 +118,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      */
     public void delayByHalfInterval() {
         this.last = clock.getTicks() - (checkInterval / 2);
-    }
-
-    public SimpleWaitingLock getRunLock() {
-        return runLock;
     }
 
     /**
@@ -552,11 +548,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         final long t = clock.getTicks();
         if (last + checkInterval < t) {
             last = t;
-            if (runLock.tryLock()) {
+            if (engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS)) {
                 try {
                     broadSweep();
                 } finally {
-                    runLock.unlock();
+                    engine.unlockWalPurgeJob();
                 }
             } else {
                 LOG.info().$("skipping, locked out").$();

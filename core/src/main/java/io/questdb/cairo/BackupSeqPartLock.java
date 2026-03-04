@@ -26,16 +26,27 @@ package io.questdb.cairo;
 
 import io.questdb.std.CharSequenceLongHashMap;
 
-// Thread safety: all access is serialized by WalPurgeJob.runLock
-// (shared with DatabaseCheckpointAgent.walPurgeJobRunLock).
+// Thread safety: all access is serialized by CairoEngine.walPurgeJobLock.
+// The only exception is the cleared flag, which is volatile and can be set by other threads without locking.
 public class BackupSeqPartLock {
     private final CharSequenceLongHashMap lockedSeqTxns = new CharSequenceLongHashMap();
+    private volatile boolean cleared;
 
     public void clear() {
-        lockedSeqTxns.clear();
+        cleared = true;
+    }
+
+    public void onLocked() {
+        if (cleared) {
+            lockedSeqTxns.clear();
+            cleared = false;
+        }
     }
 
     public long getLockedSeqTxn(TableToken tableToken) {
+        if (cleared) {
+            return CharSequenceLongHashMap.NO_ENTRY_VALUE;
+        }
         return lockedSeqTxns.get(tableToken.getDirName());
     }
 

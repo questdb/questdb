@@ -52,6 +52,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -1127,12 +1128,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
             setCurrentMicros(interval + 1);  // Set to some point in time that's not 0.
             try (WalPurgeJob job = new WalPurgeJob(engine)) {
-                final SimpleWaitingLock lock = job.getRunLock();
                 try {
-                    lock.lock();
+                    Assert.assertTrue(engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS));
                     job.drain(0);
                 } finally {
-                    lock.unlock();
+                    engine.unlockWalPurgeJob();
                     assertSegmentExistence(true, tableName, 1, 0);
                     assertWalExistence(true, tableName, 1);
                 }
@@ -1281,7 +1281,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         @Override
         public void deleteSequencerPart(long seqPart) {
-            assert false;
+            Assert.fail();
         }
 
         @Override
