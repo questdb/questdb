@@ -781,7 +781,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return false;
                 }
 
-                if (columnAst.rhs.type != LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
+                if (columnAst.rhs.type != LITERAL) {
+                    return false;
+                }
+                int argColIndex = metadata.getColumnIndex(columnAst.rhs.token);
+                if (argColIndex < 0) {
+                    return false;
+                }
+                // SampleByFirstLastRecord does not support variable-width
+                // types; fall back to the general SAMPLE BY path for arrays.
+                if (ColumnType.isArray(metadata.getColumnType(argColIndex))) {
                     return false;
                 }
             }
