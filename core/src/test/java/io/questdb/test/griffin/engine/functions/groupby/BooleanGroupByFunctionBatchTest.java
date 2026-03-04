@@ -33,120 +33,138 @@ import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class BooleanGroupByFunctionBatchTest {
     private static final int COLUMN_INDEX = 222;
     private long lastAllocated;
     private long lastSize;
 
-    @After
-    public void tearDown() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
-        }
+    @Test
+    public void testFirstBooleanBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateBooleans(true, false, true);
+                function.computeBatch(value, ptr, 3, 0);
+
+                Assert.assertTrue(function.getBool(value));
+                Assert.assertTrue(function.supportsBatchComputation());
+            } finally {
+                freeLast();
+            }
+        });
     }
 
     @Test
-    public void testFirstBooleanBatch() {
-        FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
-        try (SimpleMapValue value = prepare(function)) {
-            long ptr = allocateBooleans(true, false, true);
-            function.computeBatch(value, ptr, 3, 0);
+    public void testFirstBooleanBatchAccumulates() throws Exception {
+        assertMemoryLeak(() -> {
+            FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                long ptr = allocateBooleans(true, false);
+                function.computeBatch(value, ptr, 2, 0);
 
-            Assert.assertTrue(function.getBool(value));
-            Assert.assertTrue(function.supportsBatchComputation());
-        }
+                ptr = allocateBooleans(false, true);
+                function.computeBatch(value, ptr, 2, 2);
+
+                Assert.assertTrue(function.getBool(value));
+            } finally {
+                freeLast();
+            }
+        });
     }
 
     @Test
-    public void testFirstBooleanBatchAccumulates() {
-        FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
-        try (SimpleMapValue value = prepare(function)) {
-            long ptr = allocateBooleans(true, false);
-            function.computeBatch(value, ptr, 2, 0);
+    public void testFirstBooleanBatchEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                function.setNull(value);
 
-            ptr = allocateBooleans(false, true);
-            function.computeBatch(value, ptr, 2, 2);
+                function.computeBatch(value, 0, 0, 0);
 
-            Assert.assertTrue(function.getBool(value));
-        }
+                Assert.assertFalse(function.getBool(value));
+            }
+        });
     }
 
     @Test
-    public void testFirstBooleanBatchEmpty() {
-        FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
-        try (SimpleMapValue value = prepare(function)) {
-            function.setNull(value);
-
-            function.computeBatch(value, 0, 0, 0);
-
-            Assert.assertFalse(function.getBool(value));
-        }
+    public void testFirstBooleanSetEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                Assert.assertFalse(function.getBool(value));
+            }
+        });
     }
 
     @Test
-    public void testFirstBooleanSetEmpty() {
-        FirstBooleanGroupByFunction function = new FirstBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
-        try (SimpleMapValue value = prepare(function)) {
-            Assert.assertFalse(function.getBool(value));
-        }
+    public void testLastBooleanBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                function.setNull(value);
+
+                long ptr = allocateBooleans(false, true, false, true);
+                function.computeBatch(value, ptr, 4, 0);
+
+                Assert.assertEquals(3, value.getLong(0));
+                Assert.assertTrue(function.getBool(value));
+                Assert.assertTrue(function.supportsBatchComputation());
+            } finally {
+                freeLast();
+            }
+        });
     }
 
     @Test
-    public void testLastBooleanBatch() {
-        LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
-        try (SimpleMapValue value = prepare(function)) {
-            function.setNull(value);
+    public void testLastBooleanBatchAccumulates() throws Exception {
+        assertMemoryLeak(() -> {
+            LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                function.setNull(value);
 
-            long ptr = allocateBooleans(false, true, false, true);
-            function.computeBatch(value, ptr, 4, 0);
+                long ptr = allocateBooleans(true, false);
+                function.computeBatch(value, ptr, 2, 0);
 
-            Assert.assertEquals(3, value.getLong(0));
-            Assert.assertTrue(function.getBool(value));
-            Assert.assertTrue(function.supportsBatchComputation());
-        }
+                ptr = allocateBooleans(false, true);
+                function.computeBatch(value, ptr, 2, 2);
+
+                Assert.assertTrue(function.getBool(value));
+            } finally {
+                freeLast();
+            }
+        });
     }
 
     @Test
-    public void testLastBooleanBatchSingle() {
-        LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
-        try (SimpleMapValue value = prepare(function)) {
-            function.setNull(value);
+    public void testLastBooleanBatchSingle() throws Exception {
+        assertMemoryLeak(() -> {
+            LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                function.setNull(value);
 
-            long ptr = allocateBooleans(false);
-            function.computeBatch(value, ptr, 1, 0);
+                long ptr = allocateBooleans(false);
+                function.computeBatch(value, ptr, 1, 0);
 
-            Assert.assertFalse(function.getBool(value));
-        }
+                Assert.assertFalse(function.getBool(value));
+            } finally {
+                freeLast();
+            }
+        });
     }
 
     @Test
-    public void testLastBooleanBatchAccumulates() {
-        LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
-        try (SimpleMapValue value = prepare(function)) {
-            function.setNull(value);
-
-            long ptr = allocateBooleans(true, false);
-            function.computeBatch(value, ptr, 2, 0);
-
-            ptr = allocateBooleans(false, true);
-            function.computeBatch(value, ptr, 2, 2);
-
-            Assert.assertTrue(function.getBool(value));
-        }
-    }
-
-    @Test
-    public void testLastBooleanSetEmpty() {
-        LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
-        try (SimpleMapValue value = prepare(function)) {
-            Assert.assertFalse(function.getBool(value));
-        }
+    public void testLastBooleanSetEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            LastBooleanGroupByFunction function = new LastBooleanGroupByFunction(BooleanColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                Assert.assertFalse(function.getBool(value));
+            }
+        });
     }
 
     private long allocateBooleans(boolean... values) {
@@ -166,6 +184,14 @@ public class BooleanGroupByFunctionBatchTest {
             addr++;
         }
         return lastAllocated;
+    }
+
+    private void freeLast() {
+        if (lastAllocated != 0) {
+            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
+            lastAllocated = 0;
+            lastSize = 0;
+        }
     }
 
     private SimpleMapValue prepare(GroupByFunction function) {
