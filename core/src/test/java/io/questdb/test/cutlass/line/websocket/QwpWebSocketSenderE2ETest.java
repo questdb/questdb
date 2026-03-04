@@ -37,6 +37,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_DATE;
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_LONG256;
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_UUID;
@@ -452,6 +453,46 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("test_at_now");
                 serverMain.assertSql("select count() from test_at_now", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testDateColumn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                serverMain.execute("CREATE TABLE test_date (" +
+                        "event_date DATE, " +
+                        "ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    QwpTableBuffer buf = sender.getTableBuffer("test_date");
+                    QwpTableBuffer.ColumnBuffer dateCol = buf.getOrCreateColumn("event_date", TYPE_DATE, false);
+
+                    // Row 1: 2024-01-01 00:00:00 UTC (epoch millis)
+                    dateCol.addLong(1_704_067_200_000L);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                    // Row 2: 2024-06-15 12:30:00 UTC (epoch millis)
+                    dateCol.addLong(1_718_454_600_000L);
+                    sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    // Row 3: 1970-01-01 00:00:00 UTC (epoch zero)
+                    dateCol.addLong(0L);
+                    sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_date");
+                serverMain.assertSql("SELECT count() FROM test_date", "count\n3\n");
+                serverMain.assertSql(
+                        "SELECT event_date FROM test_date ORDER BY ts",
+                        "event_date\n2024-01-01T00:00:00.000Z\n2024-06-15T12:30:00.000Z\n1970-01-01T00:00:00.000Z\n"
+                );
             }
         });
     }
