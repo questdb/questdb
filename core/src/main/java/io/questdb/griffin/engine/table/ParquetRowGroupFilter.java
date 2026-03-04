@@ -52,24 +52,57 @@ import org.jetbrains.annotations.TestOnly;
 public final class ParquetRowGroupFilter {
     public static final int FILTER_BUFFER_MAX_PAGES = 1_048_576; // 128MB with 128-byte pages
     public static final long FILTER_BUFFER_PAGE_SIZE = 128;
-    public static final int LONGS_PER_FILTER = 2;
+    public static final int LONGS_PER_FILTER = 3;
     private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
     private static int rowGroupsSkipped;
 
     /**
-     * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
+     * Check if a row group can be skipped based on the prepared filter list.
+     * Call {@link #prepareFilterList} once per partition before using this method.
      *
-     * @param rowGroupIndex            the row group index to check
-     * @param decoder                  the Parquet partition decoder
-     * @param pushdownFilterConditions the filter conditions to apply
-     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count), ptr] per filter
-     * @param filterValues             reusable memory buffer for filter values
-     * @return true if the row group can be safely skipped (all filter values absent from bloom filter
-     * or outside min/max statistics), false otherwise
+     * @param rowGroupIndex the row group index to check
+     * @param decoder       the Parquet partition decoder
+     * @param filterList    filter descriptors prepared by {@link #prepareFilterList}
+     * @return true if the row group can be safely skipped, false otherwise
      */
     public static boolean canSkipRowGroup(
             int rowGroupIndex,
             PartitionDecoder decoder,
+            DirectLongList filterList
+    ) {
+        try {
+            boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList);
+            if (skip) {
+                rowGroupsSkipped++;
+            }
+            return skip;
+        } catch (CairoException e) {
+            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+            return false;
+        } catch (Exception e) {
+            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e).$(']').$();
+            return false;
+        }
+    }
+
+    @TestOnly
+    public static int getRowGroupsSkipped() {
+        return rowGroupsSkipped;
+    }
+
+    /**
+     * Prepare the filter list from pushdown filter conditions. This resolves column indices
+     * and serializes filter values into the provided buffers. Call once per partition, then
+     * use {@link #canSkipRowGroup} for each row group.
+     *
+     * @param metadata                 the partition metadata for column index resolution
+     * @param pushdownFilterConditions the filter conditions to apply
+     * @param filterList               reusable buffer for filter descriptors: [encoded(col_idx, count, op), ptr, columnType] per filter
+     * @param filterValues             reusable memory buffer for filter values
+     * @return true if filters were prepared successfully and row group pruning should be attempted
+     */
+    public static boolean prepareFilterList(
+            PartitionDecoder.Metadata metadata,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
             MemoryCARWImpl filterValues
@@ -81,20 +114,29 @@ public final class ParquetRowGroupFilter {
             filterList.clear();
             filterList.reopen();
             filterValues.jumpTo(0);
-            PartitionDecoder.Metadata metadata = decoder.metadata();
 
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 final PushdownFilterExtractor.PushdownFilterCondition condition = pushdownFilterConditions.getQuick(i);
+                final int opType = condition.getOperationType();
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();
-                if (valueCount == 0) {
-                    continue;
-                }
 
                 int columnIndex = metadata.getColumnIndex(condition.getColumnName());
                 if (columnIndex < 0) {
                     continue;
                 }
+
+                if (opType == PushdownFilterExtractor.OP_IS_NULL || opType == PushdownFilterExtractor.OP_IS_NOT_NULL) {
+                    filterList.add(encodeColumnCountAndOp(columnIndex, 0, opType));
+                    filterList.add(0);
+                    filterList.add(condition.getColumnType());
+                    continue;
+                }
+
+                if (valueCount == 0) {
+                    continue;
+                }
+
                 final int columnType = condition.getColumnType();
                 final long valuesOffset = filterValues.getAppendOffset();
                 boolean supported = true;
@@ -306,9 +348,7 @@ public final class ParquetRowGroupFilter {
                             filterValues.putLong(hi);
                         }
                         break;
-                    case ColumnType.STRING:
-                    case ColumnType.SYMBOL:
-                    case ColumnType.VARCHAR:
+                    case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR:
                         for (int j = 0; j < valueCount; j++) {
                             Utf8Sequence utf8 = valueFunctions.getQuick(j).getVarcharA(null);
                             if (utf8 != null) {
@@ -329,8 +369,9 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
-                filterList.add(encodeColumnAndCount(columnIndex, valueCount));
+                filterList.add(encodeColumnCountAndOp(columnIndex, valueCount, opType));
                 filterList.add(valuesOffset);
+                filterList.add(columnType);
             }
             final int filterCount = (int) (filterList.size() / LONGS_PER_FILTER);
             if (filterCount == 0) {
@@ -341,23 +382,14 @@ public final class ParquetRowGroupFilter {
             for (int i = 1, n = (int) filterList.size(); i < n; i += LONGS_PER_FILTER) {
                 filterList.set(i, baseAddress + filterList.get(i));
             }
-            boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList);
-            if (skip) {
-                rowGroupsSkipped++;
-            }
-            return skip;
+            return true;
         } catch (CairoException e) {
-            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+            LOG.error().$("error during filter list preparation [msg=").$(e.getFlyweightMessage()).$(']').$();
             return false;
         } catch (Exception e) {
-            LOG.error().$("error during row group filter pushdown, skipping [rowGroup=").$(rowGroupIndex).$(", msg=").$(e).$(']').$();
+            LOG.error().$("error during filter list preparation [msg=").$(e).$(']').$();
             return false;
         }
-    }
-
-    @TestOnly
-    public static int getRowGroupsSkipped() {
-        return rowGroupsSkipped;
     }
 
     @TestOnly
@@ -365,7 +397,7 @@ public final class ParquetRowGroupFilter {
         rowGroupsSkipped = 0;
     }
 
-    private static long encodeColumnAndCount(int columnIndex, int count) {
-        return (columnIndex & 0xFFFFFFFFL) | ((long) count << 32);
+    private static long encodeColumnCountAndOp(int columnIndex, int count, int op) {
+        return (columnIndex & 0xFFFFFFFFL) | ((long) (count & 0x00FFFFFF) << 32) | ((long) (op & 0xFF) << 56);
     }
 }

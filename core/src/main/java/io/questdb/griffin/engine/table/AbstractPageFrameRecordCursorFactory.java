@@ -35,9 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
@@ -62,8 +60,6 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
      * The page frame cursor.
      */
     protected TablePageFrameCursor pageFrameCursor;
-
-    protected @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     /**
      * Constructs a new page frame record cursor factory.
@@ -106,15 +102,6 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         return partitionFrameCursorFactory.getTableToken();
     }
 
-    public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
-        return partitionFrameCursorFactory.hasParquetFormatPartitions(executionContext);
-    }
-
-    @Override
-    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
-        this.pushdownFilterConditions = pushdownFilterConditions;
-    }
-
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return partitionFrameCursorFactory.supportsTableRowId(tableToken);
@@ -124,7 +111,6 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     protected void _close() {
         Misc.free(pageFrameCursor);
         Misc.free(partitionFrameCursorFactory);
-        Misc.freeObjList(pushdownFilterConditions);
     }
 
     /**
@@ -142,14 +128,14 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        pushdownFilterConditions,
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
                         1 // used for single-threaded exec plans,
                 );
             } else {
                 pageFrameCursor = new BwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
-                        pushdownFilterConditions,
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
                         1 // used for single-threaded exec plans
                 );
             }

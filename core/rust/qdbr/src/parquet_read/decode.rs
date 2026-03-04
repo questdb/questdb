@@ -27,7 +27,8 @@ use crate::parquet_read::slicer::{
 };
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ColumnFilterPacked, ColumnFilterValues, DecodeContext,
-    ParquetDecoder, RowGroupBuffers, RowGroupStatBuffers,
+    ParquetDecoder, RowGroupBuffers, RowGroupStatBuffers, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
+    FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
 };
 use crate::parquet_write::array::{
     append_array_null, append_array_nulls, calculate_array_shape, LevelsIterator,
@@ -127,6 +128,7 @@ const UUID_NULL: [u8; 16] = unsafe { std::mem::transmute([i64::MIN; 2]) };
 const LONG256_NULL: [u8; 32] = unsafe { std::mem::transmute([i64::MIN; 4]) };
 const BYTE_NULL: [u8; 1] = [0u8];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
+const IPV4_NULL: [u8; 4] = 0i32.to_le_bytes(); // IPv4 NULL is 0, not i32::MIN
 const SHORT_NULL: [u8; 2] = 0i16.to_le_bytes();
 const SYMBOL_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
@@ -454,17 +456,17 @@ impl ParquetDecoder {
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                             ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         } else if page_filter_start < filter_idx {
                             let mut page =
@@ -481,17 +483,17 @@ impl ParquetDecoder {
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                             ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         }
                         page_row_start = page_end;
@@ -539,17 +541,17 @@ impl ParquetDecoder {
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                         } else if page_filter_start < filter_idx {
                             decode_page_filtered::<false>(
                                 &page,
@@ -563,17 +565,17 @@ impl ParquetDecoder {
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                         }
                         ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         page_row_start = page_end;
@@ -645,17 +647,17 @@ impl ParquetDecoder {
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                             ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         }
                         row_count += page_row_count;
@@ -673,17 +675,17 @@ impl ParquetDecoder {
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
                             )
-                            .with_context(|_| {
-                                format!(
-                                    "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[column_index]
-                                        .descriptor
-                                        .primitive_type
-                                        .field_info
-                                        .name,
-                                    row_group_index,
-                                )
-                            })?;
+                                .with_context(|_| {
+                                    format!(
+                                        "could not decode page for column {:?} in row group {}",
+                                        self.metadata.schema_descr.columns()[column_index]
+                                            .descriptor
+                                            .primitive_type
+                                            .field_info
+                                            .name,
+                                        row_group_index,
+                                    )
+                                })?;
                         }
                         ctx.decompress_buffer = std::mem::take(page.buffer_mut());
                         row_count += page_row_count;
@@ -779,6 +781,8 @@ impl ParquetDecoder {
         let column_count = columns_meta.len();
         for packed_filter in filters {
             let count = packed_filter.count();
+            let op = packed_filter.operation_type();
+
             if count > 0 && packed_filter.ptr == 0 {
                 return Err(fmt_err!(
                     InvalidLayout,
@@ -791,54 +795,151 @@ impl ParquetDecoder {
                 continue;
             }
 
-            let filter_desc = ColumnFilterValues { count, ptr: packed_filter.ptr };
-
             let column_metadata = &columns_meta[column_idx];
-            let physical_type = column_metadata.physical_type();
-            let has_nulls = column_metadata
-                .column_chunk()
-                .meta_data
-                .as_ref()
-                .and_then(|m| m.statistics.as_ref())
-                .and_then(|s| s.null_count)
-                .is_none_or(|c| c > 0);
-            let bitset =
-                parquet2::bloom_filter::read_from_slice(column_metadata, file_data).unwrap_or(&[]);
+            let column_chunk_meta = column_metadata.column_chunk().meta_data.as_ref();
+            let statistics = column_chunk_meta.and_then(|m| m.statistics.as_ref());
+            let null_count = statistics.and_then(|s| s.null_count);
+            let num_values = column_chunk_meta.map(|m| m.num_values);
 
-            let primitive_type = &column_metadata.descriptor().descriptor.primitive_type;
-            let is_decimal = matches!(
-                primitive_type.logical_type,
-                Some(PrimitiveLogicalType::Decimal(_, _))
-            ) || matches!(
-                primitive_type.converted_type,
-                Some(PrimitiveConvertedType::Decimal(_, _))
-            );
-
-            if !bitset.is_empty() {
-                let all_absent = Self::all_values_absent_from_bloom(
-                    bitset,
-                    &physical_type,
-                    &filter_desc,
-                    has_nulls,
-                    is_decimal,
-                );
-                if all_absent {
+            if op == FILTER_OP_IS_NULL {
+                if null_count == Some(0) {
                     return Ok(true);
                 }
+                continue;
+            }
+            if op == FILTER_OP_IS_NOT_NULL {
+                if let (Some(nc), Some(nv)) = (null_count, num_values) {
+                    if nc == nv {
+                        return Ok(true);
+                    }
+                }
+                continue;
             }
 
-            if Self::all_values_outside_min_max(
-                column_metadata,
-                &physical_type,
-                &filter_desc,
-                has_nulls,
-                is_decimal,
-            ) {
-                return Ok(true);
+            let filter_desc = ColumnFilterValues { count, ptr: packed_filter.ptr };
+            let physical_type = column_metadata.physical_type();
+            let has_nulls = null_count.is_none_or(|c| c > 0);
+
+            let (min_bytes, max_bytes) = statistics
+                .map(|s| {
+                    let min = s.min_value.as_deref().or(s.min.as_deref());
+                    let max = s.max_value.as_deref().or(s.max.as_deref());
+                    (min, max)
+                })
+                .unwrap_or((None, None));
+
+            match op {
+                FILTER_OP_EQ => {
+                    let is_decimal = Self::is_decimal_type(column_metadata);
+                    let qdb_column_type = packed_filter.qdb_column_type();
+
+                    let bitset =
+                        parquet2::bloom_filter::read_from_slice(column_metadata, file_data)
+                            .unwrap_or(&[]);
+                    if !bitset.is_empty() {
+                        let all_absent = Self::all_values_absent_from_bloom(
+                            bitset,
+                            &physical_type,
+                            &filter_desc,
+                            has_nulls,
+                            is_decimal,
+                            qdb_column_type,
+                        );
+                        if all_absent {
+                            return Ok(true);
+                        }
+                    }
+
+                    let col_type_tag = qdb_column_type & 0xFF;
+                    let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
+                    let is_date = col_type_tag == ColumnTypeTag::Date as i32;
+                    let is_qdb_unsigned = is_ipv4 || col_type_tag == ColumnTypeTag::Char as i32;
+                    // Skip min/max filtering for third-party unsigned types (not IPv4 or Char).
+                    // QuestDB doesn't support unsigned integers, so filter values are signed
+                    // but third-party Parquet statistics are unsigned - comparison would be incorrect.
+                    let is_third_party_unsigned =
+                        !is_qdb_unsigned && Self::is_unsigned_int_type(column_metadata);
+                    if !is_third_party_unsigned
+                        && Self::all_values_outside_min_max_with_stats(
+                        &physical_type,
+                        &filter_desc,
+                        has_nulls,
+                        is_decimal,
+                        is_ipv4,
+                        is_date,
+                        min_bytes,
+                        max_bytes,
+                    )
+                    {
+                        return Ok(true);
+                    }
+                }
+                FILTER_OP_LT | FILTER_OP_LE | FILTER_OP_GT | FILTER_OP_GE => {
+                    let is_decimal = Self::is_decimal_type(column_metadata);
+                    let qdb_column_type = packed_filter.qdb_column_type();
+                    let col_type_tag = qdb_column_type & 0xFF;
+                    let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
+                    let is_date = col_type_tag == ColumnTypeTag::Date as i32;
+                    let is_qdb_unsigned = is_ipv4 || col_type_tag == ColumnTypeTag::Char as i32;
+                    // Skip min/max filtering for third-party unsigned types (not IPv4 or Char).
+                    let is_third_party_unsigned =
+                        !is_qdb_unsigned && Self::is_unsigned_int_type(column_metadata);
+
+                    if !is_third_party_unsigned
+                        && Self::value_outside_range(
+                        &physical_type,
+                        &filter_desc,
+                        is_decimal,
+                        is_ipv4,
+                        is_date,
+                        op,
+                        min_bytes,
+                        max_bytes,
+                    )
+                    {
+                        return Ok(true);
+                    }
+                }
+                _ => {}
             }
         }
 
         Ok(false)
+    }
+
+    #[inline]
+    fn is_decimal_type(column_metadata: &parquet2::metadata::ColumnChunkMetaData) -> bool {
+        let primitive_type = &column_metadata.descriptor().descriptor.primitive_type;
+        matches!(
+            primitive_type.logical_type,
+            Some(PrimitiveLogicalType::Decimal(_, _))
+        ) || matches!(
+            primitive_type.converted_type,
+            Some(PrimitiveConvertedType::Decimal(_, _))
+        )
+    }
+
+    #[inline]
+    fn is_unsigned_int_type(column_metadata: &parquet2::metadata::ColumnChunkMetaData) -> bool {
+        use parquet2::schema::types::IntegerType;
+        let primitive_type = &column_metadata.descriptor().descriptor.primitive_type;
+        matches!(
+            primitive_type.logical_type,
+            Some(PrimitiveLogicalType::Integer(
+                IntegerType::UInt8
+                    | IntegerType::UInt16
+                    | IntegerType::UInt32
+                    | IntegerType::UInt64
+            ))
+        ) || matches!(
+            primitive_type.converted_type,
+            Some(
+                PrimitiveConvertedType::Uint8
+                    | PrimitiveConvertedType::Uint16
+                    | PrimitiveConvertedType::Uint32
+                    | PrimitiveConvertedType::Uint64
+            )
+        )
     }
 
     fn all_values_absent_from_bloom(
@@ -847,29 +948,54 @@ impl ParquetDecoder {
         filter_desc: &ColumnFilterValues,
         has_nulls: bool,
         is_decimal: bool,
+        qdb_column_type: i32,
     ) -> bool {
         let count = filter_desc.count as usize;
         if count == 0 {
             return false;
         }
-        let ptr = filter_desc.ptr as *const u8;
 
+        let ptr = filter_desc.ptr as *const u8;
         match physical_type {
             PhysicalType::Int32 => {
-                for i in 0..count {
-                    let v = unsafe { (ptr as *const i32).add(i).read_unaligned() };
-                    if v == i32::MIN {
-                        if has_nulls {
+                let col_type_tag = qdb_column_type & 0xFF;
+                let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
+                let is_date = col_type_tag == ColumnTypeTag::Date as i32;
+                if is_date {
+                    for i in 0..count {
+                        let millis = unsafe { (ptr as *const i64).add(i).read_unaligned() };
+                        if millis == i64::MIN {
+                            if has_nulls {
+                                return false;
+                            }
+                        } else {
+                            let days = (millis / MILLIS_PER_DAY) as i32;
+                            if parquet2::bloom_filter::is_in_set(
+                                bitset,
+                                parquet2::bloom_filter::hash_native(days),
+                            ) {
+                                return false;
+                            }
+                        }
+                    }
+                    true
+                } else {
+                    for i in 0..count {
+                        let v = unsafe { (ptr as *const i32).add(i).read_unaligned() };
+                        let is_null = if is_ipv4 { v == 0 } else { v == i32::MIN };
+                        if is_null {
+                            if has_nulls {
+                                return false;
+                            }
+                        } else if parquet2::bloom_filter::is_in_set(
+                            bitset,
+                            parquet2::bloom_filter::hash_native(v),
+                        ) {
                             return false;
                         }
-                    } else if parquet2::bloom_filter::is_in_set(
-                        bitset,
-                        parquet2::bloom_filter::hash_native(v),
-                    ) {
-                        return false;
                     }
+                    true
                 }
-                true
             }
             PhysicalType::Int64 => {
                 for i in 0..count {
@@ -976,50 +1102,35 @@ impl ParquetDecoder {
         }
     }
 
-    fn all_values_outside_min_max(
-        column_metadata: &parquet2::metadata::ColumnChunkMetaData,
+    #[allow(clippy::too_many_arguments)]
+    fn all_values_outside_min_max_with_stats(
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
         has_nulls: bool,
         is_decimal: bool,
+        is_ipv4: bool,
+        is_date: bool,
+        min_bytes: Option<&[u8]>,
+        max_bytes: Option<&[u8]>,
     ) -> bool {
-        let column_chunk = column_metadata.column_chunk();
-        let meta_data = match &column_chunk.meta_data {
-            Some(m) => m,
-            None => return false,
-        };
-        let statistics = match &meta_data.statistics {
-            Some(s) => s,
-            None => return false,
-        };
-
-        let min_bytes = statistics
-            .min_value
-            .as_deref()
-            .or(statistics.min.as_deref());
-        let max_bytes = statistics
-            .max_value
-            .as_deref()
-            .or(statistics.max.as_deref());
-
         let count = filter_desc.count as usize;
         if count == 0 {
             return false;
         }
-        let ptr = filter_desc.ptr as *const u8;
 
+        let ptr = filter_desc.ptr as *const u8;
         match physical_type {
-            PhysicalType::Int32 => {
+            PhysicalType::Int32 if is_ipv4 => {
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
-                        i32::from_le_bytes(min_b.try_into().unwrap()),
-                        i32::from_le_bytes(max_b.try_into().unwrap()),
+                        u32::from_le_bytes(min_b.try_into().unwrap()),
+                        u32::from_le_bytes(max_b.try_into().unwrap()),
                     )),
                     _ => None,
                 };
                 for i in 0..count {
-                    let v = unsafe { (ptr as *const i32).add(i).read_unaligned() };
-                    if v == i32::MIN {
+                    let v = unsafe { (ptr as *const u32).add(i).read_unaligned() };
+                    if v == 0 {
                         if has_nulls {
                             return false;
                         }
@@ -1033,6 +1144,44 @@ impl ParquetDecoder {
                 }
                 true
             }
+            // Signed Int32 (Byte, Short, Char, Int, Date).
+            // DATE: filter values are i64 millis, converted to i32 days.
+            // Others: filter values are i32, NULL = i32::MIN.
+            PhysicalType::Int32 => {
+                let min_max = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
+                        i32::from_le_bytes(min_b.try_into().unwrap()),
+                        i32::from_le_bytes(max_b.try_into().unwrap()),
+                    )),
+                    _ => None,
+                };
+                for i in 0..count {
+                    let (v, is_null) = if is_date {
+                        let millis = unsafe { (ptr as *const i64).add(i).read_unaligned() };
+                        if millis == i64::MIN {
+                            (0, true)
+                        } else {
+                            ((millis / MILLIS_PER_DAY) as i32, false)
+                        }
+                    } else {
+                        let v = unsafe { (ptr as *const i32).add(i).read_unaligned() };
+                        (v, v == i32::MIN)
+                    };
+                    if is_null {
+                        if has_nulls {
+                            return false;
+                        }
+                    } else if let Some((min_val, max_val)) = min_max {
+                        if v >= min_val && v <= max_val {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            }
+            // Signed Int64 (Long, Timestamp, Date): NULL = i64::MIN
             PhysicalType::Int64 => {
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => Some((
@@ -1179,6 +1328,228 @@ impl ParquetDecoder {
                     }
                 }
                 true
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a range filter value proves that the row group can be skipped.
+    /// For a single filter value and a given comparison op, checks:
+    ///   LT (col < val): skip if min >= val
+    ///   LE (col <= val): skip if min > val
+    ///   GT (col > val): skip if max <= val
+    ///   GE (col >= val): skip if max < val
+    #[allow(clippy::too_many_arguments)]
+    fn value_outside_range(
+        physical_type: &PhysicalType,
+        filter_desc: &ColumnFilterValues,
+        is_decimal: bool,
+        is_ipv4: bool,
+        is_date: bool,
+        op: u8,
+        min_bytes: Option<&[u8]>,
+        max_bytes: Option<&[u8]>,
+    ) -> bool {
+        let count = filter_desc.count as usize;
+        // Range operations (LT/LE/GT/GE) expect exactly one value.
+        // If not, conservatively don't skip.
+        if count != 1 {
+            return false;
+        }
+        let ptr = filter_desc.ptr as *const u8;
+
+        match physical_type {
+            PhysicalType::Int32 if is_ipv4 => {
+                let (min_val, max_val) = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => (
+                        u32::from_le_bytes(min_b.try_into().unwrap()),
+                        u32::from_le_bytes(max_b.try_into().unwrap()),
+                    ),
+                    _ => return false,
+                };
+                let v = unsafe { (ptr as *const u32).read_unaligned() };
+                if v == 0 {
+                    return false;
+                }
+                match op {
+                    FILTER_OP_LT => min_val >= v,
+                    FILTER_OP_LE => min_val > v,
+                    FILTER_OP_GT => max_val <= v,
+                    FILTER_OP_GE => max_val < v,
+                    _ => false,
+                }
+            }
+            // Signed Int32 (Byte, Short, Char, Int, Date).
+            // DATE: filter value is i64 millis, converted to i32 days.
+            // Others: filter value is i32, NULL = i32::MIN.
+            PhysicalType::Int32 => {
+                let (min_val, max_val) = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => (
+                        i32::from_le_bytes(min_b.try_into().unwrap()),
+                        i32::from_le_bytes(max_b.try_into().unwrap()),
+                    ),
+                    _ => return false,
+                };
+                let (v, is_null) = if is_date {
+                    let millis = unsafe { (ptr as *const i64).read_unaligned() };
+                    if millis == i64::MIN {
+                        (0, true)
+                    } else {
+                        ((millis / MILLIS_PER_DAY) as i32, false)
+                    }
+                } else {
+                    let v = unsafe { (ptr as *const i32).read_unaligned() };
+                    (v, v == i32::MIN)
+                };
+                if is_null {
+                    return false;
+                }
+                match op {
+                    FILTER_OP_LT => min_val >= v,
+                    FILTER_OP_LE => min_val > v,
+                    FILTER_OP_GT => max_val <= v,
+                    FILTER_OP_GE => max_val < v,
+                    _ => false,
+                }
+            }
+            // Signed Int64 (Long, Timestamp, Date): NULL = i64::MIN
+            PhysicalType::Int64 => {
+                let (min_val, max_val) = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => (
+                        i64::from_le_bytes(min_b.try_into().unwrap()),
+                        i64::from_le_bytes(max_b.try_into().unwrap()),
+                    ),
+                    _ => return false,
+                };
+                let v = unsafe { (ptr as *const i64).read_unaligned() };
+                if v == i64::MIN {
+                    return false;
+                }
+                match op {
+                    FILTER_OP_LT => min_val >= v,
+                    FILTER_OP_LE => min_val > v,
+                    FILTER_OP_GT => max_val <= v,
+                    FILTER_OP_GE => max_val < v,
+                    _ => false,
+                }
+            }
+            PhysicalType::Float => {
+                let (min_val, max_val) = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => {
+                        let min_val = f32::from_le_bytes(min_b.try_into().unwrap());
+                        let max_val = f32::from_le_bytes(max_b.try_into().unwrap());
+                        if min_val.is_nan() || max_val.is_nan() {
+                            return false;
+                        }
+                        (min_val, max_val)
+                    }
+                    _ => return false,
+                };
+                let v = unsafe { (ptr as *const f32).read_unaligned() };
+                if v.is_nan() {
+                    return false;
+                }
+                match op {
+                    FILTER_OP_LT => min_val >= v,
+                    FILTER_OP_LE => min_val > v,
+                    FILTER_OP_GT => max_val <= v,
+                    FILTER_OP_GE => max_val < v,
+                    _ => false,
+                }
+            }
+            PhysicalType::Double => {
+                let (min_val, max_val) = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => {
+                        let min_val = f64::from_le_bytes(min_b.try_into().unwrap());
+                        let max_val = f64::from_le_bytes(max_b.try_into().unwrap());
+                        if min_val.is_nan() || max_val.is_nan() {
+                            return false;
+                        }
+                        (min_val, max_val)
+                    }
+                    _ => return false,
+                };
+                let v = unsafe { (ptr as *const f64).read_unaligned() };
+                if v.is_nan() {
+                    return false;
+                }
+                match op {
+                    FILTER_OP_LT => min_val >= v,
+                    FILTER_OP_LE => min_val > v,
+                    FILTER_OP_GT => max_val <= v,
+                    FILTER_OP_GE => max_val < v,
+                    _ => false,
+                }
+            }
+            PhysicalType::ByteArray => {
+                let (min_b, max_b) = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) => (min_b, max_b),
+                    _ => return false,
+                };
+                let len = unsafe { (ptr as *const i32).read_unaligned() };
+                if len < 0 {
+                    return false;
+                }
+                let len = len as usize;
+                let bytes = unsafe { slice::from_raw_parts(ptr.add(size_of::<i32>()), len) };
+
+                if is_decimal {
+                    let cmp_min = compare_signed_be_varlen(min_b, bytes);
+                    let cmp_max = compare_signed_be_varlen(max_b, bytes);
+                    match op {
+                        FILTER_OP_LT => cmp_min != cmp::Ordering::Less, // min >= val
+                        FILTER_OP_LE => cmp_min == cmp::Ordering::Greater, // min > val
+                        FILTER_OP_GT => cmp_max != cmp::Ordering::Greater, // max <= val
+                        FILTER_OP_GE => cmp_max == cmp::Ordering::Less, // max < val
+                        _ => false,
+                    }
+                } else {
+                    match op {
+                        FILTER_OP_LT => min_b >= bytes,
+                        FILTER_OP_LE => min_b > bytes,
+                        FILTER_OP_GT => max_b <= bytes,
+                        FILTER_OP_GE => max_b < bytes,
+                        _ => false,
+                    }
+                }
+            }
+            PhysicalType::FixedLenByteArray(size) => {
+                let size = *size;
+                let (min_b, max_b) = match (min_bytes, max_bytes) {
+                    (Some(min_b), Some(max_b)) if min_b.len() == size && max_b.len() == size => {
+                        (min_b, max_b)
+                    }
+                    _ => return false,
+                };
+                let bytes = unsafe { slice::from_raw_parts(ptr, size) };
+                let null_check = if is_decimal {
+                    is_fixed_len_null_be
+                } else {
+                    is_fixed_len_null
+                };
+                if null_check(bytes) {
+                    return false;
+                }
+
+                if is_decimal {
+                    let cmp_min = compare_signed_be(min_b, bytes);
+                    let cmp_max = compare_signed_be(max_b, bytes);
+                    match op {
+                        FILTER_OP_LT => cmp_min != cmp::Ordering::Less,
+                        FILTER_OP_LE => cmp_min == cmp::Ordering::Greater,
+                        FILTER_OP_GT => cmp_max != cmp::Ordering::Greater,
+                        FILTER_OP_GE => cmp_max == cmp::Ordering::Less,
+                        _ => false,
+                    }
+                } else {
+                    match op {
+                        FILTER_OP_LT => min_b >= bytes,
+                        FILTER_OP_LE => min_b > bytes,
+                        FILTER_OP_GT => max_b <= bytes,
+                        FILTER_OP_GE => max_b < bytes,
+                        _ => false,
+                    }
+                }
             }
             _ => false,
         }
@@ -1459,12 +1830,7 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     )?;
                     Ok(())
                 }
-                (
-                    Encoding::Plain,
-                    _,
-                    _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
-                ) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::Int | ColumnTypeTag::GeoInt) => {
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1477,6 +1843,23 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
                             bufs,
                             &INT_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut FixedIntColumnSink::new(
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, page_row_count),
+                            bufs,
+                            &IPV4_NULL,
                         ),
                     )?;
                     Ok(())
@@ -1501,11 +1884,34 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     Ok(())
                 }
                 (
-                    Encoding::DeltaBinaryPacked,
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
                     _,
-                    _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
+                    ColumnTypeTag::Date,
                 ) => {
+                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
+                    let rle_slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        page_row_count,
+                        page_row_count,
+                        &INT_NULL,
+                    )?;
+                    let mut convert_slicer =
+                        ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(rle_slicer);
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut FixedLongColumnSink::new(&mut convert_slicer, bufs, &LONG_NULL),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int | ColumnTypeTag::GeoInt) => {
                     decode_page0_filtered::<_, FILL_NULLS>(
                         page,
                         page_row_start,
@@ -1525,11 +1931,31 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                     )?;
                     Ok(())
                 }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut FixedIntColumnSink::new(
+                            &mut DeltaBinaryPackedSlicer::<4>::try_new(
+                                values_buffer,
+                                page_row_count,
+                            )?,
+                            bufs,
+                            &IPV4_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
+                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -1548,6 +1974,32 @@ pub fn decode_page_filtered<const FILL_NULLS: bool>(
                         row_hi,
                         rows_filter,
                         &mut FixedIntColumnSink::new(&mut slicer, bufs, &INT_NULL),
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::IPv4,
+                ) => {
+                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        page_row_count,
+                        page_row_count,
+                        &IPV4_NULL,
+                    )?;
+                    decode_page0_filtered::<_, FILL_NULLS>(
+                        page,
+                        page_row_start,
+                        page_row_count,
+                        row_group_lo,
+                        row_lo,
+                        row_hi,
+                        rows_filter,
+                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &IPV4_NULL),
                     )?;
                     Ok(())
                 }
@@ -2753,12 +3205,7 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
-                (
-                    Encoding::Plain,
-                    _,
-                    _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
-                ) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::Int | ColumnTypeTag::GeoInt) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -2767,6 +3214,19 @@ pub fn decode_page(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                             bufs,
                             &INT_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut FixedIntColumnSink::new(
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
+                            bufs,
+                            &IPV4_NULL,
                         ),
                     )?;
                     Ok(())
@@ -2787,11 +3247,30 @@ pub fn decode_page(
                     Ok(())
                 }
                 (
-                    Encoding::DeltaBinaryPacked,
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
                     _,
-                    _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
+                    ColumnTypeTag::Date,
                 ) => {
+                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
+                    let rle_slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_hi,
+                        row_count,
+                        &INT_NULL,
+                    )?;
+                    let mut convert_slicer =
+                        ValueConvertSlicer::<8, _, DaysToMillisConverter>::new(rle_slicer);
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut FixedLongColumnSink::new(&mut convert_slicer, bufs, &LONG_NULL),
+                    )?;
+                    Ok(())
+                }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int | ColumnTypeTag::GeoInt) => {
                     decode_page0(
                         page,
                         row_lo,
@@ -2804,11 +3283,24 @@ pub fn decode_page(
                     )?;
                     Ok(())
                 }
+                (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut FixedIntColumnSink::new(
+                            &mut DeltaBinaryPackedSlicer::<4>::try_new(values_buffer, row_count)?,
+                            bufs,
+                            &IPV4_NULL,
+                        ),
+                    )?;
+                    Ok(())
+                }
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
+                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -2823,6 +3315,28 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedIntColumnSink::new(&mut slicer, bufs, &INT_NULL),
+                    )?;
+                    Ok(())
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnTypeTag::IPv4,
+                ) => {
+                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_hi,
+                        row_count,
+                        &IPV4_NULL,
+                    )?;
+                    decode_page0(
+                        page,
+                        row_lo,
+                        row_hi,
+                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &IPV4_NULL),
                     )?;
                     Ok(())
                 }
@@ -4471,7 +4985,7 @@ fn decode_array_rows_1d<T: DataPageSlicer>(
             buffers,
             &mut def_scratch,
         )?
-        .is_none()
+            .is_none()
         {
             break;
         }
@@ -4521,7 +5035,7 @@ fn decode_array_rows_2d<T: DataPageSlicer>(
             buffers,
             &mut def_scratch,
         )?
-        .is_none()
+            .is_none()
         {
             break;
         }
@@ -4798,7 +5312,7 @@ fn decode_array_rows_generic<T: DataPageSlicer>(
             slicer,
             buffers,
         )?
-        .is_none()
+            .is_none()
         {
             break;
         }
@@ -4971,17 +5485,17 @@ fn page_row_count(page: &DataPage, column_type: ColumnType) -> ParquetResult<usi
                             get_bit_width(page.descriptor.max_rep_level),
                             header.num_values as usize,
                         )?
-                        .filter_map(|rep_level| match rep_level {
-                            Ok(rep_level) => {
-                                if rep_level == 0 {
-                                    Some(())
-                                } else {
-                                    None
+                            .filter_map(|rep_level| match rep_level {
+                                Ok(rep_level) => {
+                                    if rep_level == 0 {
+                                        Some(())
+                                    } else {
+                                        None
+                                    }
                                 }
-                            }
-                            _ => None,
-                        })
-                        .count();
+                                _ => None,
+                            })
+                            .count();
                         Ok(num_rows)
                     }
                 }
@@ -5752,7 +6266,7 @@ mod tests {
                 &mut expected_data_buff,
                 str_value.as_bytes(),
             )
-            .unwrap();
+                .unwrap();
             i += 1;
 
             if i < row_count {
@@ -5929,7 +6443,7 @@ mod tests {
             false,
             false,
         )
-        .unwrap()
+            .unwrap()
     }
 
     fn create_var_column(
@@ -5955,7 +6469,7 @@ mod tests {
             false,
             false,
         )
-        .unwrap()
+            .unwrap()
     }
 
     fn create_symbol_column(
@@ -5982,7 +6496,7 @@ mod tests {
             false,
             false,
         )
-        .unwrap()
+            .unwrap()
     }
 
     #[test]
@@ -6450,7 +6964,7 @@ mod tests {
             values.len(),
             &rows_filter,
         )
-        .unwrap();
+            .unwrap();
 
         let mut expected = Vec::new();
         expected.extend_from_slice(&DECIMAL64_NULL);
@@ -6531,7 +7045,7 @@ mod tests {
                 0,
                 indices.len(),
             )
-            .unwrap();
+                .unwrap();
             assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
         }
     }
@@ -6588,7 +7102,7 @@ mod tests {
                 indices.len(),
                 &rows_filter,
             )
-            .unwrap();
+                .unwrap();
             assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
         }
     }
@@ -6676,7 +7190,7 @@ mod tests {
                 indices.len(),
                 &rows_filter,
             )
-            .unwrap();
+                .unwrap();
             assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
         }
     }
@@ -6792,7 +7306,7 @@ mod tests {
                     indices.len(),
                     &rows_filter,
                 )
-                .unwrap();
+                    .unwrap();
 
                 assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
             }
@@ -6842,7 +7356,7 @@ mod tests {
                     0,
                     indices.len(),
                 )
-                .unwrap();
+                    .unwrap();
                 assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
             }
         }
@@ -6897,7 +7411,7 @@ mod tests {
                     indices.len(),
                     &rows_filter,
                 )
-                .unwrap();
+                    .unwrap();
                 assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
             }
         }

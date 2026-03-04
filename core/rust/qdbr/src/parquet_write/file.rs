@@ -930,7 +930,7 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::IPv4 => {
             let data: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<IPv4, i32>(
+            primitive::int_slice_to_page_nullable::<_, i32, true>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
@@ -977,7 +977,7 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::GeoByte => {
             let data: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<GeoByte, i32>(
+            primitive::int_slice_to_page_nullable::<_, i32, false>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
@@ -988,7 +988,7 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::GeoShort => {
             let data: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<GeoShort, i32>(
+            primitive::int_slice_to_page_nullable::<_, i32, false>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
@@ -999,7 +999,7 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::GeoInt => {
             let data: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<GeoInt, i32>(
+            primitive::int_slice_to_page_nullable::<_, i32, false>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,
@@ -1010,7 +1010,7 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::GeoLong => {
             let data: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page_nullable::<GeoLong, i64>(
+            primitive::int_slice_to_page_nullable::<_, i64, false>(
                 &data[lower_bound..upper_bound],
                 adjusted_column_top,
                 options,

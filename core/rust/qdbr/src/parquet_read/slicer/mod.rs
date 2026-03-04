@@ -44,7 +44,7 @@ impl Converter<8> for DaysToMillisConverter {
     #[inline]
     fn convert<S: ByteSink>(input: &[u8], output: &mut S) -> ParquetResult<()> {
         let days_since_epoch = unsafe { ptr::read_unaligned(input.as_ptr() as *const i32) };
-        let date = days_since_epoch as i64 * 24 * 60 * 60 * 1000;
+        let date = days_since_epoch as i64 * super::MILLIS_PER_DAY;
         output.extend_from_slice(&date.to_le_bytes())
     }
 }

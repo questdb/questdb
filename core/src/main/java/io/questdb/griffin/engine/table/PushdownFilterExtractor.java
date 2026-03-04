@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -41,12 +42,16 @@ import java.util.ArrayDeque;
 /**
  * Extracts pushdown filter conditions from a filter expression.
  * <p>
- * These conditions can be used for Parquet row group bloom filter
- * to skip row groups that don't contain matching values.
+ * These conditions can be used for Parquet row group pruning
+ * via bloom filters, min/max statistics, and null counts.
  * <p>
  * Supported conditions:
- * 1. col = expr (equality, where expr is any expression)
+ * 1. col = expr (equality)
  * 2. col IN (expr, ...) (IN list)
+ * 3. col &lt; expr, col &lt;= expr, col &gt; expr, col &gt;= expr (range)
+ * 4. col BETWEEN lo AND hi (decomposed to GE + LE)
+ * 5. col IS NULL / col IS NOT NULL (null checks)
+ * 6. col = v1 OR col = v2 OR ... (OR of equalities on same column)
  * <p>
  * Multiple AND conditions form multiple PushdownFilterCondition entries.
  * Value expressions are validated later (after parsing into Functions)
@@ -54,30 +59,83 @@ import java.util.ArrayDeque;
  */
 public class PushdownFilterExtractor implements Mutable {
 
+    public static final int OP_EQ = 0;
+    public static final int OP_GE = 4;
+    public static final int OP_GT = 3;
+    public static final int OP_IS_NOT_NULL = 6;
+    public static final int OP_IS_NULL = 5;
+    public static final int OP_LE = 2;
+    public static final int OP_LT = 1;
+
     private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
+    private final ObjList<ExpressionNode> orValues = new ObjList<>();
 
     @Override
     public void clear() {
         conditions.clear();
     }
 
-    public ObjList<PushdownFilterCondition> extract(
+    public ObjList<PushdownFilterCondition> extractAndCompile(
             ArrayDeque<ExpressionNode> stack,
+            ArrayDeque<ExpressionNode> stack2,
             ExpressionNode filterExpr,
-            RecordMetadata metadata
-    ) {
+            RecordMetadata metadata,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         conditions.clear();
         if (filterExpr != null) {
-            traverse(stack, filterExpr, metadata);
+            traverse(stack, stack2, filterExpr, metadata);
         }
-        return conditions;
+
+        ObjList<PushdownFilterCondition> result = null;
+        PushdownFilterCondition condition = null;
+        try {
+            for (int i = 0, n = conditions.size(); i < n; i++) {
+                condition = conditions.getQuick(i);
+                ObjList<ExpressionNode> values = condition.getValues();
+                boolean allConstant = true;
+                for (int j = 0, m = values.size(); j < m; j++) {
+                    Function f = functionParser.parseFunction(values.getQuick(j), metadata, executionContext);
+                    condition.addValueFunction(f);
+                    if (!f.isConstantOrRuntimeConstant()) {
+                        allConstant = false;
+                        break;
+                    }
+                }
+                if (allConstant) {
+                    if (result == null) {
+                        result = new ObjList<>();
+                    }
+                    result.add(condition);
+                } else {
+                    Misc.free(condition);
+                }
+            }
+        } catch (Throwable e) {
+            Misc.free(condition);
+            Misc.freeObjList(result);
+            throw e;
+        }
+
+        return result;
     }
 
-    public ObjList<PushdownFilterCondition> getConditions() {
-        return conditions;
+    private static int flipComparison(int opType) {
+        return switch (opType) {
+            case OP_LT -> OP_GT;
+            case OP_LE -> OP_GE;
+            case OP_GT -> OP_LT;
+            case OP_GE -> OP_LE;
+            default -> opType;
+        };
     }
 
-    private void traverse(ArrayDeque<ExpressionNode> stack, ExpressionNode node, RecordMetadata metadata) {
+    private static boolean isNullConstant(ExpressionNode node) {
+        return node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
+    }
+
+    private void traverse(ArrayDeque<ExpressionNode> stack, ArrayDeque<ExpressionNode> stack2, ExpressionNode node, RecordMetadata metadata) {
         stack.clear();
 
         while (!stack.isEmpty() || node != null) {
@@ -90,8 +148,22 @@ public class PushdownFilterExtractor implements Mutable {
                 } else {
                     if (Chars.equals(node.token, "=")) {
                         tryExtractEquality(node, metadata);
+                    } else if (Chars.equals(node.token, "!=")) {
+                        tryExtractNotEqual(node, metadata);
+                    } else if (Chars.equals(node.token, "<")) {
+                        tryExtractComparison(node, metadata, OP_LT);
+                    } else if (Chars.equals(node.token, "<=")) {
+                        tryExtractComparison(node, metadata, OP_LE);
+                    } else if (Chars.equals(node.token, ">")) {
+                        tryExtractComparison(node, metadata, OP_GT);
+                    } else if (Chars.equals(node.token, ">=")) {
+                        tryExtractComparison(node, metadata, OP_GE);
                     } else if (SqlKeywords.isInKeyword(node.token)) {
                         tryExtractIn(node, metadata);
+                    } else if (SqlKeywords.isBetweenKeyword(node.token)) {
+                        tryExtractBetween(node, metadata);
+                    } else if (SqlKeywords.isOrKeyword(node.token)) {
+                        tryExtractOrEqualities(stack2, node, metadata);
                     }
                     node = null;
                 }
@@ -99,6 +171,65 @@ public class PushdownFilterExtractor implements Mutable {
                 node = stack.poll();
             }
         }
+    }
+
+    private void tryExtractBetween(ExpressionNode node, RecordMetadata metadata) {
+        if (node.paramCount != 3 || node.args.size() < 3) {
+            return;
+        }
+
+        ExpressionNode colNode = node.args.getLast();
+        if (colNode == null || colNode.type != ExpressionNode.LITERAL) {
+            return;
+        }
+
+        int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+        if (columnIndex < 0) {
+            return;
+        }
+
+        ExpressionNode loNode = node.args.getQuick(1);
+        ExpressionNode hiNode = node.args.getQuick(0);
+
+        int columnType = metadata.getColumnType(columnIndex);
+
+        PushdownFilterCondition geCond = new PushdownFilterCondition(colNode.token, columnType, OP_GE);
+        geCond.addValue(loNode);
+        conditions.add(geCond);
+
+        PushdownFilterCondition leCond = new PushdownFilterCondition(colNode.token, columnType, OP_LE);
+        leCond.addValue(hiNode);
+        conditions.add(leCond);
+    }
+
+    private void tryExtractComparison(ExpressionNode node, RecordMetadata metadata, int opType) {
+        if (node.lhs == null || node.rhs == null) {
+            return;
+        }
+
+        ExpressionNode colNode;
+        ExpressionNode valueNode;
+        int effectiveOp = opType;
+        if (node.lhs.type == ExpressionNode.LITERAL && node.rhs.type != ExpressionNode.LITERAL) {
+            colNode = node.lhs;
+            valueNode = node.rhs;
+        } else if (node.rhs.type == ExpressionNode.LITERAL && node.lhs.type != ExpressionNode.LITERAL) {
+            colNode = node.rhs;
+            valueNode = node.lhs;
+            effectiveOp = flipComparison(opType);
+        } else {
+            return;
+        }
+
+        int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+        if (columnIndex < 0) {
+            return;
+        }
+
+        int columnType = metadata.getColumnType(columnIndex);
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, columnType, effectiveOp);
+        condition.addValue(valueNode);
+        conditions.add(condition);
     }
 
     private void tryExtractEquality(ExpressionNode node, RecordMetadata metadata) {
@@ -117,16 +248,20 @@ public class PushdownFilterExtractor implements Mutable {
         } else {
             return;
         }
+
         int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
         if (columnIndex < 0) {
             return;
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        PushdownFilterCondition condition = new PushdownFilterCondition(
-                colNode.token,
-                columnType
-        );
+
+        if (isNullConstant(valueNode)) {
+            conditions.add(new PushdownFilterCondition(colNode.token, columnType, OP_IS_NULL));
+            return;
+        }
+
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, columnType);
         condition.addValue(valueNode);
         conditions.add(condition);
     }
@@ -168,16 +303,110 @@ public class PushdownFilterExtractor implements Mutable {
         conditions.add(condition);
     }
 
+    private void tryExtractNotEqual(ExpressionNode node, RecordMetadata metadata) {
+        if (node.lhs == null || node.rhs == null) {
+            return;
+        }
+
+        ExpressionNode colNode;
+        ExpressionNode valueNode;
+        if (node.lhs.type == ExpressionNode.LITERAL && node.rhs.type != ExpressionNode.LITERAL) {
+            colNode = node.lhs;
+            valueNode = node.rhs;
+        } else if (node.rhs.type == ExpressionNode.LITERAL && node.lhs.type != ExpressionNode.LITERAL) {
+            colNode = node.rhs;
+            valueNode = node.lhs;
+        } else {
+            return;
+        }
+
+        if (!isNullConstant(valueNode)) {
+            return;
+        }
+
+        int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+        if (columnIndex < 0) {
+            return;
+        }
+
+        int columnType = metadata.getColumnType(columnIndex);
+        conditions.add(new PushdownFilterCondition(colNode.token, columnType, OP_IS_NOT_NULL));
+    }
+
+    private void tryExtractOrEqualities(ArrayDeque<ExpressionNode> orStack, ExpressionNode node, RecordMetadata metadata) {
+        orStack.clear();
+        orValues.clear();
+        CharSequence columnName = null;
+        int columnType = -1;
+
+        ExpressionNode cur = node;
+        while (cur != null || !orStack.isEmpty()) {
+            if (cur == null) {
+                cur = orStack.poll();
+            }
+            if (SqlKeywords.isOrKeyword(cur.token)) {
+                if (cur.lhs == null || cur.rhs == null) {
+                    return;
+                }
+                orStack.push(cur.rhs);
+                cur = cur.lhs;
+                continue;
+            }
+
+            if (!Chars.equals(cur.token, "=") || cur.lhs == null || cur.rhs == null) {
+                return;
+            }
+
+            ExpressionNode colNode;
+            ExpressionNode valueNode;
+            if (cur.lhs.type == ExpressionNode.LITERAL && cur.rhs.type != ExpressionNode.LITERAL) {
+                colNode = cur.lhs;
+                valueNode = cur.rhs;
+            } else if (cur.rhs.type == ExpressionNode.LITERAL && cur.lhs.type != ExpressionNode.LITERAL) {
+                colNode = cur.rhs;
+                valueNode = cur.lhs;
+            } else {
+                return;
+            }
+
+            if (columnName == null) {
+                int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+                if (columnIndex < 0) {
+                    return;
+                }
+                columnName = colNode.token;
+                columnType = metadata.getColumnType(columnIndex);
+            } else if (!Chars.equalsIgnoreCase(colNode.token, columnName)) {
+                return;
+            }
+
+            orValues.add(valueNode);
+            cur = null;
+        }
+
+        if (orValues.size() > 0) {
+            PushdownFilterCondition condition = new PushdownFilterCondition(columnName, columnType);
+            condition.addValues(orValues);
+            conditions.add(condition);
+        }
+    }
+
     // Not pooled: conditions are passed to RecordCursorFactory and live for the duration of query execution.
     public static class PushdownFilterCondition implements QuietCloseable {
         private final CharSequence columnName;
         private final int columnType;
+        private final int operationType;
         private final ObjList<Function> valueFunctions = new ObjList<>();
         private final ObjList<ExpressionNode> values = new ObjList<>();
 
         public PushdownFilterCondition(CharSequence columnName, int columnType) {
-            this.columnName = columnName;
+            this(columnName, columnType, OP_EQ);
+        }
+
+        public PushdownFilterCondition(CharSequence columnName, int columnType, int operationType) {
+            this.columnName = Chars.toString(columnName);
             this.columnType = columnType;
+            this.operationType = operationType;
         }
 
         public void addValue(ExpressionNode valueNode) {
@@ -186,6 +415,10 @@ public class PushdownFilterExtractor implements Mutable {
 
         public void addValueFunction(Function valueFunction) {
             valueFunctions.add(valueFunction);
+        }
+
+        public void addValues(ObjList<ExpressionNode> values1) {
+            values.addAll(values1);
         }
 
         @Override
@@ -199,6 +432,10 @@ public class PushdownFilterExtractor implements Mutable {
 
         public int getColumnType() {
             return columnType;
+        }
+
+        public int getOperationType() {
+            return operationType;
         }
 
         public ObjList<Function> getValueFunctions() {

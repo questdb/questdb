@@ -207,7 +207,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
-                    pushdownFilterConditions,
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
                     executionContext.getSharedQueryWorkerCount()
             );
         }
@@ -222,7 +222,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
-                    pushdownFilterConditions,
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
                     executionContext.getSharedQueryWorkerCount()
             );
         }

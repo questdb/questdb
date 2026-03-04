@@ -1,0 +1,200 @@
+# name: test/parquet/test_parquet_filter_pushdown.test
+# description: Test parquet filter pushdown
+# group: [parquet]
+
+require parquet
+
+# userdata1.parquet - integer range filters
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE id > 500
+----
+500
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE id < 500
+----
+499
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE id > 100 AND id < 900
+----
+799
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE id BETWEEN 100 AND 900
+----
+801
+
+query TITTTR
+SELECT registration_dttm, id, first_name, birthdate, salary FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE id = 42
+----
+2016-02-03 04:33:04 42 Todd 12/19/1999 2.8472899e+5
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE id = 42
+----
+1
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE salary < 1000
+----
+0
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE salary < 1000
+----
+0
+
+# string equality filter
+query TT
+SELECT first_name, gender FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE first_name = 'Mark' AND gender <> ''
+----
+Mark	Male
+Mark	Male
+Mark	Male
+Mark	Male
+Mark	Male
+Mark	Male
+Mark	Male
+Mark	Male
+Mark	Male
+Mark	Male
+
+query TT
+SELECT gender, first_name FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE first_name = 'Mark' AND gender <> ''
+----
+Male	Mark
+Male	Mark
+Male	Mark
+Male	Mark
+Male	Mark
+Male	Mark
+Male	Mark
+Male	Mark
+Male	Mark
+Male	Mark
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE gender = 'Male' AND first_name = 'Mark'
+----
+10
+
+# string range filter with ORDER BY
+query T
+SELECT last_name FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE first_name > 'Mark' AND country > 'Germany' AND salary > 0 ORDER BY last_name LIMIT 10
+----
+Adams
+Adams
+Allen
+Allen
+Allen
+Alvarez
+Alvarez
+Alvarez
+Arnold
+Arnold
+
+# lineitem parquet
+query I
+SELECT length(l_comment) FROM parquet_scan('data/parquet-testing/lineitem-top10000.gzip.parquet') WHERE l_orderkey = 1 ORDER BY l_comment
+----
+24
+17
+23
+23
+34
+29
+
+# date.parquet - date range filters
+query T
+SELECT * FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d < '1978-01-01'::DATE
+----
+1970-01-01 00:00:00
+1971-01-01 00:00:00
+1972-01-01 00:00:00
+1973-01-01 00:00:00
+1974-01-01 00:00:00
+1975-01-01 00:00:00
+1975-02-01 00:00:00
+1975-03-01 00:00:00
+1975-04-01 00:00:00
+1975-05-01 00:00:00
+1976-01-01 00:00:00
+1977-01-01 00:00:00
+
+query T
+SELECT * FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d > '1982-01-01'::DATE AND d < '1986-01-01'::DATE
+----
+1983-01-01 00:00:00
+1984-01-01 00:00:00
+1985-01-01 00:00:00
+1985-02-01 00:00:00
+1985-03-01 00:00:00
+1985-04-01 00:00:00
+1985-05-01 00:00:00
+
+query T
+SELECT * FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d >= '1990-01-01'::DATE
+----
+1990-01-01 00:00:00
+1991-01-01 00:00:00
+1992-01-01 00:00:00
+1993-01-01 00:00:00
+1994-01-01 00:00:00
+1996-01-01 00:00:00
+1997-01-01 00:00:00
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d = '1970-01-01'::DATE
+----
+1
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d > '1970-01-01'::DATE
+----
+26
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d >= '1982-01-01'::DATE AND d < '1985-01-01'::DATE
+----
+3
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d < '1970-01-01'::DATE
+----
+0
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d BETWEEN '1975-01-01'::DATE AND '1976-01-01'::DATE
+----
+6
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d >= '1975-01-01'::DATE AND d < '1976-01-01'::DATE
+----
+5
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d < '1975-01-01'::DATE AND d > '1976-01-01'::DATE
+----
+0
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d < '1975-01-01'::DATE OR d > '1976-01-01'::DATE
+----
+21
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d < '1975-01-01'::DATE OR d > '1976-01-01'::DATE
+----
+21
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d < '1975-01-01'::DATE OR d >= '1976-01-01'::DATE
+----
+22
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d IS NULL
+----
+9
