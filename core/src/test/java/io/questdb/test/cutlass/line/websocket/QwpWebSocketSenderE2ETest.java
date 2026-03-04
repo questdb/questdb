@@ -33,6 +33,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * End-to-end integration tests for ILP v4 WebSocket sender.
@@ -245,6 +247,191 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testConcurrentSenders_differentTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                int senderCount = 3;
+                int rowsPerSender = 1000;
+                int autoFlushRows = 10;
+                CyclicBarrier barrier = new CyclicBarrier(senderCount);
+                AtomicReference<Throwable> error = new AtomicReference<>();
+
+                Thread[] threads = new Thread[senderCount];
+                for (int s = 0; s < senderCount; s++) {
+                    final int senderIdx = s;
+                    threads[s] = new Thread(() -> {
+                        try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                                "localhost", httpPort, false,
+                                autoFlushRows,
+                                1024 * 1024,
+                                100_000_000L
+                        )) {
+                            barrier.await();
+                            for (int i = 0; i < rowsPerSender; i++) {
+                                sender.table("concurrent_diff_" + senderIdx)
+                                        .longColumn("id", i)
+                                        .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                            }
+                            sender.flush();
+                        } catch (Throwable t) {
+                            error.compareAndSet(null, t);
+                        }
+                    });
+                    threads[s].start();
+                }
+
+                for (Thread t : threads) {
+                    t.join();
+                }
+                if (error.get() != null) {
+                    throw new RuntimeException("sender thread failed", error.get());
+                }
+
+                for (int s = 0; s < senderCount; s++) {
+                    serverMain.awaitTable("concurrent_diff_" + s);
+                    serverMain.assertSql(
+                            "SELECT count() FROM concurrent_diff_" + s,
+                            "count\n" + rowsPerSender + "\n"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentSenders_sameTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                int senderCount = 3;
+                int rowsPerSender = 1000;
+                int autoFlushRows = 10;
+                CyclicBarrier barrier = new CyclicBarrier(senderCount);
+                AtomicReference<Throwable> error = new AtomicReference<>();
+
+                Thread[] threads = new Thread[senderCount];
+                for (int s = 0; s < senderCount; s++) {
+                    final int senderIdx = s;
+                    threads[s] = new Thread(() -> {
+                        try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                                "localhost", httpPort, false,
+                                autoFlushRows,
+                                1024 * 1024,
+                                100_000_000L
+                        )) {
+                            barrier.await();
+                            for (int i = 0; i < rowsPerSender; i++) {
+                                sender.table("concurrent_same")
+                                        .longColumn("sender_id", senderIdx)
+                                        .longColumn("row_id", i)
+                                        .at(1_000_000_000_000L + senderIdx * 1_000_000L + i * 1000L, ChronoUnit.MICROS);
+                            }
+                            sender.flush();
+                        } catch (Throwable t) {
+                            error.compareAndSet(null, t);
+                        }
+                    });
+                    threads[s].start();
+                }
+
+                for (Thread t : threads) {
+                    t.join();
+                }
+                if (error.get() != null) {
+                    throw new RuntimeException("sender thread failed", error.get());
+                }
+
+                serverMain.awaitTable("concurrent_same");
+                serverMain.assertSql(
+                        "SELECT count() FROM concurrent_same",
+                        "count\n" + (senderCount * rowsPerSender) + "\n"
+                );
+                // Verify each sender contributed its rows
+                for (int s = 0; s < senderCount; s++) {
+                    serverMain.assertSql(
+                            "SELECT count() FROM concurrent_same WHERE sender_id = " + s,
+                            "count\n" + rowsPerSender + "\n"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentSenders_sameTable_sameSymbols() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                int senderCount = 3;
+                int rowsPerSender = 1000;
+                int autoFlushRows = 10;
+                String[] symbols = {"alpha", "beta", "gamma"};
+                CyclicBarrier barrier = new CyclicBarrier(senderCount);
+                AtomicReference<Throwable> error = new AtomicReference<>();
+
+                Thread[] threads = new Thread[senderCount];
+                for (int s = 0; s < senderCount; s++) {
+                    final int senderIdx = s;
+                    threads[s] = new Thread(() -> {
+                        try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                                "localhost", httpPort, false,
+                                autoFlushRows,
+                                1024 * 1024,
+                                100_000_000L
+                        )) {
+                            barrier.await();
+                            for (int i = 0; i < rowsPerSender; i++) {
+                                // All senders use the same set of symbol values
+                                sender.table("concurrent_sym")
+                                        .symbol("sym", symbols[i % symbols.length])
+                                        .longColumn("sender_id", senderIdx)
+                                        .longColumn("row_id", i)
+                                        .at(1_000_000_000_000L + senderIdx * 1_000_000L + i * 1000L, ChronoUnit.MICROS);
+                            }
+                            sender.flush();
+                        } catch (Throwable t) {
+                            error.compareAndSet(null, t);
+                        }
+                    });
+                    threads[s].start();
+                }
+
+                for (Thread t : threads) {
+                    t.join();
+                }
+                if (error.get() != null) {
+                    throw new RuntimeException("sender thread failed", error.get());
+                }
+
+                serverMain.awaitTable("concurrent_sym");
+                serverMain.assertSql(
+                        "SELECT count() FROM concurrent_sym",
+                        "count\n" + (senderCount * rowsPerSender) + "\n"
+                );
+                // Verify all 3 symbol values are present
+                serverMain.assertSql(
+                        "SELECT count_distinct(sym) FROM concurrent_sym",
+                        "count_distinct\n" + symbols.length + "\n"
+                );
+                // Verify each sender contributed its rows
+                for (int s = 0; s < senderCount; s++) {
+                    serverMain.assertSql(
+                            "SELECT count() FROM concurrent_sym WHERE sender_id = " + s,
+                            "count\n" + rowsPerSender + "\n"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAtNowServerAssignedTimestamp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -306,8 +493,6 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
             }
         });
     }
-
-    // ==================== ASYNC MODE TESTS ====================
 
     @Test
     public void testMultipleColumns() throws Exception {
