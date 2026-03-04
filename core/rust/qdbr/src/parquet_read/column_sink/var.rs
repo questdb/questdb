@@ -497,13 +497,20 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
         let value = self.slicer.next();
-        let offset = self.buffers.data_vec.len();
-        self.buffers.data_vec.extend_from_slice(value)?;
-        // Write (header as u32, SPILL_MARKER as u32, offset as u64).
-        // The header uses the VARCHAR-compatible format: (len << 4) | flags.
-        // The spill marker (bit 31 of bytes 4-7) distinguishes spill entries
-        // (offsets needing fixup) from non-spill entries (absolute pointers).
         let len = value.len();
+        if len == 0 {
+            // Empty string: no data to spill, no fixup needed.
+            // Write clean aux entry without SPILL_MARKER; pointer is irrelevant
+            // since Java never dereferences it when length is 0.
+            let header: u64 = 3; // (0 << 4) | non-null | ascii
+            self.buffers
+                .aux_vec
+                .extend_from_slice(&header.to_le_bytes())?;
+            self.buffers
+                .aux_vec
+                .extend_from_slice(&0u64.to_le_bytes())?;
+            return Ok(());
+        }
         if len >= (1 << 28) {
             return Err(fmt_err!(
                 Layout,
@@ -511,8 +518,14 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
                 len
             ));
         }
+        // Write (header as u32, SPILL_MARKER as u32, offset as u64).
+        // The header uses the VARCHAR-compatible format: (len << 4) | flags.
+        // The spill marker (bit 31 of bytes 4-7) distinguishes spill entries
+        // (offsets needing fixup) from non-spill entries (absolute pointers).
+        let offset = self.buffers.data_vec.len();
+        self.buffers.data_vec.extend_from_slice(value)?;
         let len = len as u32;
-        let header: u32 = (len << 4) | if self.ascii || len == 0 { 3 } else { 1 };
+        let header: u32 = (len << 4) | if self.ascii { 3 } else { 1 };
         let combined = (SPILL_MARKER as u64) << 32 | (header as u64);
         self.buffers
             .aux_vec
