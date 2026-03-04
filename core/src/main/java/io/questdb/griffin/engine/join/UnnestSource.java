@@ -31,9 +31,10 @@ import io.questdb.std.str.Utf8Sequence;
 /**
  * Abstraction between UnnestRecord and the data being unnested.
  * <p>
- * For arrays, one source produces one output column (one array = one column).
- * For future JSON UNNEST, one source could produce N output columns
- * (one JSON expression = N declared columns).
+ * For typed arrays ({@link ArrayUnnestSource}), one source produces one
+ * output column (one array = one column).
+ * For JSON UNNEST ({@link JsonUnnestSource}), one source produces N output
+ * columns (one JSON expression = N declared COLUMNS).
  */
 public interface UnnestSource {
 

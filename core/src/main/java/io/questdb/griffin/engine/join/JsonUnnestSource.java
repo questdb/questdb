@@ -207,6 +207,8 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public short getShort(int sourceCol, int elementIndex) {
+        // 0 is the correct NULL sentinel for SHORT in QuestDB
+        // (see NullMemoryCMR.getShort and TableUtils line 798)
         if (jsonSeq == null) {
             return 0;
         }
@@ -247,10 +249,10 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         );
         if (result.getError() != SimdJsonError.SUCCESS
                 || result.getType() != SimdJsonType.STRING) {
-            // For numeric timestamps, extract as long
+            // For numeric timestamps, extract as long.
+            // Pointer is still valid from buildPointer() above.
             if (result.getError() == SimdJsonError.SUCCESS
                     && result.getType() == SimdJsonType.NUMBER) {
-                buildPointer(elementIndex, sourceCol);
                 long val = parser.queryPointerLong(
                         jsonSeq, pointerSink, result
                 );
@@ -310,7 +312,10 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
         if (len == 0) {
             return 0;
         }
-        // Detect scalar vs object array
+        // Detect scalar vs object array.
+        // If all elements are null, we default to scalar (isObjectArray = false).
+        // This is correct because both scalar (/N) and object (/N/col) paths
+        // return NULL for null elements, producing identical results.
         if (columnNames.size() == 1) {
             // Single column: could be scalar or object array.
             // Scan forward to find the first non-null element and
