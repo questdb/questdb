@@ -334,8 +334,8 @@ pub fn create_row_group<'a>(
             (&Column<'a>, &ParquetType),
             &Encoding,
         )|
-                           -> ParquetResult<
-                               DynStreamingIterator<'a, CompressedPage, ParquetError>,
+         -> ParquetResult<
+            DynStreamingIterator<'a, CompressedPage, ParquetError>,
         > {
             let encoded_column = column_chunk_to_pages(
                 *column,

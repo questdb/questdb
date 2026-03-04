@@ -71,7 +71,11 @@ fn assert_raw_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
 
 fn assert_raw_array_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: &[i64]) {
     let filtered_count = rows_filter.len();
-    assert_eq!(aux.len(), filtered_count * 16, "filtered array aux size mismatch");
+    assert_eq!(
+        aux.len(),
+        filtered_count * 16,
+        "filtered array aux size mismatch"
+    );
 
     for (fi, &row) in rows_filter.iter().enumerate() {
         let i = row as usize;
@@ -81,12 +85,18 @@ fn assert_raw_array_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filte
             u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
 
         if nulls[i] {
-            assert_eq!(size, 0, "filtered row {fi} (orig {i}): null array should have size 0");
+            assert_eq!(
+                size, 0,
+                "filtered row {fi} (orig {i}): null array should have size 0"
+            );
         } else {
             let orig = i; // the original row index determines the expected content
             let len = (orig % 5) + 1;
             let expected_size = len * 8;
-            assert_eq!(size, expected_size, "filtered row {fi} (orig {i}): array size mismatch");
+            assert_eq!(
+                size, expected_size,
+                "filtered row {fi} (orig {i}): array size mismatch"
+            );
 
             let actual = &data[offset..offset + size];
             for j in 0..len {
@@ -131,7 +141,8 @@ fn run_raw_array_test(name: &str, encoding: Encoding) {
                 optional_byte_array_schema("col", None)
             };
             let props_f = qdb_props_col_type(col_type, *version, encoding);
-            let (data_f, aux_f) = encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
+            let (data_f, aux_f) =
+                encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
             assert_raw_array_filtered(&nulls, &data_f, &aux_f, &rows_filter);
         }
     }
@@ -306,7 +317,11 @@ fn assert_double_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
 
 fn assert_double_array_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: &[i64]) {
     let filtered_count = rows_filter.len();
-    assert_eq!(aux.len(), filtered_count * 16, "filtered array aux size mismatch");
+    assert_eq!(
+        aux.len(),
+        filtered_count * 16,
+        "filtered array aux size mismatch"
+    );
 
     for (fi, &row) in rows_filter.iter().enumerate() {
         let i = row as usize;
@@ -316,16 +331,25 @@ fn assert_double_array_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_fi
             u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
 
         if nulls[i] {
-            assert_eq!(size, 0, "filtered row {fi} (orig {i}): null array should have size 0");
+            assert_eq!(
+                size, 0,
+                "filtered row {fi} (orig {i}): null array should have size 0"
+            );
         } else {
             let len = array_element_count(i);
             let expected_size = 8 + 8 * len;
-            assert_eq!(size, expected_size, "filtered row {fi} (orig {i}): array size mismatch");
+            assert_eq!(
+                size, expected_size,
+                "filtered row {fi} (orig {i}): array size mismatch"
+            );
 
             let arr = &data[offset..offset + size];
             let elem_count = u32::from_le_bytes(arr[0..4].try_into().unwrap()) as usize;
             let pad = u32::from_le_bytes(arr[4..8].try_into().unwrap());
-            assert_eq!(elem_count, len, "filtered row {fi} (orig {i}): element count mismatch");
+            assert_eq!(
+                elem_count, len,
+                "filtered row {fi} (orig {i}): element count mismatch"
+            );
             assert_eq!(pad, 0, "filtered row {fi} (orig {i}): padding should be 0");
 
             for j in 0..len {
@@ -470,10 +494,7 @@ fn array_2d_element_value(i: usize, j: usize, k: usize) -> f64 {
 ///   rep=0, def=5 → first element of first sub-array of a new row
 ///   rep=1, def=5 → first element of a new sub-array in the same row
 ///   rep=2, def=5 → next element in the same sub-array
-fn flatten_2d_arrays_optional(
-    count: usize,
-    nulls: &[bool],
-) -> (Vec<f64>, Vec<i16>, Vec<i16>) {
+fn flatten_2d_arrays_optional(count: usize, nulls: &[bool]) -> (Vec<f64>, Vec<i16>, Vec<i16>) {
     let mut values = Vec::new();
     let mut def_levels = Vec::new();
     let mut rep_levels = Vec::new();
@@ -581,7 +602,11 @@ fn assert_double_2d_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
 
 fn assert_double_2d_array_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: &[i64]) {
     let filtered_count = rows_filter.len();
-    assert_eq!(aux.len(), filtered_count * 16, "filtered 2d array aux size mismatch");
+    assert_eq!(
+        aux.len(),
+        filtered_count * 16,
+        "filtered 2d array aux size mismatch"
+    );
 
     for (fi, &row) in rows_filter.iter().enumerate() {
         let i = row as usize;
@@ -591,19 +616,31 @@ fn assert_double_2d_array_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows
             u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
 
         if nulls[i] {
-            assert_eq!(size, 0, "filtered row {fi} (orig {i}): null 2d array should have size 0");
+            assert_eq!(
+                size, 0,
+                "filtered row {fi} (orig {i}): null 2d array should have size 0"
+            );
         } else {
             let dim0 = array_2d_dim0(i);
             let dim1 = array_2d_dim1(i);
             let total_elements = dim0 * dim1;
             let expected_size = 8 + 8 * total_elements;
-            assert_eq!(size, expected_size, "filtered row {fi} (orig {i}): 2d array size mismatch");
+            assert_eq!(
+                size, expected_size,
+                "filtered row {fi} (orig {i}): 2d array size mismatch"
+            );
 
             let arr = &data[offset..offset + size];
             let actual_dim0 = u32::from_le_bytes(arr[0..4].try_into().unwrap()) as usize;
             let actual_dim1 = u32::from_le_bytes(arr[4..8].try_into().unwrap()) as usize;
-            assert_eq!(actual_dim0, dim0, "filtered row {fi} (orig {i}): dim0 mismatch");
-            assert_eq!(actual_dim1, dim1, "filtered row {fi} (orig {i}): dim1 mismatch");
+            assert_eq!(
+                actual_dim0, dim0,
+                "filtered row {fi} (orig {i}): dim0 mismatch"
+            );
+            assert_eq!(
+                actual_dim1, dim1,
+                "filtered row {fi} (orig {i}): dim1 mismatch"
+            );
 
             let mut elem_idx = 0;
             for j in 0..dim0 {

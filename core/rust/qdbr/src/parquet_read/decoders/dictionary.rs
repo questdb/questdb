@@ -118,7 +118,7 @@ impl<'a, const N: usize> FixedDictDecoder<'a, N> {
             ));
         }
 
-        Ok(Self { dict_page: dict_page.buffer.as_ref() })
+        Ok(Self { dict_page: dict_page.buffer })
     }
 }
 
@@ -176,7 +176,7 @@ impl<'a, U, T> BasePrimitiveDictDecoder<'a, U, T> {
         }
 
         Ok(Self {
-            dict_page: dict_page.buffer.as_ref(),
+            dict_page: dict_page.buffer,
             _u: std::marker::PhantomData,
             _t: std::marker::PhantomData,
         })
@@ -197,7 +197,7 @@ impl RleLocalIsGlobalSymbolDictDecoder {
 impl PrimitiveDictDecoder<i32> for RleLocalIsGlobalSymbolDictDecoder {
     #[inline]
     fn len(&self) -> u32 {
-        self.len as u32
+        self.len
     }
 
     #[inline]
@@ -245,7 +245,7 @@ impl<'a, U, T, V> ConvertablePrimitiveDictDecoder<'a, U, T, V> {
         }
 
         Ok(Self {
-            dict_page: dict_page.buffer.as_ref(),
+            dict_page: dict_page.buffer,
             converter,
             _u: std::marker::PhantomData,
             _t: std::marker::PhantomData,

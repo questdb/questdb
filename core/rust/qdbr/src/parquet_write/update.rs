@@ -102,14 +102,11 @@ impl ParquetUpdater {
         // O3 merge relies on QuestDB-specific metadata (column types, symbol tables,
         // unused_bytes tracking) that external Parquet writers don't produce.
         let num_parquet_cols = metadata.schema_descr.columns().len();
-        let qdb_meta = metadata
-            .key_value_metadata
-            .as_ref()
-            .and_then(|kvs| {
-                kvs.iter()
-                    .find(|kv| kv.key == QDB_META_KEY)
-                    .and_then(|kv| kv.value.as_ref())
-            });
+        let qdb_meta = metadata.key_value_metadata.as_ref().and_then(|kvs| {
+            kvs.iter()
+                .find(|kv| kv.key == QDB_META_KEY)
+                .and_then(|kv| kv.value.as_ref())
+        });
         match qdb_meta {
             None => {
                 return Err(fmt_err!(

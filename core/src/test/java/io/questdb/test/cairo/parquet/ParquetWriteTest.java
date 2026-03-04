@@ -25,7 +25,9 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.TableReader;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -170,6 +172,109 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             11\t2020-01-01T10:00:00.000000Z\tghi
                             12\t2020-01-01T11:00:00.000000Z\tjkl
                             100\t2020-01-02T00:00:00.000000Z\t
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteResetsUnusedBytesToZero() throws Exception {
+        // Use small row group size to get multiple row groups.
+        // Set absolute threshold low so the second O3 triggers a rewrite.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 100);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows with row group size 4 -> 2 row groups.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // First O3: UPDATE mode. Replaces one row group, accumulating dead space.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (9, '2020-01-01T00:30:00.000Z'),
+                            (10, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Verify unused_bytes > 0 after in-place update.
+            long unusedAfterUpdate;
+            try (TableReader reader = getReader("x")) {
+                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                    if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                        continue;
+                    }
+                    reader.openPartition(i);
+                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
+                    unusedAfterUpdate = decoder.metadata().getUnusedBytes();
+                    Assert.assertTrue("unused_bytes should be > 0 after update, got " + unusedAfterUpdate, unusedAfterUpdate > 0);
+                }
+            }
+
+            // Second O3: accumulated unused_bytes > 100 -> REWRITE.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (11, '2020-01-01T04:30:00.000Z'),
+                            (12, '2020-01-01T05:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Verify unused_bytes == 0 after rewrite.
+            try (TableReader reader = getReader("x")) {
+                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                    if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                        continue;
+                    }
+                    reader.openPartition(i);
+                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
+                    long unusedAfterRewrite = decoder.metadata().getUnusedBytes();
+                    Assert.assertEquals("unused_bytes should be 0 after rewrite", 0, unusedAfterRewrite);
+                }
+            }
+
+            assertSql(
+                    """
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            9\t2020-01-01T00:30:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            10\t2020-01-01T01:30:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            11\t2020-01-01T04:30:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            12\t2020-01-01T05:30:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            100\t2020-01-02T00:00:00.000000Z
                             """,
                     "SELECT * FROM x"
             );
