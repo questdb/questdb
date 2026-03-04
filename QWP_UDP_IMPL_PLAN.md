@@ -14,6 +14,10 @@ tests use real UDP sockets, real CairoEngine, real WAL writes, real SQL queries.
 - `[-]` In progress
 - `[x]` Done
 
+**Important:** When implementing, update each checkbox in this file from
+`[ ]` to `[x]` immediately after the item is built and tested. Keep the plan
+in sync with reality as you go -- do not leave updates for the end.
+
 ## Key Reuse Insight
 
 `QwpWebSocketEncoder` with `setGorillaEnabled(false)` and
@@ -124,32 +128,32 @@ engine access or `AbstractBootstrapTest` for full-server tests.
 - `[x]` **Nullable LONG column** (`testNullableLong`).
 
 
-## Iteration 2: Malformed datagram resilience `[ ]`
+## Iteration 2: Malformed datagram resilience `[x]`
 
 **Goal:** Prove the receiver does not crash or corrupt state when receiving
 garbage, and always recovers to process subsequent valid datagrams.
 
-### What to build `[ ]`
+### What to build `[x]`
 
 Harden the receiver's validation path. Add counters for dropped datagrams
 (by reason: too short, bad magic, bad version, truncated payload, parse error).
 
-### Tests `[ ]`
+### Tests `[x]`
 
 Each test sends a malformed datagram, then a valid datagram, and asserts the
 valid one was processed correctly. The "recovery" assertion is the crucial part.
 
-- `[ ]` Datagram shorter than 12 bytes (e.g., 4 bytes of zeros).
-- `[ ]` Invalid magic bytes (`"ILP3"`, all zeros).
-- `[ ]` Wrong version byte (0x02).
-- `[ ]` `payloadLength` exceeds actual received bytes (header claims 1000,
+- `[x]` Datagram shorter than 12 bytes (e.g., 4 bytes of zeros).
+- `[x]` Invalid magic bytes (`"ILP3"`, all zeros).
+- `[x]` Wrong version byte (0x02).
+- `[x]` `payloadLength` exceeds actual received bytes (header claims 1000,
   datagram is 50 bytes). This is the `payloadEnd` vulnerability test.
-- `[ ]` Valid header, `payloadLength = 0`, `tableCount = 1`.
-- `[ ]` Valid header but payload truncated (table name varint runs past end).
-- `[ ]` Valid header + table header, column data truncated mid-value.
-- `[ ]` 256 random bytes.
-- `[ ]` Duplicate datagram (same bytes sent twice) -> both ingested.
-- `[ ]` Out-of-order timestamps across datagrams -> both ingested.
+- `[x]` Valid header, `payloadLength = 0`, `tableCount = 1`.
+- `[x]` Valid header but payload truncated (table name varint runs past end).
+- `[x]` Valid header + table header, column data truncated mid-value.
+- `[x]` 256 random bytes.
+- `[x]` Duplicate datagram (same bytes sent twice) -> both ingested.
+- `[x]` Out-of-order timestamps across datagrams -> both ingested.
 
 All tests use real UDP sockets and a real `CairoEngine`. No mocking.
 

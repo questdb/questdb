@@ -33,6 +33,7 @@ import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpMessageHeader;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -67,6 +68,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private final QwpTudCache tudCache;
     private final QwpWalAppender walAppender;
 
+    private long droppedBadMagicCount;
+    private long droppedBadVersionCount;
+    private long droppedParseErrorCount;
+    private long droppedTooShortCount;
+    private long droppedTruncatedCount;
     private long fd;
     private long totalCount;
 
@@ -241,6 +247,31 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
     }
 
+    public long getDroppedBadMagicCount() {
+        return droppedBadMagicCount;
+    }
+
+    public long getDroppedBadVersionCount() {
+        return droppedBadVersionCount;
+    }
+
+    public long getDroppedParseErrorCount() {
+        return droppedParseErrorCount;
+    }
+
+    public long getDroppedTooShortCount() {
+        return droppedTooShortCount;
+    }
+
+    public long getDroppedTruncatedCount() {
+        return droppedTruncatedCount;
+    }
+
+    public long getTotalDroppedCount() {
+        return droppedBadMagicCount + droppedBadVersionCount + droppedParseErrorCount
+                + droppedTooShortCount + droppedTruncatedCount;
+    }
+
     @Override
     public boolean runSerially() {
         boolean ran = false;
@@ -293,16 +324,28 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
     private void processDatagram(long address, int length) {
         if (length < HEADER_SIZE) {
+            droppedTooShortCount++;
             return;
         }
         try {
             messageHeader.parse(address, length);
-            long totalLength = HEADER_SIZE + messageHeader.getPayloadLength();
-            if (totalLength > length) {
-                LOG.error().$("payload extends beyond datagram [payloadLen=").$(messageHeader.getPayloadLength())
-                        .$(", received=").$(length).$(']').$();
-                return;
+        } catch (QwpParseException e) {
+            switch (e.getErrorCode()) {
+                case INVALID_MAGIC -> droppedBadMagicCount++;
+                case UNSUPPORTED_VERSION -> droppedBadVersionCount++;
+                default -> droppedParseErrorCount++;
             }
+            LOG.error().$("header parse error: ").$(e.getMessage()).$();
+            return;
+        }
+        long totalLength = HEADER_SIZE + messageHeader.getPayloadLength();
+        if (totalLength > length) {
+            droppedTruncatedCount++;
+            LOG.error().$("payload extends beyond datagram [payloadLen=").$(messageHeader.getPayloadLength())
+                    .$(", received=").$(length).$(']').$();
+            return;
+        }
+        try {
             messageCursor.of(address, (int) totalLength, null, null);
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
@@ -319,6 +362,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 walAppender.appendToWalStreaming(AllowAllSecurityContext.INSTANCE, tableBlock, tud);
             }
         } catch (Throwable t) {
+            droppedParseErrorCount++;
             LOG.error().$("datagram processing error: ").$(t.getMessage()).$();
         }
     }
