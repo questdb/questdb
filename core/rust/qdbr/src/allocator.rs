@@ -118,6 +118,19 @@ pub struct MemTracking {
     _non_rss_mem_used: AtomicUsize,
 }
 
+impl MemTracking {
+    pub fn new() -> Self {
+        Self {
+            rss_mem_used: AtomicUsize::new(0),
+            rss_mem_limit: AtomicUsize::new(0),
+            malloc_count: AtomicUsize::new(0),
+            realloc_count: AtomicUsize::new(0),
+            free_count: AtomicUsize::new(0),
+            _non_rss_mem_used: AtomicUsize::new(0),
+        }
+    }
+}
+
 /// Custom allocator that fails once a memory limit watermark is reached.
 /// It also tracks memory usage for a specific memory tag.
 /// See `Unsafe.java` for the Java side of this.
@@ -148,6 +161,14 @@ const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
 
 #[cfg(not(test))]
 impl QdbAllocator {
+    pub fn new(
+        mem_tracking: *const MemTracking,
+        tagged_used: *const AtomicUsize,
+        memory_tag: i32,
+    ) -> Self {
+        Self { mem_tracking, tagged_used, memory_tag }
+    }
+
     fn rss_mem_used(&self) -> &AtomicUsize {
         unsafe { &(*self.mem_tracking).rss_mem_used }
     }
