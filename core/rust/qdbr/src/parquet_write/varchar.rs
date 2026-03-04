@@ -371,7 +371,15 @@ pub fn append_varchar_slice(
     value: &[u8],
     ascii: bool,
 ) -> ParquetResult<()> {
-    let len = value.len() as u32;
+    let len = value.len();
+    if len >= LENGTH_LIMIT_BYTES {
+        return Err(fmt_err!(
+            Layout,
+            "varchar_slice value length {} exceeds 28-bit header capacity",
+            len
+        ));
+    }
+    let len = len as u32;
     let header: u32 = (len << 4) | if ascii || len == 0 { 3 } else { 1 };
     aux_mem.reserve(16)?;
     // SAFETY: We reserved enough space for 16 bytes, and we only write to the reserved space.
