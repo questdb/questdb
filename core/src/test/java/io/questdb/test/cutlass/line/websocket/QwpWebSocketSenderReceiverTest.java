@@ -2159,6 +2159,120 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    /**
+     * Tests that a sender can recover after a type-mismatch error by reconnecting.
+     * <p>
+     * Sends a bad batch (string into a long column), catches the error,
+     * creates a new sender (fresh connection), sends a valid batch, and
+     * verifies the valid data landed.
+     * <p>
+     * Only runs in sync mode (window=1) where error propagation is immediate.
+     */
+    @Test
+    public void testErrorRecovery_reconnectAfterTypeMismatch() throws Exception {
+        Assume.assumeTrue("Window=1 only", windowSize == 1);
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Step 1: create table with a long column
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_error_recovery")
+                            .longColumn("value", 100)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                serverMain.awaitTable("ws_error_recovery");
+
+                // Step 2: send a type-mismatch batch — string into long column
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_error_recovery")
+                            .stringColumn("value", "not a number")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                    sender.flush();
+                    Assert.fail("Expected LineSenderException for type mismatch");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue("Error should indicate server error: " + e.getMessage(),
+                            e.getMessage().contains("WRITE_ERROR") ||
+                                    e.getMessage().contains("Processing failed") ||
+                                    e.getMessage().contains("Server error"));
+                }
+
+                // Step 3: reconnect with a fresh sender, send valid data
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_error_recovery")
+                            .longColumn("value", 200)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                // Step 4: verify both valid rows landed (the bad row should not)
+                serverMain.assertSql(
+                        "SELECT value FROM ws_error_recovery ORDER BY value",
+                        "value\n100\n200\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests error recovery with multiple valid batches after a failure.
+     * <p>
+     * Ensures the server accepts multiple successive batches from a new
+     * connection after a previous connection's batch failed.
+     * <p>
+     * Only runs in sync mode (window=1) where error propagation is immediate.
+     */
+    @Test
+    public void testErrorRecovery_reconnectMultipleBatchesAfterFailure() throws Exception {
+        Assume.assumeTrue("Window=1 only", windowSize == 1);
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Step 1: create table with a long column
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_error_recovery_multi")
+                            .longColumn("value", 1)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                serverMain.awaitTable("ws_error_recovery_multi");
+
+                // Step 2: send a type-mismatch batch
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.table("ws_error_recovery_multi")
+                            .stringColumn("value", "bad data")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                    sender.flush();
+                    Assert.fail("Expected LineSenderException for type mismatch");
+                } catch (LineSenderException e) {
+                    // expected
+                }
+
+                // Step 3: reconnect and send three valid batches
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    for (int batch = 0; batch < 3; batch++) {
+                        for (int i = 0; i < 5; i++) {
+                            sender.table("ws_error_recovery_multi")
+                                    .longColumn("value", (batch + 1) * 100 + i)
+                                    .at(1_000_000_000_002L + batch * 5 + i, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+                    }
+                }
+
+                // Step 4: verify 16 rows total (1 initial + 15 recovered)
+                serverMain.assertSql(
+                        "SELECT count() FROM ws_error_recovery_multi",
+                        "count\n16\n"
+                );
+            }
+        });
+    }
+
     // ==================== Array Tests ====================
 
     @Test
