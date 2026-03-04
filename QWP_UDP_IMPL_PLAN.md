@@ -256,12 +256,12 @@ In `Sender.java`:
   leak.
 
 
-## Iteration 5: Encoder extraction and remaining column types E2E `[ ]`
+## Iteration 5: Encoder extraction and remaining column types E2E `[x]`
 
 **Goal:** Clean up the encoder layering (prevent drift) and verify all column
 types end-to-end.
 
-### What to build `[ ]`
+### What to build `[x]`
 
 Extract transport-agnostic column encoding from `QwpWebSocketEncoder` into
 `QwpColumnWriter`. Both `QwpWebSocketEncoder` and `QwpUdpSender` delegate to
@@ -271,28 +271,28 @@ it. This is a pure refactoring -- behavior is unchanged.
 
 **Regression:**
 
-- `[ ]` All existing `QwpWebSocketEncoderTest` tests pass byte-for-byte.
-- `[ ]` All existing `QwpWebSocketSenderReceiverTest` E2E tests pass.
-- `[ ]` All iteration 1-4 UDP tests pass.
+- `[x]` All existing `QwpWebSocketEncoderTest` tests pass byte-for-byte.
+- `[x]` All existing `QwpWebSocketSenderReceiverTest` E2E tests pass.
+- `[x]` All iteration 1-4 UDP tests pass.
 
 **All-types E2E:**
 
-- `[ ]` Send one row per column type through the full UDP pipeline
+- `[x]` Send one row per column type through the full UDP pipeline
   (sender -> loopback -> receiver -> WAL -> SQL query). Verify value and type
   for: BOOLEAN, BYTE, SHORT, CHAR, INT, LONG, FLOAT, DOUBLE, DATE, STRING,
   VARCHAR, SYMBOL, UUID, LONG256, TIMESTAMP, TIMESTAMP_NANOS, GEOHASH,
   DOUBLE_ARRAY (1D/2D/3D), DECIMAL64, DECIMAL128, DECIMAL256.
-- `[ ]` A single row containing all 21 server-supported types simultaneously.
+- `[x]` A single row containing all 21 server-supported types simultaneously.
 
 **Stress:**
 
-- `[ ]` Send 100,000 rows in a tight loop over loopback. Verify no crashes, no
+- `[x]` Send 100,000 rows in a tight loop over loopback. Verify no crashes, no
   resource leaks (`assertMemoryLeak`). On loopback, assert close to 100%
   delivery.
 
 **SYMBOL dictionary overflow:**
 
-- `[ ]` SYMBOL column with distinct values accumulating until the dictionary +
+- `[x]` SYMBOL column with distinct values accumulating until the dictionary +
   data would exceed MTU. Verify auto-flush produces self-contained datagrams,
   each with its own dictionary. Receiver ingests all rows correctly.
 
