@@ -848,6 +848,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (isBitmapNull) {
                 forceScalarMode = true;
             }
+            // UINT types use unsigned comparison semantics that JIT does not support.
+            // Force interpreted fallback by rejecting them here.
+            if (ColumnType.isUnsigned(columnType)) {
+                throw SqlException.position(position)
+                        .put("unsigned column type is not supported by JIT [type=")
+                        .put(ColumnType.nameOf(columnType))
+                        .put(']');
+            }
             final int columnTypeTag = ColumnType.tagOf(columnType);
             int typeCode = columnTypeCode(columnTypeTag);
             if (typeCode == UNDEFINED_CODE) {

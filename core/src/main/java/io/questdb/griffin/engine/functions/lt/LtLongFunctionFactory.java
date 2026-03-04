@@ -59,35 +59,41 @@ public class LtLongFunctionFactory implements FunctionFactory {
         final Function left = args.getQuick(0);
         final Function right = args.getQuick(1);
         final boolean unsigned64 = left.getType() == ColumnType.UINT64 || right.getType() == ColumnType.UINT64;
-        return new LtLongFunction(left, right, unsigned64);
+        final boolean bitmapNull = ColumnType.needsNullBitmap(args.getQuick(0).getType())
+                || ColumnType.needsNullBitmap(args.getQuick(1).getType());
+        return new LtLongFunction(left, right, unsigned64, bitmapNull);
     }
 
     private static class LtLongFunction extends NegatableBooleanFunction implements BinaryFunction {
+        private final boolean bitmapNull;
         private final Function left;
         private final Function right;
         private final boolean unsigned64;
 
-        public LtLongFunction(Function left, Function right, boolean unsigned64) {
+        public LtLongFunction(Function left, Function right, boolean unsigned64, boolean bitmapNull) {
             this.left = left;
             this.right = right;
             this.unsigned64 = unsigned64;
+            this.bitmapNull = bitmapNull;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            if (unsigned64) {
-                if (this.left.isNull(rec) || this.right.isNull(rec)) {
+            if (unsigned64 || bitmapNull) {
+                if (left.isNull(rec) || right.isNull(rec)) {
                     return false;
                 }
+            }
+            if (unsigned64) {
                 return Numbers.lessThanUInt64(
-                        this.left.getLong(rec),
-                        this.right.getLong(rec),
+                        left.getLong(rec),
+                        right.getLong(rec),
                         negated
                 );
             }
             return Numbers.lessThan(
-                    this.left.getLong(rec),
-                    this.right.getLong(rec),
+                    left.getLong(rec),
+                    right.getLong(rec),
                     negated
             );
         }

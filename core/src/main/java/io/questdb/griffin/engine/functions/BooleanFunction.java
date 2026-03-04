@@ -59,6 +59,8 @@ public abstract class BooleanFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
+    // Returns 0 for null because BYTE uses bitmap nulls (no sentinel value).
+    // Callers must check isNull() before calling getByte().
     @Override
     public byte getByte(Record rec) {
         if (isNull(rec)) return 0;
@@ -190,6 +192,8 @@ public abstract class BooleanFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
+    // Returns 0 for null because SHORT uses bitmap nulls (no sentinel value).
+    // Callers must check isNull() before calling getShort().
     @Override
     public short getShort(Record rec) {
         if (isNull(rec)) return 0;

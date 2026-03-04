@@ -63,6 +63,7 @@ public class NullBitmapTest extends AbstractCairoTest {
                 MemoryCR bitmapMem = reader.getNullBitmapColumn(base, 1);
                 Assert.assertNotNull("Bitmap column should not be null", bitmapMem);
                 Assert.assertTrue("Bitmap should have size > 0", bitmapMem.size() > 0);
+                Assert.assertEquals("bitmap size for 4 rows", 1, bitmapMem.size());
 
                 long addr = bitmapMem.getPageAddress(0);
                 Assert.assertNotEquals("Bitmap address should not be 0", 0, addr);
@@ -430,7 +431,8 @@ public class NullBitmapTest extends AbstractCairoTest {
                     INSERT INTO t VALUES
                     ('2024-01-01T00:00:00.000000Z', 100),
                     ('2024-01-01T00:00:01.000000Z', NULL),
-                    ('2024-01-01T00:00:02.000000Z', 0)
+                    ('2024-01-01T00:00:02.000000Z', 0),
+                    ('2024-01-01T00:00:03.000000Z', -1)
                     """);
             assertQueryNoLeakCheck(
                     """
@@ -438,6 +440,7 @@ public class NullBitmapTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z\t100
                             2024-01-01T00:00:01.000000Z\t
                             2024-01-01T00:00:02.000000Z\t0
+                            2024-01-01T00:00:03.000000Z\t18446744073709551615
                             """,
                     "SELECT * FROM t",
                     "ts", true, true
@@ -555,7 +558,8 @@ public class NullBitmapTest extends AbstractCairoTest {
 
             // After reopening, BOOLEAN null detection should still work via regenerated bitmap
             // BOOLEAN never had sentinels, so regenerated bitmap should have all rows as non-null
-            assertSql("cnt\n4\n", "SELECT COUNT(*) AS cnt FROM t_migrate WHERE val IS NOT NULL OR val IS NULL");
+            assertSql("cnt\n0\n", "SELECT COUNT(*) AS cnt FROM t_migrate WHERE val IS NULL");
+            assertSql("cnt\n4\n", "SELECT COUNT(*) AS cnt FROM t_migrate WHERE val IS NOT NULL");
         });
     }
 
@@ -2306,6 +2310,320 @@ public class NullBitmapTest extends AbstractCairoTest {
                     query
             );
             assertSqlRunWithJit(query);
+        });
+    }
+
+    // ========================
+    // O3 merge tests for UINT types
+    // ========================
+
+    @Test
+    public void testO3MergePreservesUIntBitmapNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o3_uint (ts TIMESTAMP, u16 UINT16, u32 UINT32, u64 UINT64) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+
+            // Batch 1: in-order rows
+            execute("""
+                    INSERT INTO o3_uint VALUES
+                    ('2024-01-01T01:00:00.000000Z', 100, 200, 300),
+                    ('2024-01-01T01:00:01.000000Z', NULL, NULL, NULL),
+                    ('2024-01-01T02:00:00.000000Z', -1, -1, -1),
+                    ('2024-01-01T02:00:01.000000Z', NULL, NULL, NULL)
+                    """);
+
+            // Batch 2: O3 insert into the first partition
+            execute("""
+                    INSERT INTO o3_uint VALUES
+                    ('2024-01-01T01:00:00.500000Z', 50, 150, 250),
+                    ('2024-01-01T01:00:01.500000Z', NULL, NULL, NULL)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tu16\tu32\tu64
+                            2024-01-01T01:00:00.000000Z\t100\t200\t300
+                            2024-01-01T01:00:00.500000Z\t50\t150\t250
+                            2024-01-01T01:00:01.000000Z\t\t\t
+                            2024-01-01T01:00:01.500000Z\t\t\t
+                            2024-01-01T02:00:00.000000Z\t65535\t4294967295\t18446744073709551615
+                            2024-01-01T02:00:01.000000Z\t\t\t
+                            """,
+                    "SELECT * FROM o3_uint", "ts", true, true
+            );
+
+            assertSql(
+                    "total\tu16_nn\tu32_nn\tu64_nn\n6\t3\t3\t3\n",
+                    "SELECT COUNT(*) AS total, COUNT(u16) AS u16_nn, COUNT(u32) AS u32_nn, COUNT(u64) AS u64_nn FROM o3_uint"
+            );
+        });
+    }
+
+    @Test
+    public void testO3AppendCrossPartitionPreservesUIntBitmapNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o3_uint_cross (ts TIMESTAMP, u32 UINT32) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+            execute("""
+                    INSERT INTO o3_uint_cross VALUES
+                    ('2024-01-01T01:00:00.000000Z', 100),
+                    ('2024-01-01T02:00:00.000000Z', NULL),
+                    ('2024-01-01T03:00:00.000000Z', 4_294_967_295)
+                    """);
+
+            // O3 append to partitions 01 and 02
+            execute("""
+                    INSERT INTO o3_uint_cross VALUES
+                    ('2024-01-01T01:30:00.000000Z', NULL),
+                    ('2024-01-01T02:30:00.000000Z', 500)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tu32
+                            2024-01-01T01:00:00.000000Z\t100
+                            2024-01-01T01:30:00.000000Z\t
+                            2024-01-01T02:00:00.000000Z\t
+                            2024-01-01T02:30:00.000000Z\t500
+                            2024-01-01T03:00:00.000000Z\t4294967295
+                            """,
+                    "SELECT * FROM o3_uint_cross", "ts", true, true
+            );
+
+            assertSql(
+                    "total\tu32_nn\n5\t3\n",
+                    "SELECT COUNT(*) AS total, COUNT(u32) AS u32_nn FROM o3_uint_cross"
+            );
+        });
+    }
+
+    // ========================
+    // JIT fallback tests for UINT types
+    // ========================
+
+    @Test
+    public void testJitFallbackUInt32ComparisonAboveSignedMax() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_uint32_cmp (ts TIMESTAMP, val UINT32) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_uint32_cmp VALUES
+                    ('2024-01-01T00:00:00.000000Z', 0),
+                    ('2024-01-01T00:00:01.000000Z', 1),
+                    ('2024-01-01T00:00:02.000000Z', 2_147_483_648),
+                    ('2024-01-01T00:00:03.000000Z', 4_294_967_295),
+                    ('2024-01-01T00:00:04.000000Z', NULL)
+                    """);
+
+            // Values above signed int max
+            assertSql(
+                    "ts\tval\n" +
+                            "2024-01-01T00:00:02.000000Z\t2147483648\n" +
+                            "2024-01-01T00:00:03.000000Z\t4294967295\n",
+                    "SELECT * FROM t_uint32_cmp WHERE val > 2_147_483_647"
+            );
+
+            // Values below 2^31
+            assertSql(
+                    "ts\tval\n" +
+                            "2024-01-01T00:00:00.000000Z\t0\n" +
+                            "2024-01-01T00:00:01.000000Z\t1\n",
+                    "SELECT * FROM t_uint32_cmp WHERE val < 2_147_483_648"
+            );
+        });
+    }
+
+    @Test
+    public void testJitFallbackUInt64ComparisonAboveSignedMax() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_uint64_cmp (ts TIMESTAMP, val UINT64) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // -2 wraps to 18446744073709551614, -1 wraps to max UINT64
+            execute("""
+                    INSERT INTO t_uint64_cmp VALUES
+                    ('2024-01-01T00:00:00.000000Z', 0),
+                    ('2024-01-01T00:00:01.000000Z', 1),
+                    ('2024-01-01T00:00:02.000000Z', -2),
+                    ('2024-01-01T00:00:03.000000Z', -1),
+                    ('2024-01-01T00:00:04.000000Z', NULL)
+                    """);
+
+            // Values above 1 (unsigned comparison)
+            assertSql(
+                    "ts\tval\n" +
+                            "2024-01-01T00:00:02.000000Z\t18446744073709551614\n" +
+                            "2024-01-01T00:00:03.000000Z\t18446744073709551615\n",
+                    "SELECT * FROM t_uint64_cmp WHERE val > 1"
+            );
+
+            // Values below 2 (unsigned comparison): only 0 and 1
+            assertSql(
+                    "ts\tval\n" +
+                            "2024-01-01T00:00:00.000000Z\t0\n" +
+                            "2024-01-01T00:00:01.000000Z\t1\n",
+                    "SELECT * FROM t_uint64_cmp WHERE val < 2"
+            );
+        });
+    }
+
+    // ========================
+    // WAL-mode bitmap tests
+    // ========================
+
+    @Test
+    public void testBooleanNullInsertAndSelectWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_wal_bool (ts TIMESTAMP, val BOOLEAN) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t_wal_bool VALUES
+                    ('2024-01-01T00:00:00.000000Z', true),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', false)
+                    """);
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tval
+                            2024-01-01T00:00:00.000000Z\ttrue
+                            2024-01-01T00:00:01.000000Z\t
+                            2024-01-01T00:00:02.000000Z\tfalse
+                            """,
+                    "SELECT * FROM t_wal_bool", "ts", true, true
+            );
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t_wal_bool WHERE val IS NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t_wal_bool WHERE val IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testByteNullInsertAndSelectWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_wal_byte (ts TIMESTAMP, val BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t_wal_byte VALUES
+                    ('2024-01-01T00:00:00.000000Z', 42),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0)
+                    """);
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tval
+                            2024-01-01T00:00:00.000000Z\t42
+                            2024-01-01T00:00:01.000000Z\t
+                            2024-01-01T00:00:02.000000Z\t0
+                            """,
+                    "SELECT * FROM t_wal_byte", "ts", true, true
+            );
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t_wal_byte WHERE val IS NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t_wal_byte WHERE val IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testShortNullInsertAndSelectWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_wal_short (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t_wal_short VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1000),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 0)
+                    """);
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tval
+                            2024-01-01T00:00:00.000000Z\t1000
+                            2024-01-01T00:00:01.000000Z\t
+                            2024-01-01T00:00:02.000000Z\t0
+                            """,
+                    "SELECT * FROM t_wal_short", "ts", true, true
+            );
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t_wal_short WHERE val IS NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t_wal_short WHERE val IS NOT NULL");
+        });
+    }
+
+    // ========================
+    // Corrupted .n file handling tests
+    // ========================
+
+    @Test
+    public void testTruncatedBitmapFileRegenerates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_trunc (ts TIMESTAMP, val BOOLEAN) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_trunc VALUES
+                    ('2024-01-01T00:00:00.000000Z', true),
+                    ('2024-01-01T00:00:01.000000Z', false),
+                    ('2024-01-01T00:00:02.000000Z', true),
+                    ('2024-01-01T00:00:03.000000Z', false)
+                    """);
+
+            // Verify data is correct before truncation
+            assertSql("cnt\n0\n", "SELECT COUNT(*) AS cnt FROM t_trunc WHERE val IS NULL");
+
+            // Truncate the .n file to 0 bytes
+            FilesFacade ff = configuration.getFilesFacade();
+            TableToken token = engine.verifyTableName("t_trunc");
+            try (Path path = new Path()) {
+                final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                TableUtils.setPathForNativePartition(path.trimTo(rootLen), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY,
+                        1704067200000000L, -1L);
+                TableUtils.nFile(path, "val");
+                Assert.assertTrue("Bitmap file should exist", ff.exists(path.$()));
+                long fd = ff.openRW(path.$(), 0);
+                try {
+                    ff.truncate(fd, 0);
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            // Release readers so lazy migration kicks in
+            engine.releaseAllReaders();
+
+            // BOOLEAN has no sentinel; regenerated bitmap should mark all rows non-null
+            assertSql("cnt\n0\n", "SELECT COUNT(*) AS cnt FROM t_trunc WHERE val IS NULL");
+            assertSql("cnt\n4\n", "SELECT COUNT(*) AS cnt FROM t_trunc WHERE val IS NOT NULL");
+        });
+    }
+
+    @Test
+    public void testOversizedBitmapFileIsAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_oversized (ts TIMESTAMP, val SHORT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_oversized VALUES
+                    ('2024-01-01T00:00:00.000000Z', 10),
+                    ('2024-01-01T00:00:01.000000Z', NULL),
+                    ('2024-01-01T00:00:02.000000Z', 20)
+                    """);
+
+            // Verify nulls work before modification
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t_oversized WHERE val IS NULL");
+
+            // Extend the .n file beyond expected size
+            FilesFacade ff = configuration.getFilesFacade();
+            TableToken token = engine.verifyTableName("t_oversized");
+            try (Path path = new Path()) {
+                final int rootLen = path.of(configuration.getDbRoot()).concat(token).size();
+                TableUtils.setPathForNativePartition(path.trimTo(rootLen), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY,
+                        1704067200000000L, -1L);
+                TableUtils.nFile(path, "val");
+                Assert.assertTrue("Bitmap file should exist", ff.exists(path.$()));
+                long fd = ff.openRW(path.$(), 0);
+                try {
+                    // Extend to 8 bytes (much more than 1 byte needed for 3 rows)
+                    ff.truncate(fd, 8);
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            // Release readers and reopen
+            engine.releaseAllReaders();
+
+            // Reads should still work correctly
+            assertSql("cnt\n1\n", "SELECT COUNT(*) AS cnt FROM t_oversized WHERE val IS NULL");
+            assertSql("cnt\n2\n", "SELECT COUNT(*) AS cnt FROM t_oversized WHERE val IS NOT NULL");
         });
     }
 }

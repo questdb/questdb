@@ -59,26 +59,32 @@ public class LtIntFunctionFactory implements FunctionFactory {
         final Function left = args.getQuick(0);
         final Function right = args.getQuick(1);
         final boolean unsigned32 = left.getType() == ColumnType.UINT32 || right.getType() == ColumnType.UINT32;
-        return new LtIntFunction(left, right, unsigned32);
+        final boolean bitmapNull = ColumnType.needsNullBitmap(args.getQuick(0).getType())
+                || ColumnType.needsNullBitmap(args.getQuick(1).getType());
+        return new LtIntFunction(left, right, unsigned32, bitmapNull);
     }
 
     private static class LtIntFunction extends NegatableBooleanFunction implements BinaryFunction {
+        private final boolean bitmapNull;
         private final Function left;
         private final Function right;
         private final boolean unsigned32;
 
-        public LtIntFunction(Function left, Function right, boolean unsigned32) {
+        public LtIntFunction(Function left, Function right, boolean unsigned32, boolean bitmapNull) {
             this.left = left;
             this.right = right;
             this.unsigned32 = unsigned32;
+            this.bitmapNull = bitmapNull;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            if (unsigned32) {
+            if (unsigned32 || bitmapNull) {
                 if (left.isNull(rec) || right.isNull(rec)) {
                     return false;
                 }
+            }
+            if (unsigned32) {
                 return Numbers.lessThanUInt32(
                         left.getInt(rec),
                         right.getInt(rec),

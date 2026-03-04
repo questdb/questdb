@@ -367,6 +367,7 @@
                                         <replace
                                                 dir="${project.build.directory}/site/package/dist/assets"
                                                 includes="index-*.js"
+                                                failOnNoReplacements="yes"
                                                 token="{label:&quot;SHORT&quot;,value:&quot;SHORT&quot;},{label:&quot;STRING&quot;,value:&quot;STRING&quot;}"
                                                 value="{label:&quot;SHORT&quot;,value:&quot;SHORT&quot;},{label:&quot;UINT16&quot;,value:&quot;UINT16&quot;},{label:&quot;UINT32&quot;,value:&quot;UINT32&quot;},{label:&quot;UINT64&quot;,value:&quot;UINT64&quot;},{label:&quot;STRING&quot;,value:&quot;STRING&quot;}"/>
                                     </target>

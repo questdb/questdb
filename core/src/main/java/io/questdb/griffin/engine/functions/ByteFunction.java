@@ -184,6 +184,8 @@ public abstract class ByteFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
+    // Returns 0 for null because SHORT uses bitmap nulls (no sentinel value).
+    // Callers must check isNull() before calling getShort().
     @Override
     public short getShort(Record rec) {
         if (isNull(rec)) return 0;

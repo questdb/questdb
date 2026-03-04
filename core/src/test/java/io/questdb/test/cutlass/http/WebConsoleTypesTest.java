@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.Bootstrap;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -37,10 +39,14 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public class WebConsoleTypesTest {
+    private static final Log LOG = LogFactory.getLog(WebConsoleTypesTest.class);
 
     @Test
     public void testUnsignedTypesArePresentInCreateTableUiBundle() throws Exception {
         try (InputStream input = Bootstrap.class.getResourceAsStream("/io/questdb/site/public.zip")) {
+            if (input == null) {
+                LOG.info().$("Skipping: public.zip not available (build with -P build-web-console)").$();
+            }
             Assume.assumeNotNull(input);
 
             boolean foundJsBundle = false;

@@ -58,4 +58,47 @@ public class PGUnsignedTypesTest extends BasePGTest {
             }
         });
     }
+
+    @Test
+    public void testUnsignedNullHandlingAcrossPgModes() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "CREATE TABLE pg_uint_null(u16 UINT16, u32 UINT32, u64 UINT64)"
+            )) {
+                statement.execute();
+            }
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO pg_uint_null VALUES (NULL, NULL, NULL)"
+            )) {
+                statement.execute();
+            }
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO pg_uint_null VALUES (-1, -1, -1)"
+            )) {
+                statement.execute();
+            }
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT u16, u32, u64 FROM pg_uint_null"
+            )) {
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    // NULL row
+                    Assert.assertTrue(resultSet.next());
+                    Assert.assertNull(resultSet.getString(1));
+                    Assert.assertTrue(resultSet.wasNull());
+                    Assert.assertNull(resultSet.getString(2));
+                    Assert.assertTrue(resultSet.wasNull());
+                    Assert.assertNull(resultSet.getString(3));
+                    Assert.assertTrue(resultSet.wasNull());
+
+                    // max value row
+                    Assert.assertTrue(resultSet.next());
+                    Assert.assertEquals("65535", resultSet.getString(1));
+                    Assert.assertEquals("4294967295", resultSet.getString(2));
+                    Assert.assertEquals("18446744073709551615", resultSet.getString(3));
+
+                    Assert.assertFalse(resultSet.next());
+                }
+            }
+        });
+    }
 }
