@@ -96,7 +96,13 @@ public class PushdownFilterExtractor implements Mutable {
                 ObjList<ExpressionNode> values = condition.getValues();
                 boolean allConstant = true;
                 for (int j = 0, m = values.size(); j < m; j++) {
-                    Function f = functionParser.parseFunction(values.getQuick(j), metadata, executionContext);
+                    ExpressionNode node = values.getQuick(j);
+                    if (containsQuery(node)) {
+                        allConstant = false;
+                        break;
+                    }
+
+                    Function f = functionParser.parseFunction(node, metadata, executionContext);
                     condition.addValueFunction(f);
                     if (!f.isConstantOrRuntimeConstant()) {
                         allConstant = false;
@@ -119,6 +125,24 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         return result;
+    }
+
+    private static boolean containsQuery(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            return true;
+        }
+        if (containsQuery(node.lhs) || containsQuery(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (containsQuery(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int flipComparison(int opType) {
