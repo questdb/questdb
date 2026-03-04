@@ -89,7 +89,7 @@ public class PartitionDecoder implements QuietCloseable {
      * @param filters       filter descriptors: [encoded(col_idx, count, op), ptr, column_type] per filter
      * @return true if the row group can be safely skipped
      */
-    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters) {
+    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
         assert ptr != 0;
         return canSkipRowGroup(
                 ptr,
@@ -97,7 +97,8 @@ public class PartitionDecoder implements QuietCloseable {
                 fileAddr,
                 fileSize,
                 filters.getAddress(),
-                (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER)
+                (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER),
+                filterBufEnd
         );
     }
 
@@ -312,7 +313,8 @@ public class PartitionDecoder implements QuietCloseable {
             long filePtr,
             long fileSize,
             long filtersPtr,
-            int filterCount
+            int filterCount,
+            long filterBufEnd
     ) throws CairoException;
 
     private static native long columnCountOffset();
@@ -390,6 +392,10 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroup
     ) throws CairoException;
 
+    private static native long rowCountOffset();
+
+    private static native long rowGroupCountOffset();
+
     private static native long rowGroupMaxTimestamp(
             long decoderPtr,
             long fileAddr,
@@ -405,10 +411,6 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroupIndex,
             int timestampColumnIndex
     ) throws CairoException;
-
-    private static native long rowCountOffset();
-
-    private static native long rowGroupCountOffset();
 
     private static native long rowGroupSizesPtrOffset();
 
@@ -487,7 +489,7 @@ public class PartitionDecoder implements QuietCloseable {
         public int getColumnIndex(CharSequence name) {
             assert ptr != 0;
             for (int i = 0, n = columnNames.size(); i < n; i++) {
-                if (Chars.equalsIgnoreCase(columnNames.getQuick(i), name)) {
+                if (Chars.equals(columnNames.getQuick(i), name)) {
                     return i;
                 }
             }

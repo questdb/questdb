@@ -186,7 +186,9 @@ mod tests {
     use std::io::Write;
     use std::ptr::null;
 
-    use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
+    use crate::parquet_write::file::{
+        create_row_group, ParquetWriter, WriteOptions, DEFAULT_BLOOM_FILTER_FPP,
+    };
     use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 
     use arrow::datatypes::ToByteSlice;
@@ -268,13 +270,13 @@ mod tests {
             data_page_size: None,
             raw_array_encoding: false,
             bloom_filter_columns: HashSet::new(),
-            bloom_filter_fpp: 0.01,
+            bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
         };
 
         let options = write::WriteOptions {
             write_statistics: true,
             version: Version::V1,
-            bloom_filter_fpp: 0.01,
+            bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
         };
 
         let (row_group, bloom_hashes) = create_row_group(

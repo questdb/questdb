@@ -1,5 +1,7 @@
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
-use crate::parquet_write::file::{ChunkedWriter, ParquetWriter, DEFAULT_ROW_GROUP_SIZE};
+use crate::parquet_write::file::{
+    ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
+};
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
 use std::collections::HashSet;
@@ -558,7 +560,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let bloom_fpp = if bloom_filter_fpp > 0.0 {
             bloom_filter_fpp
         } else {
-            0.01
+            DEFAULT_BLOOM_FILTER_FPP
         };
 
         let parquet_writer = ParquetWriter::new(buffer_writer)

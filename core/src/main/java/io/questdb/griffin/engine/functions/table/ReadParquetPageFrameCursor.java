@@ -62,6 +62,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private final IntList columnIndexes;
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
+    private long filterBufEnd;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     private final ReadParquetPageFrame frame = new ReadParquetPageFrame();
@@ -153,7 +154,8 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
             if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
                     rowGroupIndex,
                     decoder,
-                    filterList
+                    filterList,
+                    filterBufEnd
             )) {
                 frame.partitionHi += decoder.metadata().getRowGroupSize(rowGroupIndex);
                 continue;
@@ -186,6 +188,9 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
             }
             isFilterListPrepared = ParquetRowGroupFilter.prepareFilterList(
                     decoder.metadata(), pushdownFilterConditions, filterList, filterValues);
+            if (isFilterListPrepared) {
+                filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
+            }
         }
 
         toTop();

@@ -80,6 +80,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
+    private long filterBufEnd;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     // doesn't include unsupported columns
@@ -256,6 +257,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
             isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
                     decoder.metadata(), pushdownFilterConditions, filterList, filterValues);
+            if (isFilterListPrepared) {
+                filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
+            }
         }
 
         toTop();
@@ -320,7 +324,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
                     rowGroupIndex,
                     decoder,
-                    filterList
+                    filterList,
+                    filterBufEnd
             )) {
                 continue;
             }

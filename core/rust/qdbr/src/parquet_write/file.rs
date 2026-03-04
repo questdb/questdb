@@ -29,6 +29,8 @@ use crate::parquet::error::{ParquetError, ParquetResult};
 use crate::POOL;
 use rayon::prelude::*;
 
+pub const DEFAULT_BLOOM_FILTER_FPP: f64 = 0.01;
+
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 pub const DEFAULT_ROW_GROUP_SIZE: usize = 100_000;
 
@@ -92,7 +94,7 @@ impl<W: Write> ParquetWriter<W> {
             version: Version::V1,
             parallel: false,
             bloom_filter_columns: HashSet::new(),
-            bloom_filter_fpp: 0.01,
+            bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
         }
     }
 

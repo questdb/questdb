@@ -56,6 +56,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final IntList columnIndexes;
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
+    private long filterBufEnd;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
@@ -359,7 +360,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         while (targetGroup >= 0) {
             if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
-                    targetGroup, reenterParquetDecoder, filterList)) {
+                    targetGroup, reenterParquetDecoder, filterList, filterBufEnd)) {
                 partitionHi = targetGroupStart;
                 if (partitionHi <= partitionLo) {
                     this.reenterPartitionFrame = false;
@@ -407,6 +408,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             assert reenterParquetDecoder != null;
             isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
                     reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues);
+            if (isFilterListPrepared) {
+                filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
+            }
             return computeParquetFrame(lo, hi);
         }
 

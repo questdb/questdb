@@ -55,6 +55,7 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
@@ -1538,7 +1539,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.parquetExportTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX, "zzz.copy.");
             this.parquetExportCopyReportFrequencyLines = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES, 500_000);
             this.parquetExportVersion = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_VERSION, ParquetVersion.PARQUET_VERSION_V1);
-            this.parquetExportBloomFilterFpp = getDouble(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_BLOOM_FILTER_FPP, "0.01");
+            this.parquetExportBloomFilterFpp = getDouble(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_BLOOM_FILTER_FPP, String.valueOf(PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP));
             if (!Numbers.isFinite(this.parquetExportBloomFilterFpp) || this.parquetExportBloomFilterFpp <= 0 || this.parquetExportBloomFilterFpp >= 1) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_PARQUET_EXPORT_BLOOM_FILTER_FPP.getPropertyPath(), "fpp must be between 0 and 1 (exclusive)");
             }
@@ -1983,7 +1984,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.configReloadEnabled = getBoolean(properties, env, PropertyKey.CONFIG_RELOAD_ENABLED, true);
 
         this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
-        this.partitionEncoderParquetBloomFilterFpp = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_BLOOM_FILTER_FPP, "0.01");
+        this.partitionEncoderParquetBloomFilterFpp = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_BLOOM_FILTER_FPP, String.valueOf(PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP));
         if (!Numbers.isFinite(this.partitionEncoderParquetBloomFilterFpp) || this.partitionEncoderParquetBloomFilterFpp <= 0 || this.partitionEncoderParquetBloomFilterFpp >= 1) {
             throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_BLOOM_FILTER_FPP.getPropertyPath(), "fpp must be between 0 and 1 (exclusive)");
         }

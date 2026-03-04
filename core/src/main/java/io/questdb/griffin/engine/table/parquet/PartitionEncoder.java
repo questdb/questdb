@@ -39,6 +39,8 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
 public class PartitionEncoder {
 
+    public static final double DEFAULT_BLOOM_FILTER_FPP = 0.01;
+
     public static native void closeStreamingParquetWriter(
             long writerPtr
     ) throws CairoException;

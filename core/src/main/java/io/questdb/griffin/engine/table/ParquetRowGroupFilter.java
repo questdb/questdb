@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
@@ -54,7 +56,7 @@ public final class ParquetRowGroupFilter {
     public static final long FILTER_BUFFER_PAGE_SIZE = 128;
     public static final int LONGS_PER_FILTER = 3;
     private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
-    private static int rowGroupsSkipped;
+    private static final AtomicInteger rowGroupsSkipped = new AtomicInteger();
 
     /**
      * Check if a row group can be skipped based on the prepared filter list.
@@ -68,12 +70,13 @@ public final class ParquetRowGroupFilter {
     public static boolean canSkipRowGroup(
             int rowGroupIndex,
             PartitionDecoder decoder,
-            DirectLongList filterList
+            DirectLongList filterList,
+            long filterBufEnd
     ) {
         try {
-            boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList);
+            boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList, filterBufEnd);
             if (skip) {
-                rowGroupsSkipped++;
+                rowGroupsSkipped.incrementAndGet();
             }
             return skip;
         } catch (CairoException e) {
@@ -87,7 +90,7 @@ public final class ParquetRowGroupFilter {
 
     @TestOnly
     public static int getRowGroupsSkipped() {
-        return rowGroupsSkipped;
+        return rowGroupsSkipped.get();
     }
 
     /**
@@ -394,7 +397,7 @@ public final class ParquetRowGroupFilter {
 
     @TestOnly
     public static void resetRowGroupsSkipped() {
-        rowGroupsSkipped = 0;
+        rowGroupsSkipped.set(0);
     }
 
     private static long encodeColumnCountAndOp(int columnIndex, int count, int op) {

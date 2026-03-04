@@ -77,6 +77,7 @@ impl ColumnFilterPacked {
 pub struct ColumnFilterValues {
     pub count: u32,
     pub ptr: u64,
+    pub buf_end: u64,
 }
 
 #[repr(C)]
