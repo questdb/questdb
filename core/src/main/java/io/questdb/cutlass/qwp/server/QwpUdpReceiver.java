@@ -74,6 +74,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private long droppedTooShortCount;
     private long droppedTruncatedCount;
     private long fd;
+    private long processedCount;
     private long totalCount;
 
     public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine) {
@@ -267,6 +268,10 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         return droppedTruncatedCount;
     }
 
+    public long getProcessedCount() {
+        return processedCount;
+    }
+
     public long getTotalDroppedCount() {
         return droppedBadMagicCount + droppedBadVersionCount + droppedParseErrorCount
                 + droppedTooShortCount + droppedTruncatedCount;
@@ -279,6 +284,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
             ran = true;
             processDatagram(buf, count);
+            processedCount++;
             totalCount++;
             if (totalCount >= commitRate) {
                 totalCount = 0;

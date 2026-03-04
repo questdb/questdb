@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.udp;
 
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
 import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
@@ -76,6 +77,257 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             return false;
         }
     };
+
+    @Test
+    public void testAutoFlushManyColumnTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender(300)) {
+                    for (int i = 0; i < 20; i++) {
+                        sender.table("auto_many_types")
+                                .symbol("host", "srv-" + (i % 3))
+                                .longColumn("id", i)
+                                .doubleColumn("temp", 20.0 + i * 0.1)
+                                .stringColumn("note", "row-" + i)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\n20\n",
+                    "SELECT count() FROM auto_many_types"
+            );
+            assertSql(
+                    "host\tid\ttemp\tnote\n" +
+                            "srv-0\t0\t20.0\trow-0\n",
+                    "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp LIMIT 1"
+            );
+            assertSql(
+                    "host\tid\ttemp\tnote\n" +
+                            "srv-1\t19\t21.9\trow-19\n",
+                    "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp DESC LIMIT 1"
+            );
+        });
+    }
+
+    @Test
+    public void testAutoFlushMultipleSplitsValueCorrectness() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender(200)) {
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("auto_splits")
+                                .longColumn("id", i)
+                                .doubleColumn("val", i * 1.5)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\tsum_id\tmin_id\tmax_id\n" +
+                            "100\t4950\t0\t99\n",
+                    "SELECT count(), sum(id) AS sum_id, min(id) AS min_id, max(id) AS max_id FROM auto_splits"
+            );
+        });
+    }
+
+    @Test
+    public void testAutoFlushSingleRowExceedsMtu() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpSender sender = newSender(100)) {
+                sender.table("exceed_mtu")
+                        .stringColumn("big", "x".repeat(200));
+                try {
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    Assert.fail("expected LineSenderException");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue(e.getMessage().contains("single row exceeds maximum datagram size"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAutoFlushSmallMtu() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender(200)) {
+                    for (int i = 0; i < 50; i++) {
+                        sender.table("auto_small")
+                                .doubleColumn("value", i * 1.1)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                Assert.assertTrue(
+                        "expected multiple datagrams, got " + receiver.getProcessedCount(),
+                        receiver.getProcessedCount() > 1
+                );
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\n50\n",
+                    "SELECT count() FROM auto_small"
+            );
+        });
+    }
+
+    @Test
+    public void testAutoFlushValueCorrectness() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender(200)) {
+                    for (int i = 0; i < 50; i++) {
+                        sender.table("auto_values")
+                                .doubleColumn("value", i * 2.5)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "min_val\tmax_val\n" +
+                            "0.0\t122.5\n",
+                    "SELECT min(value) AS min_val, max(value) AS max_val FROM auto_values"
+            );
+            assertSql(
+                    "value\n0.0\n",
+                    "SELECT value FROM auto_values ORDER BY timestamp LIMIT 1"
+            );
+            assertSql(
+                    "value\n122.5\n",
+                    "SELECT value FROM auto_values ORDER BY timestamp DESC LIMIT 1"
+            );
+        });
+    }
+
+    @Test
+    public void testAutoFlushWithAtNow() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender(200)) {
+                    for (int i = 0; i < 30; i++) {
+                        sender.table("auto_at_now")
+                                .longColumn("id", i)
+                                .doubleColumn("val", i * 0.5);
+                        sender.atNow();
+                    }
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\tmin_id\tmax_id\n" +
+                            "30\t0\t29\n",
+                    "SELECT count(), min(id) AS min_id, max(id) AS max_id FROM auto_at_now"
+            );
+        });
+    }
+
+    @Test
+    public void testAutoFlushWithString() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender(300)) {
+                    for (int i = 0; i < 50; i++) {
+                        sender.table("auto_string")
+                                .stringColumn("msg", "hello-" + i)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                Assert.assertTrue(
+                        "expected multiple datagrams, got " + receiver.getProcessedCount(),
+                        receiver.getProcessedCount() > 1
+                );
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\n50\n",
+                    "SELECT count() FROM auto_string"
+            );
+        });
+    }
+
+    @Test
+    public void testAutoFlushWithSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender(200)) {
+                    for (int i = 0; i < 50; i++) {
+                        sender.table("auto_sym")
+                                .symbol("host", "srv-" + (i % 5))
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                Assert.assertTrue(
+                        "expected multiple datagrams, got " + receiver.getProcessedCount(),
+                        receiver.getProcessedCount() > 1
+                );
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\n50\n",
+                    "SELECT count() FROM auto_sym"
+            );
+        });
+    }
+
+    @Test
+    public void testCancelRowAfterAutoFlush() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender(200)) {
+                    // Fill up enough rows to ensure auto-flush triggers on the next at()
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("cancel_after_af")
+                                .longColumn("id", i)
+                                .doubleColumn("val", i * 1.0)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    // Start a new row, then cancel it
+                    sender.table("cancel_after_af")
+                            .longColumn("id", 999L)
+                            .doubleColumn("val", 999.0);
+                    sender.cancelRow();
+                    // Add one more valid row
+                    sender.table("cancel_after_af")
+                            .longColumn("id", 10L)
+                            .doubleColumn("val", 10.0)
+                            .at(1_000_010L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\tmax_id\n" +
+                            "11\t10\n",
+                    "SELECT count(), max(id) AS max_id FROM cancel_after_af"
+            );
+        });
+    }
 
     @Test
     public void testCancelRowBetweenCompleteRows() throws Exception {
@@ -591,6 +843,44 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTableSwitchTriggersFlush() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender(65535)) {
+                    // Add rows to table "a"
+                    for (int i = 0; i < 3; i++) {
+                        sender.table("switch_a")
+                                .longColumn("x", i)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    // This table switch should flush "switch_a" immediately
+                    sender.table("switch_b");
+
+                    // Drain and assert switch_a arrived before any explicit flush
+                    drainReceiver(receiver);
+                    drainWalQueue();
+                    assertSql(
+                            "count\tsum\n3\t3\n",
+                            "SELECT count(), sum(x) FROM switch_a"
+                    );
+
+                    // Now complete switch_b and flush it separately
+                    sender.longColumn("y", 100L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\n1\n",
+                    "SELECT count() FROM switch_b"
+            );
+        });
+    }
+
     private static void drainReceiver(QwpUdpReceiver receiver) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
         boolean everReceived = false;
@@ -608,5 +898,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
     private static QwpUdpSender newSender() {
         return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0);
+    }
+
+    private static QwpUdpSender newSender(int maxDatagramSize) {
+        return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0, maxDatagramSize);
     }
 }

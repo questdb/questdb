@@ -158,12 +158,12 @@ valid one was processed correctly. The "recovery" assertion is the crucial part.
 All tests use real UDP sockets and a real `CairoEngine`. No mocking.
 
 
-## Iteration 3: Size estimation and auto-flush `[ ]`
+## Iteration 3: Size estimation and auto-flush `[x]`
 
 **Goal:** The sender automatically splits rows across multiple datagrams when
 approaching the MTU limit.
 
-### What to build `[ ]`
+### What to build `[x]`
 
 **`QwpDatagramSizeEstimator`** (client module) -- computes a conservative byte
 estimate from a `QwpTableBuffer`'s current state:
@@ -188,26 +188,26 @@ Inside `at()`/`atNow()`, after committing the row:
 
 **Estimate accuracy (encode + compare):**
 
-- `[ ]` For each of the 22 column types: single-row table, verify
+- `[x]` For each of the 22 column types: single-row table, verify
   `estimate >= actual` and `estimate - actual < 32`.
-- `[ ]` Multi-row tables (1, 5, 10, 50 rows) with DOUBLE + TIMESTAMP.
-- `[ ]` SYMBOL with 1, 10, 100 distinct values.
-- `[ ]` STRING with empty, short, and long values.
-- `[ ]` Property test: 100 random schemas + random data, verify
+- `[x]` Multi-row tables (1, 5, 10, 50 rows) with DOUBLE + TIMESTAMP.
+- `[x]` SYMBOL with 1, 10, 100 distinct values.
+- `[x]` STRING with empty, short, and long values.
+- `[x]` Property test: 100 random schemas + random data, verify
   `estimate >= actual`.
 
 **Auto-flush integration (sender + receiver):**
 
-- `[ ]` Set `maxDatagramSize = 200`. Send 50 rows with DOUBLE + TIMESTAMP.
+- `[x]` Set `maxDatagramSize = 200`. Send 50 rows with DOUBLE + TIMESTAMP.
   Verify all 50 rows arrive in the table (receiver got multiple datagrams).
-- `[ ]` Same with SYMBOL column (dictionary growth triggers splits).
-- `[ ]` Same with STRING column (variable-length values).
+- `[x]` Same with SYMBOL column (dictionary growth triggers splits).
+- `[x]` Same with STRING column (variable-length values).
 
 **Boundary cases:**
 
-- `[ ]` Single row exceeds MTU: set `maxDatagramSize = 100`, send a row with
+- `[x]` Single row exceeds MTU: set `maxDatagramSize = 100`, send a row with
   a 200-byte string. Verify `LineSenderException` is thrown.
-- `[ ]` Table switch triggers flush: `table("a")` -> add rows -> `table("b")`
+- `[x]` Table switch triggers flush: `table("a")` -> add rows -> `table("b")`
   (without explicit flush). Verify table "a" received its rows.
 
 
