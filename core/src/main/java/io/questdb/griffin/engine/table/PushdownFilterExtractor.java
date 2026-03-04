@@ -59,6 +59,11 @@ import java.util.ArrayDeque;
  */
 public class PushdownFilterExtractor implements Mutable {
 
+    // Operation types for pushdown filter conditions.
+    // Keep in sync with FILTER_OP_* constants in parquet_read/mod.rs.
+    // Range semantics (LT/LE/GT/GE): skip row group if
+    //   LT: min >= val, LE: min > val, GT: max <= val, GE: max < val.
+    // BETWEEN: auto-swaps bounds, skip if max_stat < min(a,b) || min_stat > max(a,b).
     public static final int OP_BETWEEN = 7;
     public static final int OP_EQ = 0;
     public static final int OP_GE = 4;

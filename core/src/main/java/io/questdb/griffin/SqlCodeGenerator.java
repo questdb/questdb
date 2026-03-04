@@ -3178,6 +3178,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         try {
+            // This path applies only to the read_parquet() table function.
+            // For native tables, generateTableQuery0() handles pushdown separately.
             if (factory.mayHaveParquetPartitions(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
                 factory.setPushdownFilterCondition(pushdownFilterExtractor.extractAndCompile(
                         sqlNodeStack, sqlNodeStack2, filterExpr, factory.getMetadata(), functionParser, executionContext));
