@@ -5315,6 +5315,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else if (columnIndex != timestampColumnIndex) {
             cthO3SortFixColumn(columnIndex, columnType, sortedTimestampsAddr, sortedTimestampsRowCount);
         }
+        // Reshuffle null bitmap to match sorted column order. The bitmap was built
+        // in append order by setupO3NullBitmapForBypassWal(), but column data has
+        // just been reshuffled by timestamp order. Without this, bitmap indices
+        // do not match data indices, producing incorrect null status after merge.
+        cthO3SortBitmap(columnIndex, sortedTimestampsAddr, sortedTimestampsRowCount);
+    }
+
+    private void cthO3SortBitmap(int columnIndex, long sortedTimestampsAddr, long rowCount) {
+        if (o3NullBitmapAddrs == null || columnIndex >= o3NullBitmapAddrs.length) {
+            return;
+        }
+        long srcBitmapAddr = o3NullBitmapAddrs[columnIndex];
+        if (srcBitmapAddr == 0) {
+            return;
+        }
+        long newBitmapSize = (rowCount + 7) >> 3;
+        long newBitmapAddr = Unsafe.malloc(newBitmapSize, MemoryTag.NATIVE_O3);
+        try {
+            Vect.memset(newBitmapAddr, newBitmapSize, 0);
+            for (long i = 0; i < rowCount; i++) {
+                long origIndex = Unsafe.getUnsafe().getLong(sortedTimestampsAddr + i * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES);
+                byte srcByte = Unsafe.getUnsafe().getByte(srcBitmapAddr + (origIndex >> 3));
+                if (((srcByte >> (int) (origIndex & 7)) & 1) != 0) {
+                    long dstByteOffset = i >> 3;
+                    int dstBitIndex = (int) (i & 7);
+                    long addr = newBitmapAddr + dstByteOffset;
+                    Unsafe.getUnsafe().putByte(addr, (byte) (Unsafe.getUnsafe().getByte(addr) | (1 << dstBitIndex)));
+                }
+            }
+        } catch (Throwable th) {
+            Unsafe.free(newBitmapAddr, newBitmapSize, MemoryTag.NATIVE_O3);
+            throw th;
+        }
+        if (o3NullBitmapAllocSizes[columnIndex] > 0) {
+            Unsafe.free(srcBitmapAddr, o3NullBitmapAllocSizes[columnIndex], MemoryTag.NATIVE_O3);
+        }
+        o3NullBitmapAddrs[columnIndex] = newBitmapAddr;
+        o3NullBitmapAllocSizes[columnIndex] = newBitmapSize;
     }
 
     private void cthO3SortFixColumn(
