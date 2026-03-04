@@ -3112,6 +3112,165 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Tests schema evolution by adding a new column in the second batch within
+     * a single connection. The schema-reference hash changes, so the client
+     * must re-send the full schema. Rows from batch 1 should have NULL for
+     * the extra column.
+     */
+    @Test
+    public void testSchemaEvolution_addColumnMidConnection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    // Batch 1: two columns (sym, val)
+                    sender.table("ws_schema_evo_add")
+                            .symbol("sym", "AAA")
+                            .longColumn("val", 10)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.table("ws_schema_evo_add")
+                            .symbol("sym", "BBB")
+                            .longColumn("val", 20)
+                            .at(1_000_000_001_000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Batch 2: three columns (sym, val, extra) - schema hash changes
+                    sender.table("ws_schema_evo_add")
+                            .symbol("sym", "CCC")
+                            .longColumn("val", 30)
+                            .doubleColumn("extra", 3.14)
+                            .at(1_000_000_002_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_schema_evo_add");
+                serverMain.assertSql("select count() from ws_schema_evo_add", "count\n3\n");
+                serverMain.assertSql(
+                        "select sym, val, extra from ws_schema_evo_add ORDER BY val",
+                        """
+                                sym\tval\textra
+                                AAA\t10\tnull
+                                BBB\t20\tnull
+                                CCC\t30\t3.14
+                                """
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests schema evolution by adding three new columns across three successive
+     * batches within a single connection. Each batch introduces one more column.
+     */
+    @Test
+    public void testSchemaEvolution_multipleNewColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    // Batch 1: columns (sym, val)
+                    sender.table("ws_schema_evo_multi")
+                            .symbol("sym", "A")
+                            .longColumn("val", 1)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Batch 2: add col_x
+                    sender.table("ws_schema_evo_multi")
+                            .symbol("sym", "B")
+                            .longColumn("val", 2)
+                            .doubleColumn("col_x", 1.1)
+                            .at(1_000_000_001_000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Batch 3: add col_y
+                    sender.table("ws_schema_evo_multi")
+                            .symbol("sym", "C")
+                            .longColumn("val", 3)
+                            .doubleColumn("col_x", 2.2)
+                            .stringColumn("col_y", "hello")
+                            .at(1_000_000_002_000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Batch 4: add col_z
+                    sender.table("ws_schema_evo_multi")
+                            .symbol("sym", "D")
+                            .longColumn("val", 4)
+                            .doubleColumn("col_x", 3.3)
+                            .stringColumn("col_y", "world")
+                            .boolColumn("col_z", true)
+                            .at(1_000_000_003_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_schema_evo_multi");
+                serverMain.assertSql("select count() from ws_schema_evo_multi", "count\n4\n");
+                serverMain.assertSql(
+                        "select sym, val, col_x, col_y, col_z from ws_schema_evo_multi ORDER BY val",
+                        """
+                                sym\tval\tcol_x\tcol_y\tcol_z
+                                A\t1\tnull\t\tfalse
+                                B\t2\t1.1\t\tfalse
+                                C\t3\t2.2\thello\tfalse
+                                D\t4\t3.3\tworld\ttrue
+                                """
+                );
+            }
+        });
+    }
+
+    /**
+     * Tests that sending columns in a different order across batches triggers
+     * a schema-hash change and the client re-sends the full schema. The server
+     * must match columns by name regardless of order.
+     */
+    @Test
+    public void testSchemaEvolution_reorderColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    // Batch 1: order is (sym, alpha, beta)
+                    sender.table("ws_schema_evo_reorder")
+                            .symbol("sym", "first")
+                            .longColumn("alpha", 10)
+                            .doubleColumn("beta", 1.5)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+
+                    // Batch 2: order is (sym, beta, alpha) - reversed data columns
+                    sender.table("ws_schema_evo_reorder")
+                            .symbol("sym", "second")
+                            .doubleColumn("beta", 2.5)
+                            .longColumn("alpha", 20)
+                            .at(1_000_000_001_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_schema_evo_reorder");
+                serverMain.assertSql("select count() from ws_schema_evo_reorder", "count\n2\n");
+                serverMain.assertSql(
+                        "select sym, alpha, beta from ws_schema_evo_reorder ORDER BY alpha",
+                        """
+                                sym\talpha\tbeta
+                                first\t10\t1.5
+                                second\t20\t2.5
+                                """
+                );
+            }
+        });
+    }
+
+    /**
      * Tests the QWP-specific shortColumn() method that encodes a native SHORT wire type.
      * Pre-creates a SHORT column to verify the client sends the correct type code.
      */
