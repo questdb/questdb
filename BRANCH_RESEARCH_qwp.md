@@ -44,7 +44,7 @@ The protocol is fully specified in `QWP_SPECIFICATION.md` (674 lines). Key prope
 Message = Header (12 bytes fixed) + Payload (variable, optionally compressed)
 
 Header:
-  [0-3]  Magic: "ILP4" (0x34504C49, LE)
+  [0-3]  Magic: "QWP1" (0x31505751, LE)
   [4]    Version: 0x01
   [5]    Flags byte (bitmask):
            bit 0 (0x01): FLAG_LZ4 compression
@@ -61,7 +61,7 @@ Payload (otherwise):
 ```
 
 **Magic byte variants:**
-- `ILP4` (0x34504C49) - Normal data message
+- `QWP1` (0x31505751) - Normal data message
 - `ILP?` (0x3F504C49) - Capability request
 - `ILP!` (0x21504C49) - Capability response
 - `ILP0` (0x30504C49) - Fallback (server doesn't support v4)

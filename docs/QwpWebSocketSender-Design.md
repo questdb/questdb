@@ -845,8 +845,8 @@ Authorization: Bearer <token>
 │ - Payload length                                        │
 │ - Mask key (4 bytes)                                    │
 ├─────────────────────────────────────────────────────────┤
-│ ILP v4 Message Header (12 bytes)                        │
-│ - Magic: "ILP4"                                         │
+│ QWP v1 Message Header (12 bytes)                        │
+│ - Magic: "QWP1"                                         │
 │ - Version: 1                                            │
 │ - Flags: 0x04 (Gorilla encoding)                        │
 │ - Table count: N                                        │

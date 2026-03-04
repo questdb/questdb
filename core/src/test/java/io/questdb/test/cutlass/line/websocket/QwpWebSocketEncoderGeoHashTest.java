@@ -441,11 +441,11 @@ public class QwpWebSocketEncoderGeoHashTest {
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
 
-                // Verify ILP v4 header magic
-                Assert.assertEquals((byte) 'I', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr));
-                Assert.assertEquals((byte) 'L', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 1));
+                // Verify QWP1 header magic
+                Assert.assertEquals((byte) 'Q', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr));
+                Assert.assertEquals((byte) 'W', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 1));
                 Assert.assertEquals((byte) 'P', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 2));
-                Assert.assertEquals((byte) '4', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 3));
+                Assert.assertEquals((byte) '1', io.questdb.client.std.Unsafe.getUnsafe().getByte(ptr + 3));
 
                 // Table count = 1
                 Assert.assertEquals((short) 1, io.questdb.client.std.Unsafe.getUnsafe().getShort(ptr + 6));
