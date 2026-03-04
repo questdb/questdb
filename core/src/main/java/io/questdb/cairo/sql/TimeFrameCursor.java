@@ -33,17 +33,19 @@ import io.questdb.std.Rows;
  * and random row access.
  */
 public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
-    // Marker bit set on all TimeFrameCursor row IDs (bit 63). Makes row IDs
-    // negative, so misuse against PageFrameMemoryPool (which expects page frame
-    // indices in the upper bits) causes immediate array index out of bounds.
-    long TIME_FRAME_ROW_ID_MARKER = Long.MIN_VALUE;
+    // Marker bits set on all TimeFrameCursor row IDs (bits 63 and 43). Bit 63
+    // makes row IDs negative, so misuse against PageFrameMemoryPool (which
+    // expects page frame indices in the upper bits) causes immediate array
+    // index out of bounds. Bit 43 ensures toRowID(0, 0) != Long.MIN_VALUE,
+    // avoiding collisions with Long.MIN_VALUE sentinels in ASOF join helpers.
+    long TIME_FRAME_ROW_ID_MARKER = Long.MIN_VALUE | (1L << 43);
 
     static boolean isTimeFrameRowID(long rowId) {
         return rowId < 0;
     }
 
     static long toLocalRowID(long timeFrameRowId) {
-        return Rows.toLocalRowID(timeFrameRowId); // lower 44 bits unaffected by bit 63
+        return Rows.toLocalRowID(timeFrameRowId & ~TIME_FRAME_ROW_ID_MARKER);
     }
 
     static int toPartitionIndex(long timeFrameRowId) {

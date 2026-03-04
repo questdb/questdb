@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -62,7 +63,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Rows;
+
 import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
@@ -322,7 +323,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowIndex != Long.MIN_VALUE) {
-                long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                 for (; ; ) {
                     slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                     final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
@@ -337,7 +338,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             break;
                         }
                         slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                        baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                        baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         // don't forget to switch the record to the new frame
                         slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     }
@@ -685,7 +686,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
             long slaveRowIndex = slaveTimeFrameHelper.findRowLoWithPrevailing(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowIndex != Long.MIN_VALUE) {
-                long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                 for (; ; ) {
                     slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                     final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
@@ -700,7 +701,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             break;
                         }
                         slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                        baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                        baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     }
                 }
@@ -798,7 +799,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
 
             if (slaveRowIndex != Long.MIN_VALUE) {
-                long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                 for (; ; ) {
                     slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                     final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
@@ -813,7 +814,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             break;
                         }
                         slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                        baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                        baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         // don't forget to switch the record to the new frame
                         slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     }
@@ -1029,7 +1030,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 // Collect all slave data for the filtered frame's timestamp range
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowIndex != Long.MIN_VALUE) {
-                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
@@ -1044,7 +1045,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                            baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                             // don't forget to switch the record to the new frame
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
@@ -1489,7 +1490,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLoWithPrevailing(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowIndex != Long.MIN_VALUE) {
-                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
@@ -1504,7 +1505,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                            baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                             // don't forget to switch the record to the new frame
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
@@ -1637,7 +1638,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
 
                 if (slaveRowIndex != Long.MIN_VALUE) {
-                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
@@ -1652,7 +1653,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                            baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                             // don't forget to switch the record to the new frame
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
@@ -1825,7 +1826,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 for (long r = scanStart; r >= rowLo; r--) {
                     slaveTimeFrameHelper.recordAtRowIndex(r);
                     if (joinFilter.getBool(joinRecord)) {
-                        functionUpdater.updateNew(value, joinRecord, Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), r));
+                        functionUpdater.updateNew(value, joinRecord, TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), r));
                         value.setNew(false);
                         return;
                     }

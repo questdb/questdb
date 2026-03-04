@@ -481,6 +481,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void toPartition(int partitionIndex) {
+            baseCursor.toPartition(partitionIndex);
+        }
+
+        @Override
         public void toTop() {
             baseCursor.toTop();
         }

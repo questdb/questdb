@@ -60,7 +60,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Rows;
+
 import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
@@ -499,7 +499,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowIndex != Long.MIN_VALUE) {
-                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
@@ -527,7 +527,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                            baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                             // don't forget to switch the record to the new frame
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
@@ -782,7 +782,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
 
                 if (slaveRowIndex != Long.MIN_VALUE) {
-                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
@@ -822,7 +822,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                            baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                             // don't forget to switch the record to the new frame
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
@@ -1021,7 +1021,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
                 if (slaveRowIndex != Long.MIN_VALUE) {
-                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
@@ -1049,7 +1049,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                            baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                             // don't forget to switch the record to the new frame
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
@@ -1258,7 +1258,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
 
                 if (slaveRowIndex != Long.MIN_VALUE) {
-                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
@@ -1286,7 +1286,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                            baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                             // don't forget to switch the record to the new frame
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }

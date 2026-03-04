@@ -45,6 +45,8 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
+    protected int initialIntervalsHi;
+    protected int initialIntervalsLo;
     protected LongList intervals;
     protected int intervalsHi;
     protected int intervalsLo;
@@ -56,8 +58,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected int partitionLo;
     protected TableReader reader;
     protected long sizeSoFar = 0;
-    private int initialIntervalsHi;
-    private int initialIntervalsLo;
     private int initialPartitionHi;
     private int initialPartitionLo;
 

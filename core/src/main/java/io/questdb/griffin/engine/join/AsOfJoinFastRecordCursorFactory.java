@@ -40,7 +40,6 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
@@ -178,7 +177,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
             long rowLo = slaveTimeFrame.getRowLo();
             int keyedFrameIndex = slaveTimeFrame.getFrameIndex();
-            long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
+            long keyedRowId = TimeFrameCursor.toLocalRowID(slaveRecB.getRowId());
 
             for (; ; ) {
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
@@ -212,7 +211,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     keyedRowId = slaveTimeFrame.getRowHi() - 1;
                     rowLo = slaveTimeFrame.getRowLo();
                 }
-                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+                slaveTimeFrameCursor.recordAt(slaveRecB, TimeFrameCursor.toRowID(keyedFrameIndex, keyedRowId));
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }

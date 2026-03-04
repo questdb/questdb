@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.TimeFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -61,7 +62,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     private final PageFrameMemoryPool frameMemoryPool;
     // Cache for partition timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...]
     private final DirectLongList frameTimestampCache;
-    private final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    private final TimeFrameMemoryRecord record = new TimeFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private int currentCachePartition = -1;
     private long currentPageFrameRowHi;
