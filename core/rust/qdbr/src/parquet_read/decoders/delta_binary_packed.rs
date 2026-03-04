@@ -110,6 +110,11 @@ where
     }
 
     pub(crate) fn get_end_pointer(&self) -> ParquetResult<*const u8> {
+        // No block was initialized (e.g. value_count <= 1 in DELTA_BINARY_PACKED header).
+        if self.blocks_remaining == 0 && self.miniblock_index == 0 && self.miniblock_offset == 0 {
+            return Ok(self.page_data.as_ptr());
+        }
+
         let mut blocks_remaining = self.blocks_remaining;
         let mut page_data = self.page_data;
         let miniblocks_per_block = self.miniblocks_per_block;
