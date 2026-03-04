@@ -36,6 +36,13 @@ import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
+/**
+ * Composite record that combines base table columns (col &lt; split)
+ * with unnested columns (col &gt;= split). The unnested region maps
+ * each column index to a (source, sourceCol) pair via flat lookup
+ * arrays. An optional trailing ordinality column (1-based row number)
+ * sits at position split + unnestColumnCount.
+ */
 public class UnnestRecord implements Record {
     private final int[] colToSourceCol;
     private final int[] colToSourceIndex;

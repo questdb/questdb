@@ -764,6 +764,48 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAllNullArrayReturnsAllNulls() throws Exception {
+        // When every element in the JSON array is null, the scan-forward
+        // detection cannot determine scalar vs object. It defaults to
+        // scalar, which is correct: both paths produce NULL for null
+        // elements, so the result is the same regardless.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, null, null]')");
+            assertQueryNoLeakCheck(
+                    "val\n"
+                            + "null\n"
+                            + "null\n"
+                            + "null\n",
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val DOUBLE)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testAllNullObjectArrayReturnsAllNulls() throws Exception {
+        // Same as above but with multiple declared columns, which forces
+        // isObjectArray = true. The result is still all NULLs because
+        // accessing any field on a null JSON element returns NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[null, null]')");
+            assertQueryNoLeakCheck(
+                    "a\tb\n"
+                            + "null\tnull\n"
+                            + "null\tnull\n",
+                    "SELECT u.a, u.b FROM t, UNNEST("
+                            + "t.payload COLUMNS(a DOUBLE, b DOUBLE)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
     public void testJsonExtractWithJsonUnnest() throws Exception {
         // json_extract() lazily allocates ~2MB internal buffers during cursor
         // execution, so assertQueryNoLeakCheck's factory memory check fails.

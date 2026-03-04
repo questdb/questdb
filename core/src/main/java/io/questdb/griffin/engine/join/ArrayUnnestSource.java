@@ -77,19 +77,24 @@ public class ArrayUnnestSource implements UnnestSource {
         return derivedView;
     }
 
+    // Only DOUBLE[] is currently enabled in ColumnType.arrayTypeSet.
+    // These getters throw so that enabling a new element type without
+    // implementing the corresponding getter surfaces immediately
+    // rather than silently returning wrong values.
+
     @Override
     public boolean getBool(int sourceCol, int elementIndex) {
-        return false;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public byte getByte(int sourceCol, int elementIndex) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public char getChar(int sourceCol, int elementIndex) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -104,7 +109,7 @@ public class ArrayUnnestSource implements UnnestSource {
 
     @Override
     public long getDate(int sourceCol, int elementIndex) {
-        return Numbers.LONG_NULL;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -121,14 +126,16 @@ public class ArrayUnnestSource implements UnnestSource {
 
     @Override
     public float getFloat(int sourceCol, int elementIndex) {
-        return Float.NaN;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt(int sourceCol, int elementIndex) {
-        return Numbers.INT_NULL;
+        throw new UnsupportedOperationException();
     }
 
+    // getLong is implemented because ArrayView.getLong() is ready.
+    // It will be reachable once LONG[] is enabled in ColumnType.arrayTypeSet.
     @Override
     public long getLong(int sourceCol, int elementIndex) {
         if (view == null) {
@@ -143,42 +150,42 @@ public class ArrayUnnestSource implements UnnestSource {
 
     @Override
     public short getShort(int sourceCol, int elementIndex) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrA(int sourceCol, int elementIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrB(int sourceCol, int elementIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen(int sourceCol, int elementIndex) {
-        return -1;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getTimestamp(int sourceCol, int elementIndex) {
-        return Numbers.LONG_NULL;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Utf8Sequence getVarcharA(int sourceCol, int elementIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Utf8Sequence getVarcharB(int sourceCol, int elementIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getVarcharSize(int sourceCol, int elementIndex) {
-        return -1;
+        throw new UnsupportedOperationException();
     }
 
     @Override
