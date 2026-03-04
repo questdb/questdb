@@ -137,7 +137,10 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
 
 impl Pushable for RleDictVarcharSliceDecoder<'_> {
     fn reserve(&mut self, count: usize) -> ParquetResult<()> {
-        self.buffers.aux_vec.reserve(count * AUX_ENTRY_SIZE)?;
+        let reserve_bytes = count
+            .checked_mul(AUX_ENTRY_SIZE)
+            .ok_or_else(|| fmt_err!(Layout, "requested reserve size exceeds usize limits"))?;
+        self.buffers.aux_vec.reserve(reserve_bytes)?;
         Ok(())
     }
 
