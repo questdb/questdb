@@ -3492,6 +3492,106 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Sends 5 batches with the same schema on a single connection. Batch 1 sends
+     * the full schema; batches 2-5 implicitly use schema reference mode (8-byte
+     * hash only) because the client's sentSchemaHashes set already contains the
+     * hash after the first successful ACK.
+     */
+    @Test
+    public void testSchemaReference_cacheHitAfterMultipleBatches() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    for (int batch = 0; batch < 5; batch++) {
+                        for (int i = 0; i < 10; i++) {
+                            sender.table("ws_schema_ref_hit")
+                                    .symbol("tag", "batch" + batch)
+                                    .longColumn("value", batch * 10 + i)
+                                    .at(1_000_000_000_000L + batch * 100 + i, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+                    }
+                }
+
+                serverMain.awaitTable("ws_schema_ref_hit");
+                serverMain.assertSql(
+                        "SELECT count() FROM ws_schema_ref_hit",
+                        "count\n50\n"
+                );
+                // Verify all 5 batch tags landed
+                serverMain.assertSql(
+                        "SELECT count_distinct(tag) FROM ws_schema_ref_hit",
+                        "count_distinct\n5\n"
+                );
+            }
+        });
+    }
+
+    /**
+     * Opens two successive connections to the same server. Each connection
+     * clears the client's sentSchemaHashes set, so the second sender must
+     * re-send the full schema (not a reference) on its first batch. This
+     * verifies that the reset-on-reconnect logic works end-to-end.
+     */
+    @Test
+    public void testSchemaReference_newConnectionResendsFull() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Connection 1: send two batches (batch 1 = full schema, batch 2 = reference)
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    for (int batch = 0; batch < 2; batch++) {
+                        for (int i = 0; i < 5; i++) {
+                            sender.table("ws_schema_ref_reconn")
+                                    .symbol("src", "conn1")
+                                    .longColumn("seq", batch * 5 + i)
+                                    .at(1_000_000_000_000L + batch * 100 + i, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+                    }
+                }
+
+                serverMain.awaitTable("ws_schema_ref_reconn");
+
+                // Connection 2: new sender must resend full schema, then schema ref
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    for (int batch = 0; batch < 2; batch++) {
+                        for (int i = 0; i < 5; i++) {
+                            sender.table("ws_schema_ref_reconn")
+                                    .symbol("src", "conn2")
+                                    .longColumn("seq", 10 + batch * 5 + i)
+                                    .at(1_000_000_000_100L + batch * 100 + i, ChronoUnit.MICROS);
+                        }
+                        sender.flush();
+                    }
+                }
+
+                // Wait for WAL to apply connection 2's data
+                serverMain.awaitTable("ws_schema_ref_reconn");
+                serverMain.assertSql(
+                        "SELECT count() FROM ws_schema_ref_reconn",
+                        "count\n20\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM ws_schema_ref_reconn WHERE src = 'conn1'",
+                        "count\n10\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM ws_schema_ref_reconn WHERE src = 'conn2'",
+                        "count\n10\n"
+                );
+            }
+        });
+    }
+
+    /**
      * Tests the QWP-specific shortColumn() method that encodes a native SHORT wire type.
      * Pre-creates a SHORT column to verify the client sends the correct type code.
      */
