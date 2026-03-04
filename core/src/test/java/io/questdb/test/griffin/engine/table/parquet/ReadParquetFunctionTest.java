@@ -930,7 +930,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT" +
                     " x AS id," +
-                    " rnd_varchar('alpha', 'beta', 'gamma', 'delta') AS v" +
+                    " CASE WHEN x % 4 = 0 THEN NULL ELSE rnd_varchar('alpha', 'beta', 'gamma', 'delta') END AS v" +
                     " FROM long_sequence(1000))");
 
             try (
