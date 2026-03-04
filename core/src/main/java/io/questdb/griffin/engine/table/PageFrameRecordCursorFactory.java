@@ -72,7 +72,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             boolean supportsRandomAccess,
             boolean singleRowFactory
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         this.configuration = configuration;
         this.rowCursorFactory = rowCursorFactory;
@@ -146,7 +146,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public ConcurrentTimeFrameCursor newTimeFrameCursor() {
         if (framingSupported) {
-            return new ConcurrentTimeFrameCursor(configuration, getMetadata());
+            return new ConcurrentTimeFrameCursorImpl(configuration, getMetadata());
         }
         return null;
     }

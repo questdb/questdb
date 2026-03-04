@@ -616,6 +616,113 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinFilterTimestampFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
+                                ('1970-01-02T00:00:01.000000Z', 'AX', 11)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            // Interval filter on the slave table.
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tsum
+                            0\t10.0\t5.0
+                            1\t10.0\t5.0
+                            2\t10.0\t5.0
+                            """,
+                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), sum(t.qty) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN (prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                            "ORDER BY sec_offs",
+                    null,
+                    true,
+                    true
+            );
+
+            // Same query, but with reordered columns in the slave subquery.
+            // This exercises SelectedConcurrentTimeFrameCursor.
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tavg1\tsum
+                            0\t10.0\t10.0\t5.0
+                            1\t10.0\t10.0\t5.0
+                            2\t10.0\t10.0\t5.0
+                            """,
+                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), avg(p.price0), sum(t.qty) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                            "ORDER BY sec_offs",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinFilterTimestampFilterSequential() throws Exception {
+        // Force the sequential (non-parallel) horizon join path to exercise
+        // SelectedTimeFrameCursor.getTimestampIndex(). When the slave subquery
+        // reorders columns so that the timestamp is NOT at position 0, the
+        // helper's binary search reads the wrong column.
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 5)
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('1970-01-01T00:00:01.000000Z', 'AX', 10),
+                                ('1970-01-02T00:00:01.000000Z', 'AX', 11)
+                            """
+            );
+
+            // Reordered columns: timestamp moves from position 0 to position 3.
+            // With the bug, the binary search reads the price column as a timestamp.
+            assertQueryNoLeakCheck(
+                    """
+                            sec_offs\tavg\tavg1\tsum
+                            0\t10.0\t10.0\t5.0
+                            1\t10.0\t10.0\t5.0
+                            2\t10.0\t10.0\t5.0
+                            """,
+                    "SELECT h.offset / " + getSecondsDivisor() + " AS sec_offs, avg(p.price), avg(p.price0), sum(t.qty) " +
+                            "FROM trades AS t " +
+                            "HORIZON JOIN (SELECT price, price price0, sym, ts FROM prices WHERE ts IN '1970-01-01') AS p ON (t.sym = p.sym) " +
+                            "RANGE FROM 0s TO 2s STEP 1s AS h " +
+                            "ORDER BY sec_offs",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyFunctionsFreedOnClose() throws Exception {
         // alloc() allocates native memory that is freed in close().
         // If keyFunctions are not freed in factory._close(), assertMemoryLeak() detects the leak.
@@ -767,6 +874,67 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             C\t5\t1\tnull
                             """,
                     sql,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinKeyedMultipleSlavePartitions() throws Exception {
+        // Tests seekEstimate with keyed ASOF and multiple slave partitions.
+        // Catches the timestamp scaling bug where seekEstimate overshoots to the
+        // last frame when master=NANO and slave=MICRO, missing correct matches
+        // in middle partitions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Each day has one trade with a distinct symbol
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T12:00:00.000000Z', 'A', 10),
+                                ('2024-01-02T12:00:00.000000Z', 'B', 20),
+                                ('2024-01-03T12:00:00.000000Z', 'C', 30)
+                            """
+            );
+
+            // Prices in 3 partitions (days) with matching symbols
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T06:00:00.000000Z', 'A', 100.0),
+                                ('2024-01-02T06:00:00.000000Z', 'B', 200.0),
+                                ('2024-01-03T06:00:00.000000Z', 'C', 300.0)
+                            """
+            );
+
+            // Each trade matches the latest price <= its timestamp with matching key.
+            // Trade A (day1 12:00) → price 100.0 (day1 06:00, sym A)
+            // Trade B (day2 12:00) → price 200.0 (day2 06:00, sym B)
+            // Trade C (day3 12:00) → price 300.0 (day3 06:00, sym C)
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tavg
+                            A\t100.0
+                            B\t200.0
+                            C\t300.0
+                            """,
+                    """
+                            SELECT t.sym, avg(p.price)
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY t.sym
+                            """,
                     null,
                     true,
                     true
@@ -1162,6 +1330,64 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     sql,
                     null,
                     false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinNotKeyedMultipleSlavePartitions() throws Exception {
+        // Tests seekEstimate with multiple slave partitions (not-keyed path).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (ts #TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Trades span 3 days
+            execute(
+                    """
+                            INSERT INTO trades VALUES
+                                ('2024-01-01T12:00:00.000000Z', 'A', 10),
+                                ('2024-01-02T12:00:00.000000Z', 'B', 20),
+                                ('2024-01-03T12:00:00.000000Z', 'C', 30)
+                            """
+            );
+
+            // Prices in 3 partitions (days)
+            execute(
+                    """
+                            INSERT INTO prices VALUES
+                                ('2024-01-01T06:00:00.000000Z', 100.0),
+                                ('2024-01-02T06:00:00.000000Z', 200.0),
+                                ('2024-01-03T06:00:00.000000Z', 300.0)
+                            """
+            );
+
+            // Each trade matches the latest price <= its timestamp.
+            // Trade A (day1 12:00) → price 100.0 (day1 06:00)
+            // Trade B (day2 12:00) → price 200.0 (day2 06:00)
+            // Trade C (day3 12:00) → price 300.0 (day3 06:00)
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tavg
+                            A\t100.0
+                            B\t200.0
+                            C\t300.0
+                            """,
+                    """
+                            SELECT t.sym, avg(p.price)
+                            FROM trades AS t
+                            HORIZON JOIN prices AS p
+                            RANGE FROM 0s TO 0s STEP 1s AS h
+                            ORDER BY t.sym
+                            """,
+                    null,
+                    true,
                     true
             );
         });

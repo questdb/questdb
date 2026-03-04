@@ -70,7 +70,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         this.recordCursorFactory = recordCursorFactory;
         this.filter = filter;
