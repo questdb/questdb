@@ -4944,7 +4944,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long destBitmapAddr = Unsafe.malloc(destBitmapSize, MemoryTag.NATIVE_O3);
                 Vect.memset(destBitmapAddr, destBitmapSize, 0);
 
-                long lagBitmapBase = -lagBitmapMappedAddr;
+                long lagBitmapBase = Math.abs(lagBitmapMappedAddr);
                 long lagBitShift = lagBitmapBitOffset & 7;
 
                 // Merge bits following the merge index
