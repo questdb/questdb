@@ -75,7 +75,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 receiver.runSerially();
             }
 
-            refreshTablesInBaseEngine();
             drainWalQueue();
             assertSql(
                     "count\n2\n",
@@ -99,7 +98,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 receiver.runSerially();
             }
 
-            refreshTablesInBaseEngine();
             drainWalQueue();
             assertSql(
                     "count\tsum\n10\t450\n",
@@ -128,7 +126,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 receiver.runSerially();
             }
 
-            refreshTablesInBaseEngine();
             drainWalQueue();
             assertSql(
                     "count\n3\n",
@@ -167,7 +164,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 receiver.runSerially();
             }
 
-            refreshTablesInBaseEngine();
             drainWalQueue();
             assertSql(
                     "count\tsum\n3\t6\n",
@@ -200,7 +196,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 receiver.runSerially();
             }
 
-            refreshTablesInBaseEngine();
             drainWalQueue();
             assertSql(
                     "id\tnote\n" +
@@ -226,7 +221,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 receiver.runSerially();
             }
 
-            refreshTablesInBaseEngine();
             drainWalQueue();
             assertSql(
                     "host\tusage\ttimestamp\n" +
@@ -252,7 +246,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 receiver.runSerially();
             }
 
-            refreshTablesInBaseEngine();
             drainWalQueue();
             assertSql(
                     "count\n5\n",
