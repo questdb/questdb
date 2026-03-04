@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.ExpressionTreeBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
@@ -41,8 +42,15 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReassociationMultiParams() throws Exception {
-        assertReassociation("d + coalesce(d + 1 + 2, 3, 4, 5)", "d + coalesce(d + (1 + 2), 3, 4, 5)");
+    public void testConcatenationIsAssociativeButNotCommutative() throws Exception {
+        // || is associative but not commutative, so Pattern B and Mirror A
+        // (which require commutativity) are skipped.
+        assertReassociation("('hello' || d) || 'world'", "'hello' || d || 'world'");
+        assertReassociation("'world' || (d || 'hello')", "'world' || (d || 'hello')");
+
+        // Pattern A and Mirror B don't require commutativity, so they still apply.
+        assertReassociation("d || 'hello' || 'world'", "d || ('hello' || 'world')");
+        assertReassociation("'world' || ('hello' || d)", "'world' || 'hello' || d");
     }
 
     @Test
@@ -58,6 +66,25 @@ public class ConstantReassociationTest extends AbstractCairoTest {
 
         // OR — Mirror A: C2 OR (col OR C1) (commutative)
         assertReassociation("true or (a or false)", "a or (true or false)");
+    }
+
+    @Test
+    public void testMismatchedOperatorsAreNotReassociated() throws Exception {
+        // Inner operator differs from outer — lhs.token != token, no reassociation
+        assertReassociation("d * 2 + 3", "d * 2 + 3");
+        assertReassociation("3 + d * 2", "3 + d * 2");
+    }
+
+    @Test
+    public void testNoReassociationForNonConstantSubtree() throws Exception {
+        // Reassociation is only applied to constant subtrees, so if the subtree contains a non-constant node, it should be left unchanged.
+        assertReassociation("1 + (a + b)", "1 + (a + b)");
+        assertReassociation("(a + b) + 1", "a + b + 1");
+    }
+
+    @Test
+    public void testReassociationMultiParams() throws Exception {
+        assertReassociation("d + coalesce(d + 1 + 2, 3, 4, 5)", "d + coalesce(d + (1 + 2), 3, 4, 5)");
     }
 
     @Test
@@ -107,9 +134,21 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testUnaryOperatorsAreNotReassociated() throws Exception {
+        // Unary operators (paramCount == 1) are left unchanged, but
+        // reassociation still applies inside their operand subtree.
+        assertReassociation("-d + 1 + 2", "-(d) + (1 + 2)");
+        assertReassociation("-(d + 1 + 2)", "-(d + (1 + 2))");
+        assertReassociation("3 + (-d)", "3 + -(d)");
+    }
+
     private void assertReassociation(String inputExpr, String expectedExpr) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ExpressionNode node = compiler.testParseExpression(inputExpr, (QueryModel) null);
+            ExpressionTreeBuilder listener = new ExpressionTreeBuilder();
+            compiler.testParseExpression(inputExpr, listener);
+            ExpressionNode node = listener.poll();
+            assert node != null;
             node.reassociateConstants(false);
             sink.clear();
             node.toSink(sink);

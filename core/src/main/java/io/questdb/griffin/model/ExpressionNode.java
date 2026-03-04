@@ -57,9 +57,14 @@ public class ExpressionNode implements Mutable, Sinkable {
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
     public boolean implemented;
     public boolean innerPredicate = false;
-    public boolean isConstantExpression;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
+    public boolean isConstantExpression;
     public ExpressionNode lhs;
+    // The expression parser (ExpressionParser.onNode) guarantees:
+    // - paramCount == 1: rhs is non-null, lhs is null.
+    // - paramCount == 2: both lhs and rhs are non-null.
+    // - paramCount > 2: children are stored in args; each entry is non-null.
+    // No later transformation violates these invariants.
     public int paramCount;
     public int position;
     public int precedence;
@@ -370,10 +375,9 @@ public class ExpressionNode implements Mutable, Sinkable {
         if (paramCount > 2) {
             // For n-ary operators, we reassociate inner arguments without changing the tree structure.
             for (int i = 0; i < paramCount; i++) {
-                final ExpressionNode arg = args.getQuick(i);
-                if (arg != null) {
-                    arg.reassociateConstants(cairoSqlLegacyOperatorPrecedence);
-                }
+                // Every args child is guaranteed non-null by the expression parser (ExpressionParser.onNode)
+                // and no later transformation violates this invariant.
+                args.getQuick(i).reassociateConstants(cairoSqlLegacyOperatorPrecedence);
             }
             return false;
         }
@@ -392,8 +396,11 @@ public class ExpressionNode implements Mutable, Sinkable {
             return true;
         }
 
+        // op is never null: every OPERATION node with paramCount == 2 gets its token
+        // from the operator registry during parsing or optimization, and the same
+        // registry is selected here via cairoSqlLegacyOperatorPrecedence.
         OperatorExpression op = OperatorExpression.chooseRegistry(cairoSqlLegacyOperatorPrecedence).getOperatorDefinition(token);
-        if (op == null || !op.isAssociative()) {
+        if (!op.isAssociative()) {
             return false;
         }
 
@@ -402,11 +409,10 @@ public class ExpressionNode implements Mutable, Sinkable {
         // which grandchild IS constant, the other one is implicitly NOT constant
         // — no need to check it.
 
-        if (rhsConst && lhs != null
-                && lhs.type == OPERATION
+        if (rhsConst && lhs.type == OPERATION
                 && lhs.paramCount == 2
                 && lhs.token.equals(token)) {
-            if (lhs.rhs != null && lhs.rhs.isConstantExpression) {
+            if (lhs.rhs.isConstantExpression) {
                 // Pattern A: (A op C1) op C2 → A op (C1 op C2)
                 ExpressionNode inner = lhs;
                 ExpressionNode a = inner.lhs;
@@ -417,7 +423,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 inner.lhs = c1;
                 inner.rhs = c2;
                 inner.isConstantExpression = true;
-            } else if (op.isCommutative() && lhs.lhs != null && lhs.lhs.isConstantExpression) {
+            } else if (op.isCommutative() && lhs.lhs.isConstantExpression) {
                 // Pattern B: (C1 op A) op C2 → A op (C1 op C2)
                 ExpressionNode inner = lhs;
                 ExpressionNode c1 = inner.lhs;
@@ -433,11 +439,10 @@ public class ExpressionNode implements Mutable, Sinkable {
             return false;
         }
 
-        if (lhsConst && rhs != null
-                && rhs.type == OPERATION
+        if (lhsConst && rhs.type == OPERATION
                 && rhs.paramCount == 2
                 && rhs.token.equals(token)) {
-            if (op.isCommutative() && rhs.rhs != null && rhs.rhs.isConstantExpression) {
+            if (op.isCommutative() && rhs.rhs.isConstantExpression) {
                 // Mirror A: C2 op (A op C1) → A op (C2 op C1)
                 ExpressionNode inner = rhs;
                 ExpressionNode c2 = lhs;
@@ -448,7 +453,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 inner.lhs = c2;
                 inner.rhs = c1;
                 inner.isConstantExpression = true;
-            } else if (rhs.lhs != null && rhs.lhs.isConstantExpression) {
+            } else if (rhs.lhs.isConstantExpression) {
                 // Mirror B: C2 op (C1 op A) → (C2 op C1) op A
                 ExpressionNode inner = rhs;
                 ExpressionNode c2 = lhs;
