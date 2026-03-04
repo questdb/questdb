@@ -1263,9 +1263,10 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         ParquetCompression.COMPRESSION_UNCOMPRESSED,
                         true,
                         false,
-                        1000,
-                        0,
-                        ParquetVersion.PARQUET_VERSION_V1
+                        1000L,
+                        0L,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
                 );
                 Assert.assertTrue(Files.exists(path.$()));
 
