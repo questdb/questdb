@@ -446,20 +446,15 @@ public class ExpressionNode implements Mutable, Sinkable {
                 // Mirror A: C2 op (A op C1) → A op (C2 op C1)
                 ExpressionNode inner = rhs;
                 ExpressionNode c2 = lhs;
-                ExpressionNode a = inner.lhs;
-                ExpressionNode c1 = inner.rhs;
-                this.lhs = a;
-                this.rhs = inner;
+                this.lhs = inner.lhs;
                 inner.lhs = c2;
-                inner.rhs = c1;
                 inner.isConstantExpression = true;
             } else if (rhs.lhs.isConstantExpression) {
                 // Mirror B: C2 op (C1 op A) → (C2 op C1) op A
                 ExpressionNode inner = rhs;
                 ExpressionNode c2 = lhs;
                 ExpressionNode c1 = inner.lhs;
-                ExpressionNode a = inner.rhs;
-                this.rhs = a;
+                this.rhs = inner.rhs;
                 this.lhs = inner;
                 inner.lhs = c2;
                 inner.rhs = c1;
