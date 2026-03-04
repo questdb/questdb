@@ -544,6 +544,69 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testMixedTimestampModes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                long ts1 = 1_645_747_200_000_000L; // 2022-02-25T00:00:00Z
+                long ts3 = 1_645_747_400_000_000L; // 2022-02-25T00:03:20Z
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    // row 1: explicit timestamp
+                    sender.table("mixed_ts")
+                            .symbol("sym", "explicit1")
+                            .longColumn("val", 1)
+                            .at(ts1, ChronoUnit.MICROS);
+                    // row 2: server-assigned timestamp
+                    sender.table("mixed_ts")
+                            .symbol("sym", "server1")
+                            .longColumn("val", 2)
+                            .atNow();
+                    // row 3: explicit timestamp again
+                    sender.table("mixed_ts")
+                            .symbol("sym", "explicit2")
+                            .longColumn("val", 3)
+                            .at(ts3, ChronoUnit.MICROS);
+                    // row 4: server-assigned timestamp
+                    sender.table("mixed_ts")
+                            .symbol("sym", "server2")
+                            .longColumn("val", 4)
+                            .atNow();
+                }
+
+                serverMain.awaitTable("mixed_ts");
+                serverMain.assertSql(
+                        "SELECT count() FROM mixed_ts",
+                        "count\n4\n"
+                );
+                // verify explicit timestamps are exact
+                serverMain.assertSql(
+                        "SELECT sym, val, timestamp FROM mixed_ts WHERE sym = 'explicit1'",
+                        """
+                                sym\tval\ttimestamp
+                                explicit1\t1\t2022-02-25T00:00:00.000000Z
+                                """
+                );
+                serverMain.assertSql(
+                        "SELECT sym, val, timestamp FROM mixed_ts WHERE sym = 'explicit2'",
+                        """
+                                sym\tval\ttimestamp
+                                explicit2\t3\t2022-02-25T00:03:20.000000Z
+                                """
+                );
+                // verify server-assigned rows have recent timestamps (not epoch or explicit ones)
+                serverMain.assertSql(
+                        "SELECT count() FROM mixed_ts WHERE sym IN ('server1', 'server2') AND timestamp > '2024-01-01'",
+                        "count\n2\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testNullDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
