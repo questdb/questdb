@@ -44,6 +44,8 @@ public interface QwpUdpReceiverConfiguration {
 
     int getMsgBufferSize();
 
+    int getMsgCount();
+
     NetworkFacade getNetworkFacade();
 
     int getPort();

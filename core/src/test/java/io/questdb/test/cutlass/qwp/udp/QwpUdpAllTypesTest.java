@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.udp;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
@@ -33,6 +34,7 @@ import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
+import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.network.Net;
@@ -42,17 +44,44 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.*;
 
+@RunWith(Parameterized.class)
 public class QwpUdpAllTypesTest extends AbstractCairoTest {
+
+    @FunctionalInterface
+    interface ReceiverFactory {
+        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
+    }
 
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
     private static final int PORT = 19002;
+
+    private final ReceiverFactory receiverFactory;
+
+    public QwpUdpAllTypesTest(String label, ReceiverFactory factory) {
+        this.receiverFactory = factory;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        List<Object[]> params = new ArrayList<>();
+        params.add(new Object[]{"base", (ReceiverFactory) QwpUdpReceiver::new});
+        if (Os.isLinux()) {
+            params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
+        }
+        return params;
+    }
 
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
@@ -122,7 +151,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                     ) TIMESTAMP(timestamp) PARTITION BY DAY WAL
                     """);
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_all", tb -> {
                     tb.getOrCreateColumn("b_bool", TYPE_BOOLEAN, false).addByte((byte) 1);
                     tb.getOrCreateColumn("b_byte", TYPE_BYTE, false).addByte((byte) 42);
@@ -170,7 +199,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testBoolean() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_bool")
                             .boolColumn("flag", true)
@@ -198,7 +227,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_byte (val BYTE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_byte", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_BYTE, false);
                     col.addByte((byte) 42);
@@ -222,7 +251,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_char (val CHAR, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_char", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_CHAR, false);
                     col.addShort((short) 'A');
@@ -246,7 +275,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_date (val DATE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 // DATE is millis since epoch: 2024-01-15T00:00:00Z = 1705276800000
                 sendDirectRow("t_date", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_DATE, true);
@@ -269,7 +298,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testDecimal128() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_dec128")
                             .decimalColumn("val", Decimal128.fromLong(123456789L, 4))
@@ -290,7 +319,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testDecimal256() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_dec256")
                             .decimalColumn("val", Decimal256.fromLong(9999912345L, 5))
@@ -311,7 +340,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testDecimal64() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_dec64")
                             .decimalColumn("val", new Decimal64(12345L, 2))
@@ -334,7 +363,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_darr1 (vals DOUBLE[], timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_darr1")
                             .doubleArray("vals", new double[]{1.1, 2.2, 3.3})
@@ -357,7 +386,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_darr2 (vals DOUBLE[][], timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_darr2")
                             .doubleArray("vals", new double[][]{{1.0, 2.0}, {3.0, 4.0}})
@@ -380,7 +409,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_darr3 (vals DOUBLE[][][], timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     double[][][] cube = {{{1.0, 2.0}, {3.0, 4.0}}, {{5.0, 6.0}, {7.0, 8.0}}};
                     sender.table("t_darr3")
@@ -402,7 +431,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testDoubleViaSender() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_dbl")
                             .doubleColumn("val", 2.718281828)
@@ -425,7 +454,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_float (val FLOAT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_float", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_FLOAT, false);
                     col.addFloat(3.14f);
@@ -449,7 +478,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_geo (val GEOHASH(6c), timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_geo", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_GEOHASH, true);
                     col.addGeoHash(GeoHashes.fromString("s24se0"), 30);
@@ -473,7 +502,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_int (val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_int", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_INT, false);
                     col.addInt(12345);
@@ -497,7 +526,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_l256 (val LONG256, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_l256", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_LONG256, true);
                     col.addLong256(
@@ -522,7 +551,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testLongViaSender() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_lng")
                             .longColumn("val", 9_876_543_210L)
@@ -545,7 +574,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_short (val SHORT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_short", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_SHORT, false);
                     col.addShort((short) 1234);
@@ -567,7 +596,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testStress100KRows() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(STRESS_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(STRESS_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(8000)) {
                     for (int i = 0; i < 100_000; i++) {
                         sender.table("t_stress100k")
@@ -596,7 +625,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testStress1KRows() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(4000)) {
                     for (int i = 0; i < 1000; i++) {
                         sender.table("t_stress")
@@ -625,7 +654,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testStringViaSender() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_str")
                             .stringColumn("msg", "hello world")
@@ -646,7 +675,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testSymbolDictionaryOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(400)) {
                     for (int i = 0; i < 200; i++) {
                         sender.table("t_sym_overflow")
@@ -688,7 +717,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_tscol")
                             .timestampColumn("created", 1_705_276_800_000_000L, ChronoUnit.MICROS)
@@ -709,7 +738,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     @Test
     public void testTimestampNanos() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("t_tsnano")
                             .timestampColumn("created", 1_705_276_800_000_000_123L, ChronoUnit.NANOS)
@@ -732,7 +761,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_uuid (val UUID, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 // UUID: 550e8400-e29b-41d4-a716-446655440000
                 // hi = 0x550e8400e29b41d4, lo = 0xa716446655440000
                 sendDirectRow("t_uuid", tb -> {
@@ -758,7 +787,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_varchar (val VARCHAR, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
 
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 sendDirectRow("t_varchar", tb -> {
                     QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_VARCHAR, true);
                     col.addString("hello varchar");

@@ -24,10 +24,12 @@
 
 package io.questdb.test.cutlass.qwp.udp;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
 import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
+import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.network.Net;
@@ -35,14 +37,41 @@ import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+@RunWith(Parameterized.class)
 public class QwpUdpInsertTest extends AbstractCairoTest {
+
+    @FunctionalInterface
+    interface ReceiverFactory {
+        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
+    }
 
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
     private static final int PORT = 19002;
+
+    private final ReceiverFactory receiverFactory;
+
+    public QwpUdpInsertTest(String label, ReceiverFactory factory) {
+        this.receiverFactory = factory;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        List<Object[]> params = new ArrayList<>();
+        params.add(new Object[]{"base", (ReceiverFactory) QwpUdpReceiver::new});
+        if (Os.isLinux()) {
+            params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
+        }
+        return params;
+    }
 
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
@@ -81,7 +110,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testAutoFlushManyColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(300)) {
                     for (int i = 0; i < 20; i++) {
                         sender.table("auto_many_types")
@@ -117,7 +146,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testAutoFlushMultipleSplitsValueCorrectness() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(200)) {
                     for (int i = 0; i < 100; i++) {
                         sender.table("auto_splits")
@@ -158,7 +187,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testAutoFlushSmallMtu() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(200)) {
                     for (int i = 0; i < 50; i++) {
                         sender.table("auto_small")
@@ -185,7 +214,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testAutoFlushValueCorrectness() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(200)) {
                     for (int i = 0; i < 50; i++) {
                         sender.table("auto_values")
@@ -217,7 +246,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testAutoFlushWithAtNow() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(200)) {
                     for (int i = 0; i < 30; i++) {
                         sender.table("auto_at_now")
@@ -242,7 +271,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testAutoFlushWithString() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(300)) {
                     for (int i = 0; i < 50; i++) {
                         sender.table("auto_string")
@@ -269,7 +298,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testAutoFlushWithSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(200)) {
                     for (int i = 0; i < 50; i++) {
                         sender.table("auto_sym")
@@ -296,7 +325,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testCancelRowAfterAutoFlush() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(200)) {
                     // Fill up enough rows to ensure auto-flush triggers on the next at()
                     for (int i = 0; i < 10; i++) {
@@ -332,7 +361,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testCancelRowBetweenCompleteRows() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     // Row 1 -- complete
                     sender.table("cancel_between")
@@ -365,7 +394,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testCancelRowDiscardsPartialRow() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     // Partial row -- cancelled
                     sender.table("cancel_partial")
@@ -394,7 +423,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testCancelRowNoOpWhenNoRowInProgress() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("cancel_noop");
                     sender.cancelRow();
@@ -418,7 +447,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testCloseFlushes() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 // No explicit flush -- sender close should flush
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("close_flush")
@@ -444,7 +473,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testManyDatagramsWithLowCommitRate() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     for (int i = 0; i < 20; i++) {
                         sender.table("low_commit")
@@ -467,7 +496,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testMultiRow() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     for (int i = 0; i < 10; i++) {
                         sender.table("multi_row")
@@ -490,7 +519,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testMultiTable() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     for (int i = 0; i < 3; i++) {
                         sender.table("table_a")
@@ -522,7 +551,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testMultiTableDifferentSchemas() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("schema_a")
                             .symbol("region", "us-east")
@@ -554,7 +583,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testMultiTableInterleavedRows() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("interleave_a")
                             .longColumn("x", 1L)
@@ -592,7 +621,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testMultiTableSeparateFlushes() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("sep_flush_a")
                             .longColumn("v", 1L)
@@ -628,7 +657,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testMultiTableSwitchBackToSameTable() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("switchback_a")
                             .longColumn("x", 1L)
@@ -662,7 +691,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testMultipleDatagrams() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     // First datagram
                     sender.table("multi_dgram")
@@ -696,7 +725,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testNullableColumn() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     // Row with string
                     sender.table("nullable_test")
@@ -731,7 +760,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testNullableDouble() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("nullable_double")
                             .longColumn("id", 1L)
@@ -763,7 +792,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testNullableLong() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("nullable_long")
                             .longColumn("id", 1L)
@@ -795,7 +824,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testSingleRow() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("single_row")
                             .symbol("host", "srv-1")
@@ -818,7 +847,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testSymbolRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     for (int i = 0; i < 5; i++) {
                         sender.table("sym_trip")
@@ -846,7 +875,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     @Test
     public void testTableSwitchTriggersFlush() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(LOW_COMMIT_RATE_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
                 try (QwpUdpSender sender = newSender(65535)) {
                     // Add rows to table "a"
                     for (int i = 0; i < 3; i++) {

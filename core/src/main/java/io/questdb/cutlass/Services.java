@@ -50,6 +50,7 @@ import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
+import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -284,8 +285,12 @@ public class Services {
             QwpUdpReceiverConfiguration config,
             CairoEngine cairoEngine
     ) {
-        // TODO: on Linux, use LinuxMMQwpUdpReceiver with recvmmsg (see QWP_UDP_DESIGN.md)
-        QwpUdpReceiver receiver = new QwpUdpReceiver(config, cairoEngine);
+        QwpUdpReceiver receiver;
+        if (Os.isLinux()) {
+            receiver = new LinuxMMQwpUdpReceiver(config, cairoEngine);
+        } else {
+            receiver = new QwpUdpReceiver(config, cairoEngine);
+        }
         receiver.start();
         return receiver;
     }

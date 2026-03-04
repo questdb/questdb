@@ -55,27 +55,27 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
 public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(QwpUdpReceiver.class);
 
+    protected final int bufLen;
+    protected final int commitRate;
+    protected final NetworkFacade nf;
+    protected final QwpTudCache tudCache;
     private final long buf;
-    private final int bufLen;
-    private final int commitRate;
     private final QwpUdpReceiverConfiguration configuration;
     private final SOCountDownLatch halted = new SOCountDownLatch(1);
     private final QwpMessageCursor messageCursor;
     private final QwpMessageHeader messageHeader;
-    private final NetworkFacade nf;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
-    private final QwpTudCache tudCache;
     private final QwpWalAppender walAppender;
 
+    protected long fd;
+    protected long processedCount;
+    protected long totalCount;
     private long droppedBadMagicCount;
     private long droppedBadVersionCount;
     private long droppedParseErrorCount;
     private long droppedTooShortCount;
     private long droppedTruncatedCount;
-    private long fd;
-    private long processedCount;
-    private long totalCount;
 
     public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine) {
         this.configuration = configuration;
@@ -331,7 +331,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void processDatagram(long address, int length) {
+    protected void processDatagram(long address, int length) {
         if (length < HEADER_SIZE) {
             droppedTooShortCount++;
             return;

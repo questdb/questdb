@@ -313,6 +313,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
     private final int qwpUdpMsgBufferSize;
+    private final int qwpUdpMsgCount;
     private final boolean qwpUdpOwnThread;
     private final int qwpUdpOwnThreadAffinity;
     private final int qwpUdpReceiveBufferSize;
@@ -1744,6 +1745,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
             this.qwpUdpCommitRate = getInt(properties, env, PropertyKey.QWP_UDP_COMMIT_RATE, 1_048_576);
             this.qwpUdpMsgBufferSize = getIntSize(properties, env, PropertyKey.QWP_UDP_MSG_BUFFER_SIZE, 65_536);
+            this.qwpUdpMsgCount = getInt(properties, env, PropertyKey.QWP_UDP_MSG_COUNT, 10_000);
             this.qwpUdpReceiveBufferSize = getIntSize(properties, env, PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE, -1);
             this.qwpUdpEnabled = getBoolean(properties, env, PropertyKey.QWP_UDP_ENABLED, false);
             this.qwpUdpOwnThreadAffinity = getInt(properties, env, PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY, -1);
@@ -6369,6 +6371,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMsgBufferSize() {
             return qwpUdpMsgBufferSize;
+        }
+
+        @Override
+        public int getMsgCount() {
+            return qwpUdpMsgCount;
         }
 
         @Override

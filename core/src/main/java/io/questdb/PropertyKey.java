@@ -582,6 +582,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     QWP_UDP_ENABLED("qwp.udp.enabled"),
     QWP_UDP_JOIN("qwp.udp.join"),
     QWP_UDP_MSG_BUFFER_SIZE("qwp.udp.msg.buffer.size"),
+    QWP_UDP_MSG_COUNT("qwp.udp.msg.count"),
     QWP_UDP_OWN_THREAD("qwp.udp.own.thread"),
     QWP_UDP_OWN_THREAD_AFFINITY("qwp.udp.own.thread.affinity"),
     QWP_UDP_RECEIVE_BUFFER_SIZE("qwp.udp.receive.buffer.size"),

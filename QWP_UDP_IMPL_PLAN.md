@@ -297,7 +297,7 @@ it. This is a pure refactoring -- behavior is unchanged.
   each with its own dictionary. Receiver ingests all rows correctly.
 
 
-## Iteration 6: Linux `recvmmsg` receiver variant `[ ]`
+## Iteration 6: Linux `recvmmsg` receiver variant `[x]`
 
 **Goal:** On Linux, receive multiple datagrams per syscall for significantly
 higher throughput. The `recvmmsg(2)` syscall returns up to N datagrams in a
@@ -316,7 +316,7 @@ in one call, returning them in a pre-allocated `mmsghdr` vector. The existing
 ILP UDP receiver uses this with a batch size of 10,000 (`msgCount` config
 property) and sees substantial throughput improvement on Linux.
 
-### What to build `[ ]`
+### What to build `[x]`
 
 **`LinuxMMQwpUdpReceiver`** -- extends or parallels `QwpUdpReceiver`:
 
@@ -347,9 +347,9 @@ core/src/main/java/io/questdb/cutlass/qwp/server/
 
 ### Tests
 
-- `[ ]` All existing `QwpUdpInsertTest` and `QwpUdpMalformedTest` tests pass
+- `[x]` All existing `QwpUdpInsertTest` and `QwpUdpMalformedTest` tests pass
   with the Linux variant (run on Linux CI).
-- `[ ]` `QwpUdpServerMainTest` E2E passes on Linux with the `recvmmsg` variant
+- `[x]` `QwpUdpServerMainTest` E2E passes on Linux with the `recvmmsg` variant
   auto-selected.
 - `[ ]` Throughput micro-benchmark: send 100K datagrams over loopback, compare
   wall-clock time for `QwpUdpReceiver` vs `LinuxMMQwpUdpReceiver`. The

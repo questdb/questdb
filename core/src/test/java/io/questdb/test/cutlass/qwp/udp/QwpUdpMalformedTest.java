@@ -24,9 +24,11 @@
 
 package io.questdb.test.cutlass.qwp.udp;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
 import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
+import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.network.Net;
@@ -36,15 +38,42 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
+@RunWith(Parameterized.class)
 public class QwpUdpMalformedTest extends AbstractCairoTest {
+
+    @FunctionalInterface
+    interface ReceiverFactory {
+        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
+    }
 
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
     private static final int PORT = 19002;
+
+    private final ReceiverFactory receiverFactory;
+
+    public QwpUdpMalformedTest(String label, ReceiverFactory factory) {
+        this.receiverFactory = factory;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        List<Object[]> params = new ArrayList<>();
+        params.add(new Object[]{"base", (ReceiverFactory) QwpUdpReceiver::new});
+        if (Os.isLinux()) {
+            params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
+        }
+        return params;
+    }
 
     private static final QwpUdpReceiverConfiguration RCVR_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
@@ -66,7 +95,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testDuplicateDatagramBothIngested() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 // identical data sent twice
                 sendValidRow("dup_test", 1L, 1_000_000L);
                 sendValidRow("dup_test", 1L, 1_000_000L);
@@ -86,7 +115,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testInvalidFlagsBothCompressions() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 // flags = 0x03 means both LZ4 (0x01) and Zstd (0x02) set
                 byte[] header = createHeader(
                         0x34504C49, // "ILP4"
@@ -111,7 +140,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testInvalidMagicAllZeros() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 sendRawBytes(new byte[12]);
                 sendValidRow("magic_zeros", 1L, 1_000_000L);
                 drainReceiver(receiver);
@@ -130,7 +159,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testInvalidMagicILP3() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 byte[] header = createHeader(
                         0x33504C49, // "ILP3" in little-endian
                         (byte) 1, (byte) 0, 0, 0L
@@ -153,7 +182,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testMultipleMalformedThenValid() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 // too short
                 sendRawBytes(new byte[]{0, 0, 0, 0});
                 // bad magic
@@ -184,7 +213,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testOutOfOrderTimestampsBothIngested() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 sendValidRow("ooo_test", 1L, 2_000_000L);
                 sendValidRow("ooo_test", 2L, 1_000_000L);
                 drainReceiver(receiver);
@@ -203,7 +232,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testPayloadLengthExceedsDatagram() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 byte[] header = createHeader(
                         0x34504C49, // "ILP4"
                         (byte) 1, (byte) 0, 1, 1000L
@@ -226,7 +255,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testPayloadTooLarge() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 // payloadLength = 0x7FFFFFFF (>16MB default max) triggers PAYLOAD_TOO_LARGE
                 byte[] header = createHeader(
                         0x34504C49, // "ILP4"
@@ -252,7 +281,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testRandomBytes() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 Random rnd = new Random(42);
                 byte[] garbage = new byte[256];
                 rnd.nextBytes(garbage);
@@ -274,7 +303,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testTooShortDatagram() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 sendRawBytes(new byte[]{0, 0, 0, 0});
                 sendValidRow("short_test", 1L, 1_000_000L);
                 drainReceiver(receiver);
@@ -293,7 +322,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testTooShortElevenBytes() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 sendRawBytes(new byte[11]);
                 sendValidRow("short11", 1L, 1_000_000L);
                 drainReceiver(receiver);
@@ -312,7 +341,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testTruncatedColumnData() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 // Build a table block with valid schema but malformed SYMBOL column data.
                 // The SYMBOL column data starts with a dictionary count varint.
                 // We fill it with 0x80 continuation bytes that never terminate,
@@ -357,7 +386,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testTruncatedTableName() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 byte[] header = createHeader(
                         0x34504C49, // "ILP4"
                         (byte) 1, (byte) 0, 1, 2L
@@ -384,7 +413,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testWrongVersion() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 byte[] header = createHeader(
                         0x34504C49, // "ILP4"
                         (byte) 2, (byte) 0, 0, 0L
@@ -407,7 +436,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     @Test
     public void testZeroPayloadWithNonZeroTableCount() throws Exception {
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = new QwpUdpReceiver(RCVR_CONF, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 byte[] header = createHeader(
                         0x34504C49, // "ILP4"
                         (byte) 1, (byte) 0, 1, 0L
