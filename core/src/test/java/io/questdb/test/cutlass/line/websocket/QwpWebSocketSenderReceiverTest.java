@@ -2737,15 +2737,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                StringBuilder largeString = new StringBuilder();
-                for (int i = 0; i < 1000; i++) {
-                    largeString.append("x");
-                }
-
+                String largeString = "x".repeat(1000);
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     sender.table("ws_test_large_string")
                             .symbol("id", "row1")
-                            .stringColumn("large_data", largeString.toString())
+                            .stringColumn("large_data", largeString)
                             .at(1000000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
