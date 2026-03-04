@@ -9,9 +9,9 @@ use super::{Packed, Unpackable, Unpacked};
 pub struct Decoder<'a, T: Unpackable> {
     packed: std::slice::Chunks<'a, u8>,
     num_bits: usize,
-    remaining: usize,          // in number of items
-    current_pack_index: usize, // invariant: < T::PACK_LENGTH
-    unpacked: T::Unpacked,     // has the current unpacked values.
+    pub remaining: usize,          // in number of items
+    pub current_pack_index: usize, // invariant: < T::PACK_LENGTH
+    pub unpacked: T::Unpacked,     // has the current unpacked values.
 }
 
 #[inline]
@@ -60,6 +60,16 @@ impl<'a, T: Unpackable> Decoder<'a, T> {
 }
 
 impl<'a, T: Unpackable> Decoder<'a, T> {
+    /// Decode the next pack of values. Call this after consuming all values
+    /// from the current pack (i.e., when `current_pack_index == T::Unpacked::LENGTH`).
+    #[inline]
+    pub fn decode_next_pack(&mut self) {
+        if let Some(packed) = self.packed.next() {
+            decode_pack::<T>(packed, self.num_bits, &mut self.unpacked);
+            self.current_pack_index = 0;
+        }
+    }
+
     #[inline]
     pub fn advance(&mut self, n: usize) -> usize {
         let n = n.min(self.remaining);
