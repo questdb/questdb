@@ -30,10 +30,13 @@ import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.network.Net;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.TimeUnit;
 
 public class QwpUdpInsertTest extends AbstractCairoTest {
 
@@ -72,7 +75,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                             .doubleColumn("usage", 60.0)
                             .at(2_000_000L, ChronoUnit.MICROS);
                 }
-                receiver.runSerially();
+                drainReceiver(receiver);
             }
 
             drainWalQueue();
@@ -95,7 +98,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     }
                     sender.flush();
                 }
-                receiver.runSerially();
+                drainReceiver(receiver);
             }
 
             drainWalQueue();
@@ -123,7 +126,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     }
                     sender.flush();
                 }
-                receiver.runSerially();
+                drainReceiver(receiver);
             }
 
             drainWalQueue();
@@ -161,7 +164,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                             .at(3_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
-                receiver.runSerially();
+                drainReceiver(receiver);
             }
 
             drainWalQueue();
@@ -193,7 +196,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                             .at(3_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
-                receiver.runSerially();
+                drainReceiver(receiver);
             }
 
             drainWalQueue();
@@ -218,7 +221,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                             .at(1_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
-                receiver.runSerially();
+                drainReceiver(receiver);
             }
 
             drainWalQueue();
@@ -243,7 +246,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     }
                     sender.flush();
                 }
-                receiver.runSerially();
+                drainReceiver(receiver);
             }
 
             drainWalQueue();
@@ -256,6 +259,21 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     "SELECT count_distinct(region) AS count_distinct FROM sym_trip"
             );
         });
+    }
+
+    private static void drainReceiver(QwpUdpReceiver receiver) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        boolean everReceived = false;
+        while (System.nanoTime() < deadline) {
+            boolean received = receiver.runSerially();
+            if (received) {
+                everReceived = true;
+            } else if (everReceived) {
+                break;
+            }
+            Os.pause();
+        }
+        Assert.assertTrue("timeout: receiver did not process any datagrams", everReceived);
     }
 
     private static QwpUdpSender newSender() {
