@@ -1996,6 +1996,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         newMapping = new SymbolToSymbolJoinKeyMapping(configuration, masterIndex, slaveIndex);
                         break;
                     case VARCHAR:
+                    case VARCHAR_SLICE:
                         newMapping = new VarcharToSymbolJoinKeyMapping(masterIndex, slaveIndex);
                         break;
                     case STRING:
@@ -8773,6 +8774,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case LONG256:
                     case STRING:
                     case VARCHAR:
+                    case VARCHAR_SLICE:
                     case SYMBOL:
                     case UUID:
                     case GEOBYTE:

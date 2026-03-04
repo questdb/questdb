@@ -1039,6 +1039,68 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVarcharSliceInsertAsSelect() throws Exception {
+        // INSERT INTO ... SELECT ... FROM read_parquet() must correctly copy
+        // VARCHAR_SLICE columns into a native VARCHAR column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar('hello', 'world', NULL, '') AS v" +
+                    " FROM long_sequence(100))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                execute("CREATE TABLE y (id LONG, v VARCHAR)");
+                execute("INSERT INTO y SELECT * FROM read_parquet('x.parquet')");
+
+                sink.clear();
+                sink.put("SELECT * FROM y ORDER BY id");
+                assertSqlCursors0("SELECT * FROM x ORDER BY id");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharSliceLatestOn() throws Exception {
+        // LATEST ON with a VARCHAR_SLICE column from read_parquet() must not
+        // throw "invalid type" error.
+        // Parallel parquet scan does not support LATEST ON, so skip in parallel mode.
+        if (parallel) {
+            return;
+        }
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_varchar('a', 'b', 'c') AS v," +
+                    " x AS val," +
+                    " timestamp_sequence('2024-01-01', 1000000) AS ts" +
+                    " FROM long_sequence(20)) TIMESTAMP(ts)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                sink.clear();
+                sink.put("SELECT * FROM read_parquet('x.parquet') LATEST ON ts PARTITION BY v");
+                assertSqlCursors0("SELECT * FROM x LATEST ON ts PARTITION BY v");
+            }
+        });
+    }
+
     private static void assertSqlCursors0(CharSequence expectedSql) throws SqlException {
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(
