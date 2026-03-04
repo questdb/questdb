@@ -1478,8 +1478,8 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         ParquetCompression.COMPRESSION_UNCOMPRESSED,
                         true,
                         false,
-                        1000,
-                        0,
+                        1000L,
+                        0L,
                         ParquetVersion.PARQUET_VERSION_V1,
                         0.0
                 );
