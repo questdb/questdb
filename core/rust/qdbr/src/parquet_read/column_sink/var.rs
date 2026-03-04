@@ -1,5 +1,5 @@
 use crate::allocator::AcVec;
-use crate::parquet::error::{ParquetErrorReason, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetErrorReason, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
@@ -503,7 +503,15 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
         // The header uses the VARCHAR-compatible format: (len << 4) | flags.
         // The spill marker (bit 31 of bytes 4-7) distinguishes spill entries
         // (offsets needing fixup) from non-spill entries (absolute pointers).
-        let len = value.len() as u32;
+        let len = value.len();
+        if len >= (1 << 28) {
+            return Err(fmt_err!(
+                Layout,
+                "varchar_slice spill value length {} exceeds 28-bit header capacity",
+                len
+            ));
+        }
+        let len = len as u32;
         let header: u32 = (len << 4) | if self.ascii || len == 0 { 3 } else { 1 };
         let combined = (SPILL_MARKER as u64) << 32 | (header as u64);
         self.buffers
@@ -597,4 +605,3 @@ pub fn fixup_varchar_slice_spill_pointers(bufs: &mut ColumnChunkBuffers) {
         aux[entry_offset + 8..entry_offset + 16].copy_from_slice(&ptr.to_le_bytes());
     }
 }
-
