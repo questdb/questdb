@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -35,6 +36,10 @@ import org.junit.Test;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_LONG256;
+import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
+import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_UUID;
 
 /**
  * End-to-end integration tests for ILP v4 WebSocket sender.
@@ -534,6 +539,274 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("multi_row");
                 serverMain.assertSql("select count() from multi_row", "count\n10\n");
+            }
+        });
+    }
+
+    @Test
+    public void testNullDouble() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("test_null_double")
+                            .doubleColumn("value", 3.14)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    // NaN is the NULL sentinel for DOUBLE columns
+                    sender.table("test_null_double")
+                            .doubleColumn("value", Double.NaN)
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                    sender.table("test_null_double")
+                            .doubleColumn("value", 2.72)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_null_double");
+                serverMain.assertSql(
+                        "SELECT value FROM test_null_double ORDER BY timestamp",
+                        """
+                                value
+                                3.14
+                                null
+                                2.72
+                                """
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_double WHERE value IS NULL",
+                        "count\n1\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNullLong() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("test_null_long")
+                            .longColumn("value", 42L)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    // Long.MIN_VALUE is the NULL sentinel for LONG columns
+                    sender.table("test_null_long")
+                            .longColumn("value", Long.MIN_VALUE)
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                    sender.table("test_null_long")
+                            .longColumn("value", 99L)
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_null_long");
+                serverMain.assertSql(
+                        "SELECT value FROM test_null_long ORDER BY timestamp",
+                        """
+                                value
+                                42
+                                null
+                                99
+                                """
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_long WHERE value IS NULL",
+                        "count\n1\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNullLong256() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    // Use fast-path API to send null LONG256 via null bitmap
+                    QwpTableBuffer buf = sender.getTableBuffer("test_null_long256");
+                    QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("value", TYPE_LONG256, true);
+
+                    // Row 1: non-null value
+                    col.addLong256(1L, 2L, 3L, 4L);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    // Row 2: null
+                    col.addNull();
+                    sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
+                    // Row 3: non-null value
+                    col.addLong256(5L, 6L, 7L, 8L);
+                    sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_null_long256");
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_long256 WHERE value IS NULL",
+                        "count\n1\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_long256 WHERE value IS NOT NULL",
+                        "count\n2\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNullMixed() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    for (int i = 0; i < 20; i++) {
+                        sender.table("test_null_mixed")
+                                .stringColumn("s", i % 2 == 0 ? "val_" + i : null)
+                                .longColumn("l", i % 3 == 0 ? Long.MIN_VALUE : i)
+                                .doubleColumn("d", i % 4 == 0 ? Double.NaN : i * 1.5)
+                                .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                }
+
+                serverMain.awaitTable("test_null_mixed");
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_mixed",
+                        "count\n20\n"
+                );
+                // 10 odd rows have null strings
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_mixed WHERE s IS NULL",
+                        "count\n10\n"
+                );
+                // Rows 0, 3, 6, 9, 12, 15, 18 → 7 null longs
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_mixed WHERE l IS NULL",
+                        "count\n7\n"
+                );
+                // Rows 0, 4, 8, 12, 16 → 5 null doubles
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_mixed WHERE d IS NULL",
+                        "count\n5\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNullString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("test_null_string")
+                            .stringColumn("message", "hello")
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.table("test_null_string")
+                            .stringColumn("message", null)
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                    sender.table("test_null_string")
+                            .stringColumn("message", "world")
+                            .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_null_string");
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_string",
+                        "count\n3\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_string WHERE message IS NULL",
+                        "count\n1\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_string WHERE message IS NOT NULL",
+                        "count\n2\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNullTimestamp() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    // Use fast-path API to send null timestamp via null bitmap
+                    QwpTableBuffer buf = sender.getTableBuffer("test_null_ts");
+                    QwpTableBuffer.ColumnBuffer tsCol = buf.getOrCreateColumn("event_time", TYPE_TIMESTAMP, true);
+
+                    // Row 1: non-null timestamp
+                    tsCol.addLong(1_609_459_200_000_000L);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    // Row 2: null timestamp
+                    tsCol.addNull();
+                    sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
+                    // Row 3: non-null timestamp
+                    tsCol.addLong(1_609_459_200_000_001L);
+                    sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_null_ts");
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_ts WHERE event_time IS NULL",
+                        "count\n1\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_ts WHERE event_time IS NOT NULL",
+                        "count\n2\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNullUuid() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    // Use fast-path API to send null UUID via null bitmap
+                    QwpTableBuffer buf = sender.getTableBuffer("test_null_uuid");
+                    QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("id", TYPE_UUID, true);
+
+                    // Row 1: non-null UUID
+                    col.addUuid(0x0123456789ABCDEFL, 0xFEDCBA9876543210L);
+                    sender.at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    // Row 2: null UUID
+                    col.addNull();
+                    sender.at(1_000_000_000_001L, ChronoUnit.MICROS);
+                    // Row 3: non-null UUID
+                    col.addUuid(0xAAAABBBBCCCCDDDDL, 0x1111222233334444L);
+                    sender.at(1_000_000_000_002L, ChronoUnit.MICROS);
+                }
+
+                serverMain.awaitTable("test_null_uuid");
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_uuid WHERE id IS NULL",
+                        "count\n1\n"
+                );
+                serverMain.assertSql(
+                        "SELECT count() FROM test_null_uuid WHERE id IS NOT NULL",
+                        "count\n2\n"
+                );
             }
         });
     }
