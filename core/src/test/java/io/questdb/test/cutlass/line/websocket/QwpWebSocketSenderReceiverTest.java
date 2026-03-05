@@ -3000,6 +3000,46 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testLargePayloadPerRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "1048576"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // ~100KB string per row
+                String largeString = "x".repeat(100_000);
+                // 10K-element array per row (~80KB)
+                double[] largeArray = new double[10_000];
+                for (int i = 0; i < largeArray.length; i++) {
+                    largeArray[i] = i * 0.01;
+                }
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 3; i++) {
+                        sender.table("ws_test_large_payload")
+                                .symbol("id", "row" + i)
+                                .stringColumn("big_text", largeString)
+                                .doubleArray("big_array", largeArray)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                }
+
+                serverMain.awaitTable("ws_test_large_payload");
+                serverMain.assertSql(
+                        "SELECT count() FROM ws_test_large_payload",
+                        "count\n3\n"
+                );
+                serverMain.assertSql(
+                        "SELECT length(big_text) FROM ws_test_large_payload LIMIT 1",
+                        "length\n100000\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testLargeStringColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
