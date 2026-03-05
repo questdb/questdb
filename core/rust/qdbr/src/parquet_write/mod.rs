@@ -1,4 +1,5 @@
 use num_traits::AsPrimitive;
+use qdb_core::col_type::nulls;
 
 pub mod array;
 mod binary;
@@ -34,19 +35,46 @@ pub mod bench {
     pub use super::varchar::{varchar_to_dict_pages, varchar_to_page};
 }
 
+/// Trait for detecting QuestDB's in-band null sentinel values in fixed-size columns.
+///
+/// QuestDB does not use a separate validity bitmap for columnar data. Instead, each
+/// fixed-size type reserves a specific sentinel value to represent NULL. The canonical
+/// definitions live in [`qdb_core::col_type::nulls`].
+///
+/// ## Sentinel values by type
+///
+/// | QuestDB type    | Rust type | Sentinel                   |
+/// |-----------------|-----------|----------------------------|
+/// | Int             | `i32`     | `i32::MIN`                 |
+/// | Long / Timestamp| `i64`     | `i64::MIN`                 |
+/// | Float           | `f32`     | `NaN`                      |
+/// | Double          | `f64`     | `NaN`                      |
+/// | GeoHash(byte)   | `i8`      | `-1`                       |
+/// | GeoHash(short)  | `i16`     | `-1`                       |
+/// | GeoHash(int)    | `i32`     | `-1`                       |
+/// | GeoHash(long)   | `i64`     | `-1`                       |
+/// | IPv4            | `i32`     | `0`                        |
+/// | Decimal128      | `(i64, u64)` | `(i64::MIN, 0)`        |
+/// | Decimal256      | 4×i64     | `(i64::MIN, 0, 0, 0)`     |
+///
+/// **Non-nullable types** (Boolean, Byte, Short, Char) use `Repetition::Required`
+/// in the Parquet schema and do not implement this trait.
+///
+/// **Variable-size types** (String, Binary, Varchar) detect nulls via length-based
+/// checks rather than sentinel values, so they also do not implement this trait.
 pub trait Nullable {
     fn is_null(&self) -> bool;
 }
 
 impl Nullable for i32 {
     fn is_null(&self) -> bool {
-        *self == i32::MIN
+        *self == nulls::INT
     }
 }
 
 impl Nullable for i64 {
     fn is_null(&self) -> bool {
-        *self == i64::MIN
+        *self == nulls::LONG
     }
 }
 
@@ -67,7 +95,7 @@ pub struct GeoByte(i8);
 
 impl Nullable for GeoByte {
     fn is_null(&self) -> bool {
-        self.0 == -1
+        self.0 == nulls::GEOHASH_BYTE
     }
 }
 
@@ -82,7 +110,7 @@ pub struct GeoShort(i16);
 
 impl Nullable for GeoShort {
     fn is_null(&self) -> bool {
-        self.0 == -1
+        self.0 == nulls::GEOHASH_SHORT
     }
 }
 
@@ -97,7 +125,7 @@ pub struct GeoInt(i32);
 
 impl Nullable for GeoInt {
     fn is_null(&self) -> bool {
-        self.0 == -1
+        self.0 == nulls::GEOHASH_INT
     }
 }
 
@@ -112,7 +140,7 @@ pub struct GeoLong(i64);
 
 impl Nullable for GeoLong {
     fn is_null(&self) -> bool {
-        self.0 == -1
+        self.0 == nulls::GEOHASH_LONG
     }
 }
 
@@ -127,7 +155,7 @@ pub struct IPv4(i32);
 
 impl Nullable for IPv4 {
     fn is_null(&self) -> bool {
-        self.0 == 0
+        self.0 == nulls::IPV4
     }
 }
 
