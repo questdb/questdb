@@ -377,16 +377,16 @@ pub fn encode_dict_rle_pages(
 pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
     let sizeof_t = mem::size_of::<T>();
     assert_eq!(slice.len() % sizeof_t, 0);
-    debug_assert!(
-        slice.as_ptr() as usize % mem::align_of::<T>() == 0,
-        "transmute_slice: pointer {:p} is not aligned for {} (align = {})",
-        slice.as_ptr(),
-        std::any::type_name::<T>(),
-        mem::align_of::<T>(),
-    );
     if slice.is_empty() {
         &[]
     } else {
+        debug_assert!(
+            slice.as_ptr() as usize % mem::align_of::<T>() == 0,
+            "transmute_slice: pointer {:p} is not aligned for {} (align = {})",
+            slice.as_ptr(),
+            std::any::type_name::<T>(),
+            mem::align_of::<T>(),
+        );
         // SAFETY: Caller guarantees alignment and valid content.
         // Length divisibility is asserted above.
         slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
