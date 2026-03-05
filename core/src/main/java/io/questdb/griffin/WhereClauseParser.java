@@ -2522,7 +2522,6 @@ public final class WhereClauseParser implements Mutable {
             boolean latestByMultiColumn,
             TableReader reader
     ) throws SqlException {
-        // here
         return switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN ->
                     analyzeIn(timestampDriver, translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
