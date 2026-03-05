@@ -65,6 +65,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     private final TimeFrameMemoryRecord record = new TimeFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private int currentCachePartition = -1;
+    private int currentPageFrameLocalIndex = -1;
     private long currentPageFrameRowHi;
     private long currentPageFrameRowLo;
     // Cursor's lifecycle is managed externally
@@ -253,11 +254,25 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         assert TimeFrameCursor.isTimeFrameRowID(rowId) : "not a time frame row ID";
         final int partitionIndex = TimeFrameCursor.toPartitionIndex(rowId);
         final long rowInPartition = TimeFrameCursor.toLocalRowID(rowId);
+        if (currentPageFrameLocalIndex >= 0
+                && partitionIndex == currentCachePartition
+                && rowInPartition >= currentPageFrameRowLo && rowInPartition < currentPageFrameRowHi
+                && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameLocalIndex) {
+            ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, currentPageFrameRowLo);
+            return;
+        }
         navigateToRow(record, partitionIndex, rowInPartition);
     }
 
     @Override
     public void recordAt(Record record, int frameIndex, long rowIndex) {
+        if (currentPageFrameLocalIndex >= 0
+                && frameIndex == currentCachePartition
+                && rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi
+                && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameLocalIndex) {
+            ((TimeFrameMemoryRecord) record).setRowIndex(frameIndex, rowIndex, currentPageFrameRowLo);
+            return;
+        }
         navigateToRow(record, frameIndex, rowIndex);
     }
 
@@ -302,17 +317,12 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     public void toTop() {
         timeFrame.clear();
         currentCachePartition = -1;
+        currentPageFrameLocalIndex = -1;
         currentPageFrameRowLo = 0;
         currentPageFrameRowHi = 0;
     }
 
-    private void navigateToRow(Record record, int partitionIndex, long rowInPartition) {
-        switchToPartition(partitionIndex);
-
-        final int pfStart = sharedState.getPartitionPageFrameStart(partitionIndex);
-        final int pfCount = sharedState.getPartitionPageFrameCount(partitionIndex);
-        final LongList cumulativeRows = sharedState.getPageFrameCumulativeRows();
-
+    private static int findPageFrame(int pfStart, int pfCount, LongList cumulativeRows, long rowInPartition) {
         int lo;
         if (pfCount <= PAGE_FRAME_SCAN_THRESHOLD) {
             lo = 0;
@@ -332,6 +342,36 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
                 }
             }
         }
+        return lo;
+    }
+
+    private void navigateToRow(Record record, int partitionIndex, long rowInPartition) {
+        switchToPartition(partitionIndex);
+
+        final int pfStart = sharedState.getPartitionPageFrameStart(partitionIndex);
+        final int pfCount = sharedState.getPartitionPageFrameCount(partitionIndex);
+        final LongList cumulativeRows = sharedState.getPageFrameCumulativeRows();
+
+        int lo;
+        final int lastPfIndex = currentPageFrameLocalIndex;
+        if (lastPfIndex >= 0 && lastPfIndex < pfCount) {
+            final int nextPf = lastPfIndex + 1;
+            if (nextPf < pfCount && rowInPartition >= currentPageFrameRowHi
+                    && rowInPartition < cumulativeRows.getQuick(pfStart + nextPf)) {
+                lo = nextPf;
+            } else if (lastPfIndex > 0 && rowInPartition < currentPageFrameRowLo) {
+                final long prevPfRowLo = lastPfIndex > 1 ? cumulativeRows.getQuick(pfStart + lastPfIndex - 2) : 0;
+                if (rowInPartition >= prevPfRowLo) {
+                    lo = lastPfIndex - 1;
+                } else {
+                    lo = findPageFrame(pfStart, pfCount, cumulativeRows, rowInPartition);
+                }
+            } else {
+                lo = findPageFrame(pfStart, pfCount, cumulativeRows, rowInPartition);
+            }
+        } else {
+            lo = findPageFrame(pfStart, pfCount, cumulativeRows, rowInPartition);
+        }
 
         final long pfRowLo = lo > 0 ? cumulativeRows.getQuick(pfStart + lo - 1) : 0;
         final long pfRowHi = cumulativeRows.getQuick(pfStart + lo);
@@ -340,6 +380,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         frameMemoryPool.navigateTo(lo, (PageFrameMemoryRecord) record);
         ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, pfRowLo);
 
+        currentPageFrameLocalIndex = lo;
         currentPageFrameRowLo = pfRowLo;
         currentPageFrameRowHi = pfRowHi;
     }
@@ -350,6 +391,7 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
             frameMemoryPool.switchAddressCache(cache);
             record.clear(); // force re-navigation (resets frameIndex to -1)
             currentCachePartition = partitionIndex;
+            currentPageFrameLocalIndex = -1;
         }
     }
 }
