@@ -94,10 +94,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
-            throw e;
+            throw th;
         }
     }
 

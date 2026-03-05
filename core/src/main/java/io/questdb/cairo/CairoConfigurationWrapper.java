@@ -947,6 +947,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlHorizonJoinMaxOffsets() {
+        return getDelegate().getSqlHorizonJoinMaxOffsets();
+    }
+
+    @Override
     public int getSqlIntervalIncrementalMergeThreshold() {
         return getDelegate().getSqlIntervalIncrementalMergeThreshold();
     }
@@ -1352,6 +1357,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalWriterMadviseMode() {
+        return getDelegate().getWalWriterMadviseMode();
+    }
+
+    @Override
     public int getWalWriterPoolMaxSegments() {
         return getDelegate().getWalWriterPoolMaxSegments();
     }
@@ -1519,6 +1529,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelGroupByEnabled() {
         return getDelegate().isSqlParallelGroupByEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelHorizonJoinEnabled() {
+        return getDelegate().isSqlParallelHorizonJoinEnabled();
     }
 
     @Override

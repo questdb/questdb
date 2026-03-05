@@ -553,6 +553,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
+    /**
+     * Sets both the absolute row index and the compact row index for late-materialized
+     * non-filter columns. In the base class, the compact index is ignored. Overridden
+     * by {@link PageFrameFilteredMemoryRecord} to use the compact index for non-filter columns.
+     */
+    public void setRowIndex(long rowIndex, long compactRowIndex) {
+        setRowIndex(rowIndex);
+    }
+
     private @NotNull DirectString csViewA(int columnIndex) {
         DirectString view = csViewsA.getQuiet(columnIndex);
         if (view != null) {
