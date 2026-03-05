@@ -940,7 +940,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (tok != null && isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
                         final int columnNamePosition = lexer.lastTokenPosition();
-                        final int columnIndex = tableMetadata.getColumnIndexQuiet(tok);
+                        final int columnIndex = tableMetadata.getColumnIndexQuiet(unquote(tok));
                         if (columnIndex != -1) {
                             // peek at the type token to capture its position for error reporting
                             expectToken(lexer, "column type");
@@ -977,9 +977,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'not' expected");
                 }
             } else {
-                int index = tableMetadata.getColumnIndexQuiet(tok);
+                int index = tableMetadata.getColumnIndexQuiet(unquote(tok));
                 if (index != -1) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
+                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(unquote(tok)).put("' already exists");
                 }
             }
 
