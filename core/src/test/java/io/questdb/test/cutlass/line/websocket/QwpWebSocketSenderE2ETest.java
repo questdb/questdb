@@ -26,12 +26,14 @@ package io.questdb.test.cutlass.line.websocket;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -517,6 +519,48 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testEmptyColumnNameRejected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("ws_empty_col_name")
+                            .longColumn("", 42)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    Assert.fail("Expected LineSenderException for empty column name");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue("Error should mention empty column name: " + e.getMessage(),
+                            e.getMessage().contains("column name cannot be empty"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyTableNameRejected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("")
+                            .longColumn("value", 42)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    Assert.fail("Expected LineSenderException for empty table name");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue("Error should mention empty table name: " + e.getMessage(),
+                            e.getMessage().contains("table name cannot be empty"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLargeNumberOfRows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -888,6 +932,27 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testNullColumnNameRejected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("ws_null_col_name")
+                            .longColumn(null, 42)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    Assert.fail("Expected LineSenderException for null column name");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue("Error should mention empty column name: " + e.getMessage(),
+                            e.getMessage().contains("column name cannot be empty"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNullDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -1077,6 +1142,27 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
                         "SELECT count() FROM test_null_string WHERE message IS NOT NULL",
                         "count\n2\n"
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testNullTableNameRejected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table(null)
+                            .longColumn("value", 42)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    Assert.fail("Expected LineSenderException for null table name");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue("Error should mention empty table name: " + e.getMessage(),
+                            e.getMessage().contains("table name cannot be empty"));
+                }
             }
         });
     }
@@ -1307,6 +1393,27 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("test_ts_col");
                 serverMain.assertSql("select count() from test_ts_col", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testWhitespaceTableNameRejected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    sender.table("   ")
+                            .longColumn("value", 42)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    Assert.fail("Expected LineSenderException for whitespace-only table name");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue("Error should mention illegal characters: " + e.getMessage(),
+                            e.getMessage().contains("table name contains illegal characters"));
+                }
             }
         });
     }
