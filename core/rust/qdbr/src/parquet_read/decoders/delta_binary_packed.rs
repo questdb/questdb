@@ -70,7 +70,7 @@ where
         let miniblock_size: usize = (block_size / miniblocks_per_block)
             .try_into()
             .map_err(|_| fmt_err!(Layout, "delta binary packed miniblock size overflow"))?;
-        if miniblock_size == 0 || miniblock_size % 32 != 0 {
+        if miniblock_size == 0 || !miniblock_size.is_multiple_of(32) {
             return Err(fmt_err!(
                 Layout,
                 "delta binary packed miniblock size {miniblock_size} must be a non-zero multiple of 32 values"

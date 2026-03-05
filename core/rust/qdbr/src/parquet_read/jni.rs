@@ -17,6 +17,7 @@ use qdb_core::col_type::ColumnType;
 use std::mem::{offset_of, size_of};
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
     mut env: JNIEnv,
     _class: JClass,
@@ -40,6 +41,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroy(
     _env: JNIEnv,
     _class: JClass,
@@ -63,6 +65,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroyDecodeContext(
     _env: JNIEnv,
     _class: JClass,
@@ -354,6 +357,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readRowGroupStats(
     mut env: JNIEnv,
     _class: JClass,
@@ -399,6 +403,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupMinTimestamp(
     mut env: JNIEnv,
     _class: JClass,
@@ -438,6 +443,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupMaxTimestamp(
     mut env: JNIEnv,
     _class: JClass,
@@ -478,6 +484,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 // See PartitionDecoder for more info on the returned value format.
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_findRowGroupByTimestamp(
     mut env: JNIEnv,
     _class: JClass,
@@ -607,6 +614,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_create(
     _env: JNIEnv,
     _class: JClass,
@@ -617,6 +625,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_destroy(
     _env: JNIEnv,
     _class: JClass,
@@ -681,6 +690,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 
 // RowGroupStatsBuffers
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_create(
     _env: JNIEnv,
     _class: JClass,
@@ -691,6 +701,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_destroy(
     _env: JNIEnv,
     _class: JClass,

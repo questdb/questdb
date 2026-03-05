@@ -38,9 +38,9 @@ fn generate_values(count: usize) -> Vec<ByteArray> {
 }
 
 fn expected_varchar_str(i: usize) -> String {
-    if i % 7 == 0 {
+    if i.is_multiple_of(7) {
         format!("overflow_value_{i:06}")
-    } else if i % 11 == 0 {
+    } else if i.is_multiple_of(11) {
         format!("caf\u{00e9}_{i}")
     } else {
         format!("val_{i:04}")
@@ -51,11 +51,11 @@ fn assert_varchar(nulls: &[bool], data: &[u8], aux: &[u8]) {
     let row_count = nulls.len();
     assert_eq!(aux.len(), row_count * 16, "varchar aux size mismatch");
 
-    for i in 0..row_count {
+    for (i, &is_null) in nulls.iter().enumerate() {
         let aux_base = i * 16;
         let header_byte = aux[aux_base];
 
-        if nulls[i] {
+        if is_null {
             assert_eq!(
                 header_byte & HEADER_FLAG_NULL,
                 HEADER_FLAG_NULL,

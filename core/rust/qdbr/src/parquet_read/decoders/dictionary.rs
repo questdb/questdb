@@ -135,7 +135,6 @@ pub trait PrimitiveDictDecoder<T> {
     /// Number of values in this dictionary.
     fn len(&self) -> u32;
 
-    /// Returns true if the dictionary is empty.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

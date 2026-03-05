@@ -40,13 +40,13 @@ fn assert_raw_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
     let non_null_indices: Vec<usize> = (0..row_count).filter(|i| !nulls[*i]).collect();
     let mut nn_idx = 0;
 
-    for i in 0..row_count {
+    for (i, &is_null) in nulls.iter().enumerate().take(row_count) {
         let aux_base = i * 16;
         let offset = u64::from_le_bytes(aux[aux_base..aux_base + 8].try_into().unwrap()) as usize;
         let size =
             u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
 
-        if nulls[i] {
+        if is_null {
             assert_eq!(size, 0, "row {i}: null array should have size 0");
         } else {
             let orig = non_null_indices[nn_idx];
@@ -211,8 +211,8 @@ fn flatten_arrays_optional(count: usize, nulls: &[bool]) -> (Vec<f64>, Vec<i16>,
     let mut values = Vec::new();
     let mut def_levels = Vec::new();
     let mut rep_levels = Vec::new();
-    for i in 0..count {
-        if nulls[i] {
+    for (i, &is_null) in nulls.iter().enumerate().take(count) {
+        if is_null {
             def_levels.push(0);
             rep_levels.push(0);
         } else {
@@ -279,13 +279,13 @@ fn assert_double_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
     let row_count = nulls.len();
     assert_eq!(aux.len(), row_count * 16, "array aux size mismatch");
 
-    for i in 0..row_count {
+    for (i, &is_null) in nulls.iter().enumerate().take(row_count) {
         let aux_base = i * 16;
         let offset = u64::from_le_bytes(aux[aux_base..aux_base + 8].try_into().unwrap()) as usize;
         let size =
             u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
 
-        if nulls[i] {
+        if is_null {
             assert_eq!(size, 0, "row {i}: null array should have size 0");
         } else {
             let len = array_element_count(i);
@@ -498,8 +498,8 @@ fn flatten_2d_arrays_optional(count: usize, nulls: &[bool]) -> (Vec<f64>, Vec<i1
     let mut values = Vec::new();
     let mut def_levels = Vec::new();
     let mut rep_levels = Vec::new();
-    for i in 0..count {
-        if nulls[i] {
+    for (i, &is_null) in nulls.iter().enumerate().take(count) {
+        if is_null {
             def_levels.push(0);
             rep_levels.push(0);
         } else {
@@ -555,13 +555,13 @@ fn assert_double_2d_array(nulls: &[bool], data: &[u8], aux: &[u8]) {
     let row_count = nulls.len();
     assert_eq!(aux.len(), row_count * 16, "2d array aux size mismatch");
 
-    for i in 0..row_count {
+    for (i, &is_null) in nulls.iter().enumerate().take(row_count) {
         let aux_base = i * 16;
         let offset = u64::from_le_bytes(aux[aux_base..aux_base + 8].try_into().unwrap()) as usize;
         let size =
             u64::from_le_bytes(aux[aux_base + 8..aux_base + 16].try_into().unwrap()) as usize;
 
-        if nulls[i] {
+        if is_null {
             assert_eq!(size, 0, "row {i}: null 2d array should have size 0");
         } else {
             let dim0 = array_2d_dim0(i);

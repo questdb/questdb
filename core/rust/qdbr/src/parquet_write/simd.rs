@@ -1789,12 +1789,12 @@ mod tests {
 
         let decoded = decode_def_levels(&buffer, 60);
         // First 10 should be null (column_top)
-        for i in 0..10 {
-            assert!(!decoded[i], "Column top index {} should be null", i);
+        for (i, &present) in decoded[..10].iter().enumerate() {
+            assert!(!present, "Column top index {} should be null", i);
         }
         // Rest should be present
-        for i in 10..60 {
-            assert!(decoded[i], "Data index {} should be present", i);
+        for (i, &present) in decoded[10..60].iter().enumerate() {
+            assert!(present, "Data index {} should be present", i + 10);
         }
     }
 
@@ -1811,8 +1811,8 @@ mod tests {
 
         let decoded = decode_def_levels(&buffer, 60);
         // First 10 are column_top nulls
-        for i in 0..10 {
-            assert!(!decoded[i], "Column top index {} should be null", i);
+        for (i, &val) in decoded[..10].iter().enumerate() {
+            assert!(!val, "Column top index {} should be null", i);
         }
         // Index 15 (10 + 5) and 35 (10 + 25) should be null in data
         assert!(!decoded[15], "Data null at index 15");
@@ -1936,8 +1936,8 @@ mod tests {
         assert!(!decoded[0]);
         assert!(!decoded[1]);
         assert!(!decoded[2]);
-        for i in 3..13 {
-            assert!(decoded[i], "Index {} should be present", i);
+        for (i, &val) in decoded[3..13].iter().enumerate() {
+            assert!(val, "Index {} should be present", i + 3);
         }
     }
 
@@ -1976,7 +1976,7 @@ mod tests {
 
     #[test]
     fn test_i32_no_nulls_no_column_top() {
-        let data: Vec<i32> = (0..100).map(|x| x).collect();
+        let data: Vec<i32> = (0..100).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
@@ -2003,7 +2003,7 @@ mod tests {
 
     #[test]
     fn test_i32_with_nulls() {
-        let mut data: Vec<i32> = (0..100).map(|x| x).collect();
+        let mut data: Vec<i32> = (0..100).collect();
         data[5] = i32::MIN;
         data[50] = i32::MIN;
         data[95] = i32::MIN;
@@ -2023,7 +2023,7 @@ mod tests {
 
     #[test]
     fn test_i32_with_column_top() {
-        let data: Vec<i32> = (0..50).map(|x| x).collect();
+        let data: Vec<i32> = (0..50).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 15, true, None).unwrap();
@@ -2031,11 +2031,11 @@ mod tests {
         assert_eq!(result.null_count, 0);
 
         let decoded = decode_def_levels(&buffer, 65);
-        for i in 0..15 {
-            assert!(!decoded[i], "Column top index {} should be null", i);
+        for (i, &val) in decoded[..15].iter().enumerate() {
+            assert!(!val, "Column top index {} should be null", i);
         }
-        for i in 15..65 {
-            assert!(decoded[i], "Data index {} should be present", i);
+        for (i, &val) in decoded[15..65].iter().enumerate() {
+            assert!(val, "Data index {} should be present", i + 15);
         }
     }
 
@@ -2054,7 +2054,7 @@ mod tests {
     #[test]
     fn test_i32_exact_simd_chunk_size() {
         // Exact multiple of 16 (SIMD chunk size for i32)
-        let data: Vec<i32> = (0..64).map(|x| x).collect();
+        let data: Vec<i32> = (0..64).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
@@ -2067,7 +2067,7 @@ mod tests {
     #[test]
     fn test_i32_remainder_handling() {
         // 67 elements = 4 * 16 + 3 remainder
-        let data: Vec<i32> = (0..67).map(|x| x).collect();
+        let data: Vec<i32> = (0..67).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
@@ -2081,23 +2081,23 @@ mod tests {
 
     #[test]
     fn test_i32_column_top_partial_byte() {
-        let data: Vec<i32> = (0..10).map(|x| x).collect();
+        let data: Vec<i32> = (0..10).collect();
         let mut buffer = Vec::new();
 
         let _result = encode_i32_def_levels(&mut buffer, &data, 5, true, None).unwrap();
 
         let decoded = decode_def_levels(&buffer, 15);
-        for i in 0..5 {
-            assert!(!decoded[i]);
+        for &val in &decoded[..5] {
+            assert!(!val);
         }
-        for i in 5..15 {
-            assert!(decoded[i]);
+        for &val in &decoded[5..15] {
+            assert!(val);
         }
     }
 
     #[test]
     fn test_i32_no_stats() {
-        let data: Vec<i32> = (0..100).map(|x| x).collect();
+        let data: Vec<i32> = (0..100).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, false, None).unwrap();
@@ -2170,11 +2170,11 @@ mod tests {
         assert_eq!(result.max, Some(49.0));
 
         let decoded = decode_def_levels(&buffer, 60);
-        for i in 0..10 {
-            assert!(!decoded[i]);
+        for &val in &decoded[..10] {
+            assert!(!val);
         }
-        for i in 10..60 {
-            assert!(decoded[i]);
+        for &val in &decoded[10..60] {
+            assert!(val);
         }
     }
 
@@ -2316,11 +2316,11 @@ mod tests {
         assert_eq!(result.null_count, 0);
 
         let decoded = decode_def_levels(&buffer, 65);
-        for i in 0..15 {
-            assert!(!decoded[i]);
+        for &val in &decoded[..15] {
+            assert!(!val);
         }
-        for i in 15..65 {
-            assert!(decoded[i]);
+        for &val in &decoded[15..65] {
+            assert!(val);
         }
     }
 
@@ -2388,11 +2388,11 @@ mod tests {
         let _result = encode_f32_def_levels(&mut buffer, &data, 5, true, None).unwrap();
 
         let decoded = decode_def_levels(&buffer, 15);
-        for i in 0..5 {
-            assert!(!decoded[i]);
+        for &val in &decoded[..5] {
+            assert!(!val);
         }
-        for i in 5..15 {
-            assert!(decoded[i]);
+        for &val in &decoded[5..15] {
+            assert!(val);
         }
     }
 
@@ -2481,14 +2481,14 @@ mod tests {
 
         let decoded = decode_def_levels(&buffer, 17);
         // First 7 are column_top (null)
-        for i in 0..7 {
-            assert!(!decoded[i], "Column top at {} should be null", i);
+        for (i, &val) in decoded[..7].iter().enumerate() {
+            assert!(!val, "Column top at {} should be null", i);
         }
         // Index 7 is data[0] which is null
         assert!(!decoded[7], "Data null at index 7");
         // Rest should be present
-        for i in 8..17 {
-            assert!(decoded[i], "Data at {} should be present", i);
+        for (i, &val) in decoded[8..17].iter().enumerate() {
+            assert!(val, "Data at {} should be present", i + 8);
         }
     }
 
@@ -2503,11 +2503,11 @@ mod tests {
         assert_eq!(result.null_count, 0);
 
         let decoded = decode_def_levels(&buffer, 26);
-        for i in 0..16 {
-            assert!(!decoded[i]);
+        for &val in &decoded[..16] {
+            assert!(!val);
         }
-        for i in 16..26 {
-            assert!(decoded[i]);
+        for &val in &decoded[16..26] {
+            assert!(val);
         }
     }
 
@@ -2515,8 +2515,8 @@ mod tests {
     fn test_all_first_chunk_null_rest_present() {
         // First 8 values null, rest present
         let mut data: Vec<i64> = (0..20).collect();
-        for i in 0..8 {
-            data[i] = i64::MIN;
+        for val in &mut data[..8] {
+            *val = i64::MIN;
         }
 
         let mut buffer = Vec::new();
@@ -2558,7 +2558,7 @@ mod tests {
     #[test]
     fn test_i32_rle_fast_path_used() {
         // No nulls, no column_top - should use compact RLE encoding
-        let data: Vec<i32> = (0..1000).map(|x| x).collect();
+        let data: Vec<i32> = (0..1000).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
@@ -2583,7 +2583,7 @@ mod tests {
     #[test]
     fn test_i32_bitpacked_slow_path_used() {
         // Has nulls - should use bitpacked encoding
-        let mut data: Vec<i32> = (0..1000).map(|x| x).collect();
+        let mut data: Vec<i32> = (0..1000).collect();
         data[500] = i32::MIN;
         let mut buffer = Vec::new();
 
@@ -2700,7 +2700,7 @@ mod tests {
 
     #[test]
     fn test_i32_stats_with_negative_values() {
-        let data: Vec<i32> = (-50..50).map(|x| x).collect();
+        let data: Vec<i32> = (-50..50).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
@@ -2732,7 +2732,7 @@ mod tests {
 
     #[test]
     fn test_i32_fast_path_large_data() {
-        let data: Vec<i32> = (0..100000).map(|x| x).collect();
+        let data: Vec<i32> = (0..100000).collect();
         let mut buffer = Vec::new();
 
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
@@ -2881,7 +2881,7 @@ mod tests {
     #[test]
     fn test_i32_probe_early_exit_mixed_in_probe() {
         // Data larger than probe size (256), with null in probe region
-        let mut data: Vec<i32> = (0..1000).map(|x| x).collect();
+        let mut data: Vec<i32> = (0..1000).collect();
         data[100] = i32::MIN;
 
         let mut buffer = Vec::new();
@@ -3067,7 +3067,7 @@ mod tests {
     #[test]
     fn test_i32_exactly_probe_size_all_not_null() {
         // Exactly 256 elements (probe size for 32-bit)
-        let data: Vec<i32> = (0..256).map(|x| x).collect();
+        let data: Vec<i32> = (0..256).collect();
 
         let mut buffer = Vec::new();
         let result = encode_i32_def_levels(&mut buffer, &data, 0, true, None).unwrap();
@@ -3079,7 +3079,7 @@ mod tests {
     #[test]
     fn test_i32_null_at_probe_boundary() {
         // Null exactly at position 255 (last element of probe)
-        let mut data: Vec<i32> = (0..500).map(|x| x).collect();
+        let mut data: Vec<i32> = (0..500).collect();
         data[255] = i32::MIN;
 
         let mut buffer = Vec::new();
@@ -3093,7 +3093,7 @@ mod tests {
     #[test]
     fn test_i32_null_just_after_probe() {
         // Null at position 256 (first element after probe)
-        let mut data: Vec<i32> = (0..500).map(|x| x).collect();
+        let mut data: Vec<i32> = (0..500).collect();
         data[256] = i32::MIN;
 
         let mut buffer = Vec::new();

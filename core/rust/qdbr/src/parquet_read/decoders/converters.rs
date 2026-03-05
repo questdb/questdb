@@ -90,6 +90,12 @@ pub mod int32 {
         }
     }
 
+    impl Default for DayToMillisConverter {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl DayToMillisConverter {
         pub fn new() -> Self {
             Self
@@ -127,6 +133,12 @@ pub mod int96 {
         }
     }
 
+    impl Default for Int96ToTimestampConverter {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl Int96ToTimestampConverter {
         pub fn new() -> Self {
             Self
@@ -142,6 +154,12 @@ pub mod int128 {
     /// Converts Parquet UUID binary order into QuestDB in-memory order.
     #[derive(Default)]
     pub struct Int128ToUuidConverter {}
+
+    impl Default for Int128ToUuidConverter {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
 
     impl Int128ToUuidConverter {
         pub fn new() -> Self {
