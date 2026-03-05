@@ -4922,7 +4922,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long lagBitmapByteSize = 0;
 
             if (lagBitmapMem != null && lagBitmapMem.isOpen() && lagRows > 0) {
-                lagBitmapBitOffset = txWriter.getTransientRowCount() - getColumnTop(columnIndex);
+                // Bitmap uses absolute partition row numbers (including column-top rows),
+                // unlike .d files which skip column-top rows. Lag data starts at bit
+                // transientRowCount in the bitmap, not transientRowCount - columnTop.
+                lagBitmapBitOffset = txWriter.getTransientRowCount();
                 lagBitmapByteOffset = lagBitmapBitOffset >> 3;
                 long lagBitmapBitShift = lagBitmapBitOffset & 7;
                 lagBitmapByteSize = ((lagBitmapBitShift + lagRows + 7) >> 3);
