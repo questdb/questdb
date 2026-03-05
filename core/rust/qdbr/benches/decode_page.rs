@@ -242,12 +242,10 @@ fn make_i8_data(row_count: usize, null_pct: u8, null_value: i8) -> Vec<i8> {
         };
         let v = if is_null_at(i, null_pct) {
             null_value
+        } else if base == null_value {
+            base.wrapping_add(1)
         } else {
-            if base == null_value {
-                base.wrapping_add(1)
-            } else {
-                base
-            }
+            base
         };
         data.push(v);
     }
@@ -264,12 +262,10 @@ fn make_i16_data(row_count: usize, null_pct: u8, null_value: i16) -> Vec<i16> {
         };
         let v = if is_null_at(i, null_pct) {
             null_value
+        } else if base == null_value {
+            base.wrapping_add(1)
         } else {
-            if base == null_value {
-                base.wrapping_add(1)
-            } else {
-                base
-            }
+            base
         };
         data.push(v);
     }
@@ -878,7 +874,7 @@ fn build_fixed_rle_dict_pages<T: NativeType>(
 ) -> (DataPage, DictPage) {
     let elem_size = std::mem::size_of::<T>();
     let raw_data: &[u8] =
-        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * elem_size) };
+        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data)) };
 
     let mut dict_map: HashMap<&[u8], u32> = HashMap::new();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
@@ -887,13 +883,12 @@ fn build_fixed_rle_dict_pages<T: NativeType>(
     let mut min_value: Option<T> = None;
     let mut max_value: Option<T> = None;
 
-    for i in 0..row_count {
+    for (i, &val) in data.iter().enumerate().take(row_count) {
         if is_null_at(i, null_pct) {
             null_count += 1;
             continue;
         }
 
-        let val = data[i];
         min_value = Some(match min_value {
             Some(m) => {
                 if val.ord(&m) == std::cmp::Ordering::Less {

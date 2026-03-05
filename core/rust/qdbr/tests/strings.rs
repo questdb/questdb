@@ -27,9 +27,9 @@ fn generate_values(count: usize) -> Vec<ByteArray> {
 }
 
 fn expected_str_value(i: usize) -> String {
-    if i % 11 == 0 {
+    if i.is_multiple_of(11) {
         format!("caf\u{00e9}_{i}")
-    } else if i % 13 == 0 {
+    } else if i.is_multiple_of(13) {
         format!("emoji\u{1F600}_{i}")
     } else {
         format!("str_{i:04}")

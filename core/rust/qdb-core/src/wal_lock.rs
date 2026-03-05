@@ -43,16 +43,16 @@
 //! state.
 //! The wal state can be one of the following:
 //! - PurgeExclusive: A purge job has exclusive access to the WAL. No writer is
-//! active and if a writer tries to acquire a lock, it will block until the
-//! purge is done.
+//!   active and if a writer tries to acquire a lock, it will block until the
+//!   purge is done.
 //! - WriterShared: A writer has shared access to the WAL. It has exclusive
-//! access to all segments with id greater than or equal to `min_segment_id`.
-//! A purge job may try to acquire a lock, in which case the state will be
-//! upgraded to WriterAndPurge.
+//!   access to all segments with id greater than or equal to `min_segment_id`.
+//!   A purge job may try to acquire a lock, in which case the state will be
+//!   upgraded to WriterAndPurge.
 //! - WriterAndPurge: Both a writer and a purge job have access to the WAL.
-//! The writer has exclusive access to all segments with id greater than or
-//! equal to `min_segment_id` and the purge job has exclusive access to all
-//! other segments.
+//!   The writer has exclusive access to all segments with id greater than or
+//!   equal to `min_segment_id` and the purge job has exclusive access to all
+//!   other segments.
 
 use std::{
     error::Error,
@@ -1095,7 +1095,7 @@ mod tests {
             let lock_manager = Arc::new(WalLock::new());
             let error = Arc::new(AtomicBool::new(false));
 
-            let min_segment_id = (i % 100) as i32;
+            let min_segment_id = i % 100;
 
             let lock_manager_writer = Arc::clone(&lock_manager);
             let error_writer = Arc::clone(&error);
@@ -1125,10 +1125,8 @@ mod tests {
                     }
                 };
                 // max_purgeable should be None (no writer) or Some(min_segment_id)
-                if let Some(seg) = max_purgeable {
-                    if seg != seg_id(min_segment_id) {
-                        error_purge.store(true, Ordering::SeqCst);
-                    }
+                if let Some(seg) = max_purgeable && seg != seg_id(min_segment_id) {
+                    error_purge.store(true, Ordering::SeqCst);
                 }
                 thread::sleep(Duration::from_millis(1));
                 if lock_manager_purge.unlock_purge("1", wal_id(1)).is_err() {

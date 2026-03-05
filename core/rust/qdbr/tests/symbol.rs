@@ -44,8 +44,8 @@ fn assert_symbol(non_null_values: &[ByteArray], nulls: &[bool], data: &[u8]) {
     let mut dict: Vec<&[u8]> = Vec::new();
     let mut expected_indices = Vec::with_capacity(row_count);
     let mut val_idx = 0;
-    for i in 0..row_count {
-        if nulls[i] {
+    for &is_null in nulls.iter().take(row_count) {
+        if is_null {
             expected_indices.push(i32::MIN);
         } else {
             let val = non_null_values[val_idx].data();
@@ -87,8 +87,8 @@ fn assert_symbol_filtered(
     let mut dict: Vec<&[u8]> = Vec::new();
     let mut full_indices: Vec<i32> = Vec::with_capacity(nulls.len());
     let mut val_idx = 0;
-    for i in 0..nulls.len() {
-        if nulls[i] {
+    for &is_null in nulls {
+        if is_null {
             full_indices.push(i32::MIN);
         } else {
             let val = non_null_values[val_idx].data();

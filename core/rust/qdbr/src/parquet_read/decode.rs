@@ -2985,8 +2985,8 @@ mod tests {
         for i in 0..src_len {
             out[i] = src[src_len - 1 - i];
         }
-        for i in src_len..target {
-            out[i] = sign_byte;
+        for byte in out.iter_mut().take(target).skip(src_len) {
+            *byte = sign_byte;
         }
         out
     }
@@ -4196,9 +4196,9 @@ mod tests {
         for (tag, size, null_bytes) in cases {
             let expected_all = expected_from_i32::<4>(&dict_values);
             let mut expected = Vec::new();
-            for row in 0..indices.len() {
+            for (row, &idx_raw) in indices.iter().enumerate() {
                 if rows_filter.contains(&(row as i64)) {
-                    let idx = indices[row] as usize;
+                    let idx = idx_raw as usize;
                     expected.extend_from_slice(&expected_all[idx * 4..idx * 4 + size]);
                 } else {
                     expected.extend_from_slice(&null_bytes[..size]);
@@ -4322,7 +4322,7 @@ mod tests {
             &mut self,
             count: usize,
         ) -> super::super::super::parquet::error::ParquetResult<()> {
-            self.bits.extend(std::iter::repeat(true).take(count));
+            self.bits.extend(std::iter::repeat_n(true, count));
             Ok(())
         }
         fn push_null(&mut self) -> super::super::super::parquet::error::ParquetResult<()> {
@@ -4333,7 +4333,7 @@ mod tests {
             &mut self,
             count: usize,
         ) -> super::super::super::parquet::error::ParquetResult<()> {
-            self.bits.extend(std::iter::repeat(false).take(count));
+            self.bits.extend(std::iter::repeat_n(false, count));
             Ok(())
         }
         fn skip(
@@ -4448,7 +4448,7 @@ mod tests {
         // Bit 0..6: ones (7 ones)
         values[0] = 0x7F; // 0b01111111
                           // Bit 7..9: zeros (3 zeros, bit 7 already 0 from 0x7F)
-        values[1] = 0b11111_00_0; // bits 8,9=0, bits 10-15=1
+        values[1] = 0b1111_1000; // bits 8,9=0, bits 10-15=1
                                   // Actually let me be more precise. Let me construct this carefully.
                                   // I want: 7 ones, 3 zeros, 54 ones
                                   // bits  0- 6: 1 (7 ones)

@@ -359,6 +359,13 @@ pub struct TestAllocatorState {
 }
 
 #[cfg(test)]
+impl Default for TestAllocatorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
 impl TestAllocatorState {
     pub fn new() -> Self {
         let mem_tracking = Arc::new(MemTracking {
