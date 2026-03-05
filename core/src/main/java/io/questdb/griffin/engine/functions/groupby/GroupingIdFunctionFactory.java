@@ -61,6 +61,9 @@ public class GroupingIdFunctionFactory implements FunctionFactory {
         if (args == null || args.size() == 0) {
             throw SqlException.$(position, "GROUPING_ID() requires at least one argument");
         }
+        if (args.size() > 31) {
+            throw SqlException.$(position, "GROUPING_ID() supports at most 31 arguments");
+        }
 
         IntList columnIndices = new IntList(args.size());
         for (int i = 0, n = args.size(); i < n; i++) {
@@ -71,6 +74,6 @@ public class GroupingIdFunctionFactory implements FunctionFactory {
             columnIndices.add(((ColumnFunction) arg).getColumnIndex());
         }
 
-        return new GroupingFunction(columnIndices);
+        return new GroupingFunction(columnIndices, position);
     }
 }

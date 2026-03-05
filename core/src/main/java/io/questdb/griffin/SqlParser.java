@@ -906,7 +906,12 @@ public class SqlParser {
      * @param startIdx          index of the first ROLLUP column in model.groupBy
      * @param rollupColumnCount number of ROLLUP columns
      */
-    private static void expandRollup(QueryModel model, int startIdx, int rollupColumnCount) {
+    private static void expandRollup(QueryModel model, int startIdx, int rollupColumnCount, int position) throws SqlException {
+        int totalSets = rollupColumnCount + 1;
+        if (totalSets > MAX_GROUPING_SETS) {
+            throw SqlException.$(position, "ROLLUP produces too many grouping sets (")
+                    .put(totalSets).put(", maximum ").put(MAX_GROUPING_SETS).put(')');
+        }
         // N+1 sets: from all columns down to empty set
         for (int setSize = rollupColumnCount; setSize >= 0; setSize--) {
             IntList set = new IntList();
@@ -921,7 +926,12 @@ public class SqlParser {
      * Expands ROLLUP with composite plain columns prepended to every set.
      * GROUP BY a, ROLLUP(b, c) -> sets: (a,b,c), (a,b), (a).
      */
-    private static void expandRollupComposite(QueryModel model, int plainCount, int rollupStart, int rollupColumnCount) {
+    private static void expandRollupComposite(QueryModel model, int plainCount, int rollupStart, int rollupColumnCount, int position) throws SqlException {
+        int totalSets = rollupColumnCount + 1;
+        if (totalSets > MAX_GROUPING_SETS) {
+            throw SqlException.$(position, "ROLLUP produces too many grouping sets (")
+                    .put(totalSets).put(", maximum ").put(MAX_GROUPING_SETS).put(')');
+        }
         for (int setSize = rollupColumnCount; setSize >= 0; setSize--) {
             IntList set = new IntList();
             // Add all plain columns first
@@ -2961,7 +2971,7 @@ public class SqlParser {
                     model.addGroupBy(columnList.getQuick(i));
                 }
                 if (isRollup) {
-                    expandRollup(model, startIdx, columnList.size());
+                    expandRollup(model, startIdx, columnList.size(), kwPos);
                 } else {
                     expandCube(model, startIdx, columnList.size(), kwPos);
                 }
@@ -3331,7 +3341,7 @@ public class SqlParser {
                 model.addGroupBy(columns.getQuick(i));
             }
             if (isRollup) {
-                expandRollup(model, 0, columns.size());
+                expandRollup(model, 0, columns.size(), kwPos);
             } else {
                 expandCube(model, 0, columns.size(), kwPos);
             }
@@ -3373,7 +3383,7 @@ public class SqlParser {
                     model.addGroupBy(rollupCols.getQuick(i));
                 }
                 if (isRollup) {
-                    expandRollupComposite(model, plainCount, rollupStart, rollupCols.size());
+                    expandRollupComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos);
                 } else {
                     expandCubeComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos);
                 }

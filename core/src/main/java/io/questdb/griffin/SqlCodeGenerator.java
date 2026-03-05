@@ -3346,7 +3346,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timestampIndex,
                         timestampType,
                         configuration,
-                        fillKeyColumnPositions
+                        fillKeyColumnPositions,
+                        model.getModelPosition()
                 );
             }
             return new FillRangeRecordCursorFactory(
@@ -8017,7 +8018,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 keyFunctions,
                                 new ObjList<>(tempOuterProjectionFunctions),
                                 model.getGroupingSets(),
-                                keyColumnIndices
+                                keyColumnIndices,
+                                model.getModelPosition()
                         ),
                         executionContext,
                         fillKeyColumnPositions

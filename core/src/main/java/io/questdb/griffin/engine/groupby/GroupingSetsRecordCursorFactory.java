@@ -84,7 +84,8 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
             ObjList<Function> keyFunctions,
             ObjList<Function> recordFunctions,
             ObjList<IntList> groupingSets,
-            IntList keyColumnIndices
+            IntList keyColumnIndices,
+            int position
     ) throws SqlException {
         super(groupByMetadata);
         try {
@@ -95,11 +96,6 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
 
             int setCount = groupingSets.size();
             int totalKeyColumns = keyColumnIndices.size();
-
-            // GROUPING_ID bitmask is int-based (31 usable bits).
-            if (totalKeyColumns > 31) {
-                throw SqlException.$(0, "GROUPING SETS supports at most 31 key columns");
-            }
 
             // Build the single RecordSink that copies all key columns.
             RecordSink mapSink = RecordSinkFactory.getInstance(
@@ -120,32 +116,42 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 nulledColumnsPerSet.add(nulled);
             }
 
-            // Compute the GROUPING_ID bitmask for each grouping set. Bit positions
-            // are assigned right-to-left per the SQL standard: the rightmost GROUP BY
-            // column occupies bit 0.
-            IntList groupingIds = new IntList(setCount);
-            for (int s = 0; s < setCount; s++) {
-                IntList activeIndices = groupingSets.getQuick(s);
-                int mask = 0;
-                for (int k = 0; k < totalKeyColumns; k++) {
-                    if (!containsValue(activeIndices, k)) {
-                        mask |= (1 << (totalKeyColumns - 1 - k));
-                    }
-                }
-                groupingIds.add(mask);
-            }
-
-            // Find GROUPING() functions among the group-by functions and
-            // initialize them with the grouping set layout. Each GroupingFunction
-            // stores its bitmask in the map value (it implements GroupByFunction),
-            // and setCurrentSet() is called before each set's map is populated
-            // so computeFirst() stores the correct bitmask.
+            // Find GROUPING() functions among the group-by functions.
             ObjList<GroupingFunction> groupingFunctions = new ObjList<>();
             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                 GroupByFunction f = groupByFunctions.getQuick(i);
                 if (f instanceof GroupingFunction gf) {
-                    gf.init(groupingIds, keyColumnIndices);
                     groupingFunctions.add(gf);
+                }
+            }
+
+            boolean hasGroupingFunctions = groupingFunctions.size() > 0;
+
+            // GROUPING_ID bitmask is int-based (31 usable bits). Guard only
+            // when GROUPING()/GROUPING_ID() functions are present, since
+            // the bitmask is only consumed by those functions.
+            if (hasGroupingFunctions && totalKeyColumns > 31) {
+                throw SqlException.$(position, "GROUPING SETS with GROUPING()/GROUPING_ID() supports at most 31 key columns");
+            }
+
+            // Compute GROUPING_ID bitmasks and initialize GROUPING() functions
+            // only when such functions are present. The bitmask is only consumed
+            // by GroupingFunction, so skip the O(setCount * keyCount) work when
+            // no GROUPING()/GROUPING_ID() calls exist.
+            if (hasGroupingFunctions) {
+                IntList groupingIds = new IntList(setCount);
+                for (int s = 0; s < setCount; s++) {
+                    IntList activeIndices = groupingSets.getQuick(s);
+                    int mask = 0;
+                    for (int k = 0; k < totalKeyColumns; k++) {
+                        if (!containsValue(activeIndices, k)) {
+                            mask |= (1 << (totalKeyColumns - 1 - k));
+                        }
+                    }
+                    groupingIds.add(mask);
+                }
+                for (int i = 0, n = groupingFunctions.size(); i < n; i++) {
+                    groupingFunctions.getQuick(i).init(groupingIds, keyColumnIndices);
                 }
             }
 
