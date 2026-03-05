@@ -363,6 +363,8 @@ mod tests {
             let len = sym_chars.len();
             offsets.push(chars.len() as u64);
             chars.extend_from_slice(&(len as u32).to_le_bytes());
+            // SAFETY: Reinterprets a contiguous `&[u16]` as raw bytes for testing.
+            // Valid because slices are contiguous and `u8` has no alignment requirement.
             let encoded: &[u8] = unsafe {
                 std::slice::from_raw_parts(
                     sym_chars.as_ptr() as *const u8,
