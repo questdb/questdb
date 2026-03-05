@@ -873,8 +873,9 @@ fn build_fixed_rle_dict_pages<T: NativeType>(
     primitive_type: PrimitiveType,
 ) -> (DataPage, DictPage) {
     let elem_size = std::mem::size_of::<T>();
-    let raw_data: &[u8] =
-        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data)) };
+    let raw_data: &[u8] = unsafe {
+        std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data))
+    };
 
     let mut dict_map: HashMap<&[u8], u32> = HashMap::new();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
