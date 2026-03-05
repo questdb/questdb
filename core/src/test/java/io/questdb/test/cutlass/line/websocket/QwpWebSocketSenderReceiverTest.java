@@ -36,7 +36,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -726,6 +725,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     // Flush the second row
                     sender.flush();
                 }
+                serverMain.awaitTable("ws_autoflush_interval");
 
                 serverMain.assertSql("select count() from ws_autoflush_interval", "count\n2\n");
                 serverMain.assertSql(
