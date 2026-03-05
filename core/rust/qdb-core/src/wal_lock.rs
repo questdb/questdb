@@ -1125,7 +1125,9 @@ mod tests {
                     }
                 };
                 // max_purgeable should be None (no writer) or Some(min_segment_id)
-                if let Some(seg) = max_purgeable && seg != seg_id(min_segment_id) {
+                if let Some(seg) = max_purgeable
+                    && seg != seg_id(min_segment_id)
+                {
                     error_purge.store(true, Ordering::SeqCst);
                 }
                 thread::sleep(Duration::from_millis(1));

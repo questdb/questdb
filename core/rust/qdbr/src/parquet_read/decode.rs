@@ -4448,14 +4448,8 @@ mod tests {
         // Bit 0..6: ones (7 ones)
         values[0] = 0x7F; // 0b01111111
                           // Bit 7..9: zeros (3 zeros, bit 7 already 0 from 0x7F)
-        values[1] = 0b1111_1000; // bits 8,9=0, bits 10-15=1
-                                 // Actually let me be more precise. Let me construct this carefully.
-                                 // I want: 7 ones, 3 zeros, 54 ones
-                                 // bits  0- 6: 1 (7 ones)
-                                 // bits  7- 9: 0 (3 zeros)
-                                 // bits 10-63: 1 (54 ones)
-                                 // byte 0: bits 0-7 = 0111_1111 = 0x7F
-                                 // byte 1: bits 8-15 = 1111_11_00 = 0xFC
+        // Pattern: bits 0..6 = 1, bits 7..9 = 0, bits 10..63 = 1.
+        // byte0 = 0x7F, byte1 = 0xFC.
         values[0] = 0x7F;
         values[1] = 0xFC;
         values[2..8].fill(0xFF);
