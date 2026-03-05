@@ -34,10 +34,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 /**
- * Factory for the GROUPING(col1, col2, ...) function. Returns an integer
- * bitmask indicating which columns are rolled up in the current grouping set.
- * For a single argument, returns 0 (actively grouped) or 1 (rolled up).
- * For multiple arguments, returns a multi-bit integer.
+ * Factory for the GROUPING(col) function. Accepts a single column argument
+ * and returns 0 (actively grouped) or 1 (rolled up) for the current
+ * grouping set. For multi-column bitmasks, use GROUPING_ID(col1, col2, ...).
  *
  * <p>This function is only valid in queries that use GROUPING SETS, ROLLUP,
  * or CUBE. The {@link GroupingSetsRecordCursorFactory} wires up the function
@@ -64,18 +63,19 @@ public class GroupingFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (args == null || args.size() == 0) {
-            throw SqlException.$(position, "GROUPING() requires at least one argument");
+            throw SqlException.$(position, "GROUPING() requires exactly one column argument");
+        }
+        if (args.size() > 1) {
+            throw SqlException.$(position, "GROUPING() accepts a single column; use GROUPING_ID() for multiple columns");
         }
 
-        IntList columnIndices = new IntList(args.size());
-        for (int i = 0, n = args.size(); i < n; i++) {
-            Function arg = args.getQuick(i);
-            if (!(arg instanceof ColumnFunction)) {
-                throw SqlException.$(argPositions.getQuick(i), "GROUPING() arguments must be column references");
-            }
-            columnIndices.add(((ColumnFunction) arg).getColumnIndex());
+        Function arg = args.getQuick(0);
+        if (!(arg instanceof ColumnFunction)) {
+            throw SqlException.$(argPositions.getQuick(0), "GROUPING() argument must be a column reference");
         }
 
+        IntList columnIndices = new IntList(1);
+        columnIndices.add(((ColumnFunction) arg).getColumnIndex());
         return new GroupingFunction(columnIndices);
     }
 }

@@ -304,7 +304,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         public void close() {
             baseCursor = Misc.free(baseCursor);
             presentTimestamps = Misc.free(presentTimestamps);
-            keyMap = Misc.free(keyMap);
+            if (keyMap != null) {
+                keyMap.close();
+            }
         }
 
         @Override
@@ -481,6 +483,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 isValueFuncsInitialized = true;
             }
             assert fillValues.size() <= columnCount : "fillValues.size()=" + fillValues.size() + " exceeds columnCount=" + columnCount;
+            if (hasKeyColumns) {
+                keyMap.reopen();
+            }
             baseRecord = baseCursor.getRecord();
             toTop();
         }
