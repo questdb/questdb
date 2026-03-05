@@ -76,6 +76,6 @@ public class GroupingFunctionFactory implements FunctionFactory {
 
         IntList columnIndices = new IntList(1);
         columnIndices.add(((ColumnFunction) arg).getColumnIndex());
-        return new GroupingFunction(columnIndices);
+        return new GroupingFunction(columnIndices, position);
     }
 }

@@ -49,12 +49,14 @@ import io.questdb.std.Numbers;
  */
 public class GroupingFunction extends IntFunction implements GroupByFunction {
     private final IntList argColumnIndices;
+    private final int position;
     private int currentValue;
     private int[] perSetValues;
     private int valueIndex;
 
-    public GroupingFunction(IntList argColumnIndices) {
+    public GroupingFunction(IntList argColumnIndices, int position) {
         this.argColumnIndices = argColumnIndices;
+        this.position = position;
     }
 
     @Override
@@ -109,7 +111,7 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
                     }
                 }
                 if (keyPos < 0) {
-                    throw SqlException.$(0, "GROUPING()/GROUPING_ID() argument must be a grouping key column");
+                    throw SqlException.$(position, "GROUPING()/GROUPING_ID() argument must be a grouping key column");
                 }
                 // Extract the bit for this key position from the full bitmask.
                 // Bit (keyCount - 1 - keyPos) in the full mask tells whether
