@@ -39,6 +39,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.MemoryTag;
@@ -46,6 +47,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -78,6 +80,10 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private long droppedTruncatedCount;
 
     public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine) {
+        this(configuration, engine, null);
+    }
+
+    public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool) {
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.bufLen = configuration.getMsgBufferSize();
@@ -215,6 +221,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
             this.messageHeader = new QwpMessageHeader();
             this.messageCursor = new QwpMessageCursor();
+
+            if (!configuration.ownThread() && workerPool != null) {
+                workerPool.assign(this);
+                logStarted();
+            }
         } catch (Throwable e) {
             if (fd > -1) {
                 nf.close(fd);
@@ -296,6 +307,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 } catch (Throwable t) {
                     LOG.error().$("commit error: ").$(t.getMessage()).$();
                 }
+                break;
             }
         }
         try {
@@ -313,14 +325,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 if (configuration.ownThreadAffinity() != -1) {
                     Os.setCurrentThreadAffinity(configuration.ownThreadAffinity());
                 }
-                LOG.info()
-                        .$("receiving on ")
-                        .$ip(configuration.getBindIPv4Address())
-                        .$(':')
-                        .$(configuration.getPort())
-                        .$(" [fd=").$(fd)
-                        .$(", commitRate=").$(commitRate)
-                        .I$();
+                logStarted();
                 while (running.get()) {
                     runSerially();
                 }
@@ -374,5 +379,16 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             droppedParseErrorCount++;
             LOG.error().$("datagram processing error: ").$(t.getMessage()).$();
         }
+    }
+
+    private void logStarted() {
+        LOG.info()
+                .$("receiving on ")
+                .$ip(configuration.getBindIPv4Address())
+                .$(':')
+                .$(configuration.getPort())
+                .$(" [fd=").$(fd)
+                .$(", commitRate=").$(commitRate)
+                .I$();
     }
 }

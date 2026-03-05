@@ -31,10 +31,12 @@ import io.questdb.network.Net;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class QwpUdpServerMainTest extends AbstractBootstrapTest {
 
@@ -117,6 +119,91 @@ public class QwpUdpServerMainTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
                 // server closes without crash or leak
+            }
+        });
+    }
+
+    @Test
+    public void testE2E_workerPoolMode() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.QWP_UDP_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.QWP_UDP_BIND_TO.getEnvVarName(), "0.0.0.0:" + QWP_UDP_PORT,
+                    PropertyKey.QWP_UDP_OWN_THREAD.getEnvVarName(), "false",
+                    PropertyKey.QWP_UDP_UNICAST.getEnvVarName(), "true",
+                    PropertyKey.CAIRO_WAL_ENABLED_DEFAULT.getEnvVarName(), "true"
+            )) {
+                try (QwpUdpSender sender = new QwpUdpSender(
+                        NetworkFacadeImpl.INSTANCE,
+                        0,
+                        LOCALHOST,
+                        QWP_UDP_PORT,
+                        0
+                )) {
+                    for (int i = 0; i < 100; i++) {
+                        sender.table("qwp_udp_pool")
+                                .longColumn("id", i)
+                                .doubleColumn("value", i * 1.5)
+                                .at(1_000_000_000_000L + i * 1_000_000L, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("qwp_udp_pool");
+                serverMain.assertSql("SELECT count() FROM qwp_udp_pool", "count\n100\n");
+            }
+        });
+    }
+
+    @Test
+    public void testE2E_workerPoolShutdownUnderLoad() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            AtomicBoolean keepSending = new AtomicBoolean(true);
+            Thread senderThread = null;
+            TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.QWP_UDP_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.QWP_UDP_BIND_TO.getEnvVarName(), "0.0.0.0:" + QWP_UDP_PORT,
+                    PropertyKey.QWP_UDP_OWN_THREAD.getEnvVarName(), "false",
+                    PropertyKey.QWP_UDP_UNICAST.getEnvVarName(), "true",
+                    PropertyKey.CAIRO_WAL_ENABLED_DEFAULT.getEnvVarName(), "true"
+            );
+            try {
+                try (QwpUdpSender sender = new QwpUdpSender(
+                        NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, QWP_UDP_PORT, 0
+                )) {
+                    sender.table("qwp_udp_load")
+                            .longColumn("id", 0)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                serverMain.awaitTable("qwp_udp_load");
+
+                senderThread = new Thread(() -> {
+                    try (QwpUdpSender sender = new QwpUdpSender(
+                            NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, QWP_UDP_PORT, 0
+                    )) {
+                        long i = 1;
+                        while (keepSending.get()) {
+                            sender.table("qwp_udp_load")
+                                    .longColumn("id", i++)
+                                    .at(1_000_000_000_000L + i * 1_000_000L, ChronoUnit.MICROS);
+                            sender.flush();
+                        }
+                    }
+                });
+                senderThread.start();
+            } finally {
+                long startNanos = System.nanoTime();
+                serverMain.close();
+                long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+                keepSending.set(false);
+                if (senderThread != null) {
+                    senderThread.join(5_000);
+                }
+                Assert.assertTrue(
+                        "shutdown under load took " + elapsedMs + "ms, expected < 30000ms",
+                        elapsedMs < 30_000
+                );
             }
         });
     }

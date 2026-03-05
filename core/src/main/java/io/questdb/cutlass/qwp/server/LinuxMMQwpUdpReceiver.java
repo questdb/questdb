@@ -27,7 +27,9 @@ package io.questdb.cutlass.qwp.server;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
+import org.jetbrains.annotations.Nullable;
 
 public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     private static final Log LOG = LogFactory.getLog(LinuxMMQwpUdpReceiver.class);
@@ -36,7 +38,11 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     private long msgVec;
 
     public LinuxMMQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine) {
-        super(configuration, engine);
+        this(configuration, engine, null);
+    }
+
+    public LinuxMMQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool) {
+        super(configuration, engine, workerPool);
         this.msgCount = configuration.getMsgCount();
         this.msgVec = nf.msgHeaders(bufLen, msgCount);
     }
@@ -62,6 +68,7 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
                 p += Net.MMSGHDR_SIZE;
             }
 
+            ran = true;
             totalCount += count;
 
             if (totalCount >= commitRate) {
@@ -71,13 +78,8 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
                 } catch (Throwable t) {
                     LOG.error().$("commit error: ").$(t.getMessage()).$();
                 }
+                break;
             }
-
-            if (ran) {
-                continue;
-            }
-
-            ran = true;
         }
         try {
             tudCache.commitAll();

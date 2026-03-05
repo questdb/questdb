@@ -476,7 +476,8 @@ public class ServerMain implements Closeable {
             // qwp/udp
             freeOnExit(services().createQwpUdpReceiver(
                     qwpUdpConfig,
-                    engine
+                    engine,
+                    workerPoolManager
             ));
         }
 

@@ -283,13 +283,15 @@ public class Services {
 
     public QwpUdpReceiver createQwpUdpReceiver(
             QwpUdpReceiverConfiguration config,
-            CairoEngine cairoEngine
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager
     ) {
+        WorkerPool workerPool = workerPoolManager.getSharedPoolNetwork();
         QwpUdpReceiver receiver;
         if (Os.isLinux()) {
-            receiver = new LinuxMMQwpUdpReceiver(config, cairoEngine);
+            receiver = new LinuxMMQwpUdpReceiver(config, cairoEngine, workerPool);
         } else {
-            receiver = new QwpUdpReceiver(config, cairoEngine);
+            receiver = new QwpUdpReceiver(config, cairoEngine, workerPool);
         }
         receiver.start();
         return receiver;
