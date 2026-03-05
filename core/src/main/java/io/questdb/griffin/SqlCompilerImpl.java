@@ -4714,7 +4714,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = GenericLexer.unquote(expectToken(lexer, "fpp value"));
                 try {
                     fpp = Numbers.parseDouble(tok);
-                    if (fpp <= 0 || fpp >= 1) {
+                    if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
                         throw SqlException.$(lexer.lastTokenPosition(), "fpp must be between 0 and 1 (exclusive)");
                     }
                 } catch (NumericException e) {

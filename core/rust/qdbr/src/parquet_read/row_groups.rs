@@ -1009,7 +1009,9 @@ impl ParquetDecoder {
                 let base = ptr as usize;
                 let mut offset = 0usize;
                 for _ in 0..count {
-                    if base + offset + size_of::<i32>() > buf_end {
+                    let end = base.checked_add(offset)
+                        .and_then(|v| v.checked_add(size_of::<i32>()));
+                    if end.is_none_or(|e| e > buf_end) {
                         return Err(fmt_err!(
                             InvalidLayout,
                             "filter values buffer out of bounds"
@@ -1023,7 +1025,9 @@ impl ParquetDecoder {
                         }
                     } else {
                         let len = len as usize;
-                        if base + offset + len > buf_end {
+                        let end = base.checked_add(offset)
+                            .and_then(|v| v.checked_add(len));
+                        if end.is_none_or(|e| e > buf_end) {
                             return Err(fmt_err!(
                                 InvalidLayout,
                                 "filter values buffer out of bounds"
@@ -1249,7 +1253,9 @@ impl ParquetDecoder {
                 let base = ptr as usize;
                 let mut offset = 0usize;
                 for _ in 0..count {
-                    if base + offset + size_of::<i32>() > buf_end {
+                    let end = base.checked_add(offset)
+                        .and_then(|v| v.checked_add(size_of::<i32>()));
+                    if end.is_none_or(|e| e > buf_end) {
                         return Err(fmt_err!(
                             InvalidLayout,
                             "filter values buffer out of bounds"
@@ -1263,7 +1269,9 @@ impl ParquetDecoder {
                         }
                     } else {
                         let len = len as usize;
-                        if base + offset + len > buf_end {
+                        let end = base.checked_add(offset)
+                            .and_then(|v| v.checked_add(len));
+                        if end.is_none_or(|e| e > buf_end) {
                             return Err(fmt_err!(
                                 InvalidLayout,
                                 "filter values buffer out of bounds"
@@ -1552,7 +1560,8 @@ impl ParquetDecoder {
                 };
                 let buf_end = filter_desc.buf_end as usize;
                 let base = ptr as usize;
-                if base + size_of::<i32>() > buf_end {
+                let end = base.checked_add(size_of::<i32>());
+                if end.is_none_or(|e| e > buf_end) {
                     return Err(fmt_err!(
                         InvalidLayout,
                         "filter values buffer out of bounds"
@@ -1563,7 +1572,9 @@ impl ParquetDecoder {
                     return Ok(false);
                 }
                 let len = len as usize;
-                if base + size_of::<i32>() + len > buf_end {
+                let end = base.checked_add(size_of::<i32>())
+                    .and_then(|v| v.checked_add(len));
+                if end.is_none_or(|e| e > buf_end) {
                     return Err(fmt_err!(
                         InvalidLayout,
                         "filter values buffer out of bounds"
@@ -1574,7 +1585,8 @@ impl ParquetDecoder {
                 if is_between {
                     let ptr2 = unsafe { ptr.add(size_of::<i32>() + len) };
                     let base2 = ptr2 as usize;
-                    if base2 + size_of::<i32>() > buf_end {
+                    let end = base2.checked_add(size_of::<i32>());
+                    if end.is_none_or(|e| e > buf_end) {
                         return Err(fmt_err!(
                             InvalidLayout,
                             "filter values buffer out of bounds"
@@ -1585,7 +1597,9 @@ impl ParquetDecoder {
                         return Ok(false);
                     }
                     let len2 = len2 as usize;
-                    if base2 + size_of::<i32>() + len2 > buf_end {
+                    let end = base2.checked_add(size_of::<i32>())
+                        .and_then(|v| v.checked_add(len2));
+                    if end.is_none_or(|e| e > buf_end) {
                         return Err(fmt_err!(
                             InvalidLayout,
                             "filter values buffer out of bounds"

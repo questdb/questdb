@@ -1202,7 +1202,7 @@ public class SqlParser {
                         break;
                     case ExportModel.COPY_OPTION_BLOOM_FILTER_FPP:
                         double fpp = expectDouble(lexer);
-                        if (fpp <= 0 || fpp >= 1) {
+                        if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
                             throw SqlException.$(lexer.lastTokenPosition(), "bloom_filter_fpp must be between 0 and 1 (exclusive)");
                         }
                         model.setBloomFilterFpp(fpp);

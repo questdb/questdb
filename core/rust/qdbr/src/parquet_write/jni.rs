@@ -577,7 +577,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             bloom_filter_column_count,
             partition_template.columns.len(),
         )?;
-        let bloom_fpp = if bloom_filter_fpp > 0.0 {
+        let bloom_fpp = if bloom_filter_fpp > 0.0 && bloom_filter_fpp < 1.0 {
             bloom_filter_fpp
         } else {
             DEFAULT_BLOOM_FILTER_FPP
