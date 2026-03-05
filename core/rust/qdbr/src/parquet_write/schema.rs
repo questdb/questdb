@@ -372,16 +372,19 @@ impl Column {
         let primary_data = if primary_data_ptr.is_null() {
             &[]
         } else {
+            // SAFETY: JNI caller guarantees a valid pointer and length. Memory remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(primary_data_ptr, primary_data_size) }
         };
         let secondary_data = if secondary_data_ptr.is_null() {
             &[]
         } else {
+            // SAFETY: JNI caller guarantees a valid pointer and length. Memory remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(secondary_data_ptr, secondary_data_size) }
         };
         let symbol_offsets = if symbol_offsets_ptr.is_null() {
             &[]
         } else {
+            // SAFETY: JNI caller guarantees a valid pointer and length. Memory remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size) }
         };
 
@@ -437,6 +440,8 @@ pub fn to_parquet_schema(
         let ascii = if column.data_type.tag() == ColumnTypeTag::Varchar
             && !column.secondary_data.is_empty()
         {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid values of the target type.
             let aux: &[[u8; 16]] = unsafe { super::util::transmute_slice(column.secondary_data) };
             Some(super::varchar::is_column_ascii(aux))
         } else {

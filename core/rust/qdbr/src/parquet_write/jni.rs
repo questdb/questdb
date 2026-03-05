@@ -41,6 +41,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     let create = || -> ParquetResult<ParquetUpdater> {
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
+        // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
         let allocator = unsafe { &*allocator }.clone();
 
         let statistics_enabled = statistics_enabled != 0;
@@ -66,6 +67,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
         ParquetUpdater::new(
             allocator,
+            // SAFETY: JNI caller guarantees a valid file descriptor for the duration of the updater.
             unsafe { File::from_raw_fd_i32(raw_fd) },
             file_size,
             sorting_columns,
@@ -82,6 +84,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     match create() {
         Ok(updater) => Box::into_raw(Box::new(updater)),
         Err(mut err) => {
+            // SAFETY: JNI caller guarantees a valid pointer to `src_path_len` bytes of path data.
+            // The memory remains valid for the JNI call duration.
             let src_path = unsafe { slice::from_raw_parts(src_path_ptr, src_path_len as usize) };
             let src_path = std::str::from_utf8(src_path).unwrap_or("!!invalid path utf8!!");
             err.add_context(format!(
@@ -103,6 +107,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         return;
     }
 
+    // SAFETY: Pointer was created by `Box::into_raw` in the corresponding create function.
+    // Java guarantees a single destroy call and no further use after destroy.
     let _ = unsafe { Box::from_raw(updater) };
 }
 
@@ -118,6 +124,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         return err.into_cairo_exception().throw(&mut env);
     }
 
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
     let parquet_updater = unsafe { &mut *updater };
     match parquet_updater.end(None) {
         Ok(_) => (),
@@ -153,6 +161,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         err.add_context("error in PartitionUpdater.updateRowGroup");
         return err.into_cairo_exception().throw(&mut env);
     }
+
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
     let parquet_updater = unsafe { &mut *parquet_updater };
 
     let mut update = || -> ParquetResult<()> {
@@ -178,6 +189,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     match update() {
         Ok(_) => (),
         Err(mut err) => {
+            // SAFETY: JNI caller guarantees a valid pointer to `table_name_len` bytes of table name data.
+            // The memory remains valid for the JNI call duration.
             let table_name =
                 unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
             let table_name =
@@ -230,6 +243,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             timestamp_index,
         )?;
 
+        // SAFETY: JNI caller guarantees a valid pointer to `dest_path_len` bytes of path data.
+        // The memory is backed by Java and remains valid for the JNI call duration.
+        // Java guarantees valid UTF-8 for file paths (validated on creation).
         let dest_path = unsafe {
             std::str::from_utf8_unchecked(slice::from_raw_parts(dest_path, dest_path_len as usize))
         };
@@ -292,6 +308,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     match encode() {
         Ok(_) => (),
         Err(mut err) => {
+            // SAFETY: JNI caller guarantees a valid pointer to `table_name_size` bytes of table name data.
+            // The memory remains valid for the JNI call duration.
             let table_name = unsafe {
                 std::str::from_utf8(slice::from_raw_parts(
                     table_name_ptr,
@@ -334,9 +352,14 @@ fn create_partition_descriptor(
         ));
     }
 
+    // SAFETY: JNI caller guarantees a valid pointer to `col_names_len` bytes of column name data.
+    // The memory is backed by Java and remains valid for the JNI call duration.
+    // Java guarantees valid UTF-8 for column names (validated on creation).
     let mut col_names = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))
     };
+    // SAFETY: JNI caller guarantees a valid pointer to `col_data_len` elements of column metadata.
+    // The memory is backed by Java and remains valid for the JNI call duration.
     let col_data = unsafe { slice::from_raw_parts(col_data_ptr, col_data_len) };
 
     let row_count = row_count as usize;
@@ -387,6 +410,9 @@ fn create_partition_descriptor(
         columns.push(column);
     }
 
+    // SAFETY: JNI caller guarantees a valid pointer to `table_name_size` bytes of table name data.
+    // The memory is backed by Java and remains valid for the JNI call duration.
+    // Java guarantees valid UTF-8 for table names (validated on creation).
     let table = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(
             table_name_ptr,
@@ -472,6 +498,9 @@ impl BufferWriter {
 
 impl Write for BufferWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // SAFETY: `self.buffer` points to a heap-allocated Vec created in `new_with_offset`.
+        // `reserve` guarantees sufficient capacity. `copy_nonoverlapping` initializes the bytes
+        // up to the new length.
         unsafe {
             let buffer_ref = &mut *self.buffer;
             if buffer_ref.len() <= self.init_offset {
@@ -584,12 +613,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             &partition_template,
             raw_array_encoding != 0,
         )?;
+        // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
         let allocator = unsafe { &*allocator_ptr };
         let encodings = crate::parquet_write::schema::to_encodings(&partition_template);
         let per_column_compressions =
             crate::parquet_write::schema::to_compressions(&partition_template);
         let mut current_buffer = Box::new(Vec::with_capacity_in(8192, allocator.clone()));
         // Reserve 16 bytes for header: [8 bytes data_len][8 bytes rows_written_to_row_groups]
+        // SAFETY: `current_buffer` is a Box, so `&mut *current_buffer` yields a valid reference.
+        // The raw pointer is stable because Box guarantees a fixed heap address.
         let buffer_writer = unsafe {
             BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 16)
         };
@@ -661,6 +693,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         err.into_cairo_exception().throw::<*const u8>(&mut env);
         return std::ptr::null();
     }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
     let mut write_chunk = || -> ParquetResult<*const u8> {
         let row_count = row_count as usize;
@@ -689,6 +723,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
 fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
     if encoder.accumulated_rows >= encoder.row_group_size {
+        // SAFETY: Truncating to zero is always valid.
         unsafe {
             encoder.current_buffer.set_len(0);
         }
@@ -792,8 +827,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         return std::ptr::null();
     }
 
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
     let mut finish = || -> ParquetResult<*const u8> {
+        // SAFETY: Truncating to zero is always valid.
         unsafe {
             encoder.current_buffer.set_len(0);
         }
@@ -846,6 +884,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         return err.into_cairo_exception().throw::<()>(&mut env);
     }
 
+    // SAFETY: Pointer was created by `Box::into_raw` in the corresponding create function.
+    // Java guarantees a single destroy call and no further use after destroy.
     let _ = unsafe { Box::from_raw(encoder) };
 }
 
@@ -874,9 +914,14 @@ fn create_partition_template(
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
 
+    // SAFETY: JNI caller guarantees a valid pointer to `col_names_len` bytes of column name data.
+    // The memory is backed by Java and remains valid for the JNI call duration.
+    // Java guarantees valid UTF-8 for column names (validated on creation).
     let mut col_names = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))
     };
+    // SAFETY: JNI caller guarantees a valid pointer to `col_count * 2` elements of column metadata.
+    // The memory is backed by Java and remains valid for the JNI call duration.
     let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count * 2) };
     let mut columns = vec![];
 
@@ -919,6 +964,8 @@ fn update_partition_data(
     row_count: usize,
 ) -> ParquetResult<()> {
     const COL_DATA_ENTRY_SIZE: usize = 7;
+    // SAFETY: JNI caller guarantees a valid pointer to `columns.len() * COL_DATA_ENTRY_SIZE`
+    // elements of column data. The memory is backed by Java and remains valid for the JNI call duration.
     let col_data = unsafe {
         slice::from_raw_parts(col_data_ptr, partition.columns.len() * COL_DATA_ENTRY_SIZE)
     };
@@ -941,16 +988,22 @@ fn update_partition_data(
         column.primary_data = if primary_ptr.is_null() {
             &[]
         } else {
+            // SAFETY: JNI caller guarantees a valid pointer to `primary_col_size` bytes of column data.
+            // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(primary_ptr, primary_col_size as usize) }
         };
         column.secondary_data = if secondary_ptr.is_null() {
             &[]
         } else {
+            // SAFETY: JNI caller guarantees a valid pointer to `secondary_col_size` bytes of column data.
+            // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(secondary_ptr, secondary_col_size as usize) }
         };
         column.symbol_offsets = if symbol_offsets_ptr.is_null() {
             &[]
         } else {
+            // SAFETY: JNI caller guarantees a valid pointer to `symbol_offsets_size` elements of symbol offset data.
+            // The memory is backed by Java memory-mapped files and remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size as usize) }
         };
     }
@@ -978,12 +1031,16 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         return std::ptr::null();
     }
 
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
     let encoder = unsafe { &mut *encoder };
     let mut write_chunk = || -> ParquetResult<*const u8> {
         let row_count = (row_group_hi - row_group_lo) as usize;
         if row_count > 0 {
             use crate::parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers};
             use std::io::Cursor;
+            // SAFETY: JNI caller guarantees a valid pointer to `source_parquet_size` bytes
+            // of source parquet data. The memory remains valid for the JNI call duration.
             let source_data = unsafe {
                 slice::from_raw_parts(
                     source_parquet_addr as *const u8,
@@ -991,6 +1048,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 )
             };
             let mut reader = Cursor::new(source_data);
+            // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
             let allocator = unsafe { &*allocator_ptr }.clone();
             let decoder =
                 ParquetDecoder::read(allocator.clone(), &mut reader, source_parquet_size as u64)?;
@@ -1061,6 +1119,8 @@ fn convert_row_group_buffers_to_partition(
             .count();
 
         if symbol_count > 0 {
+            // SAFETY: JNI caller guarantees a valid pointer to `symbol_count * 4` elements of
+            // symbol metadata. The memory is backed by Java and remains valid for the JNI call duration.
             unsafe { slice::from_raw_parts(symbol_data_ptr as *const i64, symbol_count * 4) }
         } else {
             &[]
@@ -1076,6 +1136,8 @@ fn convert_row_group_buffers_to_partition(
         let mut column = *column_template;
         column.row_count = row_count;
         column.column_top = 0;
+        // SAFETY: `col_buf.data_ptr` points to decoded row group data owned by `row_group_bufs`,
+        // which remains alive as long as the partition references it.
         column.primary_data =
             unsafe { slice::from_raw_parts(col_buf.data_ptr as *const u8, col_buf.data_size) };
 
@@ -1086,17 +1148,23 @@ fn convert_row_group_buffers_to_partition(
             let symbol_count = symbol_data[symbol_data_idx + 3] as usize;
             symbol_data_idx += 4;
             if !values_ptr.is_null() && values_size > 0 {
+                // SAFETY: JNI caller guarantees a valid pointer to `values_size` bytes of symbol value data.
+                // The memory is backed by Java and remains valid for the JNI call duration.
                 column.secondary_data = unsafe { slice::from_raw_parts(values_ptr, values_size) };
             } else {
                 column.secondary_data = &[];
             }
 
             if !offsets_ptr.is_null() && symbol_count > 0 {
+                // SAFETY: JNI caller guarantees a valid pointer to `symbol_count` elements of symbol offset data.
+                // The memory is backed by Java and remains valid for the JNI call duration.
                 column.symbol_offsets = unsafe { slice::from_raw_parts(offsets_ptr, symbol_count) };
             } else {
                 column.symbol_offsets = &[];
             }
         } else {
+            // SAFETY: `col_buf.aux_ptr` points to decoded row group auxiliary data owned by
+            // `row_group_bufs`, which remains alive as long as the partition references it.
             column.secondary_data =
                 unsafe { slice::from_raw_parts(col_buf.aux_ptr as *const u8, col_buf.aux_size) };
             column.symbol_offsets = &[];

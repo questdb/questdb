@@ -467,6 +467,8 @@ pub trait SimdEncodable: NativeType {
                 buffer.reserve(size_of::<Self>() * non_null_count);
                 if null_count == 0 {
                     // Fast path: no nulls, memcpy entire slice
+                    // SAFETY: Reinterprets a contiguous `&[T]` as raw bytes. Valid because slices are
+                    // contiguous and `u8` has no alignment requirement.
                     let bytes = unsafe {
                         std::slice::from_raw_parts(slice.as_ptr() as *const u8, size_of_val(slice))
                     };
