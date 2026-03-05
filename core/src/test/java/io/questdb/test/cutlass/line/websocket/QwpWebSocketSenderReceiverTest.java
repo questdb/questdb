@@ -1401,9 +1401,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    @Ignore("WebSocket sender doesn't validate decimal scale on client side yet - needs feature parity with HTTP")
     @Test
-    public void testDecimalScaleMismatchThrows() throws Exception {
+    public void testDecimalScaleDownPrecisionLossThrows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
@@ -1411,21 +1410,22 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    // First value with scale 2
+                    // First value with scale 2 — sets column scale to 2
                     io.questdb.client.std.Decimal64 v1 = new io.questdb.client.std.Decimal64(100, 2);
-                    sender.table("ws_test_decimal_scale_mismatch")
+                    sender.table("ws_test_decimal_precision_loss")
                             .decimalColumn("price", v1)
-                            .at(1000000000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000L, ChronoUnit.MICROS);
 
-                    // Second value with scale 4 - should throw
-                    io.questdb.client.std.Decimal64 v2 = new io.questdb.client.std.Decimal64(10000, 4);
+                    // Second value with scale 4 whose trailing digits would be lost
+                    // when rescaling from scale 4 to scale 2 (1.2345 -> cannot be 1.23 exactly)
+                    io.questdb.client.std.Decimal64 v2 = new io.questdb.client.std.Decimal64(12345, 4);
                     try {
-                        sender.table("ws_test_decimal_scale_mismatch")
+                        sender.table("ws_test_decimal_precision_loss")
                                 .decimalColumn("price", v2)
-                                .at(2000000000L, ChronoUnit.MICROS);
-                        Assert.fail("Expected LineSenderException for scale mismatch");
+                                .at(2_000_000_000L, ChronoUnit.MICROS);
+                        Assert.fail("Expected LineSenderException for precision loss");
                     } catch (LineSenderException e) {
-                        Assert.assertTrue(e.getMessage().contains("scale mismatch"));
+                        Assert.assertTrue(e.getMessage().contains("precision loss"));
                     }
                 }
             }
