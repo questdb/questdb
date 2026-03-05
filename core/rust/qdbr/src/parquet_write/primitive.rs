@@ -10,6 +10,7 @@ use crate::parquet_write::util::{
 use crate::parquet_write::Nullable;
 use parquet2::bloom_filter::hash_native;
 use parquet2::encoding::delta_bitpacked::encode;
+use qdb_core::col_type::nulls;
 use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
@@ -507,11 +508,11 @@ impl SimdEncodable for i64 {
 
     #[inline(always)]
     fn is_null(&self) -> bool {
-        *self == i64::MIN
+        *self == nulls::LONG
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
-        let iterator = slice.iter().filter(|&&x| x != i64::MIN).copied();
+        let iterator = slice.iter().filter(|&&x| x != nulls::LONG).copied();
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode(iterator, buffer);
         true
@@ -531,11 +532,11 @@ impl SimdEncodable for i32 {
 
     #[inline(always)]
     fn is_null(&self) -> bool {
-        *self == i32::MIN
+        *self == nulls::INT
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
-        let iterator = slice.iter().filter(|&&x| x != i32::MIN).map(|&x| x as i64);
+        let iterator = slice.iter().filter(|&&x| x != nulls::INT).map(|&x| x as i64);
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode(iterator, buffer);
         true
