@@ -10,5 +10,7 @@ public class OperationCodes {
     public static final int DROP_VIEW = CREATE_VIEW + 1;
     public static final int LOAD_PLUGIN = DROP_VIEW + 1;
     public static final int UNLOAD_PLUGIN = LOAD_PLUGIN + 1;
-    public static final int MAX = UNLOAD_PLUGIN;
+    public static final int SCAN_PLUGINS = UNLOAD_PLUGIN + 1;
+    public static final int RELOAD_PLUGIN = SCAN_PLUGINS + 1;
+    public static final int MAX = RELOAD_PLUGIN;
 }
