@@ -228,14 +228,16 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
                 break;
 
             case ColumnType.SHORT:
+                short shortVal = rnd.nextShort();
                 if (!isNull) {
-                    row.putShort(columnIndex, rnd.nextShort());
+                    row.putShort(columnIndex, shortVal);
                 }
                 break;
 
             case ColumnType.BYTE:
+                byte byteVal = rnd.nextByte();
                 if (!isNull) {
-                    row.putByte(columnIndex, rnd.nextByte());
+                    row.putByte(columnIndex, byteVal);
                 }
                 break;
 
