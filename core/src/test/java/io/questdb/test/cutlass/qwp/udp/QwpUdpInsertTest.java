@@ -169,6 +169,33 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAutoFlushSingleRowExceedsMtuAfterReplay() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpSender sender = newSender(200)) {
+                // Add 2 small committed rows that fit within 200 bytes
+                sender.table("exceed_replay")
+                        .longColumn("id", 1L)
+                        .at(1_000_000L, ChronoUnit.MICROS);
+                sender.table("exceed_replay")
+                        .longColumn("id", 2L)
+                        .at(2_000_000L, ChronoUnit.MICROS);
+                // Start a row with a very large string that alone exceeds 200 bytes.
+                // at() triggers maybeAutoFlush() -> cancel + flush + replay.
+                // After replay, the single replayed row still exceeds the limit.
+                sender.table("exceed_replay")
+                        .longColumn("id", 3L)
+                        .stringColumn("big", "x".repeat(200));
+                try {
+                    sender.at(3_000_000L, ChronoUnit.MICROS);
+                    Assert.fail("expected LineSenderException");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue(e.getMessage().contains("single row exceeds maximum datagram size"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAutoFlushSingleRowExceedsMtu() throws Exception {
         assertMemoryLeak(() -> {
             try (QwpUdpSender sender = newSender(100)) {
