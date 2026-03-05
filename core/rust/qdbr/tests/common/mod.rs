@@ -289,7 +289,12 @@ fn qdb_props_with_json(
     version: WriterVersion,
     encoding: Encoding,
 ) -> WriterProperties {
-    qdb_props_with_json_compressed(qdb_json, version, encoding, ParquetCompression::UNCOMPRESSED)
+    qdb_props_with_json_compressed(
+        qdb_json,
+        version,
+        encoding,
+        ParquetCompression::UNCOMPRESSED,
+    )
 }
 
 /// Build writer properties with QDB metadata, encoding, and compression.

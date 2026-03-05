@@ -102,7 +102,11 @@ where
             block_bitwidths_offset: 0,
             miniblock_size,
             miniblock_offset: 0,
-            miniblock_index: 0,
+            miniblock_index: if blocks_remaining > 0 {
+                0
+            } else {
+                miniblocks_per_block
+            }, // if there are no blocks, we want next_miniblock to return None, so we set the index to the end.
             min_delta: U::default(),
         };
         s.advance_block(0)?;
