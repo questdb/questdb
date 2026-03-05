@@ -34,7 +34,7 @@ ILPv4 is a binary protocol for high-performance time-series data ingestion. Key 
 
 | Magic | Hex Value | Description |
 |-------|-----------|-------------|
-| `ILP4` | `0x34504C49` | Standard message (little-endian int32) |
+| `QWP1` | `0x31505751` | Standard message (little-endian int32) |
 | `ILP?` | `0x3F504C49` | Capability request |
 | `ILP!` | `0x21504C49` | Capability response |
 | `ILP0` | `0x30504C49` | Fallback (server doesn't support v4) |
@@ -117,7 +117,7 @@ return result
 ```
 Offset  Size  Type    Field           Description
 ──────────────────────────────────────────────────────────
-0       4     int32   magic           "ILP4" (0x34504C49, LE)
+0       4     int32   magic           "QWP1" (0x31505751, LE)
 4       1     uint8   version         Protocol version (0x01)
 5       1     uint8   flags           Compression/encoding flags
 6       2     uint16  table_count     Number of table blocks (LE)
@@ -566,7 +566,7 @@ Table: `sensors`, 2 rows, 3 columns: `id` (LONG), `value` (DOUBLE), `ts` (TIMEST
 
 ```
 # Header (12 bytes)
-49 4C 50 34  # Magic: "ILP4" (LE)
+51 57 50 31  # Magic: "QWP1" (LE)
 01           # Version: 1
 00           # Flags: none
 01 00        # Table count: 1 (LE uint16)

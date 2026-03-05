@@ -110,7 +110,7 @@ public class QwpMessageHeaderTest {
         h.parse(header, 0, header.length);
 
         String str = h.toString();
-        Assert.assertTrue(str.contains("ILP4"));
+        Assert.assertTrue(str.contains("QWP1"));
         Assert.assertTrue(str.contains("version=1"));
         Assert.assertTrue(str.contains("[LZ4]"));
         Assert.assertTrue(str.contains("[Gorilla]"));
@@ -178,10 +178,10 @@ public class QwpMessageHeaderTest {
         h.setMaxPayloadLength(0xFFFFFFFFL);
 
         byte[] header = new byte[12];
-        header[0] = 'I';
-        header[1] = 'L';
+        header[0] = 'Q';
+        header[1] = 'W';
         header[2] = 'P';
-        header[3] = '4';
+        header[3] = '1';
         header[4] = 1; // version
         header[5] = 0; // flags
         header[6] = 1; // table count lo
@@ -284,10 +284,10 @@ public class QwpMessageHeaderTest {
     public void testReadMagicFromDirectMemory() {
         long addr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 'I');
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 'L');
+            Unsafe.getUnsafe().putByte(addr, (byte) 'Q');
+            Unsafe.getUnsafe().putByte(addr + 1, (byte) 'W');
             Unsafe.getUnsafe().putByte(addr + 2, (byte) 'P');
-            Unsafe.getUnsafe().putByte(addr + 3, (byte) '4');
+            Unsafe.getUnsafe().putByte(addr + 3, (byte) '1');
 
             int magic = QwpMessageHeader.readMagic(addr);
             Assert.assertEquals(MAGIC_MESSAGE, magic);
@@ -298,11 +298,13 @@ public class QwpMessageHeaderTest {
 
     @Test
     public void testReadMagicStatic() {
-        byte[] buf = new byte[]{'I', 'L', 'P', '4', 0, 0, 0, 0};
+        byte[] buf = new byte[]{'Q', 'W', 'P', '1', 0, 0, 0, 0};
         int magic = QwpMessageHeader.readMagic(buf, 0);
         Assert.assertEquals(MAGIC_MESSAGE, magic);
         Assert.assertTrue(QwpMessageHeader.isMessageMagic(magic));
 
+        buf[0] = 'I';
+        buf[1] = 'L';
         buf[3] = '?';
         magic = QwpMessageHeader.readMagic(buf, 0);
         Assert.assertEquals(MAGIC_CAPABILITY_REQUEST, magic);
@@ -401,11 +403,11 @@ public class QwpMessageHeaderTest {
 
     private byte[] createValidHeader(int version, int flags, int tableCount, long payloadLength) {
         byte[] header = new byte[12];
-        // Magic: "ILP4"
-        header[0] = 'I';
-        header[1] = 'L';
+        // Magic: "QWP1"
+        header[0] = 'Q';
+        header[1] = 'W';
         header[2] = 'P';
-        header[3] = '4';
+        header[3] = '1';
         // Version
         header[4] = (byte) version;
         // Flags

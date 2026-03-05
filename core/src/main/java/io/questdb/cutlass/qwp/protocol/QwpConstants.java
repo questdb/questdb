@@ -123,9 +123,9 @@ public final class QwpConstants {
      */
     public static final int MAGIC_FALLBACK = 0x30504C49; // "ILP0" in little-endian
     /**
-     * Magic bytes for ILP v4 message: "ILP4" (ASCII).
+     * Magic bytes for QWP v1 message: "QWP1" (ASCII).
      */
-    public static final int MAGIC_MESSAGE = 0x34504C49; // "ILP4" in little-endian
+    public static final int MAGIC_MESSAGE = 0x31505751; // "QWP1" in little-endian
     /**
      * Maximum columns per table (QuestDB limit).
      */

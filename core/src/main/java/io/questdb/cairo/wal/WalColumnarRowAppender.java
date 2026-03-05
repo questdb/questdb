@@ -2022,7 +2022,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int valueCount,
             long nullBitmapAddress,
             int rowCount,
-            long startRowId
+            long startRowId,
+            long serverTimestampMicros
     ) {
         checkInColumnarWrite();
 
@@ -2036,7 +2037,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             for (int row = 0; row < rowCount; row++) {
                 long timestamp;
                 if (nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                    timestamp = Numbers.LONG_NULL;
+                    // Null designated timestamp means server-assigned (atNow)
+                    timestamp = serverTimestampMicros;
                 } else {
                     timestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8);
                     valueIdx++;
@@ -2064,9 +2066,16 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putTimestampColumnWithConversion(int columnIndex, QwpTimestampColumnCursor cursor,
-                                                 int rowCount, byte ilpType, int columnType,
-                                                 boolean isDesignated, long startRowId) throws QwpParseException {
+    public void putTimestampColumnWithConversion(
+            int columnIndex,
+            QwpTimestampColumnCursor cursor,
+            int rowCount,
+            byte ilpType,
+            int columnType,
+            boolean isDesignated,
+            long startRowId,
+            long serverTimestamp
+    ) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -2082,9 +2091,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             cursor.advanceRow();
 
             long timestamp;
-            if (cursor.isNull()) {
-                timestamp = Numbers.LONG_NULL;
-            } else {
+            if (!cursor.isNull()) {
                 timestamp = cursor.getTimestamp();
 
                 // Apply precision conversion
@@ -2095,6 +2102,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     // Wire is micros, column is nanos: multiply by 1000
                     timestamp = timestamp * 1000;
                 }
+            } else {
+                // Null designated timestamp means server-assigned (atNow)
+                timestamp = isDesignated ? serverTimestamp : Numbers.LONG_NULL;
             }
 
             if (isDesignated) {

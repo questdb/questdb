@@ -90,6 +90,11 @@ public class TestServerMain extends ServerMain {
         }
     }
 
+    public void setNowAndFixClock(long now, int nowTimestampType) {
+        ensureContext();
+        sqlExecutionContext.setNowAndFixClock(now, nowTimestampType);
+    }
+
     public void reset() {
         // Drop all tables
         CairoEngine engine = this.getEngine();

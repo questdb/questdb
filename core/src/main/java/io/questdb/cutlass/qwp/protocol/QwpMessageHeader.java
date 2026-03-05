@@ -29,12 +29,12 @@ import io.questdb.std.Unsafe;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 
 /**
- * Mutable, reusable ILP v4 message header parser.
+ * Mutable, reusable QWP v1 message header parser.
  * <p>
  * The message header is 12 bytes:
  * <pre>
  * Offset  Size    Field
- * 0       4       Magic: "ILP4"
+ * 0       4       Magic: "QWP1"
  * 4       1       Version: uint8
  * 5       1       Flags: uint8
  * 6       2       Table count: uint16 (little-endian)
@@ -308,7 +308,7 @@ public class QwpMessageHeader {
      * Converts a magic integer to a string representation.
      *
      * @param magic the magic integer
-     * @return string like "ILP4"
+     * @return string like "QWP1"
      */
     private static String magicToString(int magic) {
         char[] chars = new char[4];

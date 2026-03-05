@@ -163,12 +163,12 @@ public class QwpConstantsTest {
 
     @Test
     public void testMagicBytesValue() {
-        // "ILP4" in ASCII: I=0x49, L=0x4C, P=0x50, 4=0x34
-        // Little-endian: 0x34504C49
-        Assert.assertEquals(0x34504C49, MAGIC_MESSAGE);
+        // "QWP1" in ASCII: Q=0x51, W=0x57, P=0x50, 1=0x31
+        // Little-endian: 0x31505751
+        Assert.assertEquals(0x31505751, MAGIC_MESSAGE);
 
         // Verify ASCII encoding
-        byte[] expected = new byte[]{'I', 'L', 'P', '4'};
+        byte[] expected = new byte[]{'Q', 'W', 'P', '1'};
         Assert.assertEquals((byte) (MAGIC_MESSAGE & 0xFF), expected[0]);
         Assert.assertEquals((byte) ((MAGIC_MESSAGE >> 8) & 0xFF), expected[1]);
         Assert.assertEquals((byte) ((MAGIC_MESSAGE >> 16) & 0xFF), expected[2]);

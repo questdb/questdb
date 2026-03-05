@@ -47,6 +47,7 @@ import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
 import io.questdb.std.Decimals;
+import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
@@ -353,9 +354,14 @@ public class QwpWalAppender implements QuietCloseable {
      * @param rowCount               number of rows
      * @param tud                    table update details
      */
-    private void appendToWalColumnar(QwpTableBlockCursor tableBlock, WalWriter walWriter,
-                                     int timestampColumnInBlock, int columnCount, int rowCount,
-                                     TableUpdateDetails tud) throws QwpParseException, CommitFailedException {
+    private void appendToWalColumnar(
+            QwpTableBlockCursor tableBlock,
+            WalWriter walWriter,
+            int timestampColumnInBlock,
+            int columnCount,
+            int rowCount,
+            TableUpdateDetails tud
+    ) throws QwpParseException, CommitFailedException {
         ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
         appender.beginColumnarWrite(rowCount);
 
@@ -379,7 +385,10 @@ public class QwpWalAppender implements QuietCloseable {
             }
 
             // First pass: determine min/max timestamps (in column precision, not wire precision)
+            // serverTimestamp is used for null designated timestamps (atNow rows in mixed batches)
+            long serverTimestamp = Numbers.LONG_NULL;
             if (timestampColumnInBlock >= 0) {
+                boolean hasNullTimestamps = false;
                 QwpColumnCursor tsCursor = tableBlock.getColumn(timestampColumnInBlock);
                 tsCursor.resetRowPosition();
                 for (int row = 0; row < rowCount; row++) {
@@ -401,9 +410,25 @@ public class QwpWalAppender implements QuietCloseable {
                         if (ts > maxTimestamp) maxTimestamp = ts;
                         if (ts < prevTimestamp) outOfOrder = true;
                         prevTimestamp = ts;
+                    } else {
+                        hasNullTimestamps = true;
                     }
                 }
                 tsCursor.resetRowPosition();
+                // Assign server time for null designated timestamps (mixed at/atNow batches)
+                if (hasNullTimestamps) {
+                    serverTimestamp = tud.getTimestampDriver().getTicks();
+                    boolean hasExplicitTimestamps = minTimestamp != Long.MAX_VALUE;
+                    if (serverTimestamp < minTimestamp) minTimestamp = serverTimestamp;
+                    if (serverTimestamp > maxTimestamp) maxTimestamp = serverTimestamp;
+                    if (hasExplicitTimestamps) {
+                        // Mixed explicit and server-assigned timestamps are interleaved
+                        // in row order, so the effective sequence is almost certainly
+                        // out of order (server time is typically much later than the
+                        // explicit timestamps).
+                        outOfOrder = true;
+                    }
+                }
             } else {
                 // No designated timestamp in block - use current time for min/max estimation.
                 // Actual timestamps are assigned per-row in putServerAssignedTimestamp().
@@ -427,17 +452,20 @@ public class QwpWalAppender implements QuietCloseable {
                         if (wireIsNanos != columnIsNanos || !tsCursor.supportsDirectAccess()) {
                             // Precision mismatch or Gorilla-encoded - must iterate with conversion
                             appender.putTimestampColumnWithConversion(columnIndex, tsCursor, rowCount,
-                                    ilpType, columnType, true, walWriter.getSegmentRowCount());
+                                    ilpType, columnType, true, walWriter.getSegmentRowCount(),
+                                    serverTimestamp);
                         } else {
                             // Direct access, no conversion needed
                             appender.putTimestampColumn(columnIndex, tsCursor.getValuesAddress(),
                                     tsCursor.getValueCount(), tsCursor.getNullBitmapAddress(),
-                                    rowCount, walWriter.getSegmentRowCount());
+                                    rowCount, walWriter.getSegmentRowCount(),
+                                    serverTimestamp);
                         }
                     } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
                         appender.putTimestampColumn(columnIndex, fixedCursor.getValuesAddress(),
                                 fixedCursor.getValueCount(), fixedCursor.getNullBitmapAddress(),
-                                rowCount, walWriter.getSegmentRowCount());
+                                rowCount, walWriter.getSegmentRowCount(),
+                                serverTimestamp);
                     }
                     continue;
                 }
@@ -528,7 +556,8 @@ public class QwpWalAppender implements QuietCloseable {
                             if (wireIsNanos != columnIsNanos || !tsCursor.supportsDirectAccess()) {
                                 // Precision mismatch or Gorilla-encoded - must iterate with conversion
                                 appender.putTimestampColumnWithConversion(columnIndex, tsCursor, rowCount,
-                                        ilpType, columnType, false, walWriter.getSegmentRowCount());
+                                        ilpType, columnType, false, walWriter.getSegmentRowCount(),
+                                        Numbers.LONG_NULL);
                             } else {
                                 // Direct access, no conversion needed
                                 appender.putFixedColumn(columnIndex, tsCursor.getValuesAddress(),

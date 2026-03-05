@@ -665,16 +665,21 @@ public interface ColumnarRowAppender {
      * <p>
      * The designated timestamp has special handling: in WAL format, it stores 128-bit
      * entries with (timestamp, rowId) pairs for O3 (out-of-order) processing.
+     * <p>
+     * When {@code serverTimestampMicros} is not {@link io.questdb.std.Numbers#LONG_NULL},
+     * null designated timestamp rows use this value instead of storing NULL (atNow semantics).
      *
-     * @param columnIndex       the column index in the table
-     * @param valuesAddress     address of timestamp values
-     * @param valueCount        number of non-null values
-     * @param nullBitmapAddress address of null bitmap (0 if not nullable)
-     * @param rowCount          total number of rows
-     * @param startRowId        starting row ID for this batch
+     * @param columnIndex           the column index in the table
+     * @param valuesAddress         address of timestamp values
+     * @param valueCount            number of non-null values
+     * @param nullBitmapAddress     address of null bitmap (0 if not nullable)
+     * @param rowCount              total number of rows
+     * @param startRowId            starting row ID for this batch
+     * @param serverTimestampMicros server timestamp to use for null rows, or Numbers.LONG_NULL
      */
     void putTimestampColumn(int columnIndex, long valuesAddress, int valueCount,
-                            long nullBitmapAddress, int rowCount, long startRowId);
+                            long nullBitmapAddress, int rowCount, long startRowId,
+                            long serverTimestampMicros);
 
     /**
      * Writes a TIMESTAMP column with precision conversion.
@@ -688,18 +693,26 @@ public interface ColumnarRowAppender {
      * <p>
      * This method handles both direct-access and Gorilla-encoded timestamp cursors.
      *
-     * @param columnIndex  the column index in the table
-     * @param cursor       the timestamp column cursor
-     * @param rowCount     total number of rows
-     * @param ilpType      the ILP wire type (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
-     * @param columnType   the target QuestDB column type
-     * @param isDesignated whether this is the designated timestamp column
-     * @param startRowId   starting row ID (needed for designated timestamps)
+     * @param columnIndex     the column index in the table
+     * @param cursor          the timestamp column cursor
+     * @param rowCount        total number of rows
+     * @param ilpType         the ILP wire type (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
+     * @param columnType      the target QuestDB column type
+     * @param isDesignated    whether this is the designated timestamp column
+     * @param startRowId      starting row ID (needed for designated timestamps)
+     * @param serverTimestamp server timestamp to use for null designated rows, or Numbers.LONG_NULL
      * @throws QwpParseException if cursor iteration fails
      */
-    void putTimestampColumnWithConversion(int columnIndex, QwpTimestampColumnCursor cursor,
-                                          int rowCount, byte ilpType, int columnType,
-                                          boolean isDesignated, long startRowId) throws QwpParseException;
+    void putTimestampColumnWithConversion(
+            int columnIndex,
+            QwpTimestampColumnCursor cursor,
+            int rowCount,
+            byte ilpType,
+            int columnType,
+            boolean isDesignated,
+            long startRowId,
+            long serverTimestamp
+    ) throws QwpParseException;
 
     /**
      * Writes a TIMESTAMP column cursor to a STRING column.
