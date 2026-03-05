@@ -152,7 +152,10 @@ fn run_primitive_test_filtered<T: PrimitiveType>(
     }
 
     // Select only filtered rows
-    let filtered_expected: Vec<T::T> = rows_filter.iter().map(|&r| full_expected[r as usize]).collect();
+    let filtered_expected: Vec<T::T> = rows_filter
+        .iter()
+        .map(|&r| full_expected[r as usize])
+        .collect();
     let (data, aux) = decode_file_filtered(&parquet_file, &rows_filter);
 
     // The filtered data should have exactly rows_filter.len() elements

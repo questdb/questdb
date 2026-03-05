@@ -106,7 +106,11 @@ fn assert_varchar(nulls: &[bool], data: &[u8], aux: &[u8]) {
 
 fn assert_varchar_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: &[i64]) {
     let filtered_count = rows_filter.len();
-    assert_eq!(aux.len(), filtered_count * 16, "filtered varchar aux size mismatch");
+    assert_eq!(
+        aux.len(),
+        filtered_count * 16,
+        "filtered varchar aux size mismatch"
+    );
 
     for (fi, &row) in rows_filter.iter().enumerate() {
         let i = row as usize;
@@ -131,9 +135,15 @@ fn assert_varchar_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter:
                     "filtered row {fi} (orig {i}): short varchar should have INLINED flag"
                 );
                 let inline_len = (header_byte >> HEADER_FLAGS_WIDTH) as usize;
-                assert_eq!(inline_len, str_len, "filtered row {fi} (orig {i}): inline length mismatch");
+                assert_eq!(
+                    inline_len, str_len,
+                    "filtered row {fi} (orig {i}): inline length mismatch"
+                );
                 let inline_data = &aux[aux_base + 1..aux_base + 1 + str_len];
-                assert_eq!(inline_data, expected_bytes, "filtered row {fi} (orig {i}): inline data mismatch");
+                assert_eq!(
+                    inline_data, expected_bytes,
+                    "filtered row {fi} (orig {i}): inline data mismatch"
+                );
             } else {
                 let header_u32 = u32::from_le_bytes([
                     aux[aux_base],
@@ -142,7 +152,10 @@ fn assert_varchar_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter:
                     aux[aux_base + 3],
                 ]);
                 let stored_len = (header_u32 >> HEADER_FLAGS_WIDTH as u32) as usize;
-                assert_eq!(stored_len, str_len, "filtered row {fi} (orig {i}): overflow length mismatch");
+                assert_eq!(
+                    stored_len, str_len,
+                    "filtered row {fi} (orig {i}): overflow length mismatch"
+                );
 
                 let prefix = &aux[aux_base + 4..aux_base + 10];
                 assert_eq!(
@@ -190,7 +203,8 @@ fn run_varchar_test(name: &str, encoding: Encoding) {
                 optional_byte_array_schema("col", Some(LogicalType::String))
             };
             let props_f = qdb_props(ColumnTypeTag::Varchar, *version, encoding);
-            let (data_f, aux_f) = encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
+            let (data_f, aux_f) =
+                encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
             assert_varchar_filtered(&nulls, &data_f, &aux_f, &rows_filter);
         }
     }

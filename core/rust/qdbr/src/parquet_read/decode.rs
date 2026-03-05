@@ -34,7 +34,7 @@ use parquet2::read::{SlicedDataPage, SlicedDictPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, Long128, Long256};
 use std::cmp::min;
-use std::{i32, ptr};
+use std::ptr;
 
 mod array;
 mod decimal;
@@ -381,6 +381,7 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -971,6 +972,7 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -1081,6 +1083,7 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -1751,7 +1754,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
     let filter_len = rows_filter.len();
     let mut output_row = row_lo;
 
-    let iter = decode_null_bitmap(&page, page_row_count)?;
+    let iter = decode_null_bitmap(page, page_row_count)?;
     if let Some(iter) = iter {
         let mut current_row = 0usize;
 

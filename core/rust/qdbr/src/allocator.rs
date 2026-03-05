@@ -118,6 +118,12 @@ pub struct MemTracking {
     _non_rss_mem_used: AtomicUsize,
 }
 
+impl Default for MemTracking {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemTracking {
     pub fn new() -> Self {
         Self {

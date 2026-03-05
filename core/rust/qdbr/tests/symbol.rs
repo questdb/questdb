@@ -70,7 +70,12 @@ fn assert_symbol(non_null_values: &[ByteArray], nulls: &[bool], data: &[u8]) {
     }
 }
 
-fn assert_symbol_filtered(non_null_values: &[ByteArray], nulls: &[bool], data: &[u8], rows_filter: &[i64]) {
+fn assert_symbol_filtered(
+    non_null_values: &[ByteArray],
+    nulls: &[bool],
+    data: &[u8],
+    rows_filter: &[i64],
+) {
     let filtered_count = rows_filter.len();
     assert_eq!(
         data.len(),

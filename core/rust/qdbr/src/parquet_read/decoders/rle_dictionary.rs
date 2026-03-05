@@ -136,7 +136,7 @@ where
                 Ok(()) => self.push(),
                 Err(err) => {
                     self.inner.error = Some(err);
-                    return Ok(());
+                    Ok(())
                 }
             }
         }
@@ -316,7 +316,7 @@ where
         null_value: U,
         buffers: &'a mut ColumnChunkBuffers,
     ) -> ParquetResult<Self> {
-        let num_bits = buffer.get(0).copied().ok_or_else(|| {
+        let num_bits = buffer.first().copied().ok_or_else(|| {
             fmt_err!(
                 Layout,
                 "RLE dictionary page is missing the initial byte with bit width"
