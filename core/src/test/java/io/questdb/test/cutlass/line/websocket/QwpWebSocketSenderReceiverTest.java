@@ -2309,6 +2309,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                             .at(1_000_000_000_002L, ChronoUnit.MICROS);
                     sender.flush();
                 }
+                serverMain.awaitTable("ws_error_recovery");
 
                 // Step 4: verify both valid rows landed (the bad row should not)
                 serverMain.assertSql(
