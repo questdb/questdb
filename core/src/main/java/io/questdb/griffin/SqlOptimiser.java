@@ -7598,7 +7598,6 @@ public class SqlOptimiser implements Mutable {
                             // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
                             && sampleByOffset != null
                             // for now, time zone and offset are supported only when there is no FILL()
-                            && (sampleByFillSize == 0 || (sampleByTimezoneName == null && isZeroOffset(sampleByOffset.token)))
                             && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
@@ -10696,7 +10695,11 @@ public class SqlOptimiser implements Mutable {
             rewriteSampleByFromTo(rewrittenModel);
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());
             rewrittenModel = rewriteDistinct(rewrittenModel);
+
+            LOG.info().$("optimise :: (1) before `rewriteSampleBy`: ").$(rewrittenModel).$();
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
+            LOG.info().$("optimise :: (2) after `rewriteSampleBy`: ").$(rewrittenModel).$();
+
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
@@ -10704,7 +10707,11 @@ public class SqlOptimiser implements Mutable {
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
             resolveWindowInheritance(rewrittenModel);
             resolveNamedWindows(rewrittenModel);
+
+            LOG.info().$("optimise :: (3) before `rewriteSelectClause`: ").$(rewrittenModel).$();
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            LOG.info().$("optimise :: (4) after `rewriteSelectClause`: ").$(rewrittenModel).$();
+
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);

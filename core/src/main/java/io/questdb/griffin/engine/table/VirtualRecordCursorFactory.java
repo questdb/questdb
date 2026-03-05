@@ -36,12 +36,16 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final Log LOG = LogFactory.getLog(VirtualRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final VirtualFunctionRecordCursor cursor;
     private final ObjList<Function> functions;
@@ -115,6 +119,23 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        LOG.info().$("VirtualRecord over ").$(base.getClass().getSimpleName())
+                .$(" base cols=").$(base.getMetadata().getColumnCount())
+                .$();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Function f = functions.getQuick(i);
+            if (f instanceof ColumnFunction cf) {
+                LOG.info().$("  function[").$(i)
+                        .$("]: ColumnFunction colIdx=").$(cf.getColumnIndex())
+                        .$(" class=").$(f.getClass().getSimpleName())
+                        .$();
+            } else {
+                LOG.info().$("  function[").$(i)
+                        .$("]: ").$(f.getClass().getSimpleName())
+                        .$();
+            }
+        }
+
         RecordCursor cursor = base.getCursor(executionContext);
         try {
             internalSymbolTableSource.of(cursor);
