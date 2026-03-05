@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
@@ -48,9 +47,9 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final double batchSum = Vect.sumDouble(ptr, count);
-            if (Numbers.isFinite(batchSum)) {
+            if (!Double.isNaN(batchSum)) {
                 final double existing = mapValue.getDouble(valueIndex);
-                if (Numbers.isFinite(existing)) {
+                if (!Double.isNaN(existing)) {
                     mapValue.putDouble(valueIndex, existing + batchSum);
                 } else {
                     mapValue.putDouble(valueIndex, batchSum);
@@ -68,9 +67,9 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
+        if (!Double.isNaN(value)) {
             final double sum = mapValue.getDouble(valueIndex);
-            if (Numbers.isFinite(sum)) {
+            if (!Double.isNaN(sum)) {
                 mapValue.putDouble(valueIndex, sum + value);
             } else {
                 mapValue.putDouble(valueIndex, value);
@@ -127,9 +126,9 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final double srcSum = srcValue.getDouble(valueIndex);
-        if (Numbers.isFinite(srcSum)) {
+        if (!Double.isNaN(srcSum)) {
             final double destSum = destValue.getDouble(valueIndex);
-            if (Numbers.isFinite(destSum)) {
+            if (!Double.isNaN(destSum)) {
                 destValue.putDouble(valueIndex, destSum + srcSum);
             } else {
                 destValue.putDouble(valueIndex, srcSum);

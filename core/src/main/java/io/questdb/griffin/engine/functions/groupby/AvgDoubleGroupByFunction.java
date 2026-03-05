@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Numbers;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
@@ -50,7 +49,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
             final long countPtr = mapValue.getAddress(valueIndex + 1);
             final long prevCount = mapValue.getLong(valueIndex + 1);
             final double batchSum = Vect.sumDoubleAcc(ptr, count, countPtr);
-            if (!Numbers.isNull(batchSum)) {
+            if (!Double.isNaN(batchSum)) {
                 final double prevSum = mapValue.getDouble(valueIndex);
                 if (!Double.isNaN(prevSum)) {
                     mapValue.putDouble(valueIndex, prevSum + batchSum);
@@ -69,7 +68,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
-        if (Numbers.isFinite(d)) {
+        if (!Double.isNaN(d)) {
             mapValue.putDouble(valueIndex, d);
             mapValue.putLong(valueIndex + 1, 1L);
         } else {
@@ -81,7 +80,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
-        if (Numbers.isFinite(d)) {
+        if (!Double.isNaN(d)) {
             mapValue.addDouble(valueIndex, d);
             mapValue.addLong(valueIndex + 1, 1L);
         }

@@ -47,18 +47,18 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             float acc = 0.0f;
-            boolean hasFinite = false;
+            boolean hasValue = false;
             final long hi = ptr + count * (long) Float.BYTES;
             for (; ptr < hi; ptr += Float.BYTES) {
                 final float value = Unsafe.getUnsafe().getFloat(ptr);
-                if (Float.isFinite(value)) {
+                if (!Float.isNaN(value)) {
                     acc += value;
-                    hasFinite = true;
+                    hasValue = true;
                 }
             }
-            if (hasFinite) {
+            if (hasValue) {
                 final float existing = mapValue.getFloat(valueIndex);
-                if (Float.isFinite(existing)) {
+                if (!Float.isNaN(existing)) {
                     mapValue.putFloat(valueIndex, existing + acc);
                 } else {
                     mapValue.putFloat(valueIndex, acc);
@@ -76,9 +76,9 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
-        if (Float.isFinite(value)) {
+        if (!Float.isNaN(value)) {
             final float sum = mapValue.getFloat(valueIndex);
-            if (Float.isFinite(sum)) {
+            if (!Float.isNaN(sum)) {
                 mapValue.putFloat(valueIndex, sum + value);
             } else {
                 mapValue.putFloat(valueIndex, value);
@@ -135,9 +135,9 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final float srcSum = srcValue.getFloat(valueIndex);
-        if (Float.isFinite(srcSum)) {
+        if (!Float.isNaN(srcSum)) {
             final float destSum = destValue.getFloat(valueIndex);
-            if (Float.isFinite(destSum)) {
+            if (!Float.isNaN(destSum)) {
                 destValue.putFloat(valueIndex, destSum + srcSum);
             } else {
                 destValue.putFloat(valueIndex, srcSum);

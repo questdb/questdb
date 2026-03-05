@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunction;
@@ -419,10 +420,10 @@ public class DoubleGroupByFunctionBatchTest {
         }
     }
 
-    // Verify that computeBatch is consistent with computeNext: when the running sum
-    // overflows to +Infinity, the next finite batch overwrites it (resets the accumulator).
+    // Verify that computeBatch preserves Infinity: when the running sum overflows
+    // to +Infinity, subsequent finite batches add to it (Infinity + finite = Infinity).
     @Test
-    public void testSumDoubleBatchAccumulatedInfinityIsOverwritten() {
+    public void testSumDoubleBatchAccumulatedInfinityIsPreserved() {
         SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             // Batch 1: running sum = MAX_VALUE (finite)
@@ -435,10 +436,10 @@ public class DoubleGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 1, 0);
             Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(value), 0.0);
 
-            // Batch 3: Infinity is not finite, so the accumulator resets to 1.0
+            // Batch 3: Infinity + 1.0 = Infinity (preserved, not reset)
             ptr = allocateDoubles(1.0);
             function.computeBatch(value, ptr, 1, 0);
-            Assert.assertEquals(1.0, function.getDouble(value), 0.0);
+            Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(value), 0.0);
         }
     }
 
@@ -480,6 +481,146 @@ public class DoubleGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testSumDoubleBatchInfinityInput() {
+        SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, Double.POSITIVE_INFINITY, 2.0);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testSumDoubleBatchNegativeInfinityInput() {
+        SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, Double.NEGATIVE_INFINITY, 2.0);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals(Double.NEGATIVE_INFINITY, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testSumDoubleComputeNextInfinityInput() {
+        SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(1.0), 0);
+            function.computeNext(value, recordOf(Double.POSITIVE_INFINITY), 1);
+
+            Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testSumDoubleComputeNextInfinityAccumulator() {
+        SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(Double.POSITIVE_INFINITY), 0);
+            function.computeNext(value, recordOf(1.0), 1);
+
+            Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testSumDoubleComputeNextNaNSkipped() {
+        SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(5.0), 0);
+            function.computeNext(value, recordOf(Double.NaN), 1);
+
+            Assert.assertEquals(5.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testSumDoubleMergeInfinitySrc() {
+        SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue dest = prepare(function)) {
+            dest.putDouble(0, 5.0);
+            try (SimpleMapValue src = new SimpleMapValue(1)) {
+                src.putDouble(0, Double.POSITIVE_INFINITY);
+                function.merge(dest, src);
+            }
+            Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(dest), 0.0);
+        }
+    }
+
+    @Test
+    public void testSumDoubleMergeInfinityDest() {
+        SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue dest = prepare(function)) {
+            dest.putDouble(0, Double.POSITIVE_INFINITY);
+            try (SimpleMapValue src = new SimpleMapValue(1)) {
+                src.putDouble(0, 5.0);
+                function.merge(dest, src);
+            }
+            Assert.assertEquals(Double.POSITIVE_INFINITY, function.getDouble(dest), 0.0);
+        }
+    }
+
+    @Test
+    public void testSumDoubleMergeNaNSrcSkipped() {
+        SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue dest = prepare(function)) {
+            dest.putDouble(0, 5.0);
+            try (SimpleMapValue src = new SimpleMapValue(1)) {
+                src.putDouble(0, Double.NaN);
+                function.merge(dest, src);
+            }
+            Assert.assertEquals(5.0, function.getDouble(dest), 0.0);
+        }
+    }
+
+    @Test
+    public void testAvgDoubleComputeFirstInfinity() {
+        AvgDoubleGroupByFunction function = new AvgDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(Double.POSITIVE_INFINITY), 0);
+
+            Assert.assertEquals(Double.POSITIVE_INFINITY, value.getDouble(0), 0.0);
+            Assert.assertEquals(1L, value.getLong(1));
+        }
+    }
+
+    @Test
+    public void testAvgDoubleComputeFirstNaN() {
+        AvgDoubleGroupByFunction function = new AvgDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(Double.NaN), 0);
+
+            Assert.assertEquals(0.0, value.getDouble(0), 0.0);
+            Assert.assertEquals(0L, value.getLong(1));
+        }
+    }
+
+    @Test
+    public void testAvgDoubleComputeNextInfinity() {
+        AvgDoubleGroupByFunction function = new AvgDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(1.0), 0);
+            function.computeNext(value, recordOf(Double.POSITIVE_INFINITY), 1);
+
+            Assert.assertEquals(2L, value.getLong(1));
+            Assert.assertTrue(Double.isInfinite(function.getDouble(value)));
+        }
+    }
+
+    @Test
+    public void testAvgDoubleComputeNextNaNSkipped() {
+        AvgDoubleGroupByFunction function = new AvgDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(4.0), 0);
+            function.computeNext(value, recordOf(Double.NaN), 1);
+
+            Assert.assertEquals(1L, value.getLong(1));
+            Assert.assertEquals(4.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
     public void testSumDoubleSetEmpty() {
         SumDoubleGroupByFunction function = new SumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
@@ -506,5 +647,15 @@ public class DoubleGroupByFunctionBatchTest {
         function.initValueIndex(0);
         function.setEmpty(value);
         return value;
+    }
+
+    private Record recordOf(double value) {
+        return new Record() {
+            @Override
+            public double getDouble(int col) {
+                assert col == COLUMN_INDEX;
+                return value;
+            }
+        };
     }
 }

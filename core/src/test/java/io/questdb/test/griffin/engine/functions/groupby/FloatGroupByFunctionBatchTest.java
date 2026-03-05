@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
 import io.questdb.griffin.engine.functions.groupby.CountFloatGroupByFunction;
@@ -392,10 +393,10 @@ public class FloatGroupByFunctionBatchTest {
         }
     }
 
-    // Verify that computeBatch is consistent with computeNext: when the running sum
-    // overflows to +Infinity, the next finite batch overwrites it (resets the accumulator).
+    // Verify that computeBatch preserves Infinity: when the running sum overflows
+    // to +Infinity, subsequent finite batches add to it (Infinity + finite = Infinity).
     @Test
-    public void testSumFloatBatchAccumulatedInfinityIsOverwritten() {
+    public void testSumFloatBatchAccumulatedInfinityIsPreserved() {
         SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             // Batch 1: running sum = MAX_VALUE (finite)
@@ -408,10 +409,10 @@ public class FloatGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 1, 0);
             Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(value), 0.0f);
 
-            // Batch 3: Infinity is not finite, so the accumulator resets to 1.0
+            // Batch 3: Infinity + 1.0 = Infinity (preserved, not reset)
             ptr = allocateFloats(1.0f);
             function.computeBatch(value, ptr, 1, 0);
-            Assert.assertEquals(1.0f, function.getFloat(value), 0.0f);
+            Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(value), 0.0f);
         }
     }
 
@@ -433,7 +434,7 @@ public class FloatGroupByFunctionBatchTest {
     public void testSumFloatBatchAllNaN() {
         SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
-            long ptr = allocateFloats(Float.NaN, Float.POSITIVE_INFINITY);
+            long ptr = allocateFloats(Float.NaN, Float.NaN);
             function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertTrue(Float.isNaN(function.getFloat(value)));
@@ -449,6 +450,100 @@ public class FloatGroupByFunctionBatchTest {
             function.computeBatch(value, 0, 0, 0);
 
             Assert.assertEquals(55.0f, function.getFloat(value), 0.000001f);
+        }
+    }
+
+    @Test
+    public void testSumFloatBatchInfinityInput() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateFloats(1.0f, Float.POSITIVE_INFINITY, 2.0f);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(value), 0.0f);
+        }
+    }
+
+    @Test
+    public void testSumFloatBatchNegativeInfinityInput() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateFloats(1.0f, Float.NEGATIVE_INFINITY, 2.0f);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals(Float.NEGATIVE_INFINITY, function.getFloat(value), 0.0f);
+        }
+    }
+
+    @Test
+    public void testSumFloatComputeNextInfinityInput() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(1.0f), 0);
+            function.computeNext(value, recordOf(Float.POSITIVE_INFINITY), 1);
+
+            Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(value), 0.0f);
+        }
+    }
+
+    @Test
+    public void testSumFloatComputeNextInfinityAccumulator() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(Float.POSITIVE_INFINITY), 0);
+            function.computeNext(value, recordOf(1.0f), 1);
+
+            Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(value), 0.0f);
+        }
+    }
+
+    @Test
+    public void testSumFloatComputeNextNaNSkipped() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, recordOf(5.0f), 0);
+            function.computeNext(value, recordOf(Float.NaN), 1);
+
+            Assert.assertEquals(5.0f, function.getFloat(value), 0.0f);
+        }
+    }
+
+    @Test
+    public void testSumFloatMergeInfinitySrc() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue dest = prepare(function)) {
+            dest.putFloat(0, 5.0f);
+            try (SimpleMapValue src = new SimpleMapValue(1)) {
+                src.putFloat(0, Float.POSITIVE_INFINITY);
+                function.merge(dest, src);
+            }
+            Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(dest), 0.0f);
+        }
+    }
+
+    @Test
+    public void testSumFloatMergeInfinityDest() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue dest = prepare(function)) {
+            dest.putFloat(0, Float.POSITIVE_INFINITY);
+            try (SimpleMapValue src = new SimpleMapValue(1)) {
+                src.putFloat(0, 5.0f);
+                function.merge(dest, src);
+            }
+            Assert.assertEquals(Float.POSITIVE_INFINITY, function.getFloat(dest), 0.0f);
+        }
+    }
+
+    @Test
+    public void testSumFloatMergeNaNSrcSkipped() {
+        SumFloatGroupByFunction function = new SumFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue dest = prepare(function)) {
+            dest.putFloat(0, 5.0f);
+            try (SimpleMapValue src = new SimpleMapValue(1)) {
+                src.putFloat(0, Float.NaN);
+                function.merge(dest, src);
+            }
+            Assert.assertEquals(5.0f, function.getFloat(dest), 0.0f);
         }
     }
 
@@ -484,5 +579,15 @@ public class FloatGroupByFunctionBatchTest {
         function.initValueIndex(0);
         function.setEmpty(value);
         return value;
+    }
+
+    private Record recordOf(float value) {
+        return new Record() {
+            @Override
+            public float getFloat(int col) {
+                assert col == COLUMN_INDEX;
+                return value;
+            }
+        };
     }
 }
