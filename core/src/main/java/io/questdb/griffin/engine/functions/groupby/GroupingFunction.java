@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
@@ -89,7 +90,7 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
      * @param groupingIds      per-set bitmask indicating which keys are rolled up
      * @param keyColumnIndices maps key position to base column index
      */
-    public void init(IntList groupingIds, IntList keyColumnIndices) {
+    public void init(IntList groupingIds, IntList keyColumnIndices) throws SqlException {
         int setCount = groupingIds.size();
         int keyCount = keyColumnIndices.size();
         perSetValues = new int[setCount];
@@ -107,13 +108,14 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
                         break;
                     }
                 }
-                if (keyPos >= 0) {
-                    // Extract the bit for this key position from the full bitmask.
-                    // Bit (keyCount - 1 - keyPos) in the full mask tells whether
-                    // this key is rolled up (1) or active (0).
-                    int bit = (fullMask >> (keyCount - 1 - keyPos)) & 1;
-                    result |= (bit << (argColumnIndices.size() - 1 - a));
+                if (keyPos < 0) {
+                    throw SqlException.$(0, "GROUPING()/GROUPING_ID() argument must be a grouping key column");
                 }
+                // Extract the bit for this key position from the full bitmask.
+                // Bit (keyCount - 1 - keyPos) in the full mask tells whether
+                // this key is rolled up (1) or active (0).
+                int bit = (fullMask >> (keyCount - 1 - keyPos)) & 1;
+                result |= (bit << (argColumnIndices.size() - 1 - a));
             }
             perSetValues[s] = result;
         }

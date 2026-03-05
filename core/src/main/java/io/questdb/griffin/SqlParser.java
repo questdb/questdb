@@ -94,6 +94,7 @@ import static io.questdb.std.GenericLexer.assertNoDotsAndSlashes;
 import static io.questdb.std.GenericLexer.unquote;
 
 public class SqlParser {
+    public static final int MAX_GROUPING_SETS = 4096;
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
@@ -3402,24 +3403,26 @@ public class SqlParser {
         LowerCaseCharSequenceIntHashMap columnIndex = new LowerCaseCharSequenceIntHashMap();
 
         do {
-            CharSequence tok = tok(lexer, "'(' or ')'");
+            // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+            CharSequence tok = tokIncludingLocalBrace(lexer, "'(' or ')'");
             if (Chars.equals(tok, ')')) {
                 break;
             }
             expectTok(tok, lexer.lastTokenPosition(), '(');
 
             IntList setIndices = new IntList();
-            tok = tok(lexer, "column or ')'");
+            // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+            tok = tokIncludingLocalBrace(lexer, "column or ')'");
             if (!Chars.equals(tok, ')')) {
                 // Non-empty set
                 lexer.unparseLast();
                 do {
                     ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
-                    if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
-                        throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+                    if (n == null || n.type != ExpressionNode.LITERAL) {
+                        throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "column reference expected");
                     }
 
-                    // Find or add column in groupBy
+                    // Find or add column in groupBy (dedup by column name)
                     CharSequence colName = n.token;
                     int idx = columnIndex.keyIndex(colName);
                     if (idx >= 0) {
@@ -3431,7 +3434,8 @@ public class SqlParser {
                         setIndices.add(columnIndex.valueAt(idx));
                     }
 
-                    tok = tok(lexer, "',' or ')'");
+                    // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+                    tok = tokIncludingLocalBrace(lexer, "',' or ')'");
                     if (Chars.equals(tok, ')')) {
                         break;
                     }
@@ -3439,8 +3443,12 @@ public class SqlParser {
                 } while (true);
             }
             model.addGroupingSet(setIndices);
+            if (model.getGroupingSets().size() > MAX_GROUPING_SETS) {
+                throw SqlException.$(lexer.lastTokenPosition(), "too many grouping sets (maximum " + MAX_GROUPING_SETS + ")");
+            }
 
-            tok = optTok(lexer);
+            // Use SqlUtil.fetchNext to avoid subQueryMode swallowing ')'
+            tok = SqlUtil.fetchNext(lexer);
             if (tok == null || Chars.equals(tok, ')')) {
                 break;
             }
@@ -3964,6 +3972,39 @@ public class SqlParser {
         if (tok != null) {
             lexer.unparseLast();
         }
+    }
+
+    /**
+     * Parses a parenthesized comma-separated list of column expressions: (a, b, c).
+     * Used by ROLLUP and CUBE parsing.
+     */
+    private ObjList<ExpressionNode> parseParenthesizedColumnList(
+            GenericLexer lexer,
+            QueryModel model,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        expectTok(lexer, '(');
+        ObjList<ExpressionNode> columns = new ObjList<>();
+        // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+        CharSequence tok = tokIncludingLocalBrace(lexer, "column or ')'");
+        if (Chars.equals(tok, ')')) {
+            return columns;
+        }
+        lexer.unparseLast();
+        do {
+            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+            if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
+                throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+            }
+            columns.add(n);
+            // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+            if (Chars.equals(tok, ')')) {
+                break;
+            }
+            expectTok(tok, lexer.lastTokenPosition(), ',');
+        } while (true);
+        return columns;
     }
 
     /**

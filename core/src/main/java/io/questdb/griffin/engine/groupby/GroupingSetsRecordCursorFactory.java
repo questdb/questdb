@@ -85,7 +85,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
             ObjList<Function> recordFunctions,
             ObjList<IntList> groupingSets,
             IntList keyColumnIndices
-    ) {
+    ) throws SqlException {
         super(groupByMetadata);
         try {
             this.base = base;
