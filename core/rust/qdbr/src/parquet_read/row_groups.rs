@@ -1047,6 +1047,9 @@ impl ParquetDecoder {
             }
             PhysicalType::FixedLenByteArray(size) => {
                 let size = *size;
+                if size == 0 {
+                    return Ok(false);
+                }
                 Self::validate_filter_span(ptr, count, size, filter_desc.buf_end)?;
                 let null_check = if is_decimal {
                     is_fixed_len_null_be
@@ -1294,6 +1297,9 @@ impl ParquetDecoder {
             }
             PhysicalType::FixedLenByteArray(size) => {
                 let size = *size;
+                if size == 0 {
+                    return Ok(false);
+                }
                 Self::validate_filter_span(ptr, count, size, filter_desc.buf_end)?;
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == size && max_b.len() == size => {
@@ -1650,6 +1656,9 @@ impl ParquetDecoder {
             }
             PhysicalType::FixedLenByteArray(size) => {
                 let size = *size;
+                if size == 0 {
+                    return Ok(false);
+                }
                 Self::validate_filter_span(ptr, count, size, filter_desc.buf_end)?;
                 let (min_b, max_b) = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == size && max_b.len() == size => {
@@ -2039,8 +2048,10 @@ fn is_fixed_len_null_be(bytes: &[u8]) -> bool {
 }
 
 fn compare_signed_be(a: &[u8], b: &[u8]) -> cmp::Ordering {
-    debug_assert!(!a.is_empty(), "compare_signed_be: slices must be non-empty");
     debug_assert_eq!(a.len(), b.len());
+    if a.is_empty() {
+        return cmp::Ordering::Equal;
+    }
     match (a[0] as i8).cmp(&(b[0] as i8)) {
         cmp::Ordering::Equal => a[1..].cmp(&b[1..]),
         other => other,

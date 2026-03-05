@@ -473,7 +473,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '1970-01'");
             assertPartitionExists("x", "1970-01.1");
-            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE list '1970-01'");
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '1970-01'");
             assertPartitionDoesNotExist("x", "1970-01.1");
 
             assertSqlCursors("select * from x", "select * from y");
@@ -527,7 +527,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE " + tableName + " ADD COLUMN a int");
             execute("INSERT INTO " + tableName + " VALUES(7, '2024-06-10T00:00:00.000000Z', 1)");
 
-            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE timestamp > 0 and timestamp < '2024-06-15'");
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE timestamp > 0 AND timestamp < '2024-06-15'");
 
             assertPartitionExists(tableName, "2024-06-10.10");
             assertPartitionExists(tableName, "2024-06-11.8");

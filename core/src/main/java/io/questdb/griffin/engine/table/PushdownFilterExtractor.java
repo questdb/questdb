@@ -79,6 +79,7 @@ public class PushdownFilterExtractor implements Mutable {
     @Override
     public void clear() {
         conditions.clear();
+        orValues.clear();
     }
 
     public ObjList<PushdownFilterCondition> extractAndCompile(

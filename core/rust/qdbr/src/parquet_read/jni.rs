@@ -124,6 +124,15 @@ fn decode_row_group_impl<const MODE: u8>(
                 if filtered_rows_ptr.is_null() && filtered_rows_count > 0 {
                     return Err(fmt_err!(InvalidLayout, "filtered rows pointer is null"));
                 }
+                let row_group_span = row_group_hi.saturating_sub(row_group_lo) as usize;
+                if filtered_rows_count > row_group_span {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "filtered rows count {} exceeds row group span {}",
+                        filtered_rows_count,
+                        row_group_span
+                    ));
+                }
             }
         }
 
@@ -286,6 +295,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     filtered_rows_ptr: *const i64,
     filtered_rows_size: i64,
 ) {
+    let filtered_rows_count = if filtered_rows_size < 0 { 0usize } else { filtered_rows_size as usize };
     decode_row_group_impl::<{ DecodeMode::FilterSkip as u8 }>(
         &mut env,
         decoder,
@@ -298,7 +308,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         row_group_lo,
         row_group_hi,
         filtered_rows_ptr,
-        filtered_rows_size as usize,
+        filtered_rows_count,
     );
 }
 
@@ -318,6 +328,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     filtered_rows_ptr: *const i64,
     filtered_rows_size: i64,
 ) {
+    let filtered_rows_count = if filtered_rows_size < 0 { 0usize } else { filtered_rows_size as usize };
     decode_row_group_impl::<{ DecodeMode::FilterFillNulls as u8 }>(
         &mut env,
         decoder,
@@ -330,7 +341,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         row_group_lo,
         row_group_hi,
         filtered_rows_ptr,
-        filtered_rows_size as usize,
+        filtered_rows_count,
     );
 }
 
