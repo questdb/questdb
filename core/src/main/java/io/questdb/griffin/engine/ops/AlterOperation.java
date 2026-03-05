@@ -739,7 +739,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     protected void removeColumn(MetadataService svc, CharSequence columnName) {
-        svc.removeColumn(columnName, securityContext, false);
+        svc.removeColumn(columnName, securityContext);
     }
 
     protected interface CharSequenceList extends Mutable {

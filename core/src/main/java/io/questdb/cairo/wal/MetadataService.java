@@ -161,10 +161,10 @@ public interface MetadataService {
 
     @TestOnly
     default void removeColumn(@NotNull CharSequence columnName) {
-        removeColumn(columnName, null, false);
+        removeColumn(columnName, null);
     }
 
-    void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext, boolean cascadePermissions);
+    void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext);
 
     boolean removePartition(long partitionTimestamp);
 

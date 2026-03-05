@@ -43,6 +43,6 @@ public class DropAllOperation implements Operation {
     }
 
     public void onTableOrViewOrMatViewDropped(DdlListener ddlListener, String tableName) {
-        ddlListener.onTableOrViewOrMatViewDropped(tableName, false);
+        ddlListener.onTableOrViewOrMatViewDropped(tableName);
     }
 }

@@ -2677,7 +2677,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void removeColumn(@NotNull CharSequence name, SecurityContext securityContext, boolean cascadePermissions) {
+    public void removeColumn(@NotNull CharSequence name, SecurityContext securityContext) {
         assert txWriter.getLagRowCount() == 0;
 
         checkDistressed();
@@ -2737,7 +2737,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (securityContext != null) {
-            ddlListener.onColumnDropped(tableToken, columnName, cascadePermissions);
+            ddlListener.onColumnDropped(tableToken, columnName);
         }
     }
 

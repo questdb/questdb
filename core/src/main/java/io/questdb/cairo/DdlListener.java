@@ -45,14 +45,12 @@ public interface DdlListener {
     void onColumnAdded(SecurityContext securityContext, TableToken tableToken, CharSequence columnName);
 
     /**
-     * Called when a column is dropped from a table. When {@code cascadePermissions} is {@code true},
-     * the enterprise implementation removes all permissions associated with the dropped column.
+     * Called when a column is dropped from a table.
      *
-     * @param tableToken         the table token of the table the column is dropped from
-     * @param columnName         the name of the dropped column
-     * @param cascadePermissions when {@code true}, all permissions on this column are removed
+     * @param tableToken the table token of the table the column is dropped from
+     * @param columnName the name of the dropped column
      */
-    void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions);
+    void onColumnDropped(TableToken tableToken, CharSequence columnName);
 
     /**
      * Called when a column is renamed. The enterprise implementation transfers all existing
@@ -81,17 +79,14 @@ public interface DdlListener {
      * Called when a table, view or materialized view is dropped. This method takes
      * {@code tableName} as a {@link String} instead of a {@link TableToken} because it is
      * called after the table has been dropped, at which point the token is no longer valid.
-     * When {@code cascadePermissions} is {@code true}, the enterprise implementation removes
-     * all permissions associated with the dropped table.
      * <p>
      * {@code DROP ALL} also calls this method once per successfully dropped entity, skipping
      * system tables and tables that could not be locked. Tables that fail to drop are collected
      * and reported in a single {@code CairoException} after the loop completes.
      *
-     * @param tableName          the name of the dropped table, view or materialized view
-     * @param cascadePermissions when {@code true}, all permissions on this table are removed
+     * @param tableName the name of the dropped table, view or materialized view
      */
-    void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions);
+    void onTableOrViewOrMatViewDropped(String tableName);
 
     /**
      * Called when a table is renamed. The enterprise implementation transfers all existing

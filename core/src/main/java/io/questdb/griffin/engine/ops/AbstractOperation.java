@@ -138,10 +138,6 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.sqlText = sqlStatement;
     }
 
-    protected @Nullable SecurityContext getSecurityContext() {
-        return securityContext;
-    }
-
     void init(
             int cmdType,
             String cmdName,

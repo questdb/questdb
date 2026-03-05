@@ -7482,15 +7482,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     Assert.assertTrue(compiler.parseShowSqlCalled);
                 }
 
-                execute(compiler, "create table ka(a int)", sqlExecutionContext);
-                try {
-                    execute(compiler, "drop table ka boom zoom", sqlExecutionContext);
-                    Assert.fail();
-                } catch (Exception e) {
-                    Assert.assertTrue(compiler.compileDropTableExtCalled);
-                    compiler.compileDropTableExtCalled = false;
-                }
-
                 try {
                     execute(compiler, "drop fridge blue toenail", sqlExecutionContext);
                     Assert.fail();
@@ -7517,14 +7508,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
                 try {
                     execute(compiler, "create table tab (i int)", sqlExecutionContext);
-                    compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
-                    Assert.fail();
-                } catch (Exception e) {
-                    Assert.assertTrue(compiler.unknownDropColumnSuffixCalled);
-                }
-
-                try {
-                    execute(compiler, "create table tab2 (i int)", sqlExecutionContext);
                     compiler.compile("alter table tab add column i2 int zoom boom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -7889,14 +7872,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean addColumnSuffixCalled;
         boolean compileDropOtherCalled;
-        boolean compileDropTableExtCalled;
         boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
         boolean createViewSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
-        boolean unknownDropColumnSuffixCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
@@ -7959,24 +7940,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void compileDropExt(
-                @NotNull SqlExecutionContext executionContext,
-                @NotNull CharSequence tok
-        ) throws SqlException {
-            compileDropTableExtCalled = true;
-            super.compileDropExt(executionContext, tok);
-        }
-
-        @Override
         protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
             compileDropOtherCalled = true;
             super.compileDropOther(executionContext, tok, position);
-        }
-
-        @Override
-        protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken) throws SqlException {
-            unknownDropColumnSuffixCalled = true;
-            super.unknownDropColumnSuffix(securityContext, tok, tableToken);
         }
     }
 }

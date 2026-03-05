@@ -261,8 +261,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     postOrderTreeTraversalAlgo
             );
 
-            alterOperationBuilder = createAlterOperationBuilder();
-            dropOperationBuilder = createDropOperationBuilder();
+            alterOperationBuilder = new AlterOperationBuilder();
+            dropOperationBuilder = new GenericDropOperationBuilder();
             queryRegistry = engine.getQueryRegistry();
             blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
             // we can pass 1 as worker count because actual query plan does not matter
@@ -1302,8 +1302,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
-                unknownDropColumnSuffix(securityContext, tok, tableToken);
-                return;
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
 
@@ -2602,7 +2601,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropExt(executionContext, tok);
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -2641,7 +2640,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropExt(executionContext, tok);
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -2684,7 +2683,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 dropOperationBuilder.setIfExists(hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropExt(executionContext, tok);
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
@@ -2695,7 +2694,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = SqlUtil.fetchNext(lexer);
                 }
                 if (tok != null && !Chars.equals(tok, ';')) {
-                    compileDropAllExt(executionContext, tok);
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
                 } else {
                     compiledQuery.ofDrop(DropAllOperation.INSTANCE);
                 }
@@ -4896,20 +4895,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
 
-    protected void compileDropAllExt(
-            @NotNull SqlExecutionContext executionContext,
-            @NotNull CharSequence tok
-    ) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
-    }
-
-    protected void compileDropExt(
-            @NotNull SqlExecutionContext executionContext,
-            @NotNull CharSequence tok
-    ) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
-    }
-
     protected void compileDropOther(
             @NotNull SqlExecutionContext executionContext,
             @NotNull CharSequence tok,
@@ -4920,14 +4905,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected void compileDropReportExpected(int position) throws SqlException {
         throw SqlException.position(position).put("'table' or 'view' or 'materialized view' or 'all' expected");
-    }
-
-    protected AlterOperationBuilder createAlterOperationBuilder() {
-        return new AlterOperationBuilder();
-    }
-
-    protected GenericDropOperationBuilder createDropOperationBuilder() {
-        return new GenericDropOperationBuilder();
     }
 
     protected RecordCursorFactory generateSelectOneShot(
@@ -5000,14 +4977,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("cancel", this::compileCancel);
         keywordBasedExecutors.put("refresh", this::compileRefresh);
         keywordBasedExecutors.put("backup", this::compileBackup);
-    }
-
-    protected void unknownDropColumnSuffix(
-            @Transient SecurityContext securityContext,
-            CharSequence tok,
-            TableToken tableToken
-    ) throws SqlException {
-        throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
     }
 
     @FunctionalInterface

@@ -1958,7 +1958,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext, boolean cascadePermissions) {
+        public void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
         }
@@ -2203,7 +2203,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnNameSeq, SecurityContext securityContext, boolean cascadePermissions) {
+        public void removeColumn(@NotNull CharSequence columnNameSeq, SecurityContext securityContext) {
             final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
                 String columnName = metadata.getColumnName(columnIndex);
@@ -2234,7 +2234,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
                         try {
                             if (securityContext != null) {
-                                ddlListener.onColumnDropped(metadata.getTableToken(), columnName, cascadePermissions);
+                                ddlListener.onColumnDropped(metadata.getTableToken(), columnName);
                             }
                         } finally {
                             path.trimTo(pathSize);

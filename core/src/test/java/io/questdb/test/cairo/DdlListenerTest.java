@@ -68,10 +68,9 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     assertEquals("tab", tableToken.getTableName());
                     Assert.assertTrue(Chars.equals("v", columnName));
-                    Assert.assertFalse(cascadePermissions);
                     callbackCounters[1]++;
                 }
 
@@ -84,9 +83,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     assertEquals("tab2", tableName);
-                    Assert.assertFalse(cascadePermissions);
                     callbackCounters[3]++;
                 }
 
@@ -140,7 +138,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     callbackCounters[1]++;
                 }
 
@@ -150,8 +148,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
-                    Assert.assertFalse(cascadePermissions);
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     droppedNames.add(tableName);
                     callbackCounters[3]++;
                 }
@@ -223,7 +220,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     callbackCounters[1]++;
                 }
 
@@ -233,8 +230,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
-                    Assert.assertFalse(cascadePermissions);
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     droppedNames.add(tableName);
                     callbackCounters[3]++;
                 }
@@ -289,28 +285,25 @@ public class DdlListenerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDdlListenerCascadePermissionsOnColumnDrop() throws Exception {
+    public void testDdlListenerOnColumnDrop() throws Exception {
         assertMemoryLeak(() -> {
-            final boolean[] cascadeReceived = new boolean[1];
             final int[] callCount = new int[1];
 
             engine.setDdlListener(new DefaultDdlListener() {
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     assertEquals("tab", tableToken.getTableName());
                     Assert.assertTrue(Chars.equals("z", columnName));
-                    cascadeReceived[0] = cascadePermissions;
                     callCount[0]++;
                 }
             });
 
             execute("CREATE TABLE tab(ts TIMESTAMP, x LONG, z INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             try (TableWriter writer = getWriter("tab")) {
-                writer.removeColumn("z", AllowAllSecurityContext.INSTANCE, true);
+                writer.removeColumn("z", AllowAllSecurityContext.INSTANCE);
             }
 
             Assert.assertEquals(1, callCount[0]);
-            Assert.assertTrue(cascadeReceived[0]);
 
             // cleanup
             execute("DROP TABLE tab");
@@ -327,7 +320,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     throw new RuntimeException("onColumnDropped");
                 }
 
@@ -342,7 +335,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     throw new RuntimeException("onTableOrViewOrMatViewDropped");
                 }
 
@@ -457,10 +450,9 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     assertEquals("tab", tableToken.getTableName());
                     Assert.assertTrue(Chars.equals("v", columnName));
-                    Assert.assertFalse(cascadePermissions);
                     callbackCounters[1]++;
                 }
 
@@ -473,9 +465,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     assertEquals("tab2", tableName);
-                    Assert.assertFalse(cascadePermissions);
                     callbackCounters[3]++;
                 }
 
@@ -525,7 +516,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     callbackCounters[1]++;
                 }
 
@@ -535,9 +526,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     assertEquals("mv", tableName);
-                    Assert.assertFalse(cascadePermissions);
                     callbackCounters[3]++;
                 }
 
@@ -593,7 +583,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     callbackCounters[1]++;
                 }
 
@@ -603,9 +593,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     assertEquals("v", tableName);
-                    Assert.assertFalse(cascadePermissions);
                     callbackCounters[3]++;
                 }
 
@@ -658,7 +647,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     callbackCounters[1]++;
                 }
 
@@ -668,7 +657,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     callbackCounters[3]++;
                 }
 
@@ -715,7 +704,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     callbackCounters[1]++;
                 }
 
@@ -725,7 +714,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     callbackCounters[3]++;
                 }
 
@@ -786,7 +775,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     callbackCounters[1]++;
                 }
 
@@ -796,7 +785,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     callbackCounters[3]++;
                 }
 
@@ -848,7 +837,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+                public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
                     callbackCounters[1]++;
                 }
 
@@ -858,7 +847,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     callbackCounters[3]++;
                 }
 
@@ -918,7 +907,7 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             engine.setDdlListener(new DefaultDdlListener() {
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+                public void onTableOrViewOrMatViewDropped(String tableName) {
                     droppedNames.add(tableName);
                     throw new RuntimeException("listener error on " + tableName);
                 }

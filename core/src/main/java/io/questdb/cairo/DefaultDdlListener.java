@@ -35,7 +35,7 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onColumnDropped(TableToken tableToken, CharSequence columnName, boolean cascadePermissions) {
+    public void onColumnDropped(TableToken tableToken, CharSequence columnName) {
     }
 
     @Override
@@ -47,7 +47,7 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onTableOrViewOrMatViewDropped(String tableName, boolean cascadePermissions) {
+    public void onTableOrViewOrMatViewDropped(String tableName) {
     }
 
     @Override
