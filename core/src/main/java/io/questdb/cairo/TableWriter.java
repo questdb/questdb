@@ -8482,6 +8482,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setLagMinTimestamp(segmentCopyInfo.getMinTimestamp());
                 txWriter.setLagMaxTimestamp(segmentCopyInfo.getMaxTimestamp());
                 copiedToMemory = false;
+                o3BitmapColumns = segmentFileCache.getWalBitmapMappedColumns();
+                setupO3NullBitmapFromWal();
             } else {
                 o3Lo = 0;
                 o3LoHi = processWalCommitBlock_sortWalSegmentTimestamps();
@@ -8700,6 +8702,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     false,
                     cthMergeWalColumnManySegments
             );
+
+            // Shuffle bitmap null data using the same reverse index
+            o3BitmapColumns = segmentFileCache.getWalBitmapMappedColumns();
+            shuffleBlockBitmaps(timestampAddr, indexFormat, totalRows);
 
             assert o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMem;
             assert o3MemColumns2.get(getPrimaryColumnIndex(timestampIndex)) == o3TimestampMemCpy;
@@ -10465,6 +10471,115 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             o3NullBitmapAddrs[i] = o3BitmapAddr;
             o3NullBitmapAllocSizes[i] = o3BitmapSize;
+        }
+    }
+
+    private void shuffleBlockBitmaps(
+            long mergeIndexAddress,
+            long indexFormat,
+            long totalRows
+    ) {
+        if (o3BitmapColumns == null) {
+            return;
+        }
+
+        // Extract reverse index metadata from indexFormat
+        // See ooo.h: read_reverse_index_format_bytes, read_row_count, read_reverse_index_ptr, read_format
+        int reverseIdxItemBytes = (int) ((indexFormat >> 52) & 0x0F);
+        long indexRowCount = indexFormat & 0xFFFFFFFFFFFFL;
+        // sizeof(index_l) = 16 (int64_t ts + uint64_t i)
+        long reverseIndexAddr = mergeIndexAddress + indexRowCount * 16L + 8L;
+        int format = (int) (indexFormat >>> 56);
+        boolean isDedupShuffle = (format == 3); // dedup_shuffle_index_format
+
+        int segmentCount = segmentCopyInfo.getSegmentCount();
+
+        ensureO3NullBitmapArrays();
+
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            int colType = metadata.getColumnType(colIdx);
+            if (colType <= 0 || !ColumnType.needsNullBitmap(colType)) {
+                continue;
+            }
+
+            // Check if any segment has bitmap data for this column
+            boolean hasBitmapData = false;
+            for (int seg = 0; seg < segmentCount; seg++) {
+                int bmIdx = seg * columnCount + colIdx;
+                if (bmIdx < o3BitmapColumns.size()) {
+                    MemoryCR bm = o3BitmapColumns.getQuick(bmIdx);
+                    if (bm != null && bm.size() > 0) {
+                        hasBitmapData = true;
+                        break;
+                    }
+                }
+            }
+            if (!hasBitmapData) {
+                continue;
+            }
+
+            // Allocate destination bitmap
+            long bitmapSize = (totalRows + 7) >> 3;
+            long destBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_O3);
+            Vect.memset(destBitmapAddr, bitmapSize, 0);
+
+            // Iterate segments and rows using reverse index
+            long revRowIndex = 0;
+            for (int seg = 0; seg < segmentCount; seg++) {
+                long segLo = segmentCopyInfo.getRowLo(seg);
+                long segHi = segmentCopyInfo.getRowHi(seg);
+
+                // Get this segment's bitmap
+                int bmIdx = seg * columnCount + colIdx;
+                long srcBitmapAddr = 0;
+                if (bmIdx < o3BitmapColumns.size()) {
+                    MemoryCR bm = o3BitmapColumns.getQuick(bmIdx);
+                    if (bm != null && bm.size() > 0) {
+                        srcBitmapAddr = bm.addressOf(0);
+                    }
+                }
+
+                for (long r = segLo; r < segHi; r++) {
+                    // Read destination row from reverse index
+                    long destRow = readReverseIndexEntry(reverseIndexAddr, revRowIndex, reverseIdxItemBytes);
+                    revRowIndex++;
+
+                    if (isDedupShuffle) {
+                        if (destRow == 0) {
+                            // Duplicate row, not in result set
+                            continue;
+                        }
+                        // Rows shifted by 1
+                        destRow--;
+                    }
+
+                    // Copy null bit if source has bitmap and bit is set
+                    if (srcBitmapAddr != 0) {
+                        byte srcByte = Unsafe.getUnsafe().getByte(srcBitmapAddr + (r >> 3));
+                        if ((srcByte & (1 << (int) (r & 7))) != 0) {
+                            long destByteOffset = destBitmapAddr + (destRow >> 3);
+                            byte destByte = Unsafe.getUnsafe().getByte(destByteOffset);
+                            Unsafe.getUnsafe().putByte(destByteOffset, (byte) (destByte | (1 << (int) (destRow & 7))));
+                        }
+                    }
+                }
+            }
+
+            o3NullBitmapAddrs[colIdx] = destBitmapAddr;
+            o3NullBitmapAllocSizes[colIdx] = bitmapSize;
+        }
+    }
+
+    private static long readReverseIndexEntry(long addr, long index, int itemBytes) {
+        switch (itemBytes) {
+            case 1:
+                return Unsafe.getUnsafe().getByte(addr + index) & 0xFFL;
+            case 2:
+                return Unsafe.getUnsafe().getShort(addr + index * 2L) & 0xFFFFL;
+            case 4:
+                return Unsafe.getUnsafe().getInt(addr + index * 4L) & 0xFFFFFFFFL;
+            default:
+                return Unsafe.getUnsafe().getLong(addr + index * 8L);
         }
     }
 

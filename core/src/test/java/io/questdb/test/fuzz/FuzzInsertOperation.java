@@ -258,9 +258,9 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
 
             case ColumnType.LONG256:
                 if (!isNull) {
-                    row.putLong256(columnIndex, Long256Impl.NULL_LONG256);
-                } else {
                     row.putLong256(columnIndex, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                } else {
+                    row.putLong256(columnIndex, Long256Impl.NULL_LONG256);
                 }
                 break;
 
