@@ -259,6 +259,7 @@ stages:
                 echo "##vso[task.logissue type=error]Rust coverage objects directory not found: $COVERAGE_DIR/deps"
                 exit 1
               fi
+              chmod +x "$COVERAGE_DIR/deps"/*
               mapfile -d '' -t RUST_TEST_OBJECTS < <(find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -executable -print0 | sort -z)
               OBJECT_ARGS=(--object "$COVERAGE_DIR/libquestdbr.so")
               for rust_test_object in "${RUST_TEST_OBJECTS[@]}"; do
@@ -268,7 +269,7 @@ stages:
                 echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
                 exit 1
               fi
-              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
+              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work|/home/vsts/work)/[0-9]+/s' | head -n 1 || true)
               if [ -z "$ORIG_PATH" ]; then
                 echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
                 exit 1
@@ -280,6 +281,7 @@ stages:
               llvm-cov export \
               --format=lcov \
               --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+              $PATH_EQUIV_ARGS \
               "${OBJECT_ARGS[@]}" \
               --instr-profile=questdbr.profdata \
               > questdbr.lcov.dat
@@ -300,20 +302,6 @@ stages:
               python3 ./ci/lcov_cobertura.py questdbr-patched.lcov.dat --output cobertura.xml --base-dir core/rust
             displayName: "Merge partial Rust reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-
-          - task: PublishBuildArtifacts@1
-            displayName: "Upload Rust coverage report"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-            inputs:
-              pathToPublish: "$(Build.SourcesDirectory)/cobertura.xml"
-              artifactName: "rust-coverage"
-
-          - task: PublishBuildArtifacts@1
-            displayName: "Upload merged JaCoCo report"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
-            inputs:
-              pathToPublish: "$(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml"
-              artifactName: "jacoco-merged-coverage-report"
 
           - bash: |
               set -eux
