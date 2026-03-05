@@ -51,6 +51,8 @@ import java.util.concurrent.TimeUnit;
 @RunWith(Parameterized.class)
 public class QwpUdpMalformedTest extends AbstractCairoTest {
 
+    private static final int VALID_MAGIC = 0x31505751;
+
     @FunctionalInterface
     interface ReceiverFactory {
         QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
@@ -189,7 +191,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 sendRawBytes(new byte[12]);
                 // bad version
                 byte[] badVersion = createHeader(
-                        0x34504C49, // "ILP4"
+                        VALID_MAGIC,
                         (byte) 2, (byte) 0, 0, 0L
                 );
                 sendRawBytes(badVersion);
@@ -234,7 +236,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 byte[] header = createHeader(
-                        0x34504C49, // "ILP4"
+                        VALID_MAGIC,
                         (byte) 1, (byte) 0, 1, 1000L
                 );
                 sendRawBytes(header);
@@ -258,7 +260,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 // payloadLength = 0x7FFFFFFF (>16MB default max) triggers PAYLOAD_TOO_LARGE
                 byte[] header = createHeader(
-                        0x34504C49, // "ILP4"
+                        VALID_MAGIC,
                         (byte) 1, (byte) 0, 1, 0x7FFFFFFFL
                 );
                 sendRawBytes(header);
@@ -361,7 +363,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                 };
                 int payloadLen = schema.length + badData.length;
                 byte[] header = createHeader(
-                        0x34504C49, // "ILP4"
+                        0x31505751, // "ILP4"
                         (byte) 1, (byte) 0, 1, payloadLen
                 );
                 byte[] datagram = new byte[header.length + payloadLen];
@@ -388,7 +390,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 byte[] header = createHeader(
-                        0x34504C49, // "ILP4"
+                        VALID_MAGIC,
                         (byte) 1, (byte) 0, 1, 2L
                 );
                 byte[] datagram = new byte[header.length + 2];
@@ -415,7 +417,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 byte[] header = createHeader(
-                        0x34504C49, // "ILP4"
+                        VALID_MAGIC,
                         (byte) 2, (byte) 0, 0, 0L
                 );
                 sendRawBytes(header);
@@ -438,7 +440,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
                 byte[] header = createHeader(
-                        0x34504C49, // "ILP4"
+                        VALID_MAGIC,
                         (byte) 1, (byte) 0, 1, 0L
                 );
                 sendRawBytes(header);
