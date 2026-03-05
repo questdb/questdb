@@ -10308,16 +10308,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             MemoryMA bitmapMem = getNullBitmapColumn(i);
             if (bitmapMem != null && bitmapMem.isOpen() && metadata.getColumnType(i) > 0) {
-                bitmapMem.jumpTo(bitmapByteCount);
                 // Clear any stale bits beyond the valid row count in the last byte.
                 // O3 row appends write bits beyond the committed row count, and
                 // those bits persist after O3 commit. Without clearing them,
                 // appendBitmapNotNull() assumes the bit is 0 but it may be 1.
+                //
+                // Must clear stale bits BEFORE jumpTo(bitmapByteCount) because
+                // MemoryPMARImpl keeps only one page mapped at a time. If
+                // bitmapByteCount falls on a page boundary, jumpTo unmaps the page
+                // containing the last byte, making addressOf(bitmapByteCount - 1)
+                // crash with SIGSEGV.
                 if (bitmapBitCount > 0 && bitmapByteCount > 0) {
+                    bitmapMem.jumpTo(bitmapByteCount - 1);
                     long addr = bitmapMem.addressOf(bitmapByteCount - 1);
                     byte existing = Unsafe.getUnsafe().getByte(addr);
                     Unsafe.getUnsafe().putByte(addr, (byte) (existing & ((1 << bitmapBitCount) - 1)));
                 }
+                bitmapMem.jumpTo(bitmapByteCount);
             }
         }
     }
