@@ -7580,7 +7580,7 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode sampleByTo = nested.getSampleByTo();
 
             final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
-            if (sampleBy != null && groupBy != null && groupBy.size() > 0) {
+            if (sampleBy != null && groupBy != null && groupBy.size() > 0 && !nested.hasGroupingSets()) {
                 throw SqlException.$(groupBy.getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");
             }
 
@@ -7599,7 +7599,12 @@ public class SqlOptimiser implements Mutable {
                             && sampleByOffset != null
                             // for now, time zone and offset are supported only when there is no FILL()
                             && (sampleByFillSize == 0 || (sampleByTimezoneName == null && isZeroOffset(sampleByOffset.token)))
-                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
+                            // FILL(PREV/LINEAR) and multi-value fills normally go through the dedicated
+                            // SampleBy cursor path. GROUPING SETS always need the GROUP BY rewrite since
+                            // there is no dedicated SampleBy cursor for grouping sets.
+                            && (sampleByFillSize == 0
+                            || nested.hasGroupingSets()
+                            || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
@@ -7695,7 +7700,7 @@ public class SqlOptimiser implements Mutable {
                     timestampColumn = e.toImmutable();
                 }
 
-                if (maybeKeyed.size() > 0 &&
+                if (maybeKeyed.size() > 0 && !nested.hasGroupingSets() &&
                         ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
                     boolean isKeyed = false;
 
@@ -7874,6 +7879,17 @@ public class SqlOptimiser implements Mutable {
 
                 if (timestampOnly || nested.getGroupBy().size() > 0) {
                     nested.addGroupBy(tsFloorFunc);
+                }
+
+                // For SAMPLE BY with GROUPING SETS, add the timestamp column index
+                // to every grouping set. The timestamp is always an active key -
+                // it is never rolled up, since each time bucket must be preserved.
+                if (nested.hasGroupingSets()) {
+                    int tsGroupByIndex = nested.getGroupBy().size() - 1;
+                    ObjList<IntList> sets = nested.getGroupingSets();
+                    for (int s = 0, n = sets.size(); s < n; s++) {
+                        sets.getQuick(s).add(tsGroupByIndex);
+                    }
                 }
 
                 nested.setFillFrom(sampleByFrom);
