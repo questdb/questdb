@@ -401,7 +401,13 @@ pub fn symbol_to_pages(
     };
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     let (dict_buffer, keys, max_key) = {
-        let mut bloom_guard = bloom_set.as_ref().map(|arc| arc.lock().unwrap());
+        let mut bloom_guard = bloom_set
+            .as_ref()
+            .map(|arc| {
+                arc.lock()
+                    .map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))
+            })
+            .transpose()?;
         encode_symbols_dict(
             column_values,
             offsets,

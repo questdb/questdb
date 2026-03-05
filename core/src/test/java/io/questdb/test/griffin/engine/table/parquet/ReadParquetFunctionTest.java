@@ -188,6 +188,35 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         null, parallel, false
                 );
                 Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertQueryNoLeakCheck(
+                        "id\n",
+                        "SELECT id FROM read_parquet('x.parquet') WHERE id IS NULL",
+                        null, parallel, false
+                );
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+                assertQueryNoLeakCheck(
+                        "cnt\n" + rows + "\n",
+                        "SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id IS NOT NULL",
+                        null, false, true
+                );
+
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertQueryNoLeakCheck(
+                        "cnt\n10\n",
+                        "SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN 10 AND 1",
+                        null, false, true
+                );
+
+                ParquetRowGroupFilter.resetRowGroupsSkipped();
+                assertQueryNoLeakCheck(
+                        "cnt\n0\n",
+                        "SELECT COUNT(*) cnt FROM read_parquet('x.parquet') WHERE id BETWEEN -100 AND -50",
+                        null, false, true
+                );
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             }
         });
     }

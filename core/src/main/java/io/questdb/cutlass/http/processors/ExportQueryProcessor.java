@@ -641,7 +641,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (bloomFilterFpp != null && bloomFilterFpp.size() > 0) {
             try {
                 double fpp = Numbers.parseDouble(bloomFilterFpp.ptr(), bloomFilterFpp.size());
-                if (fpp <= 0 || fpp >= 1) {
+                if (!Double.isFinite(fpp) || fpp <= 0 || fpp >= 1) {
                     errSink.clear();
                     errSink.put("bloom_filter_fpp must be between 0 and 1 (exclusive): ").put(bloomFilterFpp);
                     sendException(response, 0, errSink, state);

@@ -588,7 +588,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
             long bloomFilterIndexesPtr = 0;
             int bloomFilterCount = 0;
-            double fpp = Double.isNaN(bloomFilterFpp) ? 0.01 : bloomFilterFpp;
+            double fpp = Double.isNaN(bloomFilterFpp) ? DEFAULT_BLOOM_FILTER_FPP : bloomFilterFpp;
 
             if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
                 bloomFilterColumnIndexes.reopen();
