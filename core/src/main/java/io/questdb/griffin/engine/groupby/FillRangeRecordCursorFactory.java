@@ -302,7 +302,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         public void close() {
             baseCursor = Misc.free(baseCursor);
             presentTimestamps = Misc.free(presentTimestamps);
-            keyMap = Misc.free(keyMap);
+            if (keyMap != null) {
+                keyMap.close();
+            }
         }
 
         @Override
@@ -475,6 +477,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 presentTimestamps = new DirectLongList(capacity, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             }
             initValueFuncs(fillValues);
+            if (hasKeyColumns) {
+                keyMap.reopen();
+            }
             baseRecord = baseCursor.getRecord();
             toTop();
         }

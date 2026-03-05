@@ -659,34 +659,20 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupingFunctionMultiArg() throws Exception {
+    public void testGroupingFunctionMultiArgRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE trades (symbol SYMBOL, side SYMBOL, quantity DOUBLE, ts TIMESTAMP)" +
                             " TIMESTAMP(ts) PARTITION BY DAY"
             );
-            execute(
-                    "INSERT INTO trades VALUES " +
-                            "('BTC', 'buy', 10, '2024-01-01T00:00:00.000000Z')," +
-                            "('BTC', 'sell', 20, '2024-01-01T00:01:00.000000Z')," +
-                            "('ETH', 'buy', 30, '2024-01-01T00:02:00.000000Z')"
-            );
 
-            // GROUPING(symbol, side) returns a 2-bit bitmask:
-            // 0b00 = 0: both grouped
-            // 0b01 = 1: side rolled up
-            // 0b11 = 3: both rolled up
-            assertSql(
-                    "symbol\tside\tSUM\tgrp\n" +
-                            "BTC\tbuy\t10.0\t0\n" +
-                            "BTC\tsell\t20.0\t0\n" +
-                            "ETH\tbuy\t30.0\t0\n" +
-                            "BTC\t\t30.0\t1\n" +
-                            "ETH\t\t30.0\t1\n" +
-                            "\t\t60.0\t3\n",
+            // GROUPING() only accepts a single column; use GROUPING_ID() for multiple
+            assertException(
                     "SELECT symbol, side, SUM(quantity), GROUPING(symbol, side) AS grp " +
                             "FROM trades " +
-                            "GROUP BY ROLLUP(symbol, side)"
+                            "GROUP BY ROLLUP(symbol, side)",
+                    36,
+                    "GROUPING() accepts a single column; use GROUPING_ID() for multiple columns"
             );
         });
     }
@@ -1121,7 +1107,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "FROM trades " +
                             "GROUP BY ROLLUP(symbol)",
                     7,
-                    "GROUPING() requires at least one argument"
+                    "GROUPING() requires exactly one column argument"
             );
         });
     }
