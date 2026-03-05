@@ -127,6 +127,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
         frameMemoryPool.clear();
+        if (parquetNullBitmapAddr != 0) {
+            Unsafe.free(parquetNullBitmapAddr, parquetNullBitmapSize, MemoryTag.NATIVE_JIT);
+            parquetNullBitmapAddr = 0;
+            parquetNullBitmapSize = 0;
+        }
     }
 
     @Override
@@ -307,6 +312,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public void releaseFrameMemory() {
         frameMemoryPool.releaseParquetBuffers();
         frameMemory = null;
+        if (parquetNullBitmapAddr != 0) {
+            Unsafe.free(parquetNullBitmapAddr, parquetNullBitmapSize, MemoryTag.NATIVE_JIT);
+            parquetNullBitmapAddr = 0;
+            parquetNullBitmapSize = 0;
+        }
     }
 
     public void setErrorMsg(Throwable th) {
