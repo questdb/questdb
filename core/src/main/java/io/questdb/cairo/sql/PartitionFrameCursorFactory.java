@@ -34,6 +34,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -79,6 +80,7 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
      */
     int getOrder();
 
+    @Nullable
     ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions();
 
     TableToken getTableToken();
