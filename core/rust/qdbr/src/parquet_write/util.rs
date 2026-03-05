@@ -319,6 +319,55 @@ pub fn dict_pages_iter(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn encode_dict_rle_pages(
+    dict_buffer: Vec<u8>,
+    dict_entry_count: usize,
+    keys: Vec<u32>,
+    non_null_count: usize,
+    mut data_buffer: Vec<u8>,
+    definition_levels_byte_length: usize,
+    num_rows: usize,
+    null_count: usize,
+    statistics: Option<ParquetStatistics>,
+    primitive_type: PrimitiveType,
+    options: WriteOptions,
+    required: bool,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let max_key = if dict_entry_count == 0 {
+        0u32
+    } else {
+        (dict_entry_count - 1) as u32
+    };
+    let bits_per_key = bit_width(max_key as u64);
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        keys.into_iter(),
+        non_null_count,
+        bits_per_key as u32,
+    )?;
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+        required,
+    )?;
+
+    let unique_count = if dict_buffer.is_empty() {
+        0
+    } else {
+        dict_entry_count
+    };
+    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+}
+
 pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
     let sizeof_t = mem::size_of::<T>();
     assert_eq!(slice.len() % sizeof_t, 0);
