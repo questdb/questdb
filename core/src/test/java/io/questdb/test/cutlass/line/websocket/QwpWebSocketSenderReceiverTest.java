@@ -36,7 +36,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -430,7 +429,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    @Ignore("WebSocket transport doesn't support pre-created tables with custom timestamp columns yet - needs feature parity with HTTP")
     @Test
     public void testAtNowWithCustomTimestampColumnName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -471,7 +469,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    @Ignore("WebSocket transport doesn't support pre-created tables with custom timestamp columns yet - needs feature parity with HTTP")
     @Test
     public void testAtWithCustomTimestampColumnName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -728,6 +725,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     // Flush the second row
                     sender.flush();
                 }
+                serverMain.awaitTable("ws_autoflush_interval");
 
                 serverMain.assertSql("select count() from ws_autoflush_interval", "count\n2\n");
                 serverMain.assertSql(
@@ -1401,9 +1399,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    @Ignore("WebSocket sender doesn't validate decimal scale on client side yet - needs feature parity with HTTP")
     @Test
-    public void testDecimalScaleMismatchThrows() throws Exception {
+    public void testDecimalScaleDownPrecisionLossThrows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
@@ -1411,21 +1408,22 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
-                    // First value with scale 2
+                    // First value with scale 2 — sets column scale to 2
                     io.questdb.client.std.Decimal64 v1 = new io.questdb.client.std.Decimal64(100, 2);
-                    sender.table("ws_test_decimal_scale_mismatch")
+                    sender.table("ws_test_decimal_precision_loss")
                             .decimalColumn("price", v1)
-                            .at(1000000000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000L, ChronoUnit.MICROS);
 
-                    // Second value with scale 4 - should throw
-                    io.questdb.client.std.Decimal64 v2 = new io.questdb.client.std.Decimal64(10000, 4);
+                    // Second value with scale 4 whose trailing digits would be lost
+                    // when rescaling from scale 4 to scale 2 (1.2345 -> cannot be 1.23 exactly)
+                    io.questdb.client.std.Decimal64 v2 = new io.questdb.client.std.Decimal64(12345, 4);
                     try {
-                        sender.table("ws_test_decimal_scale_mismatch")
+                        sender.table("ws_test_decimal_precision_loss")
                                 .decimalColumn("price", v2)
-                                .at(2000000000L, ChronoUnit.MICROS);
-                        Assert.fail("Expected LineSenderException for scale mismatch");
+                                .at(2_000_000_000L, ChronoUnit.MICROS);
+                        Assert.fail("Expected LineSenderException for precision loss");
                     } catch (LineSenderException e) {
-                        Assert.assertTrue(e.getMessage().contains("scale mismatch"));
+                        Assert.assertTrue(e.getMessage().contains("precision loss"));
                     }
                 }
             }
@@ -2173,6 +2171,96 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Tests that in async mode (window > 1) a server error from a bad batch
+     * does not surface until the user thread calls flush().
+     * <p>
+     * With autoFlushRows=1, each at() call triggers an auto-flush that enqueues
+     * the batch to the I/O thread without waiting for ACKs. The user thread
+     * keeps producing rows obliviously. The error only surfaces when flush()
+     * calls awaitEmpty(), which checks the in-flight window's lastError.
+     * <p>
+     * This is fundamentally different from sync mode where flush() blocks for
+     * each batch's ACK inline, so the error surfaces on the flush() that sent
+     * the bad data.
+     * <p>
+     * The bad row targets a pre-existing table via a fresh connection so the
+     * client has no cached schema and cannot detect the mismatch locally —
+     * only the server can reject it.
+     */
+    @Test
+    public void testErrorPropagation_asyncMultipleBatchesInFlight() throws Exception {
+        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // Pre-create a table with a LONG column
+                try (QwpWebSocketSender setupSender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    setupSender.table("ws_async_multi_err")
+                            .longColumn("value", 0)
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                    setupSender.flush();
+                }
+                serverMain.awaitTable("ws_async_multi_err");
+
+                // Fresh async sender: autoFlushRows=1 so each row is enqueued
+                // immediately, window=8. The sender has no cached schema for
+                // "ws_async_multi_err", so it cannot detect the type mismatch.
+                boolean errorCaught = false;
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync(
+                        "localhost", httpPort, false,
+                        1,                              // autoFlushRows: every row
+                        Integer.MAX_VALUE,              // autoFlushBytes: disabled
+                        TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
+                        windowSize
+                )) {
+                    // Good rows to a separate table — auto-flushed, no ACK wait
+                    for (int i = 1; i <= 3; i++) {
+                        sender.table("ws_async_multi_ok")
+                                .longColumn("v", i)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
+
+                    // Bad row to the pre-existing table — STRING into LONG.
+                    // Client has no cached schema, so this passes client-side
+                    // validation. The I/O thread sends it; the server rejects it.
+                    sender.table("ws_async_multi_err")
+                            .stringColumn("value", "not a number")
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                    // More good rows — user thread doesn't know about the error yet
+                    for (int i = 4; i <= 6; i++) {
+                        sender.table("ws_async_multi_ok")
+                                .longColumn("v", i)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    }
+
+                    // flush() drains the window via awaitEmpty() — error surfaces here
+                    sender.flush();
+                    Assert.fail("Expected LineSenderException from bad batch");
+                } catch (LineSenderException e) {
+                    errorCaught = true;
+                    Assert.assertTrue(
+                            "Error message should indicate server error: " + e.getMessage(),
+                            e.getMessage().contains("WRITE_ERROR")
+                                    || e.getMessage().contains("Processing failed")
+                                    || e.getMessage().contains("Server error")
+                                    || e.getMessage().contains("failed")
+                    );
+                }
+                Assert.assertTrue("Error should have been caught", errorCaught);
+
+                // The initial setup row (value=0) must be present
+                serverMain.assertSql(
+                        "SELECT value FROM ws_async_multi_err WHERE value = 0",
+                        "value\n0\n"
+                );
+            }
+        });
+    }
+
+    /**
      * Tests that a sender can recover after a type-mismatch error by reconnecting.
      * <p>
      * Sends a bad batch (string into a long column), catches the error,
@@ -2219,6 +2307,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                             .at(1_000_000_000_002L, ChronoUnit.MICROS);
                     sender.flush();
                 }
+                serverMain.awaitTable("ws_error_recovery");
 
                 // Step 4: verify both valid rows landed (the bad row should not)
                 serverMain.assertSql(
@@ -2276,6 +2365,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                         sender.flush();
                     }
                 }
+
+                // Wait for WAL to apply all transactions
+                serverMain.awaitTable("ws_error_recovery_multi");
 
                 // Step 4: verify 16 rows total (1 initial + 15 recovered)
                 serverMain.assertSql(
@@ -2749,6 +2841,42 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testGorillaDisabled_dataCorrectness() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                int rowCount = 100;
+                long baseTimestamp = 1_704_067_200_000_000L; // 2024-01-01T00:00:00 in micros
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.setGorillaEnabled(false);
+
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("ws_gorilla_disabled")
+                                .longColumn("value", i)
+                                .at(baseTimestamp + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_gorilla_disabled");
+                serverMain.assertSql("select count() from ws_gorilla_disabled", "count\n100\n");
+                serverMain.assertSql("select sum(value) from ws_gorilla_disabled", "sum\n4950\n");
+                serverMain.assertSql(
+                        "select min(timestamp), max(timestamp) from ws_gorilla_disabled",
+                        """
+                                min\tmax
+                                2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000099Z
+                                """
+                );
+            }
+        });
+    }
+
     /**
      * Tests that cumulative ACKs work correctly with high in-flight windows.
      * <p>
@@ -2796,16 +2924,15 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     /**
-     * Tests that errors are propagated immediately in window=1 (sync) mode.
+     * Tests that a type-mismatch error surfaces on flush() in both sync and
+     * async modes.
      * <p>
-     * In sync mode (window=1), errors should be thrown immediately on flush()
-     * rather than being delayed until a later operation.
+     * Creates a table with a LONG column, then sends a STRING into it via a
+     * fresh connection. flush() must throw in both modes because it always
+     * waits for all pending ACKs before returning.
      */
     @Test
-    public void testImmediateErrorPropagationWindow1() throws Exception {
-        // Only run for window=1 (sync mode)
-        Assume.assumeTrue("Window=1 only", windowSize == 1);
-
+    public void testImmediateErrorPropagation_typeMismatchOnFlush() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 int httpPort = serverMain.getHttpServerPort();
@@ -2814,24 +2941,20 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     sender.table("ws_error_propagation_test")
                             .longColumn("value", 42)
-                            .at(1000000000000L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
-                // Wait for table to be created
                 serverMain.awaitTable("ws_error_propagation_test");
 
                 // Second sender: fresh connection, no client-side column cache
-                // Send with type mismatch - error should propagate immediately
                 try (QwpWebSocketSender sender = createSender(httpPort)) {
                     sender.table("ws_error_propagation_test")
                             .stringColumn("value", "not a number")
-                            .at(1000000000001L, ChronoUnit.MICROS);
+                            .at(1_000_000_000_001L, ChronoUnit.MICROS);
                     sender.flush();
                     Assert.fail("Expected LineSenderException");
                 } catch (LineSenderException e) {
-                    // Expected: immediate error in window=1 mode
-                    // Server returns WRITE_ERROR with "Processing failed" message
                     Assert.assertTrue("Error message should indicate server error: " + e.getMessage(),
                             e.getMessage().contains("WRITE_ERROR") ||
                                     e.getMessage().contains("Processing failed") ||
@@ -2959,6 +3082,46 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTable("ws_test_large_array");
                 serverMain.assertSql("select count() from ws_test_large_array", "count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLargePayloadPerRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "1048576"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                // ~100KB string per row
+                String largeString = "x".repeat(100_000);
+                // 10K-element array per row (~80KB)
+                double[] largeArray = new double[10_000];
+                for (int i = 0; i < largeArray.length; i++) {
+                    largeArray[i] = i * 0.01;
+                }
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    for (int i = 0; i < 3; i++) {
+                        sender.table("ws_test_large_payload")
+                                .symbol("id", "row" + i)
+                                .stringColumn("big_text", largeString)
+                                .doubleArray("big_array", largeArray)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                }
+
+                serverMain.awaitTable("ws_test_large_payload");
+                serverMain.assertSql(
+                        "SELECT count() FROM ws_test_large_payload",
+                        "count\n3\n"
+                );
+                serverMain.assertSql(
+                        "SELECT length(big_text) FROM ws_test_large_payload LIMIT 1",
+                        "length\n100000\n"
+                );
             }
         });
     }
