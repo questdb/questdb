@@ -2277,6 +2277,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
                     }
                 }
 
+                // Wait for WAL to apply all transactions
+                serverMain.awaitTable("ws_error_recovery_multi");
+
                 // Step 4: verify 16 rows total (1 initial + 15 recovered)
                 serverMain.assertSql(
                         "SELECT count() FROM ws_error_recovery_multi",
