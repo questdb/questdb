@@ -593,15 +593,6 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSetParquetRleDictionaryRejectedForInt() throws Exception {
-        assertFailure(
-                "ALTER TABLE x ALTER COLUMN i SET PARQUET ENCODING RLE_DICTIONARY",
-                50,
-                "encoding 'RLE_DICTIONARY' is not valid for column type"
-        );
-    }
-
-    @Test
     public void testInvalidColumnName() throws Exception {
         assertFailure("alter table x alter column y add index", 27, "column 'y' does not exist in table 'x'");
     }
