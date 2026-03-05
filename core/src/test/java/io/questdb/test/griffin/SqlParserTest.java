@@ -4091,7 +4091,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableParquetRleDictionaryRejectedForInt() throws Exception {
+    public void testCreateTableParquetDeltaLengthByteArrayRejectedForInt() throws Exception {
         assertSyntaxError(
                 "create table x (" +
                         "a INT PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY, " +
