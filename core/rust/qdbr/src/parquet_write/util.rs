@@ -144,17 +144,20 @@ fn is_binary_column_type(primitive_type: &PrimitiveType) -> bool {
     primitive_type.physical_type == PhysicalType::ByteArray && primitive_type.logical_type.is_none()
 }
 
-fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
+pub(crate) fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
     // We only keep 8 initial bytes for the min and max values.
     // Semantics of these Parquet fields are "lower and upper bound".
     // If max_value is longer than 8 bytes, we must choose an 8-byte value that
     // comes just after actual max_value in sort order. We achieve this by
     // converting to integer, incrementing, and converting back to bytes.
-    // TODO: if first 8 bytes are all 0xFFs, it can't be incremented and the
-    //       upper bound will be slightly off!
+    // If the first 8 bytes are all 0xFF, we can't increment the prefix, so we
+    // fall back to the untruncated value (up to 9 bytes from update()).
     let val_slice_be: [u8; SIZEOF_I64] = max_value[..SIZEOF_I64].try_into().unwrap();
-    let upper_bound = i64::from_be_bytes(val_slice_be).saturating_add(1);
-    upper_bound.to_be_bytes().to_vec()
+    let as_u64 = u64::from_be_bytes(val_slice_be);
+    match as_u64.checked_add(1) {
+        Some(inc) => inc.to_be_bytes().to_vec(),
+        None => max_value,
+    }
 }
 
 pub struct ArrayStats {
@@ -427,8 +430,12 @@ pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
 mod tests {
     use parquet2::encoding::bitpacked;
     use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
+    use parquet2::schema::types::PhysicalType;
+    use parquet2::schema::types::PrimitiveType;
 
-    use crate::parquet_write::util::encode_primitive_def_levels;
+    use crate::parquet_write::util::{
+        binary_upper_bound, encode_primitive_def_levels, BinaryMaxMinStats,
+    };
 
     #[test]
     fn decode_bitmap_v2() {
@@ -499,6 +506,50 @@ mod tests {
         };
     }
 
+    #[test]
+    fn test_binary_upper_bound_normal() {
+        let input = vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xAB];
+        let result = binary_upper_bound(input);
+        assert_eq!(result, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]);
+    }
+
+    #[test]
+    fn test_binary_upper_bound_all_ff() {
+        let input = vec![0xFF; 9];
+        let result = binary_upper_bound(input);
+        // Can't increment [0xFF; 8], falls back to keeping the 9-byte value
+        assert_eq!(result, vec![0xFF; 9]);
+    }
+
+    #[test]
+    fn test_binary_upper_bound_near_max() {
+        let mut input = vec![0xFF; 9];
+        input[7] = 0xFE;
+        let result = binary_upper_bound(input);
+        assert_eq!(result, vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn test_binary_upper_bound_high_bit() {
+        // 0x80_00_00_00_00_00_00_00 — would be i64::MIN in signed, but should work correctly
+        // with unsigned arithmetic: result should be 0x80_00_00_00_00_00_00_01
+        let input = vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x42];
+        let result = binary_upper_bound(input);
+        assert_eq!(result, vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn test_binary_stats_all_ff_keeps_max() {
+        let primitive_type =
+            PrimitiveType::from_physical("test".to_string(), PhysicalType::ByteArray);
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(&[0xFF; 9]);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        // Can't increment [0xFF; 8], falls back to 9-byte value
+        assert!(parquet_stats.max_value.is_some());
+        assert!(parquet_stats.min_value.is_some());
+    }
     #[test]
     fn test_max_min_update_unsigned() {
         let mut mm: super::MaxMin<i32> = super::MaxMin::new();
