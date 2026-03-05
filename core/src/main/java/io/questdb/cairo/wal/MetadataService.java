@@ -196,7 +196,7 @@ public interface MetadataService {
      * compression level, bit 24 explicit flag. This method commits any pending
      * transaction before modifying the column metadata.
      *
-     * @param columnName           name of the column to configure
+     * @param columnName            name of the column to configure
      * @param parquetEncodingConfig packed encoding/compression config
      */
     void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig);
