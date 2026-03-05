@@ -2749,6 +2749,42 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testGorillaDisabled_dataCorrectness() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                int rowCount = 100;
+                long baseTimestamp = 1_704_067_200_000_000L; // 2024-01-01T00:00:00 in micros
+
+                try (QwpWebSocketSender sender = createSender(httpPort)) {
+                    sender.setGorillaEnabled(false);
+
+                    for (int i = 0; i < rowCount; i++) {
+                        sender.table("ws_gorilla_disabled")
+                                .longColumn("value", i)
+                                .at(baseTimestamp + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("ws_gorilla_disabled");
+                serverMain.assertSql("select count() from ws_gorilla_disabled", "count\n100\n");
+                serverMain.assertSql("select sum(value) from ws_gorilla_disabled", "sum\n4950\n");
+                serverMain.assertSql(
+                        "select min(timestamp), max(timestamp) from ws_gorilla_disabled",
+                        """
+                                min\tmax
+                                2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000099Z
+                                """
+                );
+            }
+        });
+    }
+
     /**
      * Tests that cumulative ACKs work correctly with high in-flight windows.
      * <p>
