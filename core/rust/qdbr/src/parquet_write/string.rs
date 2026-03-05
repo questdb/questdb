@@ -235,6 +235,8 @@ fn get_utf16(entry_tail: &[u8]) -> Option<&[u16]> {
     if len_raw < 0 {
         return None;
     }
+    // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+    // The byte content represents valid `u16` values.
     let utf16_tail: &[u16] = unsafe { transmute_slice(value_tail) };
     let char_count = len_raw as usize;
     Some(&utf16_tail[..char_count])

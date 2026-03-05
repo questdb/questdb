@@ -744,6 +744,8 @@ fn symbol_column_to_pages_multi_partition(
     let partition_slices: Vec<(&[i32], usize, bool)> = partition_ranges
         .iter()
         .map(|(col, offset, length)| {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i32` values.
             let keys: &[i32] = unsafe { util::transmute_slice(col.primary_data) };
             let (keys_slice, adjusted_column_top) =
                 compute_symbol_slice(keys, col.column_top, *offset, *length);
@@ -903,6 +905,8 @@ fn chunk_to_group_page(
                 Some(t) => Ok(t),
             }?;
             let dim = column.data_type.array_dimensionality()? as usize;
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 16]` values.
             let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             array::array_to_page(
@@ -977,6 +981,8 @@ fn column_chunk_to_dict_pages(
 
     match column.data_type.tag() {
         ColumnTypeTag::Int => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i32` values.
             let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::slice_to_dict_pages_simd(
                 &data[lower_bound..upper_bound],
@@ -986,6 +992,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Long | ColumnTypeTag::Date => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::slice_to_dict_pages_simd(
                 &data[lower_bound..upper_bound],
@@ -995,6 +1003,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Timestamp => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             if column.designated_timestamp {
                 // Designated timestamp is NOT NULL; treat as nullable with 0 nulls
@@ -1016,6 +1026,8 @@ fn column_chunk_to_dict_pages(
             }
         }
         ColumnTypeTag::Float => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `f32` values.
             let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::slice_to_dict_pages_simd(
                 &data[lower_bound..upper_bound],
@@ -1025,6 +1037,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Double => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `f64` values.
             let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::slice_to_dict_pages_simd(
                 &data[lower_bound..upper_bound],
@@ -1034,6 +1048,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Byte => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i8` values.
             let data: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_dict_pages_notnull::<i8, i32>(
                 &data[lower_bound..upper_bound],
@@ -1043,6 +1059,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Short => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i16` values.
             let data: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_dict_pages_notnull::<i16, i32>(
                 &data[lower_bound..upper_bound],
@@ -1052,6 +1070,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Char => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `u16` values.
             let data: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_dict_pages_notnull::<u16, i32>(
                 &data[lower_bound..upper_bound],
@@ -1061,6 +1081,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::IPv4 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `IPv4` values.
             let data: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_dict_pages_nullable::<IPv4, i32>(
                 &data[lower_bound..upper_bound],
@@ -1070,6 +1092,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::GeoByte => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoByte` values.
             let data: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_dict_pages_nullable::<GeoByte, i32>(
                 &data[lower_bound..upper_bound],
@@ -1079,6 +1103,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::GeoShort => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoShort` values.
             let data: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_dict_pages_nullable::<GeoShort, i32>(
                 &data[lower_bound..upper_bound],
@@ -1088,6 +1114,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::GeoInt => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoInt` values.
             let data: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_dict_pages_nullable::<GeoInt, i32>(
                 &data[lower_bound..upper_bound],
@@ -1097,6 +1125,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::GeoLong => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoLong` values.
             let data: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_dict_pages_nullable::<GeoLong, i64>(
                 &data[lower_bound..upper_bound],
@@ -1106,6 +1136,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::String => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             string::string_to_dict_pages(
@@ -1117,6 +1149,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Binary => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             binary::binary_to_dict_pages(
@@ -1129,6 +1163,8 @@ fn column_chunk_to_dict_pages(
         }
         ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
             let reversed = column.data_type.tag() == ColumnTypeTag::Uuid;
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 16]` values.
             let data: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_dict_pages(
                 &data[lower_bound..upper_bound],
@@ -1139,6 +1175,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Long256 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 32]` values.
             let data: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_dict_pages(
                 &data[lower_bound..upper_bound],
@@ -1149,6 +1187,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Decimal8 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal8` values.
             let data: &[Decimal8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_dict_pages(
                 &data[lower_bound..upper_bound],
@@ -1158,6 +1198,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Decimal16 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal16` values.
             let data: &[Decimal16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_dict_pages(
                 &data[lower_bound..upper_bound],
@@ -1167,6 +1209,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Decimal32 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal32` values.
             let data: &[Decimal32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_dict_pages(
                 &data[lower_bound..upper_bound],
@@ -1176,6 +1220,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Decimal64 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal64` values.
             let data: &[Decimal64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_dict_pages(
                 &data[lower_bound..upper_bound],
@@ -1185,6 +1231,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Decimal128 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal128` values.
             let data: &[Decimal128] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_dict_pages(
                 &data[lower_bound..upper_bound],
@@ -1194,6 +1242,8 @@ fn column_chunk_to_dict_pages(
             )
         }
         ColumnTypeTag::Decimal256 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal256` values.
             let data: &[Decimal256] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_dict_pages(
                 &data[lower_bound..upper_bound],
@@ -1219,6 +1269,8 @@ fn column_chunk_to_primitive_pages(
     encoding: Encoding,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     if column.data_type.tag() == ColumnTypeTag::Symbol {
+        // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+        // The byte content represents valid `i32` values.
         let keys: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
 
         let offsets = column.symbol_offsets;
@@ -1250,6 +1302,8 @@ fn column_chunk_to_primitive_pages(
     }
 
     if column.data_type.tag() == ColumnTypeTag::Varchar {
+        // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+        // The byte content represents valid `[u8; 16]` values.
         let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
         let data = column.primary_data;
         let orig_column_top = column.column_top;
@@ -1367,6 +1421,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Byte => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i8` values.
             let data: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i8, i32>(
                 &data[lower_bound..upper_bound],
@@ -1377,6 +1433,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Char => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `u16` values.
             let data: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<u16, i32>(
                 &data[lower_bound..upper_bound],
@@ -1387,6 +1445,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Short => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i16` values.
             let data: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i16, i32>(
                 &data[lower_bound..upper_bound],
@@ -1397,6 +1457,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Int => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i32` values.
             let data: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
             let slice = &data[lower_bound..upper_bound];
             primitive::slice_to_page_simd(
@@ -1408,6 +1470,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::IPv4 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `IPv4` values.
             let data: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<IPv4, i32>(
                 &data[lower_bound..upper_bound],
@@ -1418,6 +1482,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Long | ColumnTypeTag::Date => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             let slice = &data[lower_bound..upper_bound];
             primitive::slice_to_page_simd(
@@ -1429,6 +1495,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Timestamp => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let data: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             if column.designated_timestamp {
                 // Designated timestamp column is NOT NULL, no need for SIMD def level encoding
@@ -1451,6 +1519,8 @@ fn chunk_to_primitive_page(
             }
         }
         ColumnTypeTag::GeoByte => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoByte` values.
             let data: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoByte, i32>(
                 &data[lower_bound..upper_bound],
@@ -1461,6 +1531,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::GeoShort => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoShort` values.
             let data: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoShort, i32>(
                 &data[lower_bound..upper_bound],
@@ -1471,6 +1543,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::GeoInt => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoInt` values.
             let data: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoInt, i32>(
                 &data[lower_bound..upper_bound],
@@ -1481,6 +1555,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::GeoLong => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `GeoLong` values.
             let data: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoLong, i64>(
                 &data[lower_bound..upper_bound],
@@ -1491,6 +1567,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Float => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `f32` values.
             let data: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
             let slice = &data[lower_bound..upper_bound];
             primitive::slice_to_page_simd(
@@ -1502,6 +1580,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Double => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `f64` values.
             let data: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
             let slice = &data[lower_bound..upper_bound];
             primitive::slice_to_page_simd(
@@ -1513,6 +1593,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Binary => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             binary::binary_to_page(
@@ -1525,6 +1607,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::String => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `i64` values.
             let aux: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             string::string_to_page(
@@ -1542,6 +1626,8 @@ fn chunk_to_primitive_page(
             column.name,
         )),
         ColumnTypeTag::Array => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 16]` values.
             let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;
             array::array_to_raw_page(
@@ -1555,6 +1641,8 @@ fn chunk_to_primitive_page(
         }
         ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => {
             let reversed = column.data_type.tag() == ColumnTypeTag::Uuid;
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 16]` values.
             let data: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &data[lower_bound..upper_bound],
@@ -1565,6 +1653,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Long256 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 32]` values.
             let data: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &data[lower_bound..upper_bound],
@@ -1580,6 +1670,8 @@ fn chunk_to_primitive_page(
             column.name,
         )),
         ColumnTypeTag::Decimal8 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal8` values.
             let data: &[Decimal8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1589,6 +1681,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal16 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal16` values.
             let data: &[Decimal16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1598,6 +1692,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal32 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal32` values.
             let data: &[Decimal32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1607,6 +1703,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal64 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal64` values.
             let data: &[Decimal64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1616,6 +1714,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal128 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal128` values.
             let data: &[Decimal128] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],
@@ -1625,6 +1725,8 @@ fn chunk_to_primitive_page(
             )
         }
         ColumnTypeTag::Decimal256 => {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `Decimal256` values.
             let data: &[Decimal256] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::decimal_slice_to_page_plain(
                 &data[lower_bound..upper_bound],

@@ -67,6 +67,8 @@ pub fn varchar_to_page(
     let mut buffer = vec![];
     let mut null_count = 0usize;
 
+    // SAFETY: `AuxEntryInlined` is `#[repr(C, packed)]` and exactly 16 bytes (asserted above).
+    // The source `&[[u8; 16]]` has compatible size and alignment 1.
     let aux: &[AuxEntryInlined] = unsafe { mem::transmute(aux) };
 
     let utf8_slices: Vec<Option<&[u8]>> = aux
@@ -79,6 +81,8 @@ pub fn varchar_to_page(
                 let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
                 Some(&entry.chars[..size])
             } else {
+                // SAFETY: Both `AuxEntryInlined` and `AuxEntrySplit` are `#[repr(C, packed)]` and 16 bytes.
+                // The header flag check above determines which interpretation is valid.
                 let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
                 let header = entry.header;
                 let size = (header >> HEADER_FLAGS_WIDTH) as usize;
@@ -142,6 +146,8 @@ pub fn varchar_to_dict_pages(
     primitive_type: PrimitiveType,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + aux.len();
+    // SAFETY: `AuxEntryInlined` is `#[repr(C, packed)]` and exactly 16 bytes (asserted above in `varchar_to_page`).
+    // The source `&[[u8; 16]]` has compatible size and alignment 1.
     let aux: &[AuxEntryInlined] = unsafe { mem::transmute(aux) };
 
     // Pass 1: decode aux entries into contiguous slice pointers.
@@ -156,6 +162,8 @@ pub fn varchar_to_dict_pages(
                 let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
                 Some(&entry.chars[..size])
             } else {
+                // SAFETY: Both `AuxEntryInlined` and `AuxEntrySplit` are `#[repr(C, packed)]` and 16 bytes.
+                // The header flag check above determines which interpretation is valid.
                 let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
                 let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
                 let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
@@ -366,7 +374,8 @@ pub fn append_varchar_slice(
     let len = len as u32;
     let header: u32 = (len << 4) | if ascii || len == 0 { 3 } else { 1 };
     aux_mem.reserve(16)?;
-    // SAFETY: We reserved enough space for 16 bytes, and we only write to the reserved space.
+    // SAFETY: `reserve` guarantees capacity for 16 new bytes. `write_unaligned` initializes
+    // the memory (header + pointer) before `set_len` makes it accessible.
     unsafe {
         let addr = aux_mem.as_mut_ptr().add(aux_mem.len()).cast::<u64>();
         // Write header (bytes 0-3) + reserved zero (bytes 4-7) as a single u64.
@@ -380,6 +389,8 @@ pub fn append_varchar_slice(
 /// Writes a null VarcharSlice aux entry: header=4 (VARCHAR_HEADER_FLAG_NULL), ptr=0.
 pub fn append_varchar_slice_null(aux_mem: &mut AcVec<u8>) -> ParquetResult<()> {
     aux_mem.reserve(16)?;
+    // SAFETY: `reserve` guarantees capacity for 16 new bytes. `write_unaligned` initializes
+    // the null header and zero pointer before `set_len` makes them accessible.
     unsafe {
         let addr = aux_mem.as_mut_ptr().add(aux_mem.len()).cast::<u64>();
         // Bytes 0-3: header = 4 (null flag, bit 2 set), bytes 4-7: 0.
@@ -400,6 +411,8 @@ pub fn append_varchar_slice_nulls(aux_mem: &mut AcVec<u8>, count: usize) -> Parq
         .checked_mul(16)
         .ok_or_else(|| fmt_err!(Layout, "append_varchar_slice_nulls overflow"))?;
     aux_mem.reserve(len)?;
+    // SAFETY: `reserve` guarantees capacity for `count * 16` new bytes. `write_unaligned`
+    // initializes each 16-byte null entry before `set_len` makes them accessible.
     unsafe {
         let addr = aux_mem.as_mut_ptr().add(aux_mem.len()).cast::<u64>();
         for i in 0..count {
@@ -453,6 +466,9 @@ pub fn append_varchar_nulls(
                 .ok_or_else(|| fmt_err!(Layout, "append_varchar_nulls overflow"))?;
 
             aux_mem.reserve(total_bytes)?;
+            // SAFETY: `reserve` guarantees capacity for `count * ENTRY_SIZE` new bytes.
+            // `copy_nonoverlapping` initializes each 16-byte null entry before `set_len`
+            // makes them accessible. Source and destination do not overlap.
             unsafe {
                 let ptr = aux_mem.as_mut_ptr().add(base);
                 for i in 0..count {
