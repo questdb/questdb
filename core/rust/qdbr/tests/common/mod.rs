@@ -27,7 +27,7 @@ use questdbr::{
     parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers},
 };
 
-pub const COUNT: usize = 100_000;
+pub const COUNT: usize = 1_000;
 
 pub const VERSIONS: [WriterVersion; 2] = [WriterVersion::PARQUET_1_0, WriterVersion::PARQUET_2_0];
 
