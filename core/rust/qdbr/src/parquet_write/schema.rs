@@ -554,14 +554,26 @@ pub fn to_compressions(partition: &Partition) -> Vec<Option<CompressionOptions>>
         .collect()
 }
 
+/// Bit layout for the packed per-column parquet encoding config (i32):
+/// - Bits 0-7: encoding id (matches ParquetEncoding.ENCODING_* on the Java side)
+/// - Bits 8-15: compression codec id (matches ParquetCompression constants, offset +1)
+/// - Bits 16-23: compression level
+/// - Bit 24: explicit flag (1 = user-specified override, 0 = use defaults)
+pub(crate) const ENCODING_MASK: u32 = 0xFF;
+pub(crate) const COMPRESSION_SHIFT: u32 = 8;
+pub(crate) const COMPRESSION_MASK: u32 = 0xFF;
+pub(crate) const LEVEL_SHIFT: u32 = 16;
+pub(crate) const LEVEL_MASK: u32 = 0xFF;
+pub(crate) const EXPLICIT_FLAG: u32 = 1 << 24;
+
 /// Extract per-column encoding override from packed config.
 /// Returns None if the config uses default encoding (encoding byte == 0 or not explicitly set).
 fn encoding_from_config(config: i32) -> Option<Encoding> {
-    let is_explicit = (config & (1 << 24)) != 0;
+    let is_explicit = (config as u32 & EXPLICIT_FLAG) != 0;
     if !is_explicit {
         return None;
     }
-    let encoding_id = config & 0xFF;
+    let encoding_id = config as u32 & ENCODING_MASK;
     match encoding_id {
         0 => None, // default
         1 => Some(Encoding::Plain),
@@ -576,12 +588,12 @@ fn encoding_from_config(config: i32) -> Option<Encoding> {
 /// Extract per-column compression override from packed config.
 /// Returns None if the config uses default/global compression.
 fn compression_from_config(config: i32) -> Option<CompressionOptions> {
-    let is_explicit = (config & (1 << 24)) != 0;
+    let is_explicit = (config as u32 & EXPLICIT_FLAG) != 0;
     if !is_explicit {
         return None;
     }
-    let codec_id = (config >> 8) & 0xFF;
-    let level = (config >> 16) & 0xFF;
+    let codec_id = (config as u32 >> COMPRESSION_SHIFT) & COMPRESSION_MASK;
+    let level = (config as u32 >> LEVEL_SHIFT) & LEVEL_MASK;
     match codec_id {
         0 => None, // use global default
         1 => Some(CompressionOptions::Uncompressed),
@@ -616,7 +628,10 @@ mod tests {
     use super::*;
 
     fn pack_config(encoding: i32, compression: i32, level: i32) -> i32 {
-        (encoding & 0xFF) | ((compression & 0xFF) << 8) | ((level & 0xFF) << 16) | (1 << 24)
+        ((encoding as u32 & ENCODING_MASK)
+            | ((compression as u32 & COMPRESSION_MASK) << COMPRESSION_SHIFT)
+            | ((level as u32 & LEVEL_MASK) << LEVEL_SHIFT)
+            | EXPLICIT_FLAG) as i32
     }
 
     #[test]

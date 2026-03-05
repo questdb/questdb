@@ -759,6 +759,15 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
+    // Bit layout for the packed per-column parquet encoding config (32-bit integer).
+    // Must stay in sync with the Rust constants in parquet_write/schema.rs.
+    private static final int PARQUET_CONFIG_ENCODING_MASK = 0xFF;
+    private static final int PARQUET_CONFIG_COMPRESSION_SHIFT = 8;
+    private static final int PARQUET_CONFIG_COMPRESSION_MASK = 0xFF;
+    private static final int PARQUET_CONFIG_LEVEL_SHIFT = 16;
+    private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
+    private static final int PARQUET_CONFIG_EXPLICIT_FLAG = 1 << 24;
+
     /**
      * Reads the packed Parquet encoding config for a column from table metadata memory.
      * See {@link #packParquetConfig(int, int, int)} for the bit layout.
@@ -771,14 +780,14 @@ public final class TableUtils {
      * Extracts the compression codec id (bits 8-15) from a packed Parquet config.
      */
     public static int getParquetConfigCompression(int packed) {
-        return (packed >> 8) & 0xFF;
+        return (packed >> PARQUET_CONFIG_COMPRESSION_SHIFT) & PARQUET_CONFIG_COMPRESSION_MASK;
     }
 
     /**
      * Extracts the compression level (bits 16-23) from a packed Parquet config.
      */
     public static int getParquetConfigCompressionLevel(int packed) {
-        return (packed >> 16) & 0xFF;
+        return (packed >> PARQUET_CONFIG_LEVEL_SHIFT) & PARQUET_CONFIG_LEVEL_MASK;
     }
 
     /**
@@ -786,7 +795,7 @@ public final class TableUtils {
      * The id corresponds to a {@code ParquetEncoding.ENCODING_*} constant.
      */
     public static int getParquetConfigEncoding(int packed) {
-        return packed & 0xFF;
+        return packed & PARQUET_CONFIG_ENCODING_MASK;
     }
 
     /**
@@ -794,7 +803,7 @@ public final class TableUtils {
      * explicitly configured encoding/compression for this column via ALTER TABLE.
      */
     public static boolean isParquetConfigExplicit(int packed) {
-        return (packed & (1 << 24)) != 0;
+        return (packed & PARQUET_CONFIG_EXPLICIT_FLAG) != 0;
     }
 
     /**
@@ -809,10 +818,10 @@ public final class TableUtils {
      * A packed value of 0 means "use defaults for everything".
      */
     public static int packParquetConfig(int encoding, int compression, int level) {
-        return (encoding & 0xFF)
-                | ((compression & 0xFF) << 8)
-                | ((level & 0xFF) << 16)
-                | (1 << 24);
+        return (encoding & PARQUET_CONFIG_ENCODING_MASK)
+                | ((compression & PARQUET_CONFIG_COMPRESSION_MASK) << PARQUET_CONFIG_COMPRESSION_SHIFT)
+                | ((level & PARQUET_CONFIG_LEVEL_MASK) << PARQUET_CONFIG_LEVEL_SHIFT)
+                | PARQUET_CONFIG_EXPLICIT_FLAG;
     }
 
     public static int getColumnType(MemoryR metaMem, int columnIndex) {

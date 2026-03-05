@@ -141,6 +141,7 @@ impl AsPrimitive<i32> for IPv4 {
 mod tests {
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_write::file::ParquetWriter;
+    use crate::parquet_write::schema;
     use crate::parquet_write::schema::{Column, Partition};
     use arrow::array::Array;
     use arrow::datatypes::ToByteSlice;
@@ -804,7 +805,7 @@ mod tests {
         let col2_data: Vec<i32> = (0..100).collect();
 
         // Pack config: encoding=4 (DeltaBinaryPacked), compression=0, level=0, explicit flag set
-        let delta_binary_config = 4 | (1 << 24);
+        let delta_binary_config = (4 | schema::EXPLICIT_FLAG) as i32;
 
         let col1 = Column::from_raw_data(
             0,
@@ -910,7 +911,7 @@ mod tests {
         let col2_data: Vec<f64> = (0..1000).map(|i| i as f64 * 0.1).collect();
 
         // Pack config: encoding=0 (default), compression=2 (Snappy), level=0, explicit flag set
-        let snappy_config = (2 << 8) | (1 << 24);
+        let snappy_config = ((2 << schema::COMPRESSION_SHIFT) | schema::EXPLICIT_FLAG) as i32;
 
         let col1 = Column::from_raw_data(
             0,
