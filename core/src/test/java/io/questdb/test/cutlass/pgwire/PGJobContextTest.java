@@ -3798,11 +3798,7 @@ if __name__ == "__main__":
 
                                         try (PreparedStatement stmt = conn.prepareStatement(command)) {
                                             if (command.startsWith("select")) {
-                                                try (ResultSet result = stmt.executeQuery()) {
-                                                    while (result.next()) {
-                                                        // ignore
-                                                    }
-                                                }
+                                                consume(stmt.executeQuery());
                                             } else {
                                                 stmt.executeUpdate();
                                             }
@@ -4066,7 +4062,7 @@ if __name__ == "__main__":
                                 expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
-                                        "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
+                                        "  filter: (" + i + "L<x and x<" + (i + 1) * 10 + ".0)\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n");
@@ -7623,11 +7619,7 @@ nodejs code:
                     // since PG JDBC does use phantom references to track statement instances
                     // and close them when they are GCed
                     statements.add(stmt);
-                    try (ResultSet ignore = stmt.executeQuery("select * from x")) {
-                        while (ignore.next()) {
-                            // ignore
-                        }
-                    }
+                    consume(stmt.executeQuery("select * from x"));
                 }
                 Assert.fail("Expected exception");
             } catch (PSQLException e) {
@@ -12459,6 +12451,17 @@ create table tab as (
                 }
             }
         });
+    }
+
+    private static void consume(ResultSet stmt) throws SQLException {
+        int count = 0;
+        try (ResultSet ignore = stmt) {
+            while (ignore.next()) {
+                // ignore
+                count++;
+            }
+        }
+        Assert.assertTrue(count > 0);
     }
 
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
