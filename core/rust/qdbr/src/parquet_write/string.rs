@@ -135,53 +135,47 @@ pub fn string_to_dict_pages(
     let num_rows = column_top + offsets.len();
     let mut null_count = 0;
 
-    // Convert UTF-16 slices to UTF-8 strings
-    let utf8_strings: Vec<Option<String>> = offsets
-        .iter()
-        .map(|offset| {
-            let offset =
-                usize::try_from(*offset).expect("invalid offset value in string aux column");
-            match get_utf16(&data[offset..]) {
-                Some(utf16) => Some(String::from_utf16(utf16).expect("utf16 string")),
-                None => {
-                    null_count += 1;
-                    None
-                }
-            }
-        })
-        .collect();
-
-    // Build dictionary
-    let mut dict_map: RapidHashMap<Vec<u8>, u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<Vec<u8>> = Vec::new();
+    // Deduplicate on raw UTF-16 slices (zero-copy from data buffer),
+    // then convert only unique entries to UTF-8.
+    let mut dict_map: RapidHashMap<&[u16], u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<&[u16]> = Vec::new();
     let mut keys: Vec<u32> = Vec::with_capacity(offsets.len());
-    let mut total_keys_bytes = 0usize;
+    let mut is_not_null: Vec<bool> = Vec::with_capacity(offsets.len());
 
-    for s in &utf8_strings {
-        if let Some(ref utf8) = s {
-            let utf8_bytes = utf8.as_bytes();
-            let next_id = dict_entries.len() as u32;
-            let key = *dict_map.entry(utf8_bytes.to_vec()).or_insert_with(|| {
-                total_keys_bytes += 4 + utf8_bytes.len();
-                dict_entries.push(utf8_bytes.to_vec());
-                next_id
-            });
-            keys.push(key);
+    for offset in offsets {
+        let offset =
+            usize::try_from(*offset).expect("invalid offset value in string aux column");
+        match get_utf16(&data[offset..]) {
+            Some(utf16) => {
+                let next_id = dict_entries.len() as u32;
+                let key = *dict_map.entry(utf16).or_insert_with(|| {
+                    dict_entries.push(utf16);
+                    next_id
+                });
+                keys.push(key);
+                is_not_null.push(true);
+            }
+            None => {
+                null_count += 1;
+                is_not_null.push(false);
+            }
         }
     }
 
-    // Build dict buffer (length-prefixed UTF-8)
-    let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
+    // Convert only unique dict entries to UTF-8 and build dict buffer
+    let mut dict_buffer = Vec::new();
     let mut stats = if options.write_statistics {
         Some(BinaryMaxMinStats::new(&primitive_type))
     } else {
         None
     };
-    for entry in &dict_entries {
-        dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
-        dict_buffer.extend_from_slice(entry);
+    for utf16 in &dict_entries {
+        let utf8 = String::from_utf16(utf16).expect("utf16 string");
+        let utf8_bytes = utf8.as_bytes();
+        dict_buffer.extend_from_slice(&(utf8_bytes.len() as u32).to_le_bytes());
+        dict_buffer.extend_from_slice(utf8_bytes);
         if let Some(ref mut s) = stats {
-            s.update(entry);
+            s.update(utf8_bytes);
         }
     }
 
@@ -189,8 +183,7 @@ pub fn string_to_dict_pages(
     let total_null_count = column_top + null_count;
     let mut data_buffer = Vec::new();
 
-    let def_levels =
-        (0..num_rows).map(|i| i >= column_top && utf8_strings[i - column_top].is_some());
+    let def_levels = (0..num_rows).map(|i| i >= column_top && is_not_null[i - column_top]);
     encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
