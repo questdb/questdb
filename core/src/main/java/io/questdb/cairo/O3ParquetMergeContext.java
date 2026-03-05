@@ -42,7 +42,7 @@ public class O3ParquetMergeContext implements Closeable {
     private PartitionDescriptor chunkDescriptor;
     private LongList gapO3Ranges;
     private LongList mergeDstBufs;
-    private ObjList<O3ParquetMergeStrategy.MergeAction> mergeActions;
+    private ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf;
     private DirectIntList parquetColumns;
     private PartitionDecoder partitionDecoder;
     private OwnedMemoryPartitionDescriptor partitionDescriptor;
@@ -56,7 +56,7 @@ public class O3ParquetMergeContext implements Closeable {
         chunkDescriptor = new PartitionDescriptor();
         gapO3Ranges = new LongList();
         mergeDstBufs = new LongList();
-        mergeActions = new ObjList<>();
+        actionsBuf = new ObjList<>();
         parquetColumns = new DirectIntList(64, MemoryTag.NATIVE_O3);
         partitionDecoder = new PartitionDecoder();
         partitionDescriptor = new OwnedMemoryPartitionDescriptor();
@@ -82,7 +82,7 @@ public class O3ParquetMergeContext implements Closeable {
         chunkDescriptor = Misc.free(chunkDescriptor);
         gapO3Ranges = null;
         mergeDstBufs = null;
-        mergeActions = null;
+        actionsBuf = null;
         parquetColumns = Misc.free(parquetColumns);
         partitionDecoder = Misc.free(partitionDecoder);
         partitionDescriptor = Misc.free(partitionDescriptor);
@@ -101,8 +101,8 @@ public class O3ParquetMergeContext implements Closeable {
         return gapO3Ranges;
     }
 
-    public ObjList<O3ParquetMergeStrategy.MergeAction> getMergeActions() {
-        return mergeActions;
+    public ObjList<O3ParquetMergeStrategy.MergeAction> getActionsBuf() {
+        return actionsBuf;
     }
 
     public LongList getMergeDstBufs(int colCount) {

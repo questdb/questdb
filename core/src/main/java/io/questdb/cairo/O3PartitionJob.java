@@ -255,19 +255,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 // Compute merge actions (scratch lists are reused across calls within the same partition)
-                final ObjList<O3ParquetMergeStrategy.MergeAction> mergeActions = ctx.getMergeActions();
-                final LongList rgO3Ranges = ctx.getRgO3Ranges();
-                final LongList gapO3Ranges = ctx.getGapO3Ranges();
-                O3ParquetMergeStrategy.computeMergeActions(
+                final ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf = ctx.getActionsBuf();
+                final int actionCount = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         srcOooLo,
                         srcOooHi,
                         rowGroupSize / 4,
                         rowGroupSize,
-                        mergeActions,
-                        rgO3Ranges,
-                        gapO3Ranges
+                        actionsBuf,
+                        ctx.getRgO3Ranges(),
+                        ctx.getGapO3Ranges()
                 );
 
                 // Execute merge actions.
@@ -284,7 +282,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final PartitionDescriptor chunkDescriptor = ctx.getChunkDescriptor();
                 int metadataPosition = 0;
                 try {
-                    for (int i = 0, n = mergeActions.size(); i < n; i++) {
+                    for (int i = 0; i < actionCount; i++) {
                         if (metadataPosition > Short.MAX_VALUE) {
                             throw CairoException.critical(0)
                                     .put("too many output row groups in parquet O3 merge [count=")
@@ -293,7 +291,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     .put((int) Short.MAX_VALUE)
                                     .put(']');
                         }
-                        final O3ParquetMergeStrategy.MergeAction action = mergeActions.getQuick(i);
+                        final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         switch (action.type) {
                             case MERGE: {
                                 final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
