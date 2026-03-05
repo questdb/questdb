@@ -354,9 +354,14 @@ public class QwpWalAppender implements QuietCloseable {
      * @param rowCount               number of rows
      * @param tud                    table update details
      */
-    private void appendToWalColumnar(QwpTableBlockCursor tableBlock, WalWriter walWriter,
-                                     int timestampColumnInBlock, int columnCount, int rowCount,
-                                     TableUpdateDetails tud) throws QwpParseException, CommitFailedException {
+    private void appendToWalColumnar(
+            QwpTableBlockCursor tableBlock,
+            WalWriter walWriter,
+            int timestampColumnInBlock,
+            int columnCount,
+            int rowCount,
+            TableUpdateDetails tud
+    ) throws QwpParseException, CommitFailedException {
         ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
         appender.beginColumnarWrite(rowCount);
 
@@ -380,8 +385,8 @@ public class QwpWalAppender implements QuietCloseable {
             }
 
             // First pass: determine min/max timestamps (in column precision, not wire precision)
-            // serverTimestampMicros is used for null designated timestamps (atNow rows in mixed batches)
-            long serverTimestampMicros = Numbers.LONG_NULL;
+            // serverTimestamp is used for null designated timestamps (atNow rows in mixed batches)
+            long serverTimestamp = Numbers.LONG_NULL;
             if (timestampColumnInBlock >= 0) {
                 boolean hasNullTimestamps = false;
                 QwpColumnCursor tsCursor = tableBlock.getColumn(timestampColumnInBlock);
@@ -412,10 +417,10 @@ public class QwpWalAppender implements QuietCloseable {
                 tsCursor.resetRowPosition();
                 // Assign server time for null designated timestamps (mixed at/atNow batches)
                 if (hasNullTimestamps) {
-                    serverTimestampMicros = tud.getTimestampDriver().getTicks();
+                    serverTimestamp = tud.getTimestampDriver().getTicks();
                     boolean hasExplicitTimestamps = minTimestamp != Long.MAX_VALUE;
-                    if (serverTimestampMicros < minTimestamp) minTimestamp = serverTimestampMicros;
-                    if (serverTimestampMicros > maxTimestamp) maxTimestamp = serverTimestampMicros;
+                    if (serverTimestamp < minTimestamp) minTimestamp = serverTimestamp;
+                    if (serverTimestamp > maxTimestamp) maxTimestamp = serverTimestamp;
                     if (hasExplicitTimestamps) {
                         // Mixed explicit and server-assigned timestamps are interleaved
                         // in row order, so the effective sequence is almost certainly
@@ -448,19 +453,19 @@ public class QwpWalAppender implements QuietCloseable {
                             // Precision mismatch or Gorilla-encoded - must iterate with conversion
                             appender.putTimestampColumnWithConversion(columnIndex, tsCursor, rowCount,
                                     ilpType, columnType, true, walWriter.getSegmentRowCount(),
-                                    serverTimestampMicros);
+                                    serverTimestamp);
                         } else {
                             // Direct access, no conversion needed
                             appender.putTimestampColumn(columnIndex, tsCursor.getValuesAddress(),
                                     tsCursor.getValueCount(), tsCursor.getNullBitmapAddress(),
                                     rowCount, walWriter.getSegmentRowCount(),
-                                    serverTimestampMicros);
+                                    serverTimestamp);
                         }
                     } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
                         appender.putTimestampColumn(columnIndex, fixedCursor.getValuesAddress(),
                                 fixedCursor.getValueCount(), fixedCursor.getNullBitmapAddress(),
                                 rowCount, walWriter.getSegmentRowCount(),
-                                serverTimestampMicros);
+                                serverTimestamp);
                     }
                     continue;
                 }
