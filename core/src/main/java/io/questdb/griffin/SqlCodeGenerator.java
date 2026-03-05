@@ -9005,8 +9005,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             argPositions.add(0);
             argPositions.add(0);
             filter = AND_FUNCTION_FACTORY.newInstance(0, andArgs, argPositions, configuration, executionContext);
+            RecordCursorFactory wrapped = new FilteredRecordCursorFactory(base, filter);
             existingFiltered.halfClose();
-            return new FilteredRecordCursorFactory(base, filter);
+            return wrapped;
         }
         return new FilteredRecordCursorFactory(factory, filter);
     }
