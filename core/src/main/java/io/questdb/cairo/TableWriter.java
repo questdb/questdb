@@ -7134,7 +7134,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 descriptorIndex++;
                             }
                         }
-                        indexes.add(descriptorIndex);
+                        boolean isDuplicate = false;
+                        for (long k = 0, sz = indexes.size(); k < sz; k++) {
+                            if (indexes.get(k) == descriptorIndex) {
+                                isDuplicate = true;
+                                break;
+                            }
+                        }
+                        if (!isDuplicate) {
+                            indexes.add(descriptorIndex);
+                        }
                     } else {
                         throw CairoException.nonCritical().put("bloom_filter_columns contains non-existent column: ").put(columnName);
                     }

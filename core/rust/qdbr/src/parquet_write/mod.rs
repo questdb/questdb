@@ -942,6 +942,20 @@ mod tests {
             can_skip,
             "should skip: none of the filter values are in the row group"
         );
+
+        let present_vals: Vec<i64> = vec![200, 205];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (present_vals.len() as u64) << 32,
+            ptr: present_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(
+            !can_skip,
+            "should NOT skip: filter values are present in the row group"
+        );
     }
 
     #[test]

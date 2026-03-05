@@ -246,8 +246,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         };
         let version = version_from_i32(version)?;
 
-        let bloom_filter_cols =
-            build_bloom_filter_set(bloom_filter_column_indexes, bloom_filter_column_count);
+        let bloom_filter_cols = build_bloom_filter_set(
+            bloom_filter_column_indexes,
+            bloom_filter_column_count,
+            partition.columns.len(),
+        )?;
 
         let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
         let mut file = file.with_context(|_| {
@@ -378,12 +381,26 @@ fn create_partition_descriptor(
     Ok(partition)
 }
 
-fn build_bloom_filter_set(indexes_ptr: *const jint, count: jint) -> HashSet<usize> {
+fn build_bloom_filter_set(
+    indexes_ptr: *const jint,
+    count: jint,
+    max_columns: usize,
+) -> ParquetResult<HashSet<usize>> {
     if indexes_ptr.is_null() || count <= 0 {
-        return HashSet::new();
+        return Ok(HashSet::new());
     }
     let indexes = unsafe { slice::from_raw_parts(indexes_ptr, count as usize) };
-    indexes.iter().map(|&i| i as usize).collect()
+    let mut out = HashSet::with_capacity(indexes.len());
+    for &i in indexes {
+        if i < 0 || (i as usize) >= max_columns {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid bloom filter column index: {i}"
+            ));
+        }
+        out.insert(i as usize);
+    }
+    Ok(out)
 }
 
 fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
@@ -555,8 +572,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let buffer_writer = unsafe {
             BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 16)
         };
-        let bloom_filter_cols =
-            build_bloom_filter_set(bloom_filter_column_indexes, bloom_filter_column_count);
+        let bloom_filter_cols = build_bloom_filter_set(
+            bloom_filter_column_indexes,
+            bloom_filter_column_count,
+            partition_template.columns.len(),
+        )?;
         let bloom_fpp = if bloom_filter_fpp > 0.0 {
             bloom_filter_fpp
         } else {

@@ -54,13 +54,15 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final IntList columnIndexes;
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
-    private long filterBufEnd;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final LongList pageSizes = new LongList();
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private final int sharedQueryWorkerCount;
+    private int cachedRowGroupIndex;
+    private long cachedRowGroupStartRow;
+    private long filterBufEnd;
     private boolean isFilterListPrepared;
     // Track the lowest partition index that has not been released yet
     private int lowestOpenPartitionIndex = 0;
@@ -231,6 +233,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
         lowestOpenPartitionIndex = 0;
+        cachedRowGroupIndex = 0;
+        cachedRowGroupStartRow = 0;
         clearAddresses();
     }
 
@@ -328,8 +332,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
 
-        long rowGroupStartRow = 0;
-        for (int i = 0; i < rowGroupCount; i++) {
+        long rowGroupStartRow = cachedRowGroupStartRow;
+        for (int i = cachedRowGroupIndex; i < rowGroupCount; i++) {
             final long rowGroupSize = metadata.getRowGroupSize(i);
             final long rowGroupEndRow = rowGroupStartRow + rowGroupSize;
 
@@ -354,6 +358,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 } else {
                     reenterPartitionFrame = false;
                 }
+
+                cachedRowGroupIndex = i + 1;
+                cachedRowGroupStartRow = rowGroupEndRow;
 
                 remainingRowsInInterval = partitionHi - adjustedHi;
 
@@ -381,6 +388,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             clearAddresses();
             reenterParquetDecoder = partitionFrame.getParquetDecoder();
             reenterPageFrameRowLimit = 0;
+            cachedRowGroupIndex = 0;
+            cachedRowGroupStartRow = 0;
             assert reenterParquetDecoder != null;
             isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
                     reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues);

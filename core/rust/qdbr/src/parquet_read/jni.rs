@@ -211,7 +211,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         if decoder.is_null() {
             return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
         }
-        if filters.is_null() {
+        if filters.is_null() && filter_count > 0 {
             return Err(fmt_err!(InvalidLayout, "filters pointer is null"));
         }
         if file_ptr.is_null() {
@@ -219,7 +219,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         }
 
         let decoder = unsafe { &*decoder };
-        let filters = unsafe { slice::from_raw_parts(filters, filter_count as usize) };
+        let filters = if filter_count == 0 {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(filters, filter_count as usize) }
+        };
         let file_data = unsafe { slice::from_raw_parts(file_ptr, file_size as usize) };
 
         decoder.can_skip_row_group(row_group_index, file_data, filters, filter_buf_end)

@@ -40,11 +40,6 @@ SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHER
 ----
 0
 
-query I
-SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE salary < 1000
-----
-0
-
 # string equality filter
 query TT
 SELECT first_name, gender FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE first_name = 'Mark' AND gender <> ''
@@ -104,6 +99,12 @@ SELECT length(l_comment) FROM parquet_scan('data/parquet-testing/lineitem-top100
 23
 34
 29
+
+# IN clause filter
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/userdata1.parquet') WHERE id IN (1, 42, 100, 999)
+----
+4
 
 # date.parquet - date range filters
 query T
@@ -185,16 +186,21 @@ SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d <
 21
 
 query I
-SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d < '1975-01-01'::DATE OR d > '1976-01-01'::DATE
-----
-21
-
-query I
 SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d < '1975-01-01'::DATE OR d >= '1976-01-01'::DATE
 ----
 22
 
 query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d IN ('1970-01-01'::DATE, '1990-01-01'::DATE)
+----
+2
+
+query I
 SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d IS NULL
 ----
 9
+
+query I
+SELECT COUNT(*) FROM parquet_scan('data/parquet-testing/date.parquet') WHERE d IS NOT NULL
+----
+27

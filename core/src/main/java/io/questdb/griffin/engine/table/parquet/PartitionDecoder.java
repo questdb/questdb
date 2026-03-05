@@ -87,10 +87,12 @@ public class PartitionDecoder implements QuietCloseable {
      *
      * @param rowGroupIndex the row group index to check
      * @param filters       filter descriptors: [encoded(col_idx, count, op), ptr, column_type] per filter
+     * @param filterBufEnd  exclusive end address of the filter values buffer, used for native bounds checking
      * @return true if the row group can be safely skipped
      */
     public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
         assert ptr != 0;
+        assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
         return canSkipRowGroup(
                 ptr,
                 rowGroupIndex,

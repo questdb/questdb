@@ -186,10 +186,12 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; ++i) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
             }
-            isFilterListPrepared = ParquetRowGroupFilter.prepareFilterList(
+            isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
                     decoder.metadata(), pushdownFilterConditions, filterList, filterValues);
             if (isFilterListPrepared) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
+            } else {
+                filterBufEnd = 0;
             }
         }
 

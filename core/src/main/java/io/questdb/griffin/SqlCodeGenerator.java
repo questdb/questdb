@@ -5470,6 +5470,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
         } catch (Throwable e) {
+            Misc.free(filter);
             Misc.free(partitionFrameCursorFactory);
             throw e;
         }

@@ -477,7 +477,8 @@ public final class Chars {
 
     /**
      * Strictly greater than (&gt;) comparison of two CharSequences in Unicode code point order.
-     * This produces the same ordering as comparing the UTF-8 encoded byte sequences.
+     * For well-formed UTF-16 input, this produces the same ordering as comparing the
+     * UTF-8 encoded byte sequences.
      *
      * @param l left sequence, can be null
      * @param r right sequence, can be null
@@ -1080,7 +1081,8 @@ public final class Chars {
 
     /**
      * Strictly less than (&lt;) comparison of two CharSequences in Unicode code point order.
-     * This produces the same ordering as comparing the UTF-8 encoded byte sequences.
+     * For well-formed UTF-16 input, this produces the same ordering as comparing the
+     * UTF-8 encoded byte sequences.
      *
      * @param l left sequence, can be null
      * @param r right sequence, can be null

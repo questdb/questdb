@@ -99,7 +99,7 @@ public class PartitionEncoder {
                 version,
                 0,
                 0,
-                0.01
+                DEFAULT_BLOOM_FILTER_FPP
         );
     }
 
@@ -116,6 +116,10 @@ public class PartitionEncoder {
             int bloomFilterColumnCount,
             double bloomFilterFpp
     ) {
+        assert bloomFilterColumnCount >= 0;
+        assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
+        assert bloomFilterColumnCount == 0 || (bloomFilterFpp > 0.0 && bloomFilterFpp < 1.0);
+
         final Utf8Sequence tableName = descriptor.getTableName();
         final int columnCount = descriptor.getColumnCount();
         final long partitionSize = descriptor.getPartitionRowCount();

@@ -49,7 +49,7 @@ import java.util.ArrayDeque;
  * 1. col = expr (equality)
  * 2. col IN (expr, ...) (IN list)
  * 3. col &lt; expr, col &lt;= expr, col &gt; expr, col &gt;= expr (range)
- * 4. col BETWEEN lo AND hi (decomposed to GE + LE)
+ * 4. col BETWEEN lo AND hi (single OP_BETWEEN with two bounds)
  * 5. col IS NULL / col IS NOT NULL (null checks)
  * 6. col = v1 OR col = v2 OR ... (OR of equalities on same column)
  * <p>
@@ -364,6 +364,7 @@ public class PushdownFilterExtractor implements Mutable {
         orValues.clear();
         CharSequence columnName = null;
         int columnType = -1;
+        int resolvedColumnIndex = -1;
 
         ExpressionNode cur = node;
         while (cur != null || !orStack.isEmpty()) {
@@ -395,14 +396,15 @@ public class PushdownFilterExtractor implements Mutable {
                 return;
             }
 
-            if (columnName == null) {
-                int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
-                if (columnIndex < 0) {
-                    return;
-                }
+            int columnIndex = metadata.getColumnIndexQuiet(colNode.token);
+            if (columnIndex < 0) {
+                return;
+            }
+            if (resolvedColumnIndex < 0) {
+                resolvedColumnIndex = columnIndex;
                 columnName = colNode.token;
                 columnType = metadata.getColumnType(columnIndex);
-            } else if (!Chars.equalsIgnoreCase(colNode.token, columnName)) {
+            } else if (columnIndex != resolvedColumnIndex) {
                 return;
             }
 

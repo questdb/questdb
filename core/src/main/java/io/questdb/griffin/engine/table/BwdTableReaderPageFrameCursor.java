@@ -56,13 +56,15 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final IntList columnIndexes;
     private final LongList columnPageAddresses = new LongList();
     private final IntList columnSizeShifts;
-    private long filterBufEnd;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final LongList pageSizes = new LongList();
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private final int sharedQueryWorkerCount;
+    private int cachedRowGroupIndex = -1;
+    private long cachedRowGroupStartRow = 0;
+    private long filterBufEnd;
     // Track the highest partition index that has not been released yet
     private int highestOpenPartitionIndex = -1;
     private boolean isFilterListPrepared;
@@ -241,6 +243,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
         highestOpenPartitionIndex = -1;
+        cachedRowGroupIndex = -1;
+        cachedRowGroupStartRow = 0;
         clearAddresses();
     }
 
@@ -338,19 +342,50 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
 
-        long rowGroupStartRow = 0;
         int targetGroup = -1;
         long targetGroupStart = 0;
 
-        for (int i = 0; i < rowGroupCount; i++) {
-            final long rowGroupSize = metadata.getRowGroupSize(i);
-            final long rowGroupEndRow = rowGroupStartRow + rowGroupSize;
-            if (partitionHi <= rowGroupEndRow) {
-                targetGroup = i;
-                targetGroupStart = rowGroupStartRow;
-                break;
+        // Use cached position if available
+        if (cachedRowGroupIndex >= 0 && cachedRowGroupIndex < rowGroupCount) {
+            final long cachedGroupSize = metadata.getRowGroupSize(cachedRowGroupIndex);
+            final long cachedGroupEndRow = cachedRowGroupStartRow + cachedGroupSize;
+            if (partitionHi > cachedRowGroupStartRow && partitionHi <= cachedGroupEndRow) {
+                // partitionHi is within the cached row group, use it directly
+                targetGroup = cachedRowGroupIndex;
+                targetGroupStart = cachedRowGroupStartRow;
+            } else if (partitionHi <= cachedRowGroupStartRow) {
+                // partitionHi moved to earlier row groups, search backward from cache
+                long rowGroupEndRow = cachedRowGroupStartRow;
+                for (int i = cachedRowGroupIndex - 1; i >= 0; i--) {
+                    final long rowGroupSize = metadata.getRowGroupSize(i);
+                    final long rowGroupStartRow = rowGroupEndRow - rowGroupSize;
+                    if (partitionHi > rowGroupStartRow) {
+                        targetGroup = i;
+                        targetGroupStart = rowGroupStartRow;
+                        cachedRowGroupIndex = i;
+                        cachedRowGroupStartRow = rowGroupStartRow;
+                        break;
+                    }
+                    rowGroupEndRow = rowGroupStartRow;
+                }
             }
-            rowGroupStartRow = rowGroupEndRow;
+        }
+
+        // fallback
+        if (targetGroup < 0) {
+            long rowGroupStartRow = 0;
+            for (int i = 0; i < rowGroupCount; i++) {
+                final long rowGroupSize = metadata.getRowGroupSize(i);
+                final long rowGroupEndRow = rowGroupStartRow + rowGroupSize;
+                if (partitionHi <= rowGroupEndRow) {
+                    targetGroup = i;
+                    targetGroupStart = rowGroupStartRow;
+                    cachedRowGroupIndex = i;
+                    cachedRowGroupStartRow = rowGroupStartRow;
+                    break;
+                }
+                rowGroupStartRow = rowGroupEndRow;
+            }
         }
 
         if (targetGroup < 0) {
@@ -391,6 +426,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             frame.rowGroupLo = (int) (adjustedLo - targetGroupStart);
             frame.rowGroupHi = (int) (partitionHi - targetGroupStart);
             frame.partitionIndex = reenterPartitionIndex;
+            // Update cache to avoid re-scanning skipped row groups on next call
+            cachedRowGroupIndex = targetGroup;
+            cachedRowGroupStartRow = targetGroupStart;
             return frame;
         }
 
@@ -405,6 +443,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             clearAddresses();
             reenterParquetDecoder = partitionFrame.getParquetDecoder();
             reenterPageFrameRowLimit = 0;
+            cachedRowGroupIndex = -1;
+            cachedRowGroupStartRow = 0;
             assert reenterParquetDecoder != null;
             isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
                     reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues);

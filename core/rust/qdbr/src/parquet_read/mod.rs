@@ -1042,6 +1042,127 @@ mod tests {
         )];
         assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
+        // Sub-day precision: col < (day 100 - 1ms). The filter value
+        // 100*86_400_000 - 1 = day 99 end-of-day. min_stat = day 100 =
+        // 100*86_400_000 ms > filter value → skip is correct.
+        let v: Vec<i64> = vec![100 * millis_per_day - 1];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_LT,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // Sub-day precision: col < (day 100 + 1ms). The filter value is
+        // just past midnight of day 100. min_stat = day 100 = 100*86_400_000 ms
+        // which is < filter value → cannot skip (some rows may match).
+        let v: Vec<i64> = vec![100 * millis_per_day + 1];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_LT,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // Sub-day precision: col > (day 200 + half day).
+        // max_stat = day 200 = 200*86_400_000 ms < filter value → skip.
+        let v: Vec<i64> = vec![200 * millis_per_day + millis_per_day / 2];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_GT,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // Sub-day BETWEEN: BETWEEN (day 201 - 1ms) AND (day 300).
+        // Filter lo = 200*86_400_000 + 86_399_999 ms. Stat max = day 200 =
+        // 200*86_400_000 ms < lo → skip.
+        let v: Vec<i64> = vec![201 * millis_per_day - 1, 300 * millis_per_day];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn skip_row_group_range_date_pre_epoch() -> ParquetResult<()> {
+        // Pre-epoch dates: day -3, -2, -1 (i.e. 1969-12-29, 30, 31)
+        let day_values: Vec<i32> = vec![-3, -2, -1];
+        let buf = gen_i32_parquet_with_stats(&day_values)?;
+        let decoder = read_decoder(&buf)?;
+
+        let millis_per_day: i64 = 86_400_000;
+
+        // col < -1ms: min_stat = day -3 = -3*86_400_000 ms, filter = -1.
+        // -259_200_000 >= -1 is false → cannot skip.
+        let v: Vec<i64> = vec![-1];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_LT,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // col > day -1: max_stat = day -1 = -86_400_000 ms, filter = -1*86_400_000.
+        // -86_400_000 <= -86_400_000 → skip.
+        let v: Vec<i64> = vec![-1 * millis_per_day];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_GT,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // col >= day -2: max_stat = day -1 = -86_400_000 ms, filter = -2*86_400_000.
+        // -86_400_000 < -172_800_000 is false → cannot skip.
+        let v: Vec<i64> = vec![-2 * millis_per_day];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            1,
+            v.as_ptr() as u64,
+            FILTER_OP_GE,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN day -10 AND day -5: [-10,-5] doesn't overlap [-3,-1] → skip.
+        let v: Vec<i64> = vec![-10 * millis_per_day, -5 * millis_per_day];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
+        // BETWEEN day -2 AND day 0: overlaps [-3,-1] → cannot skip.
+        let v: Vec<i64> = vec![-2 * millis_per_day, 0];
+        let filters = [make_filter_with_op_and_type(
+            0,
+            2,
+            v.as_ptr() as u64,
+            FILTER_OP_BETWEEN,
+            ColumnTypeTag::Date as i32,
+        )];
+        assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
+
         Ok(())
     }
 

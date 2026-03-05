@@ -374,7 +374,8 @@ public final class ParquetRowGroupFilter {
                         break;
                 }
 
-                if (!supported) {
+                if (!supported || valueCount > 0x00FFFFFF) {
+                    filterValues.jumpTo(valuesOffset);
                     continue;
                 }
 

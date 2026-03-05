@@ -15,7 +15,7 @@ use parquet2::metadata::FileMetaData;
 use parquet2::read::{SlicePageReader, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
-use std::{cmp, ptr, slice};
+use std::{cmp, mem::size_of, ptr, slice};
 
 // The metadata fields are accessed from Java.
 // This struct contains only immutable metadata.
@@ -860,6 +860,34 @@ impl ParquetDecoder {
         )
     }
 
+    #[inline]
+    fn validate_filter_span(
+        ptr: *const u8,
+        count: usize,
+        element_size: usize,
+        buf_end: u64,
+    ) -> ParquetResult<()> {
+        let bytes = count
+            .checked_mul(element_size)
+            .ok_or_else(|| fmt_err!(InvalidLayout, "filter values buffer out of bounds"))?;
+        let base = ptr as usize;
+        let limit = base
+            .checked_add(bytes)
+            .ok_or_else(|| fmt_err!(InvalidLayout, "filter values buffer out of bounds"))?;
+        if limit > buf_end as usize {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "filter values buffer out of bounds"
+            ));
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn millis_to_parquet_day(millis: i64) -> i32 {
+        millis.div_euclid(MILLIS_PER_DAY) as i32
+    }
+
     fn all_values_absent_from_bloom(
         bitset: &[u8],
         physical_type: &PhysicalType,
@@ -880,6 +908,7 @@ impl ParquetDecoder {
                 let is_ipv4 = col_type_tag == ColumnTypeTag::IPv4 as i32;
                 let is_date = col_type_tag == ColumnTypeTag::Date as i32;
                 if is_date {
+                    Self::validate_filter_span(ptr, count, size_of::<i64>(), filter_desc.buf_end)?;
                     for i in 0..count {
                         let millis = unsafe { (ptr as *const i64).add(i).read_unaligned() };
                         if millis == i64::MIN {
@@ -887,7 +916,7 @@ impl ParquetDecoder {
                                 return Ok(false);
                             }
                         } else {
-                            let days = (millis / MILLIS_PER_DAY) as i32;
+                            let days = Self::millis_to_parquet_day(millis);
                             if parquet2::bloom_filter::is_in_set(
                                 bitset,
                                 parquet2::bloom_filter::hash_native(days),
@@ -898,6 +927,7 @@ impl ParquetDecoder {
                     }
                     Ok(true)
                 } else {
+                    Self::validate_filter_span(ptr, count, size_of::<i32>(), filter_desc.buf_end)?;
                     for i in 0..count {
                         let v = unsafe { (ptr as *const i32).add(i).read_unaligned() };
                         let is_null = if is_ipv4 { v == 0 } else { v == i32::MIN };
@@ -916,6 +946,7 @@ impl ParquetDecoder {
                 }
             }
             PhysicalType::Int64 => {
+                Self::validate_filter_span(ptr, count, size_of::<i64>(), filter_desc.buf_end)?;
                 for i in 0..count {
                     let v = unsafe { (ptr as *const i64).add(i).read_unaligned() };
                     if v == i64::MIN {
@@ -932,6 +963,7 @@ impl ParquetDecoder {
                 Ok(true)
             }
             PhysicalType::Float => {
+                Self::validate_filter_span(ptr, count, size_of::<f32>(), filter_desc.buf_end)?;
                 for i in 0..count {
                     let v = unsafe { (ptr as *const f32).add(i).read_unaligned() };
                     if v.is_nan() {
@@ -952,6 +984,7 @@ impl ParquetDecoder {
                 Ok(true)
             }
             PhysicalType::Double => {
+                Self::validate_filter_span(ptr, count, size_of::<f64>(), filter_desc.buf_end)?;
                 for i in 0..count {
                     let v = unsafe { (ptr as *const f64).add(i).read_unaligned() };
                     if v.is_nan() {
@@ -1010,20 +1043,13 @@ impl ParquetDecoder {
             }
             PhysicalType::FixedLenByteArray(size) => {
                 let size = *size;
-                let buf_end = filter_desc.buf_end as usize;
-                let base = ptr as usize;
+                Self::validate_filter_span(ptr, count, size, filter_desc.buf_end)?;
                 let null_check = if is_decimal {
                     is_fixed_len_null_be
                 } else {
                     is_fixed_len_null
                 };
                 for i in 0..count {
-                    if base + i * size + size > buf_end {
-                        return Err(fmt_err!(
-                            InvalidLayout,
-                            "filter values buffer out of bounds"
-                        ));
-                    }
                     let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
                     if null_check(bytes) {
                         if has_nulls {
@@ -1061,6 +1087,7 @@ impl ParquetDecoder {
         let ptr = filter_desc.ptr as *const u8;
         match physical_type {
             PhysicalType::Int32 if is_ipv4 => {
+                Self::validate_filter_span(ptr, count, size_of::<u32>(), filter_desc.buf_end)?;
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
                         u32::from_le_bytes(min_b.try_into().unwrap()),
@@ -1088,6 +1115,12 @@ impl ParquetDecoder {
             // DATE: filter values are i64 millis, converted to i32 days.
             // Others: filter values are i32, NULL = i32::MIN.
             PhysicalType::Int32 => {
+                let elem_size = if is_date {
+                    size_of::<i64>()
+                } else {
+                    size_of::<i32>()
+                };
+                Self::validate_filter_span(ptr, count, elem_size, filter_desc.buf_end)?;
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => Some((
                         i32::from_le_bytes(min_b.try_into().unwrap()),
@@ -1101,7 +1134,7 @@ impl ParquetDecoder {
                         if millis == i64::MIN {
                             (0, true)
                         } else {
-                            ((millis / MILLIS_PER_DAY) as i32, false)
+                            (Self::millis_to_parquet_day(millis), false)
                         }
                     } else {
                         let v = unsafe { (ptr as *const i32).add(i).read_unaligned() };
@@ -1123,6 +1156,7 @@ impl ParquetDecoder {
             }
             // Signed Int64 (Long, Timestamp, Date): NULL = i64::MIN
             PhysicalType::Int64 => {
+                Self::validate_filter_span(ptr, count, size_of::<i64>(), filter_desc.buf_end)?;
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => Some((
                         i64::from_le_bytes(min_b.try_into().unwrap()),
@@ -1147,6 +1181,7 @@ impl ParquetDecoder {
                 Ok(true)
             }
             PhysicalType::Float => {
+                Self::validate_filter_span(ptr, count, size_of::<f32>(), filter_desc.buf_end)?;
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => {
                         let min_val = f32::from_le_bytes(min_b.try_into().unwrap());
@@ -1176,6 +1211,7 @@ impl ParquetDecoder {
                 Ok(true)
             }
             PhysicalType::Double => {
+                Self::validate_filter_span(ptr, count, size_of::<f64>(), filter_desc.buf_end)?;
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => {
                         let min_val = f64::from_le_bytes(min_b.try_into().unwrap());
@@ -1250,8 +1286,7 @@ impl ParquetDecoder {
             }
             PhysicalType::FixedLenByteArray(size) => {
                 let size = *size;
-                let buf_end = filter_desc.buf_end as usize;
-                let base = ptr as usize;
+                Self::validate_filter_span(ptr, count, size, filter_desc.buf_end)?;
                 let min_max = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == size && max_b.len() == size => {
                         Some((min_b, max_b))
@@ -1264,12 +1299,6 @@ impl ParquetDecoder {
                     is_fixed_len_null
                 };
                 for i in 0..count {
-                    if base + (i + 1) * size > buf_end {
-                        return Err(fmt_err!(
-                            InvalidLayout,
-                            "filter values buffer out of bounds"
-                        ));
-                    }
                     let bytes = unsafe { slice::from_raw_parts(ptr.add(i * size), size) };
                     if null_check(bytes) {
                         if has_nulls {
@@ -1327,6 +1356,7 @@ impl ParquetDecoder {
 
         match physical_type {
             PhysicalType::Int32 if is_ipv4 => {
+                Self::validate_filter_span(ptr, count, size_of::<u32>(), filter_desc.buf_end)?;
                 let (min_val, max_val) = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => (
                         u32::from_le_bytes(min_b.try_into().unwrap()),
@@ -1359,6 +1389,12 @@ impl ParquetDecoder {
             // DATE: filter value is i64 millis, converted to i32 days.
             // Others: filter value is i32, NULL = i32::MIN.
             PhysicalType::Int32 => {
+                let elem_size = if is_date {
+                    size_of::<i64>()
+                } else {
+                    size_of::<i32>()
+                };
+                Self::validate_filter_span(ptr, count, elem_size, filter_desc.buf_end)?;
                 let (min_val, max_val) = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => (
                         i32::from_le_bytes(min_b.try_into().unwrap()),
@@ -1367,26 +1403,25 @@ impl ParquetDecoder {
                     _ => return Ok(false),
                 };
                 if is_date {
+                    let min_ms = min_val as i64 * MILLIS_PER_DAY;
+                    let max_ms = max_val as i64 * MILLIS_PER_DAY;
                     if is_between {
                         let a_ms = unsafe { (ptr as *const i64).read_unaligned() };
                         let b_ms = unsafe { (ptr.add(8) as *const i64).read_unaligned() };
                         if a_ms == i64::MIN || b_ms == i64::MIN {
                             return Ok(false);
                         }
-                        let a = (a_ms / MILLIS_PER_DAY) as i32;
-                        let b = (b_ms / MILLIS_PER_DAY) as i32;
-                        Ok(max_val < a.min(b) || min_val > a.max(b))
+                        Ok(max_ms < a_ms.min(b_ms) || min_ms > a_ms.max(b_ms))
                     } else {
                         let millis = unsafe { (ptr as *const i64).read_unaligned() };
                         if millis == i64::MIN {
                             return Ok(false);
                         }
-                        let v = (millis / MILLIS_PER_DAY) as i32;
                         Ok(match op {
-                            FILTER_OP_LT => min_val >= v,
-                            FILTER_OP_LE => min_val > v,
-                            FILTER_OP_GT => max_val <= v,
-                            FILTER_OP_GE => max_val < v,
+                            FILTER_OP_LT => min_ms >= millis,
+                            FILTER_OP_LE => min_ms > millis,
+                            FILTER_OP_GT => max_ms <= millis,
+                            FILTER_OP_GE => max_ms < millis,
                             _ => false,
                         })
                     }
@@ -1413,6 +1448,7 @@ impl ParquetDecoder {
             }
             // Signed Int64 (Long, Timestamp, Date): NULL = i64::MIN
             PhysicalType::Int64 => {
+                Self::validate_filter_span(ptr, count, size_of::<i64>(), filter_desc.buf_end)?;
                 let (min_val, max_val) = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => (
                         i64::from_le_bytes(min_b.try_into().unwrap()),
@@ -1442,6 +1478,7 @@ impl ParquetDecoder {
                 }
             }
             PhysicalType::Float => {
+                Self::validate_filter_span(ptr, count, size_of::<f32>(), filter_desc.buf_end)?;
                 let (min_val, max_val) = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 4 && max_b.len() == 4 => {
                         let min_val = f32::from_le_bytes(min_b.try_into().unwrap());
@@ -1475,6 +1512,7 @@ impl ParquetDecoder {
                 }
             }
             PhysicalType::Double => {
+                Self::validate_filter_span(ptr, count, size_of::<f64>(), filter_desc.buf_end)?;
                 let (min_val, max_val) = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == 8 && max_b.len() == 8 => {
                         let min_val = f64::from_le_bytes(min_b.try_into().unwrap());
@@ -1596,14 +1634,13 @@ impl ParquetDecoder {
             }
             PhysicalType::FixedLenByteArray(size) => {
                 let size = *size;
+                Self::validate_filter_span(ptr, count, size, filter_desc.buf_end)?;
                 let (min_b, max_b) = match (min_bytes, max_bytes) {
                     (Some(min_b), Some(max_b)) if min_b.len() == size && max_b.len() == size => {
                         (min_b, max_b)
                     }
                     _ => return Ok(false),
                 };
-                let buf_end = filter_desc.buf_end as usize;
-                let base = ptr as usize;
                 let null_check = if is_decimal {
                     is_fixed_len_null_be
                 } else {
@@ -1611,12 +1648,6 @@ impl ParquetDecoder {
                 };
 
                 if is_between {
-                    if base + size * 2 > buf_end {
-                        return Err(fmt_err!(
-                            InvalidLayout,
-                            "filter values buffer out of bounds"
-                        ));
-                    }
                     let bytes1 = unsafe { slice::from_raw_parts(ptr, size) };
                     let bytes2 = unsafe { slice::from_raw_parts(ptr.add(size), size) };
                     if null_check(bytes1) || null_check(bytes2) {
@@ -1640,12 +1671,6 @@ impl ParquetDecoder {
                         max_b < lo || min_b > hi
                     })
                 } else {
-                    if base + size > buf_end {
-                        return Err(fmt_err!(
-                            InvalidLayout,
-                            "filter values buffer out of bounds"
-                        ));
-                    }
                     let bytes = unsafe { slice::from_raw_parts(ptr, size) };
                     if null_check(bytes) {
                         return Ok(false);

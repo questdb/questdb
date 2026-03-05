@@ -80,18 +80,13 @@ pub mod int32 {
     }
 
     /// Converts "days since epoch" values into milliseconds.
+    #[derive(Default)]
     pub struct DayToMillisConverter;
 
     impl Converter<i32, i64> for DayToMillisConverter {
         #[inline]
         fn convert(&self, input: i32) -> i64 {
             (input as i64) * 24 * 60 * 60 * 1000
-        }
-    }
-
-    impl Default for DayToMillisConverter {
-        fn default() -> Self {
-            Self::new()
         }
     }
 
@@ -115,6 +110,7 @@ pub mod int96 {
     }
 
     /// Converts Parquet `INT96` (Julian day + nanos) into epoch nanoseconds.
+    #[derive(Default)]
     pub struct Int96ToTimestampConverter;
 
     impl Converter<Int96Timestamp, i64> for Int96ToTimestampConverter {
@@ -131,12 +127,6 @@ pub mod int96 {
         }
     }
 
-    impl Default for Int96ToTimestampConverter {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
     impl Int96ToTimestampConverter {
         pub fn new() -> Self {
             Self
@@ -150,13 +140,8 @@ pub mod int128 {
     use super::*;
 
     /// Converts Parquet UUID binary order into QuestDB in-memory order.
+    #[derive(Default)]
     pub struct Int128ToUuidConverter {}
-
-    impl Default for Int128ToUuidConverter {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
 
     impl Int128ToUuidConverter {
         pub fn new() -> Self {
