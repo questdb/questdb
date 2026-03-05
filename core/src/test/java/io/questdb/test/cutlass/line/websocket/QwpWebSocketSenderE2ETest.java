@@ -715,11 +715,11 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
                                 explicit3\t4\t2022-02-25T00:03:20.000000Z
                                 """
                 );
-                // verify server-assigned rows are within [now, now + 1 hour]
+                // verify server-assigned rows are within [now - 1 hour, now + 1 hour]
                 serverMain.assertSql(
                         "SELECT count() FROM mixed_ts_micro_table" +
                                 " WHERE sym IN ('server1', 'server2')" +
-                                " AND timestamp BETWEEN now() AND dateadd('h', 1, now())",
+                                " AND timestamp BETWEEN dateadd('h', -1, now()) AND dateadd('h', 1, now())",
                         "count\n2\n"
                 );
             }
@@ -876,11 +876,11 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
                                 explicit3\t4\t2022-02-25T00:03:20.000000000Z
                                 """
                 );
-                // verify server-assigned rows are within [now, now + 1 hour]
+                // verify server-assigned rows are within [now - 1 hour, now + 1 hour]
                 serverMain.assertSql(
                         "SELECT count() FROM mixed_ts_nano_table" +
                                 " WHERE sym IN ('server1', 'server2')" +
-                                " AND timestamp BETWEEN now() AND dateadd('h', 1, now())",
+                                " AND timestamp BETWEEN dateadd('h', -1, now()) AND dateadd('h', 1, now())",
                         "count\n2\n"
                 );
             }
