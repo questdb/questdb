@@ -5,13 +5,12 @@ use std::hash::Hash;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, dict_pages_iter, encode_primitive_def_levels, ExactSizedIter, MaxMin,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
 use parquet2::bloom_filter::hash_native;
 use parquet2::encoding::delta_bitpacked::encode;
 use qdb_core::col_type::nulls;
-use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
@@ -708,21 +707,7 @@ where
     encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
-    let max_key = if dict_entries.is_empty() {
-        0u32
-    } else {
-        (dict_entries.len() - 1) as u32
-    };
-    let bits_per_key = super::util::bit_width(max_key as u64);
     let non_null_len = slice.len() - null_count;
-    data_buffer.push(bits_per_key);
-    encode_u32(
-        &mut data_buffer,
-        keys.into_iter(),
-        non_null_len,
-        bits_per_key as u32,
-    )?;
-
     let stats = if options.write_statistics {
         Some(build_statistics(
             Some(total_null_count as i64),
@@ -733,24 +718,20 @@ where
         None
     };
 
-    let data_page = build_plain_page(
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
         data_buffer,
+        definition_levels_byte_length,
         num_rows,
         total_null_count,
-        definition_levels_byte_length,
         stats,
         primitive_type,
         options,
-        Encoding::RleDictionary,
         false,
-    )?;
-
-    let unique_count = if dict_buffer.is_empty() {
-        0
-    } else {
-        dict_entries.len()
-    };
-    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+    )
 }
 
 /// Dictionary encoding for nullable int types that need type conversion (Geo*, IPv4).
@@ -809,21 +790,7 @@ where
     encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
-    let max_key = if dict_entries.is_empty() {
-        0u32
-    } else {
-        (dict_entries.len() - 1) as u32
-    };
-    let bits_per_key = super::util::bit_width(max_key as u64);
     let non_null_len = slice.len() - null_count;
-    data_buffer.push(bits_per_key);
-    encode_u32(
-        &mut data_buffer,
-        keys.into_iter(),
-        non_null_len,
-        bits_per_key as u32,
-    )?;
-
     let stats = if options.write_statistics {
         Some(build_statistics(
             Some(total_null_count as i64),
@@ -834,24 +801,20 @@ where
         None
     };
 
-    let data_page = build_plain_page(
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
         data_buffer,
+        definition_levels_byte_length,
         num_rows,
         total_null_count,
-        definition_levels_byte_length,
         stats,
         primitive_type,
         options,
-        Encoding::RleDictionary,
         false,
-    )?;
-
-    let unique_count = if dict_buffer.is_empty() {
-        0
-    } else {
-        dict_entries.len()
-    };
-    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+    )
 }
 
 /// Dictionary encoding for not-null int types (Byte, Short, Char) — Required repetition,
@@ -907,23 +870,6 @@ where
         dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
     }
 
-    let mut data_buffer = Vec::new();
-    // No def levels for Required columns
-
-    let max_key = if dict_entries.is_empty() {
-        0u32
-    } else {
-        (dict_entries.len() - 1) as u32
-    };
-    let bits_per_key = super::util::bit_width(max_key as u64);
-    data_buffer.push(bits_per_key);
-    encode_u32(
-        &mut data_buffer,
-        keys.into_iter(),
-        num_rows,
-        bits_per_key as u32,
-    )?;
-
     let stats = if options.write_statistics {
         Some(build_statistics(
             Some(column_top as i64),
@@ -934,24 +880,20 @@ where
         None
     };
 
-    let data_page = build_plain_page(
-        data_buffer,
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        num_rows,
+        Vec::new(),
+        0,
         num_rows,
         column_top,
-        0, // no def levels
         stats,
         primitive_type,
         options,
-        Encoding::RleDictionary,
         true,
-    )?;
-
-    let unique_count = if dict_buffer.is_empty() {
-        0
-    } else {
-        dict_entries.len()
-    };
-    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+    )
 }
 
 /// Dictionary encoding for Decimal types (FixedLenByteArray).
@@ -1007,50 +949,29 @@ where
     encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
-    let max_key = if dict_entries.is_empty() {
-        0u32
-    } else {
-        (dict_entries.len() - 1) as u32
-    };
-    let bits_per_key = super::util::bit_width(max_key as u64);
     let non_null_len = slice.len() - null_count;
-    data_buffer.push(bits_per_key);
-    encode_u32(
-        &mut data_buffer,
-        keys.into_iter(),
-        non_null_len,
-        bits_per_key as u32,
-    )?;
-
     let stats = if options.write_statistics {
-        let s = &PrimitiveStatistics::<T> {
-            primitive_type: primitive_type.clone(),
-            null_count: Some(total_null_count as i64),
-            distinct_count: None,
-            max_value: statistics.max,
-            min_value: statistics.min,
-        } as &dyn parquet2::statistics::Statistics;
-        Some(serialize_statistics(s))
+        Some(build_statistics(
+            Some(total_null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
     } else {
         None
     };
 
-    let data_page = build_plain_page(
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
         data_buffer,
+        definition_levels_byte_length,
         num_rows,
         total_null_count,
-        definition_levels_byte_length,
         stats,
         primitive_type,
         options,
-        Encoding::RleDictionary,
         false,
-    )?;
-
-    let unique_count = if dict_buffer.is_empty() {
-        0
-    } else {
-        dict_entries.len()
-    };
-    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+    )
 }
