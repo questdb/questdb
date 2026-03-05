@@ -4448,8 +4448,8 @@ mod tests {
         // Bit 0..6: ones (7 ones)
         values[0] = 0x7F; // 0b01111111
                           // Bit 7..9: zeros (3 zeros, bit 7 already 0 from 0x7F)
-        // Pattern: bits 0..6 = 1, bits 7..9 = 0, bits 10..63 = 1.
-        // byte0 = 0x7F, byte1 = 0xFC.
+                          // Pattern: bits 0..6 = 1, bits 7..9 = 0, bits 10..63 = 1.
+                          // byte0 = 0x7F, byte1 = 0xFC.
         values[0] = 0x7F;
         values[1] = 0xFC;
         values[2..8].fill(0xFF);
