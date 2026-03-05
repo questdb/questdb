@@ -59,6 +59,7 @@ public class CastInCtasTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5)), cast(x AS varchar)");
             assertSql("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertSql("x\n1\n2\n3\n4\n5\n", "SELECT x FROM t");
         });
     }
 
@@ -70,6 +71,21 @@ public class CastInCtasTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5)), cast(x AS string)");
             assertSql("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertSql("x\n1\n2\n3\n4\n5\n", "SELECT x FROM t");
+        });
+    }
+
+    /**
+     * Verifies CTAS cast-list support for LONG to SYMBOL remains unsupported.
+     */
+    @Test
+    public void testCastLongToSymbolInCtasFails() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "CREATE TABLE t AS (SELECT x FROM long_sequence(5)), cast(x AS symbol)",
+                    57,
+                    "unsupported cast [column=x, from=LONG, to=SYMBOL]"
+            );
         });
     }
 
@@ -97,6 +113,17 @@ public class CastInCtasTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Verifies CTAS cast-list support for STRING to VARCHAR.
+     */
+    @Test
+    public void testCastStringToVarcharInCtas() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 'a' x FROM long_sequence(5)), cast(x AS varchar)");
+            assertSql("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+        });
+    }
+
     // --- UUID → STRING / VARCHAR ---
 
     /**
@@ -118,6 +145,31 @@ public class CastInCtasTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), cast(x AS varchar)");
             assertSql("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+        });
+    }
+
+    /**
+     * Verifies CTAS cast-list support for UUID to SYMBOL remains unsupported.
+     */
+    @Test
+    public void testCastUuidToSymbolInCtasFails() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), cast(x AS symbol)",
+                    69,
+                    "unsupported cast [column=x, from=UUID, to=SYMBOL]"
+            );
+        });
+    }
+
+    /**
+     * Verifies CTAS cast-list support for VARCHAR to STRING.
+     */
+    @Test
+    public void testCastVarcharToStringInCtas() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT cast('a' AS varchar) x FROM long_sequence(5)), cast(x AS string)");
+            assertSql("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
         });
     }
 }
