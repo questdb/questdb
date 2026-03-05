@@ -156,7 +156,10 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Set false positive probability for bloom filters.
     pub fn with_bloom_filter_fpp(mut self, fpp: f64) -> Self {
-        debug_assert!(fpp > 0.0 && fpp < 1.0, "bloom filter fpp must be in (0.0, 1.0)");
+        debug_assert!(
+            fpp > 0.0 && fpp < 1.0,
+            "bloom filter fpp must be in (0.0, 1.0)"
+        );
         self.bloom_filter_fpp = fpp;
         self
     }
@@ -580,7 +583,13 @@ fn symbol_column_to_pages_multi_partition(
 
     // Insert hashes into shared bloom set while building dictionary
     let dict_page = {
-        let mut bloom_guard = bloom_set.as_ref().map(|arc| arc.lock().map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))).transpose()?;
+        let mut bloom_guard = bloom_set
+            .as_ref()
+            .map(|arc| {
+                arc.lock()
+                    .map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))
+            })
+            .transpose()?;
         symbol::build_symbol_dict_page(&global_info, offsets, chars, bloom_guard.as_deref_mut())?
     };
 
@@ -873,7 +882,12 @@ fn chunk_to_primitive_page(
         offset + length - orig_column_top
     };
 
-    let mut bloom_guard = bloom_set.map(|arc| arc.lock().map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))).transpose()?;
+    let mut bloom_guard = bloom_set
+        .map(|arc| {
+            arc.lock()
+                .map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))
+        })
+        .transpose()?;
     let bloom_hashes = bloom_guard.as_deref_mut();
 
     let page = match column.data_type.tag() {

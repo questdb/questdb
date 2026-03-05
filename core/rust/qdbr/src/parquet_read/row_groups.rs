@@ -1009,7 +1009,8 @@ impl ParquetDecoder {
                 let base = ptr as usize;
                 let mut offset = 0usize;
                 for _ in 0..count {
-                    let end = base.checked_add(offset)
+                    let end = base
+                        .checked_add(offset)
                         .and_then(|v| v.checked_add(size_of::<i32>()));
                     if end.is_none_or(|e| e > buf_end) {
                         return Err(fmt_err!(
@@ -1025,8 +1026,7 @@ impl ParquetDecoder {
                         }
                     } else {
                         let len = len as usize;
-                        let end = base.checked_add(offset)
-                            .and_then(|v| v.checked_add(len));
+                        let end = base.checked_add(offset).and_then(|v| v.checked_add(len));
                         if end.is_none_or(|e| e > buf_end) {
                             return Err(fmt_err!(
                                 InvalidLayout,
@@ -1253,7 +1253,8 @@ impl ParquetDecoder {
                 let base = ptr as usize;
                 let mut offset = 0usize;
                 for _ in 0..count {
-                    let end = base.checked_add(offset)
+                    let end = base
+                        .checked_add(offset)
                         .and_then(|v| v.checked_add(size_of::<i32>()));
                     if end.is_none_or(|e| e > buf_end) {
                         return Err(fmt_err!(
@@ -1269,8 +1270,7 @@ impl ParquetDecoder {
                         }
                     } else {
                         let len = len as usize;
-                        let end = base.checked_add(offset)
-                            .and_then(|v| v.checked_add(len));
+                        let end = base.checked_add(offset).and_then(|v| v.checked_add(len));
                         if end.is_none_or(|e| e > buf_end) {
                             return Err(fmt_err!(
                                 InvalidLayout,
@@ -1572,7 +1572,8 @@ impl ParquetDecoder {
                     return Ok(false);
                 }
                 let len = len as usize;
-                let end = base.checked_add(size_of::<i32>())
+                let end = base
+                    .checked_add(size_of::<i32>())
                     .and_then(|v| v.checked_add(len));
                 if end.is_none_or(|e| e > buf_end) {
                     return Err(fmt_err!(
@@ -1597,7 +1598,8 @@ impl ParquetDecoder {
                         return Ok(false);
                     }
                     let len2 = len2 as usize;
-                    let end = base2.checked_add(size_of::<i32>())
+                    let end = base2
+                        .checked_add(size_of::<i32>())
                         .and_then(|v| v.checked_add(len2));
                     if end.is_none_or(|e| e > buf_end) {
                         return Err(fmt_err!(
