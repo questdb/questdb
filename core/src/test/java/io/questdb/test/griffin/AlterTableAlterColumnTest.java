@@ -32,6 +32,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -354,6 +357,41 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropParquetEncodingThenConvert() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    "val INT PARQUET ENCODING DELTA_BINARY_PACKED," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("INSERT INTO x SELECT" +
+                    " CASE WHEN x % 2 = 0 THEN rnd_int() ELSE NULL END," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(1000)");
+
+            // seal the partition by inserting into the next day
+            execute("INSERT INTO x VALUES (42, '2015-01-02T00:00:00.000000Z')");
+
+            execute("ALTER TABLE x ALTER COLUMN val DROP PARQUET ENCODING");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                assertSqlCursors(
+                        "SELECT * FROM x WHERE ts IN '2015-01-01'",
+                        "SELECT * FROM read_parquet('x.parquet')"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSetParquetCompressionLevelTooHigh() throws Exception {
         assertFailure(
                 "ALTER TABLE x ALTER COLUMN d SET PARQUET COMPRESSION ZSTD 30",
@@ -456,6 +494,41 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 50,
                 "invalid parquet encoding, supported values:"
         );
+    }
+
+    @Test
+    public void testSetParquetEncodingThenConvert() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x2 (" +
+                    "val LONG," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+
+            execute("INSERT INTO x2 SELECT" +
+                    " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(1000)");
+
+            // seal the partition by inserting into the next day
+            execute("INSERT INTO x2 VALUES (42, '2015-01-02T00:00:00.000000Z')");
+
+            execute("ALTER TABLE x2 ALTER COLUMN val SET PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x2")
+            ) {
+                path.of(root).concat("x2.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                assertSqlCursors(
+                        "SELECT * FROM x2 WHERE ts IN '2015-01-01'",
+                        "SELECT * FROM read_parquet('x2.parquet')"
+                );
+            }
+        });
     }
 
     @Test
