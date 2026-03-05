@@ -1156,6 +1156,59 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testSameColumnNameDifferentTypesDifferentTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                    for (int i = 0; i < 10; i++) {
+                        // table A: "value" is LONG
+                        sender.table("schema_iso_a")
+                                .longColumn("value", i * 100L)
+                                .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                        // table B: "value" is DOUBLE
+                        sender.table("schema_iso_b")
+                                .doubleColumn("value", i * 1.5)
+                                .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    }
+                }
+
+                serverMain.awaitTable("schema_iso_a");
+                serverMain.awaitTable("schema_iso_b");
+
+                // verify row counts
+                serverMain.assertSql("SELECT count() FROM schema_iso_a", "count\n10\n");
+                serverMain.assertSql("SELECT count() FROM schema_iso_b", "count\n10\n");
+
+                // verify table A stores LONG values
+                serverMain.assertSql(
+                        "SELECT value FROM schema_iso_a ORDER BY timestamp LIMIT 3",
+                        """
+                                value
+                                0
+                                100
+                                200
+                                """
+                );
+
+                // verify table B stores DOUBLE values
+                serverMain.assertSql(
+                        "SELECT value FROM schema_iso_b ORDER BY timestamp LIMIT 3",
+                        """
+                                value
+                                0.0
+                                1.5
+                                3.0
+                                """
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSingleRowWithBooleanColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
