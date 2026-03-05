@@ -40,9 +40,8 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public class NullingRecord implements Record {
     private Record base;
-    // Columns for which this record returns NULL instead of the base value.
-    // Contains base record column indices (0-based).
-    private IntList nulledColumns;
+    // O(1) lookup: true at index i means column i is nulled.
+    private boolean[] isColumnNulled;
 
     @Override
     public BinarySequence getBin(int col) {
@@ -193,18 +192,21 @@ public class NullingRecord implements Record {
 
     public void of(Record base, IntList nulledColumns) {
         this.base = base;
-        this.nulledColumns = nulledColumns;
+        if (nulledColumns == null || nulledColumns.size() == 0) {
+            this.isColumnNulled = null;
+        } else {
+            int maxCol = 0;
+            for (int i = 0, n = nulledColumns.size(); i < n; i++) {
+                maxCol = Math.max(maxCol, nulledColumns.getQuick(i));
+            }
+            this.isColumnNulled = new boolean[maxCol + 1];
+            for (int i = 0, n = nulledColumns.size(); i < n; i++) {
+                isColumnNulled[nulledColumns.getQuick(i)] = true;
+            }
+        }
     }
 
     private boolean isNulled(int col) {
-        if (nulledColumns == null) {
-            return false;
-        }
-        for (int i = 0, n = nulledColumns.size(); i < n; i++) {
-            if (nulledColumns.getQuick(i) == col) {
-                return true;
-            }
-        }
-        return false;
+        return isColumnNulled != null && col < isColumnNulled.length && isColumnNulled[col];
     }
 }
