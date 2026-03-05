@@ -6,12 +6,11 @@ use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_def_levels, BinaryMaxMinStats,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, BinaryMaxMinStats,
 };
 use parquet2::bloom_filter::hash_byte;
-use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::{delta_bitpacked, Encoding};
-use parquet2::page::{DictPage, Page};
+use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
 use rapidhash::RapidHashMap;
@@ -236,45 +235,23 @@ pub fn varchar_to_dict_pages(
     encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
-    let max_key = if dict_entries.is_empty() {
-        0u32
-    } else {
-        (dict_entries.len() - 1) as u32
-    };
-    let bits_per_key = super::util::bit_width(max_key as u64);
     let non_null_len = aux.len() - null_count;
-    data_buffer.push(bits_per_key);
-    encode_u32(
-        &mut data_buffer,
-        keys.into_iter(),
-        non_null_len,
-        bits_per_key as u32,
-    )?;
+    let statistics = stats.map(|s| s.into_parquet_stats(total_null_count));
 
-    let data_page = build_plain_page(
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
         data_buffer,
+        definition_levels_byte_length,
         num_rows,
         total_null_count,
-        definition_levels_byte_length,
-        stats.map(|s| s.into_parquet_stats(total_null_count)),
+        statistics,
         primitive_type,
         options,
-        Encoding::RleDictionary,
         false,
-    )?;
-
-    let uniq_vals = if dict_buffer.is_empty() {
-        0
-    } else {
-        dict_entries.len()
-    };
-    let dict_page = DictPage::new(dict_buffer, uniq_vals, false);
-
-    Ok(DynIter::new(
-        [Page::Dict(dict_page), Page::Data(data_page)]
-            .into_iter()
-            .map(Ok),
-    ))
+    )
 }
 
 fn encode_plain(

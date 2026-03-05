@@ -28,7 +28,8 @@ use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, dict_pages_iter, encode_primitive_def_levels, transmute_slice, ExactSizedIter,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, transmute_slice,
+    ExactSizedIter,
 };
 use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::hybrid_rle::encode_u32;
@@ -193,39 +194,23 @@ pub fn string_to_dict_pages(
     encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
-    let max_key = if dict_entries.is_empty() {
-        0u32
-    } else {
-        (dict_entries.len() - 1) as u32
-    };
-    let bits_per_key = super::util::bit_width(max_key as u64);
     let non_null_len = offsets.len() - null_count;
-    data_buffer.push(bits_per_key);
-    encode_u32(
-        &mut data_buffer,
-        keys.into_iter(),
-        non_null_len,
-        bits_per_key as u32,
-    )?;
+    let statistics = stats.map(|s| s.into_parquet_stats(total_null_count));
 
-    let data_page = build_plain_page(
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
         data_buffer,
+        definition_levels_byte_length,
         num_rows,
         total_null_count,
-        definition_levels_byte_length,
-        stats.map(|s| s.into_parquet_stats(total_null_count)),
+        statistics,
         primitive_type,
         options,
-        Encoding::RleDictionary,
         false,
-    )?;
-
-    let unique_count = if dict_buffer.is_empty() {
-        0
-    } else {
-        dict_entries.len()
-    };
-    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+    )
 }
 
 fn encode_plain(
