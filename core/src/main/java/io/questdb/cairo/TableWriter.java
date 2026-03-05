@@ -1106,6 +1106,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 setStateForTimestamp(path, partitionTimestamp);
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
                 setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
+                setBitmapAppendPosition(txWriter.getTransientRowCount());
                 path.trimTo(pathSize);
             }
 
