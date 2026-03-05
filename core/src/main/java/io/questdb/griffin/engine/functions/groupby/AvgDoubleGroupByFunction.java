@@ -49,17 +49,17 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
             final long countPtr = mapValue.getAddress(valueIndex + 1);
             final long prevCount = mapValue.getLong(valueIndex + 1);
             final double batchSum = Vect.sumDoubleAcc(ptr, count, countPtr);
-            if (!Double.isNaN(batchSum)) {
+            // sumDoubleAcc overwrites *countPtr with the batch count
+            final long batchCount = mapValue.getLong(valueIndex + 1);
+            if (batchCount > 0) {
                 final double prevSum = mapValue.getDouble(valueIndex);
-                if (!Double.isNaN(prevSum)) {
+                if (prevCount > 0) {
                     mapValue.putDouble(valueIndex, prevSum + batchSum);
                 } else {
                     mapValue.putDouble(valueIndex, batchSum);
                 }
-                // sumDoubleAcc overwrites *countPtr with the batch count, so add the previous count back
-                mapValue.addLong(valueIndex + 1, prevCount);
+                mapValue.putLong(valueIndex + 1, prevCount + batchCount);
             } else {
-                // All values were NaN, but sumDoubleAcc still overwrote *countPtr with 0.
                 mapValue.putLong(valueIndex + 1, prevCount);
             }
         }
