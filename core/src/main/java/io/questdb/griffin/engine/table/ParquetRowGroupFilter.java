@@ -374,7 +374,7 @@ public final class ParquetRowGroupFilter {
                         break;
                 }
 
-                if (!supported || valueCount > 0x00FFFFFF) {
+                if (!supported || valueCount > 0x00FFFFFF) { // 16_777_215, max value count that fits in 24-bit field of ColumnFilterPacked
                     filterValues.jumpTo(valuesOffset);
                     continue;
                 }
