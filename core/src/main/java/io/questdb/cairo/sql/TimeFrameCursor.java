@@ -117,6 +117,12 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      */
     void jumpTo(int frameIndex);
 
+    /**
+     * Advances the cursor to the next non-empty time frame. Empty partitions
+     * (0 rows after interval filtering) are skipped automatically.
+     *
+     * @return true if a non-empty frame was found, false if no more frames
+     */
     boolean next();
 
     /**
@@ -130,6 +136,12 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      */
     long open();
 
+    /**
+     * Moves the cursor to the previous non-empty time frame. Empty partitions
+     * (0 rows after interval filtering) are skipped automatically.
+     *
+     * @return true if a non-empty frame was found, false if no more frames
+     */
     boolean prev();
 
     /**
@@ -170,6 +182,11 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      * so this method positions at the last frame in the matching partition.
      * <p>
      * The timestamp must be in the cursor's native timestamp space.
+     * <p>
+     * This method operates on partition-level metadata (timestamps and ceilings)
+     * without opening partitions. It does not skip empty partitions because
+     * emptiness is only known after {@link #open()}. Callers must handle the
+     * case where the seeked frame turns out to be empty.
      * <p>
      * This is useful for ASOF-style lookups where we need to skip to the area
      * near a target timestamp without scanning all preceding frames.

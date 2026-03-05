@@ -169,13 +169,19 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     public boolean next() {
         buildFrameMetadata();
         int frameIndex = timeFrame.getFrameIndex();
-        if (++frameIndex < partitionCount) {
-            timeFrame.ofEstimate(
-                    frameIndex,
-                    partitionTimestamps.getQuick(frameIndex),
-                    partitionCeilings.getQuick(frameIndex)
-            );
-            return true;
+        while (++frameIndex < partitionCount) {
+            // Eagerly open partition to check if it has rows after interval filtering.
+            // Empty partitions (0 rows) are skipped to match the old page-frame-based
+            // model where time frames were never empty.
+            ensurePartitionOpened(frameIndex);
+            if (partitionTotalRows[frameIndex] > 0) {
+                timeFrame.ofEstimate(
+                        frameIndex,
+                        partitionTimestamps.getQuick(frameIndex),
+                        partitionCeilings.getQuick(frameIndex)
+                );
+                return true;
+            }
         }
         // Update frame index in case of subsequent prev() call.
         timeFrame.ofEstimate(partitionCount, Long.MIN_VALUE, Long.MIN_VALUE);
@@ -243,13 +249,16 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     public boolean prev() {
         buildFrameMetadata();
         int frameIndex = timeFrame.getFrameIndex();
-        if (--frameIndex >= 0) {
-            timeFrame.ofEstimate(
-                    frameIndex,
-                    partitionTimestamps.getQuick(frameIndex),
-                    partitionCeilings.getQuick(frameIndex)
-            );
-            return true;
+        while (--frameIndex >= 0) {
+            ensurePartitionOpened(frameIndex);
+            if (partitionTotalRows[frameIndex] > 0) {
+                timeFrame.ofEstimate(
+                        frameIndex,
+                        partitionTimestamps.getQuick(frameIndex),
+                        partitionCeilings.getQuick(frameIndex)
+                );
+                return true;
+            }
         }
         // Update frame index in case of subsequent next() call.
         timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);

@@ -203,9 +203,11 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             }
 
             if (!slaveCursorReadyForForwardScan) {
-                slaveTimeFrameCursor.jumpTo(TimeFrameCursor.toPartitionIndex(forwardRowId));
-                slaveTimeFrameCursor.open();
-                slaveTimeFrameCursor.recordAt(slaveRecB, forwardRowId);
+                if (!forwardScanExhausted) {
+                    slaveTimeFrameCursor.jumpTo(TimeFrameCursor.toPartitionIndex(forwardRowId));
+                    slaveTimeFrameCursor.open();
+                    slaveTimeFrameCursor.recordAt(slaveRecB, forwardRowId);
+                }
                 slaveCursorReadyForForwardScan = true;
             }
 
@@ -261,18 +263,12 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 if (backwardRowId > frameRowLo) {
                     backwardRowId--;
                 } else {
-                    boolean found = false;
-                    while (slaveTimeFrameCursor.prev()) {
+                    if (slaveTimeFrameCursor.prev()) {
                         slaveTimeFrameCursor.open();
                         int frameIndex = slaveTimeFrame.getFrameIndex();
-                        if (slaveTimeFrame.getRowHi() > slaveTimeFrame.getRowLo()) {
-                            frameRowLo = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
-                            backwardRowId = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
+                        frameRowLo = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
+                        backwardRowId = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
+                    } else {
                         backwardScanExhausted = true;
                         break;
                     }
@@ -324,7 +320,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     value.putLong(0, slaveRecB.getRowId());
                 }
                 forwardRowId++;
-                while (forwardRowId == frameRowHi) {
+                if (forwardRowId == frameRowHi) {
                     if (!slaveTimeFrameCursor.next()) {
                         forwardScanExhausted = true;
                         break;
@@ -333,9 +329,6 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     int frameIndex = slaveTimeFrame.getFrameIndex();
                     frameRowHi = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowHi());
                     forwardRowId = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
-                }
-                if (forwardScanExhausted) {
-                    break;
                 }
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }

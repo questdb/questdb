@@ -56,6 +56,8 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     protected boolean isSlaveForwardScan;
     // Flag indicating if slave open is pending.
     protected boolean isSlaveOpenPending;
+    // Flag indicating if initial seekEstimate has been done.
+    private boolean isInitialSeekDone;
     // The lookahead timestamp value.
     protected long lookaheadTimestamp = Long.MIN_VALUE;
     // The master record cursor.
@@ -198,6 +200,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         slaveTimeFrameCursor.toTop();
         isSlaveOpenPending = false;
         isSlaveForwardScan = true;
+        isInitialSeekDone = false;
     }
 
     private long binarySearchScanDown(long v, long low, long high, long totalRowLo) {
@@ -287,11 +290,12 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             // This uses only estimated timestamp boundaries since we don't know
             // the precise boundaries until we open the frame.
             if (isSlaveForwardScan) {
-                if (slaveFrameIndex == -1) {
+                if (slaveFrameIndex == -1 && !isInitialSeekDone) {
                     // First lookup: use seekEstimate to skip to the target's vicinity,
                     // avoiding O(N) linear scan through all preceding frames.
                     final long nativeTimestamp = slaveTimestampScale == 1 ? masterTimestamp : masterTimestamp / slaveTimestampScale;
                     slaveTimeFrameCursor.seekEstimate(nativeTimestamp);
+                    isInitialSeekDone = true;
                 }
                 if (!slaveTimeFrameCursor.next() || masterTimestamp < scaleTimestamp(slaveTimeFrame.getTimestampEstimateLo(), slaveTimestampScale)) {
                     // We've reached the last frame or a frame after the searched timestamp.

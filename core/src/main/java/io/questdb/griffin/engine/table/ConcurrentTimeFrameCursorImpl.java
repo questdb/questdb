@@ -138,13 +138,16 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     public boolean next() {
         int frameIndex = timeFrame.getFrameIndex();
         final int partitionCount = sharedState.getPartitionCount();
-        if (++frameIndex < partitionCount) {
-            timeFrame.ofEstimate(
-                    frameIndex,
-                    sharedState.getPartitionTimestamp(frameIndex),
-                    sharedState.getPartitionCeiling(frameIndex)
-            );
-            return true;
+        while (++frameIndex < partitionCount) {
+            sharedState.ensurePartitionOpened(frameIndex);
+            if (sharedState.getPartitionTotalRows(frameIndex) > 0) {
+                timeFrame.ofEstimate(
+                        frameIndex,
+                        sharedState.getPartitionTimestamp(frameIndex),
+                        sharedState.getPartitionCeiling(frameIndex)
+                );
+                return true;
+            }
         }
         // Update frame index in case of subsequent prev() call.
         timeFrame.ofEstimate(partitionCount, Long.MIN_VALUE, Long.MIN_VALUE);
@@ -229,13 +232,16 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public boolean prev() {
         int frameIndex = timeFrame.getFrameIndex();
-        if (--frameIndex >= 0) {
-            timeFrame.ofEstimate(
-                    frameIndex,
-                    sharedState.getPartitionTimestamp(frameIndex),
-                    sharedState.getPartitionCeiling(frameIndex)
-            );
-            return true;
+        while (--frameIndex >= 0) {
+            sharedState.ensurePartitionOpened(frameIndex);
+            if (sharedState.getPartitionTotalRows(frameIndex) > 0) {
+                timeFrame.ofEstimate(
+                        frameIndex,
+                        sharedState.getPartitionTimestamp(frameIndex),
+                        sharedState.getPartitionCeiling(frameIndex)
+                );
+                return true;
+            }
         }
         // Update frame index in case of subsequent next() call.
         timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
