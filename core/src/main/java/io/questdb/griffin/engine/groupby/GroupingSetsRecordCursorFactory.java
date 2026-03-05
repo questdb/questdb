@@ -96,6 +96,11 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
             int setCount = groupingSets.size();
             int totalKeyColumns = keyColumnIndices.size();
 
+            // GROUPING_ID bitmask is int-based (31 usable bits).
+            if (totalKeyColumns > 31) {
+                throw SqlException.$(0, "GROUPING SETS supports at most 31 key columns");
+            }
+
             // Build the single RecordSink that copies all key columns.
             RecordSink mapSink = RecordSinkFactory.getInstance(
                     configuration, asm, base.getMetadata(), listColumnFilter, keyFunctions, null

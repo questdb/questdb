@@ -855,9 +855,13 @@ public class SqlParser {
      * @param startIdx        index of the first CUBE column in model.groupBy
      * @param cubeColumnCount number of CUBE columns
      */
-    private static void expandCube(QueryModel model, int startIdx, int cubeColumnCount) {
+    private static void expandCube(QueryModel model, int startIdx, int cubeColumnCount, int position) throws SqlException {
         // 2^N subsets, from the full set (all bits set) down to empty set (0)
         int totalSets = 1 << cubeColumnCount;
+        if (totalSets > MAX_GROUPING_SETS) {
+            throw SqlException.$(position, "CUBE produces too many grouping sets (")
+                    .put(totalSets).put(", maximum ").put(MAX_GROUPING_SETS).put(')');
+        }
         for (int mask = totalSets - 1; mask >= 0; mask--) {
             IntList set = new IntList();
             for (int bit = 0; bit < cubeColumnCount; bit++) {
@@ -873,8 +877,12 @@ public class SqlParser {
      * Expands CUBE with composite plain columns prepended to every set.
      * GROUP BY a, CUBE(b, c) -> sets: (a,b,c), (a,b), (a,c), (a).
      */
-    private static void expandCubeComposite(QueryModel model, int plainCount, int rollupStart, int cubeColumnCount) {
+    private static void expandCubeComposite(QueryModel model, int plainCount, int rollupStart, int cubeColumnCount, int position) throws SqlException {
         int totalSets = 1 << cubeColumnCount;
+        if (totalSets > MAX_GROUPING_SETS) {
+            throw SqlException.$(position, "CUBE produces too many grouping sets (")
+                    .put(totalSets).put(", maximum ").put(MAX_GROUPING_SETS).put(')');
+        }
         for (int mask = totalSets - 1; mask >= 0; mask--) {
             IntList set = new IntList();
             // Add all plain columns first
@@ -2939,13 +2947,14 @@ public class SqlParser {
 
             // support SAMPLE BY 1h ROLLUP(symbol, side)
             if (tok != null && (isRollupKeyword(tok) || isCubeKeyword(tok))) {
+                int kwPos = lexer.lastTokenPosition();
                 boolean isRollup = isRollupKeyword(tok);
                 ObjList<ExpressionNode> columnList = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
                 if (columnList.size() == 0) {
-                    throw SqlException.$(lexer.lastTokenPosition(), (isRollup ? "ROLLUP" : "CUBE") + " requires at least one column");
+                    throw SqlException.$(kwPos, (isRollup ? "ROLLUP" : "CUBE") + " requires at least one column");
                 }
                 if (!isRollup && columnList.size() > 15) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "CUBE supports at most 15 columns");
+                    throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
                 }
                 int startIdx = model.getGroupBy().size();
                 for (int i = 0, n = columnList.size(); i < n; i++) {
@@ -2954,7 +2963,7 @@ public class SqlParser {
                 if (isRollup) {
                     expandRollup(model, startIdx, columnList.size());
                 } else {
-                    expandCube(model, startIdx, columnList.size());
+                    expandCube(model, startIdx, columnList.size(), kwPos);
                 }
                 tok = optTok(lexer);
             } else if (tok != null && isGroupingKeyword(tok)) {
@@ -3324,7 +3333,7 @@ public class SqlParser {
             if (isRollup) {
                 expandRollup(model, 0, columns.size());
             } else {
-                expandCube(model, 0, columns.size());
+                expandCube(model, 0, columns.size(), kwPos);
             }
             return optTok(lexer);
         }
@@ -3366,7 +3375,7 @@ public class SqlParser {
                 if (isRollup) {
                     expandRollupComposite(model, plainCount, rollupStart, rollupCols.size());
                 } else {
-                    expandCubeComposite(model, plainCount, rollupStart, rollupCols.size());
+                    expandCubeComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos);
                 }
                 return optTok(lexer);
             }
@@ -3392,6 +3401,12 @@ public class SqlParser {
     /**
      * Parses explicit GROUPING SETS ((a, b), (a), ()).
      * The outer parentheses and inner sets with their parentheses.
+     * <p>
+     * Unlike ROLLUP/CUBE (which accept expressions via
+     * {@link #parseParenthesizedColumnList}), explicit GROUPING SETS
+     * only accept column references. This is intentional: expressions
+     * in explicit sets create ambiguity in set membership resolution
+     * because the same expression can appear in different forms.
      */
     private void parseExplicitGroupingSets(
             GenericLexer lexer,
