@@ -2441,6 +2441,7 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
             drainWalQueue();
+            pause.set(true);
 
             Callable<Exception> callback = () -> {
                 try {
@@ -2450,16 +2451,18 @@ public class CopyExportTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), contains);
                     LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
                     return e;
-                } finally {
-                    pause.set(false);
                 }
                 return new UnsupportedOperationException();
             };
 
             CopyExportRunnable stmt = () -> {
                 runAndFetchCopyExportID("copy (select x from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
-                // Wait for the first export to be active before attempting the second
-                waitForActiveExport();
+                try {
+                    // Wait for the first export to be active before attempting the second
+                    waitForActiveExport();
+                } finally {
+                    pause.set(false);
+                }
             };
 
             CopyExportRunnable test = () ->
@@ -2496,6 +2499,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             execute("create table test_table (x int, y string)");
             execute("insert into test_table select x, x::string as y FROM long_sequence(100_000)");
+            pause.set(true);
 
             Callable<Exception> callback = () -> {
                 try {
@@ -2505,15 +2509,17 @@ public class CopyExportTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), contains);
                     LOG.info().$("asserted that duplicate export failed: [message=").$(e.getFlyweightMessage()).$(", contains=").$(contains).I$();
                     return e;
-                } finally {
-                    pause.set(false);
                 }
                 return new UnsupportedOperationException();
             };
 
             CopyExportRunnable stmt = () -> {
                 runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
-                waitForActiveExport();
+                try {
+                    waitForActiveExport();
+                } finally {
+                    pause.set(false);
+                }
             };
 
             CopyExportRunnable test = () ->
