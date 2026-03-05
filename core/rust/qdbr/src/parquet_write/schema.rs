@@ -330,9 +330,7 @@ pub struct Column {
     /// Currently only Symbol dataType columns support this flag.
     pub required: bool,
     pub designated_timestamp_ascending: bool,
-    /// Packed per-column parquet encoding config from Java.
-    /// Bits 0-7: encoding enum, bits 8-15: compression codec, bits 16-23: compression level, bit 24: isExplicitlySet
-    pub parquet_encoding_config: i32,
+    pub parquet_encoding_config: ParquetEncodingConfig,
 }
 
 impl Column {
@@ -400,7 +398,7 @@ impl Column {
             designated_timestamp,
             required,
             designated_timestamp_ascending,
-            parquet_encoding_config,
+            parquet_encoding_config: ParquetEncodingConfig::from_raw(parquet_encoding_config),
         })
     }
 }
@@ -477,7 +475,7 @@ pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
         .columns
         .iter()
         .map(|c| {
-            if let Some(enc) = encoding_from_config(c.parquet_encoding_config) {
+            if let Some(enc) = c.parquet_encoding_config.encoding() {
                 validate_encoding(c.data_type, enc)
             } else {
                 encoding_map(c.data_type)
@@ -555,38 +553,98 @@ pub fn to_compressions(partition: &Partition) -> Vec<Option<CompressionOptions>>
     partition
         .columns
         .iter()
-        .map(|c| compression_from_config(c.parquet_encoding_config))
+        .map(|c| c.parquet_encoding_config.compression())
         .collect()
 }
 
-/// Bit layout for the packed per-column parquet encoding config (i32):
+/// Packed per-column parquet encoding config from Java.
+///
+/// Bit layout (i32):
 /// - Bits 0-7: encoding id (matches ParquetEncoding.ENCODING_* on the Java side)
 /// - Bits 8-15: compression codec id (matches ParquetCompression constants, offset +1)
 /// - Bits 16-23: compression level
 /// - Bit 24: explicit flag (1 = user-specified override, 0 = use defaults)
-pub(crate) const ENCODING_MASK: u32 = 0xFF;
-pub(crate) const COMPRESSION_SHIFT: u32 = 8;
-pub(crate) const COMPRESSION_MASK: u32 = 0xFF;
-pub(crate) const LEVEL_SHIFT: u32 = 16;
-pub(crate) const LEVEL_MASK: u32 = 0xFF;
-pub(crate) const EXPLICIT_FLAG: u32 = 1 << 24;
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParquetEncodingConfig(i32);
 
-/// Extract per-column encoding override from packed config.
-/// Returns None if the config uses default encoding (encoding byte == 0 or not explicitly set).
-fn encoding_from_config(config: i32) -> Option<Encoding> {
-    let is_explicit = (config as u32 & EXPLICIT_FLAG) != 0;
-    if !is_explicit {
-        return None;
+const ENCODING_MASK: u32 = 0xFF;
+const COMPRESSION_SHIFT: u32 = 8;
+const COMPRESSION_MASK: u32 = 0xFF;
+const LEVEL_SHIFT: u32 = 16;
+const LEVEL_MASK: u32 = 0xFF;
+const EXPLICIT_FLAG: u32 = 1 << 24;
+
+impl ParquetEncodingConfig {
+    /// Create a config from the raw packed i32 received from JNI.
+    pub fn from_raw(raw: i32) -> Self {
+        Self(raw)
     }
-    let encoding_id = config as u32 & ENCODING_MASK;
-    match encoding_id {
-        0 => None, // default
-        1 => Some(Encoding::Plain),
-        2 => Some(Encoding::RleDictionary),
-        3 => Some(Encoding::DeltaLengthByteArray),
-        4 => Some(Encoding::DeltaBinaryPacked),
-        5 => Some(Encoding::ByteStreamSplit),
-        _ => None,
+
+    /// Build an explicit config from encoding, compression, and level IDs.
+    #[cfg(test)]
+    pub fn new(encoding: i32, compression: i32, level: i32) -> Self {
+        Self(
+            ((encoding as u32 & ENCODING_MASK)
+                | ((compression as u32 & COMPRESSION_MASK) << COMPRESSION_SHIFT)
+                | ((level as u32 & LEVEL_MASK) << LEVEL_SHIFT)
+                | EXPLICIT_FLAG) as i32,
+        )
+    }
+
+    /// Return the raw packed i32 value.
+    pub fn raw(self) -> i32 {
+        self.0
+    }
+
+    /// Whether the config was explicitly set by the user.
+    pub fn is_explicit(self) -> bool {
+        (self.0 as u32 & EXPLICIT_FLAG) != 0
+    }
+
+    /// Extract per-column encoding override.
+    /// Returns None if the config uses default encoding (encoding byte == 0 or not explicitly set).
+    pub fn encoding(self) -> Option<Encoding> {
+        if !self.is_explicit() {
+            return None;
+        }
+        let encoding_id = self.0 as u32 & ENCODING_MASK;
+        match encoding_id {
+            0 => None, // default
+            1 => Some(Encoding::Plain),
+            2 => Some(Encoding::RleDictionary),
+            3 => Some(Encoding::DeltaLengthByteArray),
+            4 => Some(Encoding::DeltaBinaryPacked),
+            5 => Some(Encoding::ByteStreamSplit),
+            _ => None,
+        }
+    }
+
+    /// Extract per-column compression override.
+    /// Returns None if the config uses default/global compression.
+    pub fn compression(self) -> Option<CompressionOptions> {
+        if !self.is_explicit() {
+            return None;
+        }
+        let codec_id = (self.0 as u32 >> COMPRESSION_SHIFT) & COMPRESSION_MASK;
+        let level = (self.0 as u32 >> LEVEL_SHIFT) & LEVEL_MASK;
+        match codec_id {
+            0 => None, // use global default
+            1 => Some(CompressionOptions::Uncompressed),
+            2 => Some(CompressionOptions::Snappy),
+            3 => Some(CompressionOptions::Gzip(
+                parquet2::compression::GzipLevel::try_new(if level > 0 { level as u8 } else { 6 })
+                    .ok(),
+            )),
+            4 => Some(CompressionOptions::Brotli(
+                parquet2::compression::BrotliLevel::try_new(if level > 0 { level } else { 1 }).ok(),
+            )),
+            5 => Some(CompressionOptions::Zstd(
+                parquet2::compression::ZstdLevel::try_new(if level > 0 { level as i32 } else { 1 })
+                    .ok(),
+            )),
+            6 => Some(CompressionOptions::Lz4Raw),
+            _ => None,
+        }
     }
 }
 
@@ -618,6 +676,12 @@ fn compression_from_config(config: i32) -> Option<CompressionOptions> {
     }
 }
 
+impl From<i32> for ParquetEncodingConfig {
+    fn from(raw: i32) -> Self {
+        Self::from_raw(raw)
+    }
+}
+
 pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type.tag() {
         ColumnTypeTag::Symbol => Encoding::RleDictionary,
@@ -632,106 +696,99 @@ pub(crate) fn encoding_map(data_type: ColumnType) -> Encoding {
 mod tests {
     use super::*;
 
-    fn pack_config(encoding: i32, compression: i32, level: i32) -> i32 {
-        ((encoding as u32 & ENCODING_MASK)
-            | ((compression as u32 & COMPRESSION_MASK) << COMPRESSION_SHIFT)
-            | ((level as u32 & LEVEL_MASK) << LEVEL_SHIFT)
-            | EXPLICIT_FLAG) as i32
+    #[test]
+    fn test_encoding_default() {
+        assert_eq!(ParquetEncodingConfig::from_raw(0).encoding(), None);
     }
 
     #[test]
-    fn test_encoding_from_config_default() {
-        assert_eq!(encoding_from_config(0), None);
-    }
-
-    #[test]
-    fn test_encoding_from_config_not_explicit() {
+    fn test_encoding_not_explicit() {
         // encoding byte set but explicit flag not set
-        assert_eq!(encoding_from_config(1), None);
+        assert_eq!(ParquetEncodingConfig::from_raw(1).encoding(), None);
     }
 
     #[test]
-    fn test_encoding_from_config_plain() {
+    fn test_encoding_plain() {
         assert_eq!(
-            encoding_from_config(pack_config(1, 0, 0)),
+            ParquetEncodingConfig::new(1, 0, 0).encoding(),
             Some(Encoding::Plain)
         );
     }
 
     #[test]
-    fn test_encoding_from_config_rle_dictionary() {
+    fn test_encoding_rle_dictionary() {
         assert_eq!(
-            encoding_from_config(pack_config(2, 0, 0)),
+            ParquetEncodingConfig::new(2, 0, 0).encoding(),
             Some(Encoding::RleDictionary)
         );
     }
 
     #[test]
-    fn test_encoding_from_config_delta_length_byte_array() {
+    fn test_encoding_delta_length_byte_array() {
         assert_eq!(
-            encoding_from_config(pack_config(3, 0, 0)),
+            ParquetEncodingConfig::new(3, 0, 0).encoding(),
             Some(Encoding::DeltaLengthByteArray)
         );
     }
 
     #[test]
-    fn test_encoding_from_config_delta_binary_packed() {
+    fn test_encoding_delta_binary_packed() {
         assert_eq!(
-            encoding_from_config(pack_config(4, 0, 0)),
+            ParquetEncodingConfig::new(4, 0, 0).encoding(),
             Some(Encoding::DeltaBinaryPacked)
         );
     }
 
     #[test]
-    fn test_encoding_from_config_byte_stream_split() {
+    fn test_encoding_byte_stream_split() {
         assert_eq!(
-            encoding_from_config(pack_config(5, 0, 0)),
+            ParquetEncodingConfig::new(5, 0, 0).encoding(),
             Some(Encoding::ByteStreamSplit)
         );
     }
 
     #[test]
-    fn test_encoding_from_config_encoding_zero_explicit() {
+    fn test_encoding_zero_explicit() {
         // explicit flag set but encoding is 0 -> use default
-        assert_eq!(encoding_from_config(pack_config(0, 0, 0)), None);
+        assert_eq!(ParquetEncodingConfig::new(0, 0, 0).encoding(), None);
     }
 
     #[test]
-    fn test_encoding_from_config_unknown_id() {
-        assert_eq!(encoding_from_config(pack_config(99, 0, 0)), None);
+    fn test_encoding_unknown_id() {
+        assert_eq!(ParquetEncodingConfig::new(99, 0, 0).encoding(), None);
     }
 
     #[test]
-    fn test_compression_from_config_default() {
-        assert_eq!(compression_from_config(0), None);
+    fn test_compression_default() {
+        assert_eq!(ParquetEncodingConfig::from_raw(0).compression(), None);
     }
 
     #[test]
-    fn test_compression_from_config_not_explicit() {
-        assert_eq!(compression_from_config(1 << 8), None);
+    fn test_compression_not_explicit() {
+        assert_eq!(ParquetEncodingConfig::from_raw(1 << 8).compression(), None);
     }
 
     #[test]
-    fn test_compression_from_config_uncompressed() {
-        let c = compression_from_config(pack_config(0, 1, 0));
+    fn test_compression_uncompressed() {
+        let c = ParquetEncodingConfig::new(0, 1, 0).compression();
         assert_eq!(c, Some(CompressionOptions::Uncompressed));
     }
 
     #[test]
-    fn test_compression_from_config_snappy() {
-        let c = compression_from_config(pack_config(0, 2, 0));
+    fn test_compression_snappy() {
+        let c = ParquetEncodingConfig::new(0, 2, 0).compression();
         assert_eq!(c, Some(CompressionOptions::Snappy));
     }
 
     #[test]
-    fn test_compression_from_config_lz4_raw() {
-        let c = compression_from_config(pack_config(0, 6, 0));
+    fn test_compression_lz4_raw() {
+        let c = ParquetEncodingConfig::new(0, 6, 0).compression();
         assert_eq!(c, Some(CompressionOptions::Lz4Raw));
     }
 
     #[test]
-    fn test_compression_from_config_zstd_default_level() {
-        let c = compression_from_config(pack_config(0, 5, 0));
+    fn test_compression_zstd_default_level() {
+        let c = ParquetEncodingConfig::new(0, 5, 0).compression();
         match c {
             Some(CompressionOptions::Zstd(_)) => {}
             other => panic!("expected Zstd, got {:?}", other),
@@ -739,8 +796,8 @@ mod tests {
     }
 
     #[test]
-    fn test_compression_from_config_zstd_custom_level() {
-        let c = compression_from_config(pack_config(0, 5, 3));
+    fn test_compression_zstd_custom_level() {
+        let c = ParquetEncodingConfig::new(0, 5, 3).compression();
         match c {
             Some(CompressionOptions::Zstd(_)) => {}
             other => panic!("expected Zstd, got {:?}", other),
@@ -748,8 +805,8 @@ mod tests {
     }
 
     #[test]
-    fn test_compression_from_config_gzip() {
-        let c = compression_from_config(pack_config(0, 3, 0));
+    fn test_compression_gzip() {
+        let c = ParquetEncodingConfig::new(0, 3, 0).compression();
         match c {
             Some(CompressionOptions::Gzip(_)) => {}
             other => panic!("expected Gzip, got {:?}", other),
@@ -757,8 +814,8 @@ mod tests {
     }
 
     #[test]
-    fn test_compression_from_config_brotli() {
-        let c = compression_from_config(pack_config(0, 4, 0));
+    fn test_compression_brotli() {
+        let c = ParquetEncodingConfig::new(0, 4, 0).compression();
         match c {
             Some(CompressionOptions::Brotli(_)) => {}
             other => panic!("expected Brotli, got {:?}", other),
@@ -766,27 +823,24 @@ mod tests {
     }
 
     #[test]
-    fn test_compression_from_config_unknown_codec() {
-        assert_eq!(compression_from_config(pack_config(0, 99, 0)), None);
+    fn test_compression_unknown_codec() {
+        assert_eq!(ParquetEncodingConfig::new(0, 99, 0).compression(), None);
     }
 
     #[test]
     fn test_combined_encoding_and_compression() {
-        let config = pack_config(5, 5, 3); // BYTE_STREAM_SPLIT + ZSTD level 3
-        assert_eq!(
-            encoding_from_config(config),
-            Some(Encoding::ByteStreamSplit)
-        );
-        match compression_from_config(config) {
+        let config = ParquetEncodingConfig::new(5, 5, 3); // BYTE_STREAM_SPLIT + ZSTD level 3
+        assert_eq!(config.encoding(), Some(Encoding::ByteStreamSplit));
+        match config.compression() {
             Some(CompressionOptions::Zstd(_)) => {}
             other => panic!("expected Zstd, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_compression_from_config_codec_zero_explicit() {
+    fn test_compression_codec_zero_explicit() {
         // explicit flag set, compression codec is 0 -> use global default
-        assert_eq!(compression_from_config(pack_config(1, 0, 0)), None);
+        assert_eq!(ParquetEncodingConfig::new(1, 0, 0).compression(), None);
     }
 
     fn col_type(tag: ColumnTypeTag) -> ColumnType {
