@@ -430,7 +430,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    @Ignore("WebSocket transport doesn't support pre-created tables with custom timestamp columns yet - needs feature parity with HTTP")
     @Test
     public void testAtNowWithCustomTimestampColumnName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -471,7 +470,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
         });
     }
 
-    @Ignore("WebSocket transport doesn't support pre-created tables with custom timestamp columns yet - needs feature parity with HTTP")
     @Test
     public void testAtWithCustomTimestampColumnName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
