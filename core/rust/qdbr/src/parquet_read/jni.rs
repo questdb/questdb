@@ -121,7 +121,7 @@ fn decode_row_group_impl<const MODE: u8>(
         match MODE {
             x if x == DecodeMode::NoFilter as u8 => {}
             _ => {
-                if filtered_rows_ptr.is_null() {
+                if filtered_rows_ptr.is_null() && filtered_rows_count > 0 {
                     return Err(fmt_err!(InvalidLayout, "filtered rows pointer is null"));
                 }
             }
