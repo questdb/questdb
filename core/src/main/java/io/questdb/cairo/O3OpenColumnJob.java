@@ -2842,6 +2842,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
             }
 
+            // Save original (absolute) prefix/suffix values before srcDataTop
+            // adjustments below. writeNullBitmapForMerge needs absolute row
+            // indices because the .n file uses absolute partition row positions.
+            final long bitmapPrefixHi = prefixHi;
+            final long bitmapSuffixLo = suffixLo;
+            final long bitmapSuffixHi = suffixHi;
+
             // When prefix is "data" we need to reduce it by "srcDataTop".
             if (prefixType == O3_BLOCK_DATA) {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) << shl;
@@ -2874,7 +2881,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             // Write null bitmap (.n file) for bitmap-null types during O3 merge.
             // The merge must preserve null bits from both the source partition
             // (.n file on disk) and the O3 in-memory bitmap.
+            // The bitmap must cover all partition rows (absolute positions) because
+            // the reader uses absolute row indices to access bitmap bits.
             if (ColumnType.needsNullBitmap(columnType)) {
+                final long bitmapRowCount = o3SplitPartitionSize > 0 ? o3SplitPartitionSize : srcDataNewPartitionSize;
                 long srcDataNullAddr = 0;
                 long srcDataNullSize = 0;
                 long srcDataNullFd = -1;
@@ -2882,11 +2892,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // Open the source partition's .n file to read existing null bits.
                     // Use calloc + read instead of mmap because the bitmap file may be
                     // smaller than (srcDataMax+7)/8 when the column has a non-zero column
-                    // top — writeNullBitmapForMerge sizes the file for (rowCount) entries
-                    // where rowCount excludes column-top rows. On Linux, mmap zero-pads
-                    // beyond EOF; on Windows, CreateFileMapping fails when the requested
-                    // size exceeds the file length. calloc ensures zero-padding on all
-                    // platforms, so bits beyond the file read as not-null.
+                    // top. On Linux, mmap zero-pads beyond EOF; on Windows,
+                    // CreateFileMapping fails when the requested size exceeds the file
+                    // length. calloc ensures zero-padding on all platforms, so bits
+                    // beyond the file read as not-null.
                     if (pathToOldPartition != null && srcDataMax > srcDataTop) {
                         srcDataNullFd = ff.openRO(nFile(pathToOldPartition.trimTo(pOldLen), columnName, columnNameTxn));
                         if (srcDataNullFd > -1) {
@@ -2898,6 +2907,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             }
                         }
                     }
+                    // Pass bitmapRowCount (full partition size) and original
+                    // (absolute) prefix/suffix values. The adjustments above convert
+                    // these to data-relative offsets for the data copy, but the bitmap
+                    // needs absolute positions to match the reader's indexing.
                     writeNullBitmapForMerge(
                             ff,
                             pathToNewPartition,
@@ -2905,19 +2918,19 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             columnName,
                             columnNameTxn,
                             tableWriter,
-                            rowCount,
+                            bitmapRowCount,
                             originalSrcDataTop,
                             srcDataNullAddr,
                             prefixType,
                             prefixLo,
-                            prefixHi,
+                            bitmapPrefixHi,
                             mergeType,
                             timestampMergeIndexAddr,
                             mergeRowCount,
                             mergeDataLo,
                             suffixType,
-                            suffixLo,
-                            suffixHi,
+                            bitmapSuffixLo,
+                            bitmapSuffixHi,
                             srcOooLo
                     );
                 } finally {
