@@ -76,8 +76,10 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final TimeFrameMemoryRecord recordA = new TimeFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrameMemoryRecord recordB = new TimeFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
+    private int currentPageFrameGlobalIndex = -1;
     private long currentPageFrameRowHi;
     private long currentPageFrameRowLo;
+    private int currentPartition = -1;
     private TablePageFrameCursor frameCursor;
     private boolean isFrameMetadataBuilt;
     private int pageFrameCount;
@@ -270,12 +272,26 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         assert TimeFrameCursor.isTimeFrameRowID(rowId) : "not a time frame row ID";
         final int partitionIndex = TimeFrameCursor.toPartitionIndex(rowId);
         final long rowInPartition = TimeFrameCursor.toLocalRowID(rowId);
+        if (currentPageFrameGlobalIndex >= 0
+                && partitionIndex == currentPartition
+                && rowInPartition >= currentPageFrameRowLo && rowInPartition < currentPageFrameRowHi
+                && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameGlobalIndex) {
+            ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, currentPageFrameRowLo);
+            return;
+        }
         ensurePartitionOpened(partitionIndex);
         navigateToRow(record, partitionIndex, rowInPartition);
     }
 
     @Override
     public void recordAt(Record record, int frameIndex, long rowIndex) {
+        if (currentPageFrameGlobalIndex >= 0
+                && frameIndex == currentPartition
+                && rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi
+                && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameGlobalIndex) {
+            ((TimeFrameMemoryRecord) record).setRowIndex(frameIndex, rowIndex, currentPageFrameRowLo);
+            return;
+        }
         ensurePartitionOpened(frameIndex);
         navigateToRow(record, frameIndex, rowIndex);
     }
@@ -323,8 +339,10 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         if (!isFrameMetadataBuilt) {
             frameCursor.toTop();
         }
+        currentPageFrameGlobalIndex = -1;
         currentPageFrameRowLo = 0;
         currentPageFrameRowHi = 0;
+        currentPartition = -1;
     }
 
     private void buildFrameMetadata() {
@@ -384,28 +402,52 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         partitionOpened[partitionIndex] = true;
     }
 
-    private void navigateToRow(Record record, int partitionIndex, long rowInPartition) {
-        final int pageFrameStart = partitionPageFrameStart[partitionIndex];
-        final int pageFrameCountInPartition = partitionPageFrameCount[partitionIndex];
-
+    private static int findPageFrame(int pfStart, int pfCount, LongList cumulativeRows, long rowInPartition) {
         int lo;
-        if (pageFrameCountInPartition <= PAGE_FRAME_SCAN_THRESHOLD) {
+        if (pfCount <= PAGE_FRAME_SCAN_THRESHOLD) {
             lo = 0;
-            while (lo < pageFrameCountInPartition - 1
-                    && pageFrameCumulativeRows.getQuick(pageFrameStart + lo) <= rowInPartition) {
+            while (lo < pfCount - 1
+                    && cumulativeRows.getQuick(pfStart + lo) <= rowInPartition) {
                 lo++;
             }
         } else {
             lo = 0;
-            int hi = pageFrameCountInPartition - 1;
+            int hi = pfCount - 1;
             while (lo < hi) {
                 int mid = (lo + hi) >>> 1;
-                if (pageFrameCumulativeRows.getQuick(pageFrameStart + mid) <= rowInPartition) {
+                if (cumulativeRows.getQuick(pfStart + mid) <= rowInPartition) {
                     lo = mid + 1;
                 } else {
                     hi = mid;
                 }
             }
+        }
+        return lo;
+    }
+
+    private void navigateToRow(Record record, int partitionIndex, long rowInPartition) {
+        final int pageFrameStart = partitionPageFrameStart[partitionIndex];
+        final int pfCount = partitionPageFrameCount[partitionIndex];
+
+        int lo;
+        final int lastLocalPfIndex = currentPageFrameGlobalIndex - pageFrameStart;
+        if (lastLocalPfIndex >= 0 && lastLocalPfIndex < pfCount && partitionIndex == currentPartition) {
+            final int nextPf = lastLocalPfIndex + 1;
+            if (nextPf < pfCount && rowInPartition >= currentPageFrameRowHi
+                    && rowInPartition < pageFrameCumulativeRows.getQuick(pageFrameStart + nextPf)) {
+                lo = nextPf;
+            } else if (lastLocalPfIndex > 0 && rowInPartition < currentPageFrameRowLo) {
+                final long prevPfRowLo = lastLocalPfIndex > 1 ? pageFrameCumulativeRows.getQuick(pageFrameStart + lastLocalPfIndex - 2) : 0;
+                if (rowInPartition >= prevPfRowLo) {
+                    lo = lastLocalPfIndex - 1;
+                } else {
+                    lo = findPageFrame(pageFrameStart, pfCount, pageFrameCumulativeRows, rowInPartition);
+                }
+            } else {
+                lo = findPageFrame(pageFrameStart, pfCount, pageFrameCumulativeRows, rowInPartition);
+            }
+        } else {
+            lo = findPageFrame(pageFrameStart, pfCount, pageFrameCumulativeRows, rowInPartition);
         }
 
         final int pageFrameIndex = pageFrameStart + lo;
@@ -415,8 +457,10 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         frameMemoryPool.navigateTo(pageFrameIndex, (PageFrameMemoryRecord) record);
         ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, pageFrameRowLo);
 
+        currentPageFrameGlobalIndex = pageFrameIndex;
         currentPageFrameRowLo = pageFrameRowLo;
         currentPageFrameRowHi = pageFrameRowHi;
+        currentPartition = partitionIndex;
     }
 
     // maxTimestampHi is used to handle split partitions correctly as ceil method
