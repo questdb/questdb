@@ -2879,12 +2879,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 long srcDataNullSize = 0;
                 long srcDataNullFd = -1;
                 try {
-                    // Open the source partition's .n file to read existing null bits
+                    // Open the source partition's .n file to read existing null bits.
+                    // Use calloc + read instead of mmap because the bitmap file may be
+                    // smaller than (srcDataMax+7)/8 when the column has a non-zero column
+                    // top — writeNullBitmapForMerge sizes the file for (rowCount) entries
+                    // where rowCount excludes column-top rows. On Linux, mmap zero-pads
+                    // beyond EOF; on Windows, CreateFileMapping fails when the requested
+                    // size exceeds the file length. calloc ensures zero-padding on all
+                    // platforms, so bits beyond the file read as not-null.
                     if (pathToOldPartition != null && srcDataMax > srcDataTop) {
                         srcDataNullFd = ff.openRO(nFile(pathToOldPartition.trimTo(pOldLen), columnName, columnNameTxn));
                         if (srcDataNullFd > -1) {
                             srcDataNullSize = (srcDataMax + 7) >> 3;
-                            srcDataNullAddr = mapRO(ff, srcDataNullFd, srcDataNullSize, MemoryTag.MMAP_O3);
+                            long fileLen = ff.length(srcDataNullFd);
+                            if (fileLen > 0) {
+                                srcDataNullAddr = Unsafe.calloc(srcDataNullSize, MemoryTag.NATIVE_O3);
+                                ff.read(srcDataNullFd, srcDataNullAddr, Math.min(fileLen, srcDataNullSize), 0);
+                            }
                         }
                     }
                     writeNullBitmapForMerge(
@@ -2911,7 +2922,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     );
                 } finally {
                     if (srcDataNullAddr != 0) {
-                        ff.munmap(srcDataNullAddr, srcDataNullSize, MemoryTag.MMAP_O3);
+                        Unsafe.free(srcDataNullAddr, srcDataNullSize, MemoryTag.NATIVE_O3);
                     }
                     if (srcDataNullFd > -1) {
                         ff.close(srcDataNullFd);
