@@ -185,7 +185,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 for (int i = 0, size = metadata.getColumnCount(); i < size; i++) {
                     chainTypes.add(metadata.getColumnType(i));
                 }
-                recordSink = RecordSinkFactory.getInstance(sqlGenerator.getAsm(), chainTypes, listColumnFilter, configuration);
+                recordSink = RecordSinkFactory.getInstance(configuration, sqlGenerator.getAsm(), chainTypes, listColumnFilter);
                 singleRecordSinkA = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
                 singleRecordSinkB = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
             } else {

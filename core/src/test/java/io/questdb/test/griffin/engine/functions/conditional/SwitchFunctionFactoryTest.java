@@ -770,8 +770,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         340.0\t44173540\t458818940\t410717394\tnull
                         -154.0\t-1418341054\t-1162267908\t2031014705\tnull
                         null\t-530317703\t-1575135393\t-296610933\t1
-                        null\t936627841\t326010667\t-667031149\t2
-                        null\t-1870444467\t-2034804966\t171200398\t3
+                        null\t936627841\t326010667\t-667031149\t1
+                        null\t-1870444467\t-2034804966\t171200398\t1
                         0.0\t1637847416\t-419093579\t-1819240775\t4
                         -0.0\t-1533414895\t-1787109293\t-66297136\t5
                         """,
@@ -864,8 +864,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         340.0\t44173540\t458818940\t410717394\t458818940
                         -154.0\t-1418341054\t-1162267908\t2031014705\t-1162267908
                         null\t-530317703\t-1575135393\t-296610933\t1
-                        null\t936627841\t326010667\t-667031149\t2
-                        null\t-1870444467\t-2034804966\t171200398\t3
+                        null\t936627841\t326010667\t-667031149\t1
+                        null\t-1870444467\t-2034804966\t171200398\t1
                         0.0\t1637847416\t-419093579\t-1819240775\t4
                         -0.0\t-1533414895\t-1787109293\t-66297136\t5
                         """,
@@ -959,8 +959,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         -684.0\t-342047842\t-2132716300\t2006313928\tnull
                         -195.0\t-27395319\t264240638\t2085282008\tnull
                         null\t-483853667\t2137969456\t1890602616\t1
-                        null\t-1272693194\t68265578\t1036510002\t2
-                        null\t-2002373666\t44173540\t458818940\t3
+                        null\t-1272693194\t68265578\t1036510002\t1
+                        null\t-2002373666\t44173540\t458818940\t1
                         0.0\t410717394\t-2144581835\t1978144263\t4
                         -0.0\t-1418341054\t-1162267908\t2031014705\t5
                         """,
@@ -975,8 +975,6 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when -830.0f then c
                                 when 685.0f then 350
                                 when cast(null as float) then 1
-                                when cast('Infinity' as float) then 2
-                                when cast('-Infinity' as float) then 3
                                 when cast(0.0 as float) then 4
                                 when cast(-0.0 as float) then 5
                             end k
@@ -1041,8 +1039,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         -684.0\t-342047842\t-2132716300\t2006313928\t-2132716300
                         -195.0\t-27395319\t264240638\t2085282008\t264240638
                         null\t-483853667\t2137969456\t1890602616\t1
-                        null\t-1272693194\t68265578\t1036510002\t2
-                        null\t-2002373666\t44173540\t458818940\t3
+                        null\t-1272693194\t68265578\t1036510002\t1
+                        null\t-2002373666\t44173540\t458818940\t1
                         0.0\t410717394\t-2144581835\t1978144263\t4
                         -0.0\t-1418341054\t-1162267908\t2031014705\t5
                         """,
@@ -1057,8 +1055,6 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                 when -830.0f then c
                                 when 685.0f then 350
                                 when cast(null as float) then 1
-                                when cast('Infinity' as float) then 2
-                                when cast('-Infinity' as float) then 3
                                 when cast(0.0 as float) then 4
                                 when cast(-0.0 as float) then 5
                                 else b \
@@ -1926,6 +1922,120 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: tanc
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolConstIntBasic() throws Exception {
+        // single-branch CASE with constant int results triggers inlined
+        // SymbolSwitchConstIntFunction: direct int comparison, no picker/CaseFunction
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (side SYMBOL, price DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('BUY', 100.0),
+                    ('SELL', 200.0),
+                    ('BUY', 150.0),
+                    ('SELL', 50.0)
+                    """);
+            String query = "SELECT side, CASE side WHEN 'BUY' THEN 1 ELSE -1 END AS dir FROM t";
+            assertQueryNoLeakCheck(
+                    """
+                            side\tdir
+                            BUY\t1
+                            SELL\t-1
+                            BUY\t1
+                            SELL\t-1
+                            """,
+                    query, null, null, true, true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            VirtualRecord
+                              functions: [side,switch(side,'BUY',1,-1)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolConstIntInDoubleContext() throws Exception {
+        // inlined CASE used in arithmetic with doubles exercises
+        // the getDouble() override that avoids Numbers.intToDouble() NULL check
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (side SYMBOL, price DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('BUY', 100.0),
+                    ('SELL', 200.0),
+                    ('BUY', 150.0),
+                    ('SELL', 50.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            side\tsigned_price
+                            BUY\t100.0
+                            SELL\t-200.0
+                            BUY\t150.0
+                            SELL\t-50.0
+                            """,
+                    "SELECT side, CASE side WHEN 'BUY' THEN 1 ELSE -1 END * price AS signed_price FROM t",
+                    null, null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolConstIntMissingKey() throws Exception {
+        // WHEN value not in symbol table: resolvedKey becomes VALUE_NOT_FOUND (-2),
+        // which never matches any record key, so every row gets the else value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (side SYMBOL, price DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('BUY', 100.0),
+                    ('SELL', 200.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            side\tdir
+                            BUY\t-1
+                            SELL\t-1
+                            """,
+                    "SELECT side, CASE side WHEN 'ZZZ' THEN 1 ELSE -1 END AS dir FROM t",
+                    null, null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolConstIntWithNulls() throws Exception {
+        // NULL symbol values: VALUE_IS_NULL (INT_NULL) never equals a valid
+        // resolved key, so NULLs naturally map to the else value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (side SYMBOL, price DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('BUY', 100.0),
+                    (NULL, 200.0),
+                    ('SELL', 150.0),
+                    (NULL, 50.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            side\tdir
+                            BUY\t1
+                            \t-1
+                            SELL\t-1
+                            \t-1
+                            """,
+                    "SELECT side, CASE side WHEN 'BUY' THEN 1 ELSE -1 END AS dir FROM t",
+                    null, null, true, true
             );
         });
     }

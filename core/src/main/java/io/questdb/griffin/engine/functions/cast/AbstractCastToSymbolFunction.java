@@ -33,7 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.ObjList;
@@ -43,7 +43,7 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Abstract base class for functions that cast values to symbol.
  */
-public abstract class AbstractCastToSymbolFunction extends SymbolFunction implements UnaryFunction {
+public abstract class AbstractCastToSymbolFunction extends SymbolFunction implements CastFunction {
     /**
      * The function argument to cast.
      */

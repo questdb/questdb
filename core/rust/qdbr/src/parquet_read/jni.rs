@@ -4,7 +4,7 @@ use std::slice;
 use crate::allocator::QdbAllocator;
 use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;
-use crate::parquet_read::decode::ParquetColumnIndex;
+use crate::parquet_read::row_groups::ParquetColumnIndex;
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, DecodeContext, ParquetDecoder,
     RowGroupBuffers, RowGroupStatBuffers,
@@ -15,6 +15,7 @@ use qdb_core::col_type::ColumnType;
 use std::mem::{offset_of, size_of};
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
     mut env: JNIEnv,
     _class: JClass,
@@ -38,6 +39,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroy(
     _env: JNIEnv,
     _class: JClass,
@@ -61,6 +63,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroyDecodeContext(
     _env: JNIEnv,
     _class: JClass,
@@ -282,6 +285,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readRowGroupStats(
     mut env: JNIEnv,
     _class: JClass,
@@ -318,22 +322,99 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     }
 }
 
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupMinTimestamp(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    file_ptr: *const u8,
+    file_size: u64,
+    row_group_index: u32,
+    timestamp_column_index: u32,
+) -> i64 {
+    assert!(!decoder.is_null(), "decoder pointer is null");
+    assert!(!file_ptr.is_null(), "file pointer is null");
+
+    let decoder = unsafe { &*decoder };
+
+    match decoder.row_group_min_timestamp(
+        file_ptr,
+        file_size,
+        row_group_index,
+        timestamp_column_index,
+    ) {
+        Ok(ts) => ts,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get min timestamp for row group {row_group_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMinTimestamp");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupMaxTimestamp(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    file_ptr: *const u8,
+    file_size: u64,
+    row_group_index: u32,
+    timestamp_column_index: u32,
+) -> i64 {
+    assert!(!decoder.is_null(), "decoder pointer is null");
+    assert!(!file_ptr.is_null(), "file pointer is null");
+
+    let decoder = unsafe { &*decoder };
+
+    match decoder.row_group_max_timestamp(
+        file_ptr,
+        file_size,
+        row_group_index,
+        timestamp_column_index,
+    ) {
+        Ok(ts) => ts,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get max timestamp for row group {row_group_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMaxTimestamp");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
 // See PartitionDecoder for more info on the returned value format.
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_findRowGroupByTimestamp(
     mut env: JNIEnv,
     _class: JClass,
     decoder: *const ParquetDecoder,
+    file_ptr: *const u8,
+    file_size: u64,
     timestamp: i64,
     row_lo: usize,
     row_hi: usize,
     timestamp_index: u32,
 ) -> u64 {
     assert!(!decoder.is_null(), "decoder pointer is null");
+    assert!(!file_ptr.is_null(), "file pointer is null");
 
     let decoder = unsafe { &*decoder };
 
-    match decoder.find_row_group_by_timestamp(timestamp, row_lo, row_hi, timestamp_index) {
+    match decoder.find_row_group_by_timestamp(
+        file_ptr,
+        file_size,
+        timestamp,
+        row_lo,
+        row_hi,
+        timestamp_index,
+    ) {
         Ok(row_group_index) => row_group_index,
         Err(mut err) => {
             err.add_context(format!("could not find row group by timestamp {timestamp}"));
@@ -432,6 +513,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_create(
     _env: JNIEnv,
     _class: JClass,
@@ -442,6 +524,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_destroy(
     _env: JNIEnv,
     _class: JClass,
@@ -506,6 +589,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 
 // RowGroupStatsBuffers
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_create(
     _env: JNIEnv,
     _class: JClass,
@@ -516,6 +600,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_destroy(
     _env: JNIEnv,
     _class: JClass,

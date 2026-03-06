@@ -33,6 +33,68 @@ import org.jetbrains.annotations.NotNull;
 public final class TimestampSamplerFactory {
 
     /**
+     * Find the end of the interval token in the input string. The interval token is expected to be an optional sign,
+     * followed by a number, followed by a single letter qualifier. Supports negative and zero values.
+     *
+     * @param cs       input string
+     * @param position position in SQL text to report error against
+     * @return index of the first character after the numeric part (the unit qualifier position)
+     * @throws SqlException when input string is not a valid interval token
+     */
+    public static int findIntervalEndIndex(CharSequence cs, int position) throws SqlException {
+        if (cs == null) {
+            throw SqlException.$(position, "missing interval");
+        }
+
+        final int len = cs.length();
+        if (len == 0) {
+            throw SqlException.$(position, "expected interval qualifier");
+        }
+
+        // look for end of digits (with optional leading sign)
+        int k = -1;
+        int start = 0;
+        boolean atLeastOneDigit = false;
+
+        // Handle optional leading sign
+        if (cs.charAt(0) == '-' || cs.charAt(0) == '+') {
+            start = 1;
+            if (len == 1) {
+                throw SqlException.$(position, "expected interval qualifier");
+            }
+        }
+
+        for (int i = start; i < len; i++) {
+            char c = cs.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+            atLeastOneDigit = true;
+        }
+
+        if (!atLeastOneDigit) {
+            throw SqlException.$(position, "expected numeric value");
+        }
+
+        if (k == -1) {
+            // Allow unitless zero ("0", "+0", "-0") as a special case.
+            // Return -1 as a sentinel value; the caller must handle this.
+            if (len - start == 1 && cs.charAt(start) == '0') {
+                return -1;
+            }
+            throw SqlException.$(position + len, "expected interval qualifier");
+        }
+
+        // expect 1 letter qualifier
+        if (k + 1 < len) {
+            throw SqlException.$(position + k, "expected single letter qualifier");
+        }
+
+        return k;
+    }
+
+    /**
      * Find the end of the interval token in the input string. The interval token is expected to be a number followed by
      * a single letter qualifier.
      *
@@ -42,7 +104,7 @@ public final class TimestampSamplerFactory {
      * @return index of the first character after the interval token
      * @throws SqlException when input string is not a valid interval token
      */
-    public static int findIntervalEndIndex(CharSequence cs, int position, CharSequence kind) throws SqlException {
+    public static int findPositiveIntervalEndIndex(CharSequence cs, int position, CharSequence kind) throws SqlException {
         if (cs == null) {
             throw SqlException.$(position, "missing interval");
         }
@@ -110,15 +172,38 @@ public final class TimestampSamplerFactory {
      * @throws SqlException when input string is invalid
      */
     public static TimestampSampler getInstance(TimestampDriver driver, CharSequence cs, int position) throws SqlException {
-        int k = findIntervalEndIndex(cs, position, "sample");
+        int k = findPositiveIntervalEndIndex(cs, position, "sample");
         assert cs.length() > k;
 
-        long n = parseInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
+        long n = parsePositiveInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
         return getInstance(driver, n, cs.charAt(k), position + k);
     }
 
     /**
-     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int, CharSequence)}
+     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int)}
+     * has been called and returned a valid index. Supports negative and zero values.
+     *
+     * @param cs          token to parse interval from
+     * @param intervalEnd end of interval token, exclusive
+     * @param position    position in SQL text to report error against
+     * @return parsed interval value
+     * @throws SqlException when input string is invalid
+     */
+    public static long parseInterval(CharSequence cs, int intervalEnd, int position) throws SqlException {
+        try {
+            // Skip leading '+' sign as Numbers.parseLong doesn't support it
+            int start = 0;
+            if (intervalEnd > 0 && cs.charAt(0) == '+') {
+                start = 1;
+            }
+            return Numbers.parseLong(cs, start, intervalEnd);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid interval value [value=").put(cs).put(']');
+        }
+    }
+
+    /**
+     * Parse positive interval value from string. Expected to be called after {@link #findPositiveIntervalEndIndex(CharSequence, int, CharSequence)}
      * has been called and returned a valid index. Behavior is undefined if called with invalid index.
      *
      * @param cs          token to parse interval from
@@ -130,7 +215,7 @@ public final class TimestampSamplerFactory {
      * @return parsed interval value
      * @throws SqlException when input string is invalid
      */
-    public static long parseInterval(CharSequence cs, int intervalEnd, int position, String kind, int maxValue, char unit) throws SqlException {
+    public static long parsePositiveInterval(CharSequence cs, int intervalEnd, int position, String kind, int maxValue, char unit) throws SqlException {
         if (intervalEnd == 0) {
             // 'SAMPLE BY m' is the same as 'SAMPLE BY 1m' etc.
             return 1;
