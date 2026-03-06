@@ -216,7 +216,14 @@ pub fn append_varchar(
         aux_mem.resize(len_before_value + VARCHAR_MAX_BYTES_FULLY_INLINED, 0u8)?;
         append_offset(aux_mem, data_mem.len())
     } else {
-        assert!(value_size <= LENGTH_LIMIT_BYTES);
+        if value_size > LENGTH_LIMIT_BYTES {
+            return Err(fmt_err!(
+                Layout,
+                "VARCHAR value size {} exceeds limit {}",
+                value_size,
+                LENGTH_LIMIT_BYTES
+            ));
+        }
         let header = ((value_size as u32) << HEADER_FLAGS_WIDTH) | is_ascii(value);
         aux_mem.extend_from_slice(&header.to_le_bytes())?;
         aux_mem.extend_from_slice(&value[0..VARCHAR_INLINED_PREFIX_BYTES])?;
@@ -250,7 +257,14 @@ pub fn append_varchar_null(aux_mem: &mut AcVec<u8>, data_mem: &[u8]) -> ParquetR
 }
 
 fn append_offset(aux_mem: &mut AcVec<u8>, offset: usize) -> ParquetResult<()> {
-    assert!(offset < VARCHAR_MAX_COLUMN_SIZE);
+    if offset >= VARCHAR_MAX_COLUMN_SIZE {
+        return Err(fmt_err!(
+            Layout,
+            "VARCHAR column offset {} exceeds maximum size {}",
+            offset,
+            VARCHAR_MAX_COLUMN_SIZE
+        ));
+    }
     aux_mem.extend_from_slice(&(offset as u16).to_le_bytes())?;
     aux_mem.extend_from_slice(&((offset >> 16) as u32).to_le_bytes())?;
     Ok(())
@@ -282,7 +296,14 @@ pub fn append_varchar_nulls(
         _ => {
             const ENTRY_SIZE: usize = 16; // 10 bytes header + 6 bytes offset
             let offset = data_mem.len();
-            assert!(offset < VARCHAR_MAX_COLUMN_SIZE);
+            if offset >= VARCHAR_MAX_COLUMN_SIZE {
+                return Err(fmt_err!(
+                    Layout,
+                    "VARCHAR column offset {} exceeds maximum size {}",
+                    offset,
+                    VARCHAR_MAX_COLUMN_SIZE
+                ));
+            }
 
             let mut null_entry = [0u8; ENTRY_SIZE];
             null_entry[..10].copy_from_slice(&VARCHAR_HEADER_FLAG_NULL);
