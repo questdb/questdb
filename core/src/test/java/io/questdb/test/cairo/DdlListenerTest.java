@@ -922,6 +922,14 @@ public class DdlListenerTest extends AbstractCairoTest {
                 Assert.fail("expected CairoException for listener failures");
             } catch (Exception e) {
                 // DROP ALL collects listener failures and reports them
+                Assert.assertEquals(
+                        "[-1] Failures while dropping tables, views and materialized views [" +
+                                "'tab3': listener error on tab3, " +
+                                "'tab2': listener error on tab2, " +
+                                "'tab1': listener error on tab1" +
+                                "]",
+                        e.getMessage()
+                );
             }
 
             // All 3 tables must have been dropped despite the listener throwing on each one

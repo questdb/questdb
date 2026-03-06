@@ -168,6 +168,7 @@ public interface MetadataService {
 
     boolean removePartition(long partitionTimestamp);
 
+    @TestOnly
     default void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
         renameColumn(columnName, newName, null);
     }

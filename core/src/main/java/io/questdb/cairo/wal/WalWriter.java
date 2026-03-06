@@ -2233,9 +2233,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         markColumnRemoved(index, type);
 
                         try {
-                            if (securityContext != null) {
-                                ddlListener.onColumnDropped(metadata.getTableToken(), columnName);
-                            }
+                            ddlListener.onColumnDropped(metadata.getTableToken(), columnName);
                         } finally {
                             path.trimTo(pathSize);
                         }
@@ -2290,9 +2288,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // as part of rolling to a new segment
 
                         try {
-                            if (securityContext != null) {
-                                ddlListener.onColumnRenamed(metadata.getTableToken(), columnName, newColumnName);
-                            }
+                            ddlListener.onColumnRenamed(metadata.getTableToken(), columnName, newColumnName);
                         } finally {
                             path.trimTo(pathSize);
                         }
