@@ -227,7 +227,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             );
 
             this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
-            this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            this.functionParser = createFunctionParser(configuration, engine.getFunctionFactoryCache());
             final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
             this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, postOrderTreeTraversalAlgo, queryColumnPool, sqlNodePool);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
@@ -3238,6 +3238,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRefreshMatView();
     }
 
+
     private void compileReindex(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
 
         if (executionContext.isValidationOnly()) {
@@ -4384,6 +4385,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+
     private int filterApply(
             Function filter,
             int functionPosition,
@@ -4812,6 +4814,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (tok != null) {
             throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
         }
+    }
+
+    protected FunctionParser createFunctionParser(CairoConfiguration configuration, FunctionFactoryCache cache) {
+        return new FunctionParser(configuration, cache);
     }
 
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {

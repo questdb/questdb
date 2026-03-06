@@ -81,12 +81,16 @@ public class FunctionListFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         FunctionFactoryCache ffCache = sqlExecutionContext.getCairoEngine().getFunctionFactoryCache();
-        return new CursorFunction(new FunctionsCursorFactory(ffCache.getFactories())) {
+        return new CursorFunction(createCursorFactory(ffCache)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
             }
         };
+    }
+
+    protected AbstractRecordCursorFactory createCursorFactory(FunctionFactoryCache ffCache) {
+        return new FunctionsCursorFactory(ffCache.getFactories());
     }
 
     public enum FunctionFactoryType {
@@ -109,15 +113,18 @@ public class FunctionListFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class FunctionsCursorFactory extends AbstractRecordCursorFactory {
-        private final FunctionsRecordCursor cursor = new FunctionsRecordCursor();
+    protected static class FunctionsCursorFactory extends AbstractRecordCursorFactory {
+        private final FunctionsRecordCursor cursor;
         private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories;
         private final ObjList<CharSequence> funcNames;
 
-        public FunctionsCursorFactory(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories) {
+        public FunctionsCursorFactory(
+                LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories
+        ) {
             super(METADATA);
             this.factories = factories;
             this.funcNames = factories.keys();
+            this.cursor = createCursor();
         }
 
         @Override
@@ -136,11 +143,14 @@ public class FunctionListFunctionFactory implements FunctionFactory {
             sink.type("functions()");
         }
 
+        protected FunctionsRecordCursor createCursor() {
+            return new FunctionsRecordCursor();
+        }
 
-        private class FunctionsRecordCursor implements NoRandomAccessRecordCursor {
-            private final FunctionRecord record = new FunctionRecord();
-            ObjList<FunctionFactoryDescriptor> funcDescriptors;
-            private int descriptorIndex = -1;
+        protected class FunctionsRecordCursor implements NoRandomAccessRecordCursor {
+            protected final FunctionRecord record = new FunctionRecord();
+            protected ObjList<FunctionFactoryDescriptor> funcDescriptors;
+            protected int descriptorIndex = -1;
             private int funcNameIndex = -1;
 
             @Override
@@ -183,7 +193,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                         }
                     }
                 }
-                return false;
+                return hasNextExtra();
             }
 
             @Override
@@ -201,7 +211,11 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                 close();
             }
 
-            private class FunctionRecord implements Record {
+            protected boolean hasNextExtra() {
+                return false;
+            }
+
+            protected class FunctionRecord implements Record {
                 private final StringSink sink = new StringSink();
                 private FunctionFactory funcFactory;
                 private CharSequence funcName;
@@ -243,7 +257,7 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                     return getStrA(col).length();
                 }
 
-                private void init(CharSequence funcName, FunctionFactory factory) {
+                public void init(CharSequence funcName, FunctionFactory factory) {
                     this.funcName = funcName;
                     this.funcFactory = factory;
                     sink.clear();

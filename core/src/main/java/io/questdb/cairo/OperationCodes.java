@@ -8,5 +8,9 @@ public class OperationCodes {
     public static final int DROP_MAT_VIEW = CREATE_MAT_VIEW + 1;
     public static final int CREATE_VIEW = DROP_MAT_VIEW + 1;
     public static final int DROP_VIEW = CREATE_VIEW + 1;
-    public static final int MAX = DROP_VIEW;
+    public static final int LOAD_PLUGIN = DROP_VIEW + 1;
+    public static final int UNLOAD_PLUGIN = LOAD_PLUGIN + 1;
+    public static final int SCAN_PLUGINS = UNLOAD_PLUGIN + 1;
+    public static final int RELOAD_PLUGIN = SCAN_PLUGINS + 1;
+    public static final int MAX = RELOAD_PLUGIN;
 }
