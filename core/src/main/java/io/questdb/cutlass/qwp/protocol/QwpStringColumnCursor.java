@@ -55,7 +55,6 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     private long nullBitmapAddress;
     private boolean nullable;
     private long offsetArrayAddress;
-    private int rowCount;
     private long stringDataAddress;
     // Configuration
     private byte typeCode;
@@ -92,7 +91,6 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         valueUtf8.clear();
         typeCode = TYPE_STRING;
         nullable = false;
-        rowCount = 0;
         nullBitmapAddress = 0;
         offsetArrayAddress = 0;
         stringDataAddress = 0;
@@ -102,21 +100,6 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     @Override
     public int getCurrentRow() {
         return currentRow;
-    }
-
-    /**
-     * Returns current row's value as a String.
-     * <p>
-     * <b>Allocates:</b> Creates a new String object. Prefer {@link #getUtf8Value()}
-     * for zero-allocation access when the consumer supports {@link DirectUtf8Sequence}.
-     *
-     * @return String value, or null if NULL
-     */
-    public String getStringValue() {
-        if (currentIsNull) {
-            return null;
-        }
-        return valueUtf8.toString();
     }
 
     @Override
@@ -141,11 +124,6 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         return currentIsNull;
     }
 
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
     /**
      * Initializes this cursor for the given column data.
      *
@@ -159,7 +137,6 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable) {
         this.typeCode = typeCode;
         this.nullable = nullable;
-        this.rowCount = rowCount;
 
         int offset = 0;
         int nullCount = 0;

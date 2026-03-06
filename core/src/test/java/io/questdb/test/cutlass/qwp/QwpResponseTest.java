@@ -172,9 +172,9 @@ public class QwpResponseTest {
         QwpResponse.TableError error = new QwpResponse.TableError(
                 5, QwpStatusCode.INTERNAL_ERROR, "detailed error message here");
 
-        assertEquals(5, error.getTableIndex());
-        assertEquals(QwpStatusCode.INTERNAL_ERROR, error.getErrorCode());
-        assertEquals("detailed error message here", error.getErrorMessage());
+        assertEquals(5, error.tableIndex());
+        assertEquals(QwpStatusCode.INTERNAL_ERROR, error.errorCode());
+        assertEquals("detailed error message here", error.errorMessage());
 
         String str = error.toString();
         assertTrue(str.contains("5"));
@@ -194,14 +194,14 @@ public class QwpResponseTest {
         ObjList<QwpResponse.TableError> tableErrors = response.getTableErrors();
         assertEquals(3, tableErrors.size());
 
-        assertEquals(0, tableErrors.get(0).getTableIndex());
-        assertEquals(QwpStatusCode.SCHEMA_MISMATCH, tableErrors.get(0).getErrorCode());
+        assertEquals(0, tableErrors.get(0).tableIndex());
+        assertEquals(QwpStatusCode.SCHEMA_MISMATCH, tableErrors.get(0).errorCode());
 
-        assertEquals(3, tableErrors.get(1).getTableIndex());
-        assertEquals(QwpStatusCode.TABLE_NOT_FOUND, tableErrors.get(1).getErrorCode());
+        assertEquals(3, tableErrors.get(1).tableIndex());
+        assertEquals(QwpStatusCode.TABLE_NOT_FOUND, tableErrors.get(1).errorCode());
 
-        assertEquals(7, tableErrors.get(2).getTableIndex());
-        assertEquals(QwpStatusCode.PARSE_ERROR, tableErrors.get(2).getErrorCode());
+        assertEquals(7, tableErrors.get(2).tableIndex());
+        assertEquals(QwpStatusCode.PARSE_ERROR, tableErrors.get(2).errorCode());
     }
 
     @Test
@@ -234,7 +234,7 @@ public class QwpResponseTest {
         byte[] encoded = QwpResponseEncoder.encode(original);
         QwpResponse decoded = QwpResponseEncoder.decode(encoded, 0, encoded.length);
 
-        assertEquals(255, decoded.getTableErrors().get(0).getTableIndex());
+        assertEquals(255, decoded.getTableErrors().get(0).tableIndex());
     }
 
     @Test
@@ -271,13 +271,13 @@ public class QwpResponseTest {
         assertNotNull(decoded.getTableErrors());
         assertEquals(2, decoded.getTableErrors().size());
 
-        assertEquals(1, decoded.getTableErrors().get(0).getTableIndex());
-        assertEquals(QwpStatusCode.TABLE_NOT_FOUND, decoded.getTableErrors().get(0).getErrorCode());
-        assertEquals("table1 missing", decoded.getTableErrors().get(0).getErrorMessage());
+        assertEquals(1, decoded.getTableErrors().get(0).tableIndex());
+        assertEquals(QwpStatusCode.TABLE_NOT_FOUND, decoded.getTableErrors().get(0).errorCode());
+        assertEquals("table1 missing", decoded.getTableErrors().get(0).errorMessage());
 
-        assertEquals(5, decoded.getTableErrors().get(1).getTableIndex());
-        assertEquals(QwpStatusCode.SCHEMA_MISMATCH, decoded.getTableErrors().get(1).getErrorCode());
-        assertEquals("column x wrong type", decoded.getTableErrors().get(1).getErrorMessage());
+        assertEquals(5, decoded.getTableErrors().get(1).tableIndex());
+        assertEquals(QwpStatusCode.SCHEMA_MISMATCH, decoded.getTableErrors().get(1).errorCode());
+        assertEquals("column x wrong type", decoded.getTableErrors().get(1).errorMessage());
     }
 
     @Test

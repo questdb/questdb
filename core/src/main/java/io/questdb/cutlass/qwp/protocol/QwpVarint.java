@@ -61,18 +61,6 @@ public final class QwpVarint {
     }
 
     /**
-     * Decodes a varint from the given byte array.
-     *
-     * @param buf the buffer to read from
-     * @param pos the position to start reading
-     * @return the decoded value
-     * @throws QwpParseException if the varint is malformed (too many bytes)
-     */
-    public static long decode(byte[] buf, int pos) throws QwpParseException {
-        return decode(buf, pos, buf.length);
-    }
-
-    /**
      * Decodes a varint from the given byte array with bounds checking.
      *
      * @param buf   the buffer to read from

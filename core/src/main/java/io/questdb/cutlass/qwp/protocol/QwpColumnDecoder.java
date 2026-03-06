@@ -186,8 +186,5 @@ public interface QwpColumnDecoder {
             values[rowIndex] = new long[]{hi, lo};
         }
 
-        public int size() {
-            return values.length;
-        }
     }
 }

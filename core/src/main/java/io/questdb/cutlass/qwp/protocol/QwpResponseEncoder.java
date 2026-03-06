@@ -87,9 +87,9 @@ public class QwpResponseEncoder {
 
             for (int i = 0; i < errorCount; i++) {
                 QwpResponse.TableError error = errors.get(i);
-                size += varintSize(error.getTableIndex());
+                size += varintSize(error.tableIndex());
                 size += 1; // error code
-                size += stringSize(error.getErrorMessage());
+                size += stringSize(error.errorMessage());
             }
         } else {
             size += stringSize(response.getErrorMessage());
@@ -169,22 +169,6 @@ public class QwpResponseEncoder {
     }
 
     /**
-     * Decodes a response from direct memory.
-     *
-     * @param address starting address
-     * @param length  available bytes
-     * @return decoded response
-     * @throws QwpParseException if parsing fails
-     */
-    public static QwpResponse decode(long address, int length) throws QwpParseException {
-        byte[] buf = new byte[length];
-        for (int i = 0; i < length; i++) {
-            buf[i] = Unsafe.getUnsafe().getByte(address + i);
-        }
-        return decode(buf, 0, length);
-    }
-
-    /**
      * Encodes a response to a byte array.
      *
      * @param response response to encode
@@ -247,17 +231,17 @@ public class QwpResponseEncoder {
                 QwpResponse.TableError error = errors.get(i);
 
                 // Table index
-                offset += encodeVarint(error.getTableIndex(), address + offset, maxLen - offset);
+                offset += encodeVarint(error.tableIndex(), address + offset, maxLen - offset);
 
                 // Error code
                 if (offset >= maxLen) {
                     throw new IllegalArgumentException("buffer too small for error code");
                 }
-                Unsafe.getUnsafe().putByte(address + offset, error.getErrorCode());
+                Unsafe.getUnsafe().putByte(address + offset, error.errorCode());
                 offset++;
 
                 // Error message
-                offset += encodeString(error.getErrorMessage(), address + offset, maxLen - offset);
+                offset += encodeString(error.errorMessage(), address + offset, maxLen - offset);
             }
         } else {
             // Other error responses have an error message

@@ -51,7 +51,6 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
     // Configuration
     private boolean nullable;
     private int precision;
-    private int rowCount;
     private int valueSize;
     private long valuesAddress;
 
@@ -79,7 +78,6 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         nullable = false;
-        rowCount = 0;
         precision = 0;
         valueSize = 0;
         nullBitmapAddress = 0;
@@ -116,11 +114,6 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
         return currentIsNull;
     }
 
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
     /**
      * Initializes this cursor for the given column data.
      *
@@ -133,7 +126,6 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
      */
     public int of(long dataAddress, int dataLength, int rowCount, boolean nullable) throws QwpParseException {
         this.nullable = nullable;
-        this.rowCount = rowCount;
 
         int offset = 0;
         int nullCount = 0;
@@ -179,30 +171,21 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
     }
 
     private static long readValue(long address, int valueSize) {
-        switch (valueSize) {
-            case 1:
-                return Unsafe.getUnsafe().getByte(address) & 0xFFL;
-            case 2:
-                return Unsafe.getUnsafe().getShort(address) & 0xFFFFL;
-            case 3:
-                return (Unsafe.getUnsafe().getShort(address) & 0xFFFFL) |
-                        ((Unsafe.getUnsafe().getByte(address + 2) & 0xFFL) << 16);
-            case 4:
-                return Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL;
-            case 5:
-                return (Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL) |
-                        ((Unsafe.getUnsafe().getByte(address + 4) & 0xFFL) << 32);
-            case 6:
-                return (Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL) |
-                        ((Unsafe.getUnsafe().getShort(address + 4) & 0xFFFFL) << 32);
-            case 7:
-                return (Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL) |
-                        ((Unsafe.getUnsafe().getShort(address + 4) & 0xFFFFL) << 32) |
-                        ((Unsafe.getUnsafe().getByte(address + 6) & 0xFFL) << 48);
-            case 8:
-                return Unsafe.getUnsafe().getLong(address);
-            default:
-                throw new IllegalArgumentException("Invalid value size: " + valueSize);
-        }
+        return switch (valueSize) {
+            case 1 -> Unsafe.getUnsafe().getByte(address) & 0xFFL;
+            case 2 -> Unsafe.getUnsafe().getShort(address) & 0xFFFFL;
+            case 3 -> (Unsafe.getUnsafe().getShort(address) & 0xFFFFL) |
+                    ((Unsafe.getUnsafe().getByte(address + 2) & 0xFFL) << 16);
+            case 4 -> Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL;
+            case 5 -> (Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL) |
+                    ((Unsafe.getUnsafe().getByte(address + 4) & 0xFFL) << 32);
+            case 6 -> (Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL) |
+                    ((Unsafe.getUnsafe().getShort(address + 4) & 0xFFFFL) << 32);
+            case 7 -> (Unsafe.getUnsafe().getInt(address) & 0xFFFFFFFFL) |
+                    ((Unsafe.getUnsafe().getShort(address + 4) & 0xFFFFL) << 32) |
+                    ((Unsafe.getUnsafe().getByte(address + 6) & 0xFFL) << 48);
+            case 8 -> Unsafe.getUnsafe().getLong(address);
+            default -> throw new IllegalArgumentException("Invalid value size: " + valueSize);
+        };
     }
 }

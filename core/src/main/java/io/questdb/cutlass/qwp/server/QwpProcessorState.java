@@ -47,7 +47,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sink;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -57,7 +56,6 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
-    private static final String ERROR_ID = generateErrorId();
     private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
     // Per-connection accumulated symbol dictionary for delta encoding
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
@@ -167,14 +165,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    public void formatError(Utf8Sink sink) {
-        sink.putAscii("{\"code\":\"").putAscii(currentStatus.codeStr);
-        sink.putAscii("\",\"message\":\"");
-        sink.escapeJsonStr(error, 0, Math.min(error.length(), maxResponseErrorMessageLength));
-        sink.putQuote();
-        sink.putAscii(",\"errorId\":\"").putAscii(ERROR_ID).put('-').put(errorId).putAscii("\"").putAscii('}');
-    }
-
     public String getErrorText() {
         return error.toString();
     }
@@ -183,20 +173,12 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return highestProcessedSequence;
     }
 
-    public int getHttpResponseCode() {
-        return currentStatus.responseCode;
-    }
-
     public long getLastAckedSequence() {
         return lastAckedSequence;
     }
 
     public int getRecvBufferLen() {
         return recvBufferLen;
-    }
-
-    public SendStatus getSendStatus() {
-        return sendStatus;
     }
 
     public Status getStatus() {
@@ -352,10 +334,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void setRecvBufferLen(int recvBufferLen) {
         this.recvBufferLen = recvBufferLen;
-    }
-
-    public void setSendStatus(SendStatus sendStatus) {
-        this.sendStatus = sendStatus;
     }
 
     public void setWsHandshakeSent(boolean wsHandshakeSent) {

@@ -288,20 +288,6 @@ public final class QwpFixedWidthDecoder implements QwpColumnDecoder {
         return size;
     }
 
-    /**
-     * Gets the type code this decoder handles.
-     */
-    public byte getTypeCode() {
-        return typeCode;
-    }
-
-    /**
-     * Gets the size in bytes of each value.
-     */
-    public int getValueSize() {
-        return valueSize;
-    }
-
     private void decodeBytes(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {
         int valueOffset = 0;
         for (int i = 0; i < rowCount; i++) {

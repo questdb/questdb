@@ -1091,7 +1091,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(-9999L));
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL256,
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DECIMAL256,
                         false);
 
                 long[] timestamps = makeTimestamps(rowCount);
@@ -1143,7 +1143,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(dataAddress + 9, Long.reverseBytes(-9999L));
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64,
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DECIMAL64,
                         false);
 
                 long[] timestamps = makeTimestamps(rowCount);
@@ -1196,7 +1196,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(dataAddress + 9, Long.reverseBytes(-9999L));
 
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64,
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DECIMAL64,
                         false);
 
                 long[] timestamps = makeTimestamps(rowCount);

@@ -29,12 +29,6 @@ package io.questdb.cutlass.qwp.websocket;
  */
 public final class WebSocketCloseCode {
     /**
-     * Abnormal closure (1006).
-     * Reserved value. MUST NOT be sent in a Close frame.
-     * Used to indicate that a connection was closed abnormally.
-     */
-    public static final int ABNORMAL_CLOSURE = 1006;
-    /**
      * Going away (1001).
      * The endpoint is going away, e.g., server shutting down or browser navigating away.
      */
@@ -50,11 +44,6 @@ public final class WebSocketCloseCode {
      */
     public static final int INVALID_PAYLOAD_DATA = 1007;
     /**
-     * Mandatory extension (1010).
-     * The client expected the server to negotiate one or more extensions.
-     */
-    public static final int MANDATORY_EXTENSION = 1010;
-    /**
      * Message too big (1009).
      * The endpoint received a message that is too big to process.
      */
@@ -65,90 +54,12 @@ public final class WebSocketCloseCode {
      */
     public static final int NORMAL_CLOSURE = 1000;
     /**
-     * No status received (1005).
-     * Reserved value. MUST NOT be sent in a Close frame.
-     */
-    public static final int NO_STATUS_RECEIVED = 1005;
-    /**
-     * Policy violation (1008).
-     * The endpoint received a message that violates its policy.
-     */
-    public static final int POLICY_VIOLATION = 1008;
-    /**
      * Protocol error (1002).
      * The endpoint is terminating the connection due to a protocol error.
      */
     public static final int PROTOCOL_ERROR = 1002;
-    /**
-     * Reserved (1004).
-     * Reserved for future use.
-     */
-    public static final int RESERVED = 1004;
-    /**
-     * TLS handshake (1015).
-     * Reserved value. MUST NOT be sent in a Close frame.
-     * Used to indicate that the connection was closed due to TLS handshake failure.
-     */
-    public static final int TLS_HANDSHAKE = 1015;
-    /**
-     * Unsupported data (1003).
-     * The endpoint received a type of data it cannot accept.
-     */
-    public static final int UNSUPPORTED_DATA = 1003;
 
     private WebSocketCloseCode() {
         // Constants class
-    }
-
-    /**
-     * Returns a human-readable description of the close code.
-     *
-     * @param code the close code
-     * @return the description
-     */
-    public static String describe(int code) {
-        return switch (code) {
-            case NORMAL_CLOSURE -> "Normal Closure";
-            case GOING_AWAY -> "Going Away";
-            case PROTOCOL_ERROR -> "Protocol Error";
-            case UNSUPPORTED_DATA -> "Unsupported Data";
-            case RESERVED -> "Reserved";
-            case NO_STATUS_RECEIVED -> "No Status Received";
-            case ABNORMAL_CLOSURE -> "Abnormal Closure";
-            case INVALID_PAYLOAD_DATA -> "Invalid Payload Data";
-            case POLICY_VIOLATION -> "Policy Violation";
-            case MESSAGE_TOO_BIG -> "Message Too Big";
-            case MANDATORY_EXTENSION -> "Mandatory Extension";
-            case INTERNAL_ERROR -> "Internal Error";
-            case TLS_HANDSHAKE -> "TLS Handshake";
-            default -> {
-                if (code >= 3000 && code < 4000) {
-                    yield "Library/Framework Code (" + code + ")";
-                } else if (code >= 4000 && code < 5000) {
-                    yield "Application Code (" + code + ")";
-                }
-                yield "Unknown (" + code + ")";
-            }
-        };
-    }
-
-    /**
-     * Checks if a close code is valid for use in a Close frame.
-     * Codes 1005 and 1006 are reserved and must not be sent.
-     *
-     * @param code the close code
-     * @return true if the code can be sent in a Close frame
-     */
-    public static boolean isValidForSending(int code) {
-        if (code < 1000) {
-            return false;
-        }
-        if (code == NO_STATUS_RECEIVED || code == ABNORMAL_CLOSURE || code == TLS_HANDSHAKE) {
-            return false;
-        }
-        // 1000-2999 are defined by RFC 6455
-        // 3000-3999 are reserved for libraries/frameworks
-        // 4000-4999 are reserved for applications
-        return code < 5000;
     }
 }

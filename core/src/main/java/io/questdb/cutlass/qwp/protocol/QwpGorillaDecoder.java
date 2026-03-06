@@ -63,15 +63,6 @@ public class QwpGorillaDecoder {
     }
 
     /**
-     * Creates a decoder using an existing bit reader.
-     *
-     * @param bitReader the bit reader to use
-     */
-    public QwpGorillaDecoder(QwpBitReader bitReader) {
-        this.bitReader = bitReader;
-    }
-
-    /**
      * Returns the number of bits required to encode a delta-of-delta value.
      *
      * @param deltaOfDelta the delta-of-delta value
@@ -150,33 +141,6 @@ public class QwpGorillaDecoder {
      */
     public long getBitPosition() {
         return bitReader.getBitPosition();
-    }
-
-    /**
-     * Gets the previous delta (for debugging/testing).
-     *
-     * @return the last computed delta
-     */
-    public long getPrevDelta() {
-        return prevDelta;
-    }
-
-    /**
-     * Gets the previous timestamp (for debugging/testing).
-     *
-     * @return the last decoded timestamp
-     */
-    public long getPrevTimestamp() {
-        return prevTimestamp;
-    }
-
-    /**
-     * Returns whether there are more bits available in the reader.
-     *
-     * @return true if more bits available
-     */
-    public boolean hasMoreBits() {
-        return bitReader.hasMoreBits();
     }
 
     /**

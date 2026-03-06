@@ -233,9 +233,8 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     /**
      * Called when a close frame is received.
      *
-     * @param code the close status code
      */
-    public void onCloseFrameReceived(int code) {
+    public void onCloseFrameReceived() {
         closeFrameReceived = true;
         if (closeFrameSent) {
             state = STATE_CLOSED;
@@ -341,7 +340,7 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
         }
 
         processor.onClose(code, reasonPtr, reasonLength);
-        onCloseFrameReceived(code);
+        onCloseFrameReceived();
         return true;
     }
 

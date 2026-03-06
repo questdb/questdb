@@ -44,11 +44,8 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
     // Pre-allocated instances for common errors to avoid allocation on hot paths
     private static final QwpParseException INCOMPLETE_VARINT = new QwpParseException(ErrorCode.INCOMPLETE_VARINT, "incomplete varint: buffer underflow");
     private static final QwpParseException INSUFFICIENT_DATA = new QwpParseException(ErrorCode.INSUFFICIENT_DATA, "insufficient data for column");
-    private static final QwpParseException INVALID_COLUMN_TYPE = new QwpParseException(ErrorCode.INVALID_COLUMN_TYPE, "invalid column type code");
     private static final QwpParseException INVALID_MAGIC = new QwpParseException(ErrorCode.INVALID_MAGIC, "invalid magic bytes");
-    private static final QwpParseException INVALID_UTF8 = new QwpParseException(ErrorCode.INVALID_UTF8, "invalid UTF-8 sequence");
     private static final QwpParseException PAYLOAD_TOO_LARGE = new QwpParseException(ErrorCode.PAYLOAD_TOO_LARGE, "payload exceeds maximum size");
-    private static final QwpParseException SCHEMA_NOT_FOUND = new QwpParseException(ErrorCode.SCHEMA_NOT_FOUND, "schema hash not found in cache");
     private static final QwpParseException UNSUPPORTED_VERSION = new QwpParseException(ErrorCode.UNSUPPORTED_VERSION, "unsupported protocol version");
     private static final QwpParseException VARINT_OVERFLOW = new QwpParseException(ErrorCode.VARINT_OVERFLOW, "varint overflow: too many continuation bytes");
     private final ErrorCode errorCode;
@@ -65,20 +62,6 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
      */
     public static QwpParseException bitReadOverflow() {
         return BIT_READ_OVERFLOW;
-    }
-
-    /**
-     * Creates a new exception with a custom message and byte offset.
-     *
-     * @param errorCode  the error code
-     * @param message    the error message
-     * @param byteOffset the byte offset where the error occurred
-     * @return a new exception instance
-     */
-    public static QwpParseException create(ErrorCode errorCode, CharSequence message, long byteOffset) {
-        QwpParseException ex = new QwpParseException(errorCode, message);
-        ex.byteOffset = byteOffset;
-        return ex;
     }
 
     /**
@@ -107,20 +90,6 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
     }
 
     /**
-     * Returns a cached exception for insufficient data.
-     */
-    public static QwpParseException insufficientData() {
-        return INSUFFICIENT_DATA;
-    }
-
-    /**
-     * Returns a cached exception for invalid column type.
-     */
-    public static QwpParseException invalidColumnType() {
-        return INVALID_COLUMN_TYPE;
-    }
-
-    /**
      * Returns a cached exception for invalid magic bytes.
      */
     public static QwpParseException invalidMagic() {
@@ -128,24 +97,10 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
     }
 
     /**
-     * Returns a cached exception for invalid UTF-8.
-     */
-    public static QwpParseException invalidUtf8() {
-        return INVALID_UTF8;
-    }
-
-    /**
      * Returns a cached exception for payload too large.
      */
     public static QwpParseException payloadTooLarge() {
         return PAYLOAD_TOO_LARGE;
-    }
-
-    /**
-     * Returns a cached exception for schema not found.
-     */
-    public static QwpParseException schemaNotFound() {
-        return SCHEMA_NOT_FOUND;
     }
 
     /**
@@ -160,10 +115,6 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
      */
     public static QwpParseException varintOverflow() {
         return VARINT_OVERFLOW;
-    }
-
-    public long getByteOffset() {
-        return byteOffset;
     }
 
     public ErrorCode getErrorCode() {
@@ -211,11 +162,7 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
         INVALID_SCHEMA_MODE,
         COLUMN_COUNT_EXCEEDED,
         ROW_COUNT_EXCEEDED,
-        DECOMPRESSION_ERROR,
-        TABLE_COUNT_MISMATCH,
-        INVALID_NULL_BITMAP,
         INVALID_OFFSET_ARRAY,
-        INVALID_DICTIONARY_INDEX,
-        GORILLA_DECODE_ERROR
+        INVALID_DICTIONARY_INDEX
     }
 }

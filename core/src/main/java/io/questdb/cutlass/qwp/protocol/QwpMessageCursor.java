@@ -82,54 +82,10 @@ public class QwpMessageCursor implements Mutable {
     }
 
     /**
-     * Returns the current table block cursor without advancing.
-     * <p>
-     * Must be called after {@link #nextTable()}.
-     */
-    public QwpTableBlockCursor getCurrentTable() {
-        return tableBlockCursor;
-    }
-
-    /**
-     * Returns the current table index (0-based).
-     */
-    public int getCurrentTableIndex() {
-        return currentTableIndex;
-    }
-
-    /**
-     * Returns the message header for diagnostics.
-     */
-    public QwpMessageHeader getMessageHeader() {
-        return messageHeader;
-    }
-
-    /**
-     * Returns the number of tables in this message.
-     */
-    public int getTableCount() {
-        return tableCount;
-    }
-
-    /**
      * Returns whether there are more tables to iterate.
      */
     public boolean hasNextTable() {
         return currentTableIndex + 1 < tableCount;
-    }
-
-    /**
-     * Returns whether delta symbol dictionary mode is enabled.
-     */
-    public boolean isDeltaSymbolDictEnabled() {
-        return deltaSymbolDictEnabled;
-    }
-
-    /**
-     * Returns whether Gorilla timestamp encoding is enabled.
-     */
-    public boolean isGorillaEnabled() {
-        return gorillaEnabled;
     }
 
     /**

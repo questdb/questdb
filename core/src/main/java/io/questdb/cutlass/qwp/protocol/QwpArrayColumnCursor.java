@@ -125,18 +125,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
     }
 
     /**
-     * Returns the shape array for the current row.
-     * <p>
-     * The returned array is reused across rows. Only the first {@link #getNDims()}
-     * elements are valid.
-     *
-     * @return shape array (internal buffer, do not modify)
-     */
-    public int[] getShape() {
-        return currentShape;
-    }
-
-    /**
      * Returns the total number of elements in the current row's array.
      *
      * @return total element count
@@ -171,11 +159,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
     @Override
     public boolean isNull() {
         return currentIsNull;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
     }
 
     /**

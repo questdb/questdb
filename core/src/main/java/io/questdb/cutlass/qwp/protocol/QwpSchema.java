@@ -76,17 +76,6 @@ public final class QwpSchema {
     }
 
     /**
-     * Creates a schema from column definitions with a pre-computed hash.
-     *
-     * @param columns    the column definitions
-     * @param schemaHash the pre-computed schema hash
-     * @return the schema
-     */
-    public static QwpSchema createWithHash(QwpColumnDef[] columns, long schemaHash) {
-        return new QwpSchema(columns.clone(), schemaHash);
-    }
-
-    /**
      * Encodes a schema reference to direct memory.
      *
      * @param address    destination address
@@ -322,7 +311,7 @@ public final class QwpSchema {
 
     @Override
     public int hashCode() {
-        return (int) (schemaHash ^ (schemaHash >>> 32));
+        return Long.hashCode(schemaHash);
     }
 
     @Override

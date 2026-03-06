@@ -69,7 +69,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     private long nullBitmapAddress;
     // Configuration
     private boolean nullable;
-    private int rowCount;
 
     @Override
     public boolean advanceRow() throws QwpParseException {
@@ -95,7 +94,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         nullable = false;
-        rowCount = 0;
         dictionarySize = 0;
         deltaMode = false;
         connectionDict = null;
@@ -112,26 +110,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     @Override
     public int getCurrentRow() {
         return currentRow;
-    }
-
-    /**
-     * Returns a dictionary entry by index as UTF-8.
-     *
-     * @param index dictionary index
-     * @return UTF-8 sequence, or null if delta mode
-     */
-    public DirectUtf8Sequence getDictionaryEntry(int index) {
-        if (deltaMode) {
-            return null;
-        }
-        return dictionaryUtf8.getQuick(index);
-    }
-
-    /**
-     * Returns the dictionary size.
-     */
-    public int getDictionarySize() {
-        return dictionarySize;
     }
 
     /**
@@ -202,11 +180,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
         return currentIsNull;
     }
 
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
     /**
      * Initializes this cursor for the given column data.
      *
@@ -240,7 +213,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             ObjList<String> connectionDict
     ) throws QwpParseException {
         this.nullable = nullable;
-        this.rowCount = rowCount;
         this.deltaMode = connectionDict != null;
         this.connectionDict = connectionDict;
 

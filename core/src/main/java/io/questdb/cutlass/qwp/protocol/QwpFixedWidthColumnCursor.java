@@ -94,13 +94,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
         resetRowPosition();
     }
 
-    /**
-     * Returns current row's byte value.
-     */
-    public byte getByte() {
-        return (byte) currentLong;
-    }
-
     @Override
     public int getCurrentRow() {
         return currentRow;
@@ -118,20 +111,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
      */
     public double getDouble() {
         return currentDouble;
-    }
-
-    /**
-     * Returns current row's float value.
-     */
-    public float getFloat() {
-        return (float) currentDouble;
-    }
-
-    /**
-     * Returns current row's int value.
-     */
-    public int getInt() {
-        return (int) currentLong;
     }
 
     /**
@@ -179,15 +158,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
      */
     public long getNullBitmapAddress() {
         return nullBitmapAddress;
-    }
-
-    /**
-     * Returns the total row count (including nulls).
-     *
-     * @return total row count
-     */
-    public int getRowCount() {
-        return rowCount;
     }
 
     /**
@@ -261,11 +231,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     @Override
     public boolean isNull() {
         return currentIsNull;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
     }
 
     /**

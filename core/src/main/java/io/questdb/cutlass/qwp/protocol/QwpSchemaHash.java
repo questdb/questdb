@@ -318,18 +318,6 @@ public final class QwpSchemaHash {
         return hash(data, 0, data.length, DEFAULT_SEED);
     }
 
-    /**
-     * Computes XXHash64 of a byte array region.
-     *
-     * @param data   the data to hash
-     * @param offset starting offset
-     * @param length number of bytes to hash
-     * @return the 64-bit hash value
-     */
-    public static long hash(byte[] data, int offset, int length) {
-        return hash(data, offset, length, DEFAULT_SEED);
-    }
-
     private static long avalanche(long h64) {
         h64 ^= h64 >>> 33;
         h64 *= PRIME64_2;

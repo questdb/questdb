@@ -131,7 +131,7 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
                 Assert.assertEquals(WebSocketConnectionContext.STATE_CLOSING, ctx.getState());
 
                 // Client responds with close
-                ctx.onCloseFrameReceived(WebSocketCloseCode.GOING_AWAY);
+                ctx.onCloseFrameReceived();
 
                 Assert.assertEquals(WebSocketConnectionContext.STATE_CLOSED, ctx.getState());
             }
@@ -269,7 +269,7 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
         assertMemoryLeak(() -> {
             try (WebSocketConnectionContext ctx = createContext()) {
                 MockWebSocketProcessor processor = new MockWebSocketProcessor();
-                ctx.onCloseFrameReceived(WebSocketCloseCode.NORMAL_CLOSURE);
+                ctx.onCloseFrameReceived();
 
                 // Ping during close handshake should still be handled
                 byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[]{1, 2});
@@ -829,7 +829,7 @@ public class WebSocketConnectionContextTest extends AbstractWebSocketTest {
         assertMemoryLeak(() -> {
             try (WebSocketConnectionContext ctx = createContext()) {
                 ctx.initiateClose(WebSocketCloseCode.NORMAL_CLOSURE, "Normal");
-                ctx.onCloseFrameReceived(WebSocketCloseCode.NORMAL_CLOSURE);
+                ctx.onCloseFrameReceived();
 
                 Assert.assertEquals(WebSocketConnectionContext.STATE_CLOSED, ctx.getState());
                 Assert.assertTrue(ctx.isClosed());

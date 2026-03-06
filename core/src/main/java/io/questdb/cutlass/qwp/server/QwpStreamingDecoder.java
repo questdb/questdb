@@ -140,20 +140,6 @@ public class QwpStreamingDecoder implements QuietCloseable {
     }
 
     /**
-     * Returns the message cursor (for diagnostics).
-     */
-    public QwpMessageCursor getMessageCursor() {
-        return messageCursor;
-    }
-
-    /**
-     * Returns the schema cache (may be null).
-     */
-    public QwpSchemaCache getSchemaCache() {
-        return schemaCache;
-    }
-
-    /**
      * Resets the decoder for reuse.
      * <p>
      * Call this after processing a message to prepare for the next one.

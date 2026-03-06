@@ -48,10 +48,6 @@ public class QwpSchemaCache {
         this.cache = new LongObjHashMap<>();
     }
 
-    public QwpSchemaCache(int initialCapacity) {
-        this.cache = new LongObjHashMap<>(initialCapacity);
-    }
-
     public void clear() {
         cache.clear();
         hits = 0;
@@ -106,13 +102,6 @@ public class QwpSchemaCache {
         return ((long) tableNameHash << 32) ^ schemaHash;
     }
 
-    private static class Entry {
-        final QwpSchema schema;
-        final String tableName;
-
-        Entry(String tableName, QwpSchema schema) {
-            this.tableName = tableName;
-            this.schema = schema;
-        }
+    private record Entry(String tableName, QwpSchema schema) {
     }
 }

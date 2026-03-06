@@ -90,13 +90,6 @@ public interface QwpColumnCursor extends Mutable {
     boolean isNull();
 
     /**
-     * Returns whether this column is nullable.
-     *
-     * @return true if column can contain NULL values
-     */
-    boolean isNullable();
-
-    /**
      * Resets the cursor to before the first row.
      * <p>
      * After calling this method, {@link #advanceRow()} must be called

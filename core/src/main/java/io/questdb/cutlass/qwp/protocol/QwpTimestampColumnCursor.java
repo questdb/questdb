@@ -123,15 +123,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     }
 
     /**
-     * Returns the total row count (including nulls).
-     *
-     * @return total row count
-     */
-    public int getRowCount() {
-        return rowCount;
-    }
-
-    /**
      * Returns current row's timestamp value (microseconds or nanoseconds since epoch).
      */
     public long getTimestamp() {
@@ -166,11 +157,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     @Override
     public boolean isNull() {
         return currentIsNull;
-    }
-
-    @Override
-    public boolean isNullable() {
-        return nullable;
     }
 
     /**

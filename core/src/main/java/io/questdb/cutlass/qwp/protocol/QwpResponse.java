@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Represents an QWP v1 response to be sent to the client.
@@ -221,31 +222,10 @@ public class QwpResponse {
     /**
      * Represents an error for a specific table in a partial failure.
      */
-    public static class TableError {
-        private final byte errorCode;
-        private final String errorMessage;
-        private final int tableIndex;
-
-        public TableError(int tableIndex, byte errorCode, String errorMessage) {
-            this.tableIndex = tableIndex;
-            this.errorCode = errorCode;
-            this.errorMessage = errorMessage;
-        }
-
-        public byte getErrorCode() {
-            return errorCode;
-        }
-
-        public String getErrorMessage() {
-            return errorMessage;
-        }
-
-        public int getTableIndex() {
-            return tableIndex;
-        }
+    public record TableError(int tableIndex, byte errorCode, String errorMessage) {
 
         @Override
-        public String toString() {
+        public @NotNull String toString() {
             return "TableError{index=" + tableIndex +
                     ", code=" + QwpStatusCode.name(errorCode) +
                     ", message=\"" + errorMessage + "\"}";

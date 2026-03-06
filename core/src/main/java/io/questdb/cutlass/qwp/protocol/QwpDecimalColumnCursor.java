@@ -65,7 +65,6 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     // Wire pointers
     private long nullBitmapAddress;
     private boolean nullable;
-    private int rowCount;
     private byte scale;
     // Configuration
     private byte typeCode;
@@ -96,7 +95,6 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     public void clear() {
         typeCode = TYPE_DECIMAL64;
         nullable = false;
-        rowCount = 0;
         valueSize = 8;
         scale = 0;
         nullBitmapAddress = 0;
@@ -192,25 +190,18 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         return currentIsNull;
     }
 
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
     /**
      * Initializes this cursor for the given column data.
      *
      * @param dataAddress address of column data
-     * @param dataLength  available bytes
      * @param rowCount    number of rows
      * @param typeCode    column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
      * @param nullable    whether column is nullable
      * @return bytes consumed from dataAddress
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable) {
+    public int of(long dataAddress, int rowCount, byte typeCode, boolean nullable) {
         this.typeCode = typeCode;
         this.nullable = nullable;
-        this.rowCount = rowCount;
         this.valueSize = getDecimalValueSize(typeCode);
 
         int offset = 0;

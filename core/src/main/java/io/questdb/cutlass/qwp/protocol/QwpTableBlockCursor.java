@@ -81,8 +81,6 @@ public class QwpTableBlockCursor implements Mutable {
     private boolean gorillaEnabled;
     // Table state
     private int rowCount;
-    // Schema cache reference
-    private QwpSchemaCache schemaCache;
     private int stringColumnCount;
     private int[] stringColumnIndices = new int[16];
     private int symbolColumnCount;
@@ -100,7 +98,6 @@ public class QwpTableBlockCursor implements Mutable {
         gorillaEnabled = false;
         columnDefs = null;
         bytesConsumed = 0;
-        schemaCache = null;
         connectionSymbolDict = null;
         deltaSymbolDictEnabled = false;
 
@@ -138,13 +135,6 @@ public class QwpTableBlockCursor implements Mutable {
     }
 
     /**
-     * Returns the number of bytes consumed during parsing.
-     */
-    public int getBytesConsumed() {
-        return bytesConsumed;
-    }
-
-    /**
      * Returns the column cursor at the specified index.
      * <p>
      * The returned cursor is positioned at the current row after {@link #nextRow()}.
@@ -165,13 +155,6 @@ public class QwpTableBlockCursor implements Mutable {
      */
     public QwpColumnDef getColumnDef(int index) {
         return columnDefs[index];
-    }
-
-    /**
-     * Returns the current row index (0-based).
-     */
-    public int getCurrentRow() {
-        return currentRow;
     }
 
     /**
@@ -337,7 +320,6 @@ public class QwpTableBlockCursor implements Mutable {
             boolean deltaSymbolDictEnabled
     ) throws QwpParseException {
         this.gorillaEnabled = gorillaEnabled;
-        this.schemaCache = schemaCache;
         this.connectionSymbolDict = connectionSymbolDict;
         this.deltaSymbolDictEnabled = deltaSymbolDictEnabled;
 
@@ -553,7 +535,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, decCursor);
                 }
                 decimalColumnIndices[decimalColumnCount++] = colIndex;
-                return decCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
+                return decCursor.of(dataAddress, rowCount, typeCode, nullable);
 
             default:
                 throw QwpParseException.create(

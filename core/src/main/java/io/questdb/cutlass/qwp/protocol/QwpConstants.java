@@ -30,14 +30,6 @@ package io.questdb.cutlass.qwp.protocol;
 public final class QwpConstants {
 
     /**
-     * Size of capability request in bytes.
-     */
-    public static final int CAPABILITY_REQUEST_SIZE = 8;
-    /**
-     * Size of capability response in bytes.
-     */
-    public static final int CAPABILITY_RESPONSE_SIZE = 8;
-    /**
      * Default initial receive buffer size (64 KB).
      */
     public static final int DEFAULT_INITIAL_RECV_BUFFER_SIZE = 64 * 1024;
@@ -54,10 +46,6 @@ public final class QwpConstants {
      * Default maximum rows per table in a batch.
      */
     public static final int DEFAULT_MAX_ROWS_PER_TABLE = 1_000_000;
-    /**
-     * Default maximum string length in bytes (1 MB).
-     */
-    public static final int DEFAULT_MAX_STRING_LENGTH = 1024 * 1024;
     /**
      * Default maximum tables per batch.
      */
