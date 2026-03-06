@@ -70,7 +70,6 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     // Cumulative row counts per page frame (for row-to-page-frame resolution)
     private final DirectLongList pageFrameCumulativeRows;
     private final LongList partitionCeilings = new LongList();
-    private final LongList partitionRowCounts = new LongList();
     private final LongList partitionTimestamps = new LongList();
     private final TimeFrameMemoryRecord recordA = new TimeFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrameMemoryRecord recordB = new TimeFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
@@ -355,11 +354,6 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         }
 
         partitionCount = reader.getPartitionCount();
-
-        partitionRowCounts.clear();
-        for (int p = 0; p < partitionCount; p++) {
-            partitionRowCounts.add(reader.getPartitionRowCountFromMetadata(p));
-        }
 
         partitionOpened = new boolean[partitionCount];
         partitionPageFrameStart = new int[partitionCount];
