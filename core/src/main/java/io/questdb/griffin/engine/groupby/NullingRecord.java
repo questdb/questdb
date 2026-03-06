@@ -24,9 +24,15 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -42,6 +48,11 @@ public class NullingRecord implements Record {
     private Record base;
     // O(1) lookup: true at index i means column i is nulled.
     private boolean[] isColumnNulled;
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        return isNulled(col) ? ArrayConstant.NULL : base.getArray(col, columnType);
+    }
 
     @Override
     public BinarySequence getBin(int col) {
@@ -71,6 +82,44 @@ public class NullingRecord implements Record {
     @Override
     public long getDate(int col) {
         return isNulled(col) ? Numbers.LONG_NULL : base.getDate(col);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        if (isNulled(col)) {
+            sink.ofRawNull();
+        } else {
+            base.getDecimal128(col, sink);
+        }
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return isNulled(col) ? Decimals.DECIMAL16_NULL : base.getDecimal16(col);
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        if (isNulled(col)) {
+            sink.ofRawNull();
+        } else {
+            base.getDecimal256(col, sink);
+        }
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return isNulled(col) ? Decimals.DECIMAL32_NULL : base.getDecimal32(col);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return isNulled(col) ? Decimals.DECIMAL64_NULL : base.getDecimal64(col);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return isNulled(col) ? Decimals.DECIMAL8_NULL : base.getDecimal8(col);
     }
 
     @Override
@@ -114,8 +163,23 @@ public class NullingRecord implements Record {
     }
 
     @Override
+    public Interval getInterval(int col) {
+        return isNulled(col) ? Interval.NULL : base.getInterval(col);
+    }
+
+    @Override
     public long getLong(int col) {
         return isNulled(col) ? Numbers.LONG_NULL : base.getLong(col);
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+        return isNulled(col) ? Numbers.LONG_NULL : base.getLong128Hi(col);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return isNulled(col) ? Numbers.LONG_NULL : base.getLong128Lo(col);
     }
 
     @Override

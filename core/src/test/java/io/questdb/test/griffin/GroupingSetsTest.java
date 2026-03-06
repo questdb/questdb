@@ -1131,6 +1131,57 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingSetsExpressionRejectedInCube() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            assertException(
+                    "SELECT SUM(v) FROM t GROUP BY CUBE(a + b)",
+                    37,
+                    "column reference expected"
+            );
+        });
+    }
+
+    @Test
+    public void testGroupingSetsExpressionRejectedInExplicit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            assertException(
+                    "SELECT SUM(v) FROM t GROUP BY GROUPING SETS ((a + b))",
+                    48,
+                    "column reference expected"
+            );
+        });
+    }
+
+    @Test
+    public void testGroupingSetsExpressionRejectedInRollup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            assertException(
+                    "SELECT SUM(v) FROM t GROUP BY ROLLUP(a + b)",
+                    39,
+                    "column reference expected"
+            );
+        });
+    }
+
+    @Test
+    public void testGroupingSetsExpressionRejectedInSampleByRollup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE t (a INT, b INT, v DOUBLE, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            assertException(
+                    "SELECT SUM(v) FROM t SAMPLE BY 1h ROLLUP(a + b)",
+                    43,
+                    "column reference expected"
+            );
+        });
+    }
+
+    @Test
     public void testGroupingFillPreservesValue() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1157,6 +1208,70 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "FROM trades " +
                             "SAMPLE BY 1h ROLLUP(symbol) FILL(NULL) " +
                             "ORDER BY ts, grp, symbol"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedQualificationRejectedInCompositeRollup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            assertException(
+                    "SELECT SUM(v) FROM t GROUP BY a, ROLLUP(t.a)",
+                    40,
+                    "mixing qualified and unqualified references to the same column"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedQualificationRejectedInCube() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            assertException(
+                    "SELECT SUM(v) FROM t GROUP BY CUBE(a, t.a)",
+                    38,
+                    "mixing qualified and unqualified references to the same column"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedQualificationRejectedInExplicitGroupingSets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            assertException(
+                    "SELECT SUM(v) FROM t GROUP BY GROUPING SETS ((a), (t.a))",
+                    51,
+                    "mixing qualified and unqualified references to the same column"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedQualificationRejectedInRollup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            assertException(
+                    "SELECT SUM(v) FROM t GROUP BY ROLLUP(a, t.a)",
+                    40,
+                    "mixing qualified and unqualified references to the same column"
+            );
+        });
+    }
+
+    @Test
+    public void testQualifiedReferencesAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            execute("INSERT INTO t VALUES (1, 10, 100.0), (1, 20, 200.0), (2, 10, 300.0)");
+            // All qualified - no mixed qualification error
+            assertSql(
+                    "a\tSUM\n" +
+                            "null\t600.0\n" +
+                            "1\t300.0\n" +
+                            "2\t300.0\n",
+                    "SELECT t.a, SUM(v) FROM t GROUP BY ROLLUP(t.a) ORDER BY t.a"
             );
         });
     }

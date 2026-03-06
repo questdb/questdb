@@ -848,13 +848,49 @@ public class SqlParser {
     }
 
     /**
-     * Expands CUBE into grouping sets. CUBE(a, b) generates all 2^N subsets:
-     * (a,b), (a), (b), ().
-     *
-     * @param model           query model to add grouping sets to
-     * @param startIdx        index of the first CUBE column in model.groupBy
-     * @param cubeColumnCount number of CUBE columns
+     * Checks that all columns in the combined GROUP BY list do not mix
+     * qualified (t.a) and unqualified (a) references to the same column.
+     * The grouping set machinery deduplicates by raw token text, so
+     * mixed forms would create separate entries and incorrect sets.
      */
+    private static void checkMixedQualification(ObjList<ExpressionNode> groupByColumns) throws SqlException {
+        for (int i = 0, n = groupByColumns.size(); i < n; i++) {
+            ExpressionNode a = groupByColumns.getQuick(i);
+            for (int j = i + 1; j < n; j++) {
+                ExpressionNode b = groupByColumns.getQuick(j);
+                if (isSameColumnMixedQualification(a.token, b.token)) {
+                    throw SqlException.$(b.position, "mixing qualified and unqualified references to the same column in GROUPING SETS");
+                }
+            }
+        }
+    }
+
+    private static void ensureColumnReferences(ObjList<ExpressionNode> columns, int kwPos) throws SqlException {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            ExpressionNode node = columns.getQuick(i);
+            if (node.type != ExpressionNode.LITERAL) {
+                throw SqlException.$(node.position, "column reference expected");
+            }
+        }
+    }
+
+    /**
+     * Returns true if two column tokens refer to the same column but one
+     * is qualified (t.col) and the other is not (col).
+     */
+    private static boolean isSameColumnMixedQualification(CharSequence a, CharSequence b) {
+        int aDot = Chars.indexOf(a, '.');
+        int bDot = Chars.indexOf(b, '.');
+        if ((aDot < 0) == (bDot < 0)) {
+            // Both qualified or both unqualified - no mixed issue
+            return false;
+        }
+        // One is qualified, the other is not. Compare the column name parts.
+        CharSequence aCol = aDot >= 0 ? a.subSequence(aDot + 1, a.length()) : a;
+        CharSequence bCol = bDot >= 0 ? b.subSequence(bDot + 1, b.length()) : b;
+        return Chars.equalsIgnoreCase(aCol, bCol);
+    }
+
     private static void expandCube(QueryModel model, int startIdx, int cubeColumnCount, int position) throws SqlException {
         // 2^N subsets, from the full set (all bits set) down to empty set (0)
         int totalSets = 1 << cubeColumnCount;
@@ -2963,6 +2999,8 @@ public class SqlParser {
                 if (columnList.size() == 0) {
                     throw SqlException.$(kwPos, (isRollup ? "ROLLUP" : "CUBE") + " requires at least one column");
                 }
+                ensureColumnReferences(columnList, kwPos);
+                checkMixedQualification(columnList);
                 if (!isRollup && columnList.size() > 15) {
                     throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
                 }
@@ -3334,6 +3372,8 @@ public class SqlParser {
             if (columns.size() == 0) {
                 throw SqlException.$(kwPos, isRollup ? "ROLLUP requires at least one column" : "CUBE requires at least one column");
             }
+            ensureColumnReferences(columns, kwPos);
+            checkMixedQualification(columns);
             if (!isRollup && columns.size() > 15) {
                 throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
             }
@@ -3375,6 +3415,7 @@ public class SqlParser {
                 if (rollupCols.size() == 0) {
                     throw SqlException.$(kwPos, isRollup ? "ROLLUP requires at least one column" : "CUBE requires at least one column");
                 }
+                ensureColumnReferences(rollupCols, kwPos);
                 if (!isRollup && rollupCols.size() > 15) {
                     throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
                 }
@@ -3382,6 +3423,8 @@ public class SqlParser {
                 for (int i = 0, n = rollupCols.size(); i < n; i++) {
                     model.addGroupBy(rollupCols.getQuick(i));
                 }
+                // Check all columns (plain + rollup) for mixed qualification
+                checkMixedQualification(model.getGroupBy());
                 if (isRollup) {
                     expandRollupComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos);
                 } else {
@@ -3412,11 +3455,9 @@ public class SqlParser {
      * Parses explicit GROUPING SETS ((a, b), (a), ()).
      * The outer parentheses and inner sets with their parentheses.
      * <p>
-     * Unlike ROLLUP/CUBE (which accept expressions via
-     * {@link #parseParenthesizedColumnList}), explicit GROUPING SETS
-     * only accept column references. This is intentional: expressions
-     * in explicit sets create ambiguity in set membership resolution
-     * because the same expression can appear in different forms.
+     * Like ROLLUP/CUBE, explicit GROUPING SETS only accept column
+     * references - expressions are rejected to avoid ambiguity in
+     * set membership resolution.
      */
     private void parseExplicitGroupingSets(
             GenericLexer lexer,
@@ -3424,7 +3465,9 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         expectTok(lexer, '(');
-        // Track column name to index mapping for deduplication
+        // Track column name to index mapping for deduplication.
+        // Dedup uses raw token text; mixing qualified (t.a) and unqualified
+        // (a) references to the same column is rejected below.
         LowerCaseCharSequenceIntHashMap columnIndex = new LowerCaseCharSequenceIntHashMap();
 
         do {
@@ -3447,13 +3490,21 @@ public class SqlParser {
                         throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "column reference expected");
                     }
 
-                    // Find or add column in groupBy (dedup by column name)
-                    CharSequence colName = n.token;
-                    int idx = columnIndex.keyIndex(colName);
+                    // Detect mixed qualified/unqualified references to the
+                    // same column (e.g., both "a" and "t.a"). The dedup map
+                    // uses raw token text, so these would create separate
+                    // entries and produce incorrect grouping sets.
+                    for (int ci = 0, cn = columnIndex.size(); ci < cn; ci++) {
+                        CharSequence existing = columnIndex.keys().getQuick(ci);
+                        if (existing != null && isSameColumnMixedQualification(n.token, existing)) {
+                            throw SqlException.$(n.position, "mixing qualified and unqualified references to the same column in GROUPING SETS");
+                        }
+                    }
+                    int idx = columnIndex.keyIndex(n.token);
                     if (idx >= 0) {
                         int pos = model.getGroupBy().size();
                         model.addGroupBy(n);
-                        columnIndex.putAt(idx, colName, pos);
+                        columnIndex.putAt(idx, n.token, pos);
                         setIndices.add(pos);
                     } else {
                         setIndices.add(columnIndex.valueAt(idx));
