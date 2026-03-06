@@ -577,3 +577,616 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ptr;
+
+    use parquet2::encoding::{uleb128, zigzag_leb128};
+
+    use crate::allocator::{AcVec, TestAllocatorState};
+    use crate::parquet_read::column_sink::Pushable;
+    use crate::parquet_read::decoders::delta_binary_packed::{
+        DeltaBinaryPackedDecoder, MiniblockIterator,
+    };
+    use crate::parquet_read::ColumnChunkBuffers;
+
+    fn create_buffers(allocator: &crate::allocator::QdbAllocator) -> ColumnChunkBuffers {
+        ColumnChunkBuffers {
+            data_size: 0,
+            data_ptr: ptr::null_mut(),
+            data_vec: AcVec::new_in(allocator.clone()),
+            aux_size: 0,
+            aux_ptr: ptr::null_mut(),
+            aux_vec: AcVec::new_in(allocator.clone()),
+            page_buffers: Vec::new(),
+        }
+    }
+
+    fn write_uleb128(buf: &mut Vec<u8>, value: u64) {
+        let mut tmp = [0u8; 10];
+        let len = uleb128::encode(value, &mut tmp);
+        buf.extend_from_slice(&tmp[..len]);
+    }
+
+    fn write_zigzag(buf: &mut Vec<u8>, value: i64) {
+        let (tmp, len) = zigzag_leb128::encode(value);
+        buf.extend_from_slice(&tmp[..len]);
+    }
+
+    /// Bit-pack 32 values at the given bit width (little-endian, LSB first).
+    fn bitpack32(values: &[u64], num_bits: u8) -> Vec<u8> {
+        assert_eq!(values.len(), 32);
+        if num_bits == 0 {
+            return vec![];
+        }
+        let total_bits = 32 * num_bits as usize;
+        let mut bytes = vec![0u8; total_bits / 8];
+        for (i, &v) in values.iter().enumerate() {
+            let bit_offset = i * num_bits as usize;
+            for b in 0..num_bits as usize {
+                if v & (1 << b) != 0 {
+                    let pos = bit_offset + b;
+                    bytes[pos / 8] |= 1 << (pos % 8);
+                }
+            }
+        }
+        bytes
+    }
+
+    /// Encode a slice of i64 values into DELTA_BINARY_PACKED format.
+    /// Uses block_size=128, miniblocks_per_block=4 (miniblock_size=32).
+    fn encode_delta_binary_packed(values: &[i64]) -> Vec<u8> {
+        let block_size: u64 = 128;
+        let miniblocks_per_block: u64 = 4;
+        let miniblock_size = 32usize;
+        let value_count = values.len() as u64;
+
+        let mut buf = Vec::new();
+        write_uleb128(&mut buf, block_size);
+        write_uleb128(&mut buf, miniblocks_per_block);
+        write_uleb128(&mut buf, value_count);
+
+        if values.is_empty() {
+            write_zigzag(&mut buf, 0); // first_value placeholder
+            return buf;
+        }
+
+        write_zigzag(&mut buf, values[0]);
+
+        if values.len() <= 1 {
+            return buf;
+        }
+
+        // Compute deltas (wrapping to handle extreme values)
+        let deltas: Vec<i64> = values.windows(2).map(|w| w[1].wrapping_sub(w[0])).collect();
+
+        // Process in blocks of block_size values (128 deltas)
+        for block_start in (0..deltas.len()).step_by(block_size as usize) {
+            let block_end = (block_start + block_size as usize).min(deltas.len());
+            let block_deltas = &deltas[block_start..block_end];
+            let min_delta = *block_deltas.iter().min().unwrap();
+
+            write_zigzag(&mut buf, min_delta);
+
+            // Compute relative deltas (subtract min_delta)
+            let mut relative: Vec<u64> = block_deltas
+                .iter()
+                .map(|&d| d.wrapping_sub(min_delta) as u64)
+                .collect();
+            // Pad to full block size with zeros
+            relative.resize(block_size as usize, 0);
+
+            // Compute bitwidths per miniblock
+            let mut bitwidths = Vec::new();
+            for mb in 0..miniblocks_per_block as usize {
+                let start = mb * miniblock_size;
+                let end = start + miniblock_size;
+                let max_val = *relative[start..end].iter().max().unwrap();
+                let bw = if max_val == 0 {
+                    0u8
+                } else {
+                    (64 - max_val.leading_zeros()) as u8
+                };
+                bitwidths.push(bw);
+            }
+            buf.extend_from_slice(&bitwidths);
+
+            // Bit-pack each miniblock
+            for (mb, bitwidth) in bitwidths
+                .iter()
+                .enumerate()
+                .take(miniblocks_per_block as usize)
+            {
+                let start = mb * miniblock_size;
+                let end = start + miniblock_size;
+                let packed = bitpack32(&relative[start..end], *bitwidth);
+                buf.extend_from_slice(&packed);
+            }
+        }
+
+        buf
+    }
+
+    /// Helper to decode i32 values using the decoder.
+    fn decode_i32_push_slice(data: &[u8], count: usize) -> Vec<i32> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i32, i32>::try_new(data, &mut buffers, i32::MIN)
+                    .unwrap();
+            decoder.reserve(count).unwrap();
+            decoder.push_slice(count).unwrap();
+            decoder.result().unwrap();
+        }
+        let out: &[i32] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
+        out.to_vec()
+    }
+
+    /// Helper to decode i64 values using the decoder.
+    fn decode_i64_push_slice(data: &[u8], count: usize) -> Vec<i64> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(data, &mut buffers, i64::MIN)
+                    .unwrap();
+            decoder.reserve(count).unwrap();
+            decoder.push_slice(count).unwrap();
+            decoder.result().unwrap();
+        }
+        let out: &[i64] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
+        out.to_vec()
+    }
+
+    /// Helper to decode i32 values one-by-one using push().
+    fn decode_i32_push_one_by_one(data: &[u8], count: usize) -> Vec<i32> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i32, i32>::try_new(data, &mut buffers, i32::MIN)
+                    .unwrap();
+            decoder.reserve(count).unwrap();
+            for _ in 0..count {
+                decoder.push().unwrap();
+            }
+            decoder.result().unwrap();
+        }
+        let out: &[i32] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
+        out.to_vec()
+    }
+
+    // ─── Happy path tests ───
+
+    #[test]
+    fn single_value_i32() {
+        let data = encode_delta_binary_packed(&[42]);
+        let result = decode_i32_push_slice(&data, 1);
+        assert_eq!(result, vec![42]);
+    }
+
+    #[test]
+    fn single_value_i64() {
+        let data = encode_delta_binary_packed(&[42]);
+        let result = decode_i64_push_slice(&data, 1);
+        assert_eq!(result, vec![42i64]);
+    }
+
+    #[test]
+    fn single_value_negative() {
+        let data = encode_delta_binary_packed(&[-100]);
+        let result = decode_i64_push_slice(&data, 1);
+        assert_eq!(result, vec![-100i64]);
+    }
+
+    #[test]
+    fn ascending_sequence_push() {
+        let values: Vec<i64> = (100..133).collect(); // 33 values
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i32_push_one_by_one(&data, values.len());
+        let expected: Vec<i32> = values.iter().map(|&v| v as i32).collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn ascending_sequence_push_slice() {
+        let values: Vec<i64> = (100..133).collect();
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i32_push_slice(&data, values.len());
+        let expected: Vec<i32> = values.iter().map(|&v| v as i32).collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn descending_sequence() {
+        let values: Vec<i64> = (0..33).rev().collect(); // 32, 31, ..., 0
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i64_push_slice(&data, values.len());
+        assert_eq!(result, values);
+    }
+
+    #[test]
+    fn constant_values() {
+        let values = vec![7i64; 33];
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i64_push_slice(&data, values.len());
+        assert_eq!(result, values);
+    }
+
+    #[test]
+    fn variable_deltas() {
+        // Deltas: 1, 3, 2, 5, 1, 4, ...
+        let values: Vec<i64> = vec![
+            10, 11, 14, 16, 21, 22, 26, 30, 31, 35, 40, 41, 45, 50, 51, 55, 60, 61, 65, 70, 71, 75,
+            80, 81, 85, 90, 91, 95, 100, 101, 105, 110, 111,
+        ];
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i64_push_slice(&data, values.len());
+        assert_eq!(result, values);
+    }
+
+    #[test]
+    fn multiple_miniblocks() {
+        // 97 values = 96 deltas = 3 miniblocks of 32
+        let values: Vec<i64> = (0..97).map(|i| i * 2).collect();
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i64_push_slice(&data, values.len());
+        assert_eq!(result, values);
+    }
+
+    #[test]
+    fn multiple_blocks() {
+        // 130 values = 129 deltas, which exceeds block_size=128
+        let values: Vec<i64> = (0..130).map(|i| i * 3 + 1).collect();
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i64_push_slice(&data, values.len());
+        assert_eq!(result, values);
+    }
+
+    #[test]
+    fn push_null_and_push_nulls() {
+        let values: Vec<i64> = (0..5).collect();
+        let data = encode_delta_binary_packed(&values);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        let null_val: i64 = i64::MIN;
+        let total = 8; // 5 real + 3 nulls
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, null_val)
+                    .unwrap();
+            decoder.reserve(total).unwrap();
+            // push 2 values, 1 null, 3 values, 2 nulls
+            decoder.push_slice(2).unwrap();
+            decoder.push_null().unwrap();
+            decoder.push_slice(3).unwrap();
+            decoder.push_nulls(2).unwrap();
+            decoder.result().unwrap();
+        }
+        let out: &[i64] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), total) };
+        assert_eq!(out, &[0, 1, null_val, 2, 3, 4, null_val, null_val]);
+    }
+
+    #[test]
+    fn skip_values() {
+        // [0, 1, 2, 3, 4, 5, 6, 7, ...] — skip first 3, then read next 5
+        let values: Vec<i64> = (0..33).collect();
+        let data = encode_delta_binary_packed(&values);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        let count = 5;
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN)
+                    .unwrap();
+            decoder.reserve(count).unwrap();
+            decoder.skip(3).unwrap();
+            decoder.push_slice(count).unwrap();
+            decoder.result().unwrap();
+        }
+        let out: &[i64] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
+        assert_eq!(out, &[3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn mixed_push_skip_null() {
+        let values: Vec<i64> = (10..43).collect(); // 33 values: 10..42
+        let data = encode_delta_binary_packed(&values);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        let null_val: i64 = -1;
+        // push 1, skip 2, null 1, push 3
+        let total = 5;
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, null_val)
+                    .unwrap();
+            decoder.reserve(total).unwrap();
+            decoder.push().unwrap(); // 10
+            decoder.skip(2).unwrap(); // skip 11, 12
+            decoder.push_null().unwrap(); // null
+            decoder.push_slice(3).unwrap(); // 13, 14, 15
+            decoder.result().unwrap();
+        }
+        let out: &[i64] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), total) };
+        assert_eq!(out, &[10, null_val, 13, 14, 15]);
+    }
+
+    #[test]
+    fn push_slice_zero_is_noop() {
+        let data = encode_delta_binary_packed(&[42]);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN)
+                    .unwrap();
+            decoder.reserve(1).unwrap();
+            decoder.push_slice(0).unwrap();
+            decoder.push_slice(1).unwrap();
+            decoder.result().unwrap();
+        }
+        let out: &[i64] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), 1) };
+        assert_eq!(out, &[42]);
+    }
+
+    #[test]
+    fn skip_zero_is_noop() {
+        let data = encode_delta_binary_packed(&[42]);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN)
+                    .unwrap();
+            decoder.reserve(1).unwrap();
+            decoder.skip(0).unwrap();
+            decoder.push_slice(1).unwrap();
+            decoder.result().unwrap();
+        }
+        let out: &[i64] =
+            unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), 1) };
+        assert_eq!(out, &[42]);
+    }
+
+    #[test]
+    fn large_values_i32() {
+        // Values near i32 boundaries with small deltas (stay within 32-bit delta range).
+        let values: Vec<i64> = vec![
+            i32::MAX as i64 - 2,
+            i32::MAX as i64 - 1,
+            i32::MAX as i64,
+            i32::MAX as i64 - 5,
+            i32::MAX as i64 - 10,
+        ];
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i32_push_slice(&data, values.len());
+        let expected: Vec<i32> = values.iter().map(|&v| v as i32).collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn large_values_i64() {
+        // Values near i64 boundaries with small deltas.
+        let values = vec![
+            i64::MAX - 10,
+            i64::MAX - 5,
+            i64::MAX - 2,
+            i64::MAX - 1,
+            i64::MAX,
+        ];
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i64_push_slice(&data, values.len());
+        assert_eq!(result, values);
+    }
+
+    #[test]
+    fn get_end_pointer_single_value() {
+        let data = encode_delta_binary_packed(&[42]);
+        let (iter, _first) = MiniblockIterator::<i64>::try_new(&data).unwrap();
+        let end = iter.get_end_pointer().unwrap();
+        // Single value: no blocks, end pointer should equal page_data start
+        let page_data_ptr = iter.page_data.as_ptr();
+        assert_eq!(end, page_data_ptr);
+    }
+
+    #[test]
+    fn get_end_pointer_with_blocks() {
+        let values: Vec<i64> = (0..33).collect();
+        let data = encode_delta_binary_packed(&values);
+        let (iter, _first) = MiniblockIterator::<i64>::try_new(&data).unwrap();
+        let end = iter.get_end_pointer().unwrap();
+        // End pointer should be at or past the start of page_data
+        assert!(end >= iter.page_data.as_ptr());
+        // End pointer should not exceed the original data buffer
+        let data_end = unsafe { data.as_ptr().add(data.len()) };
+        assert!(end <= data_end);
+    }
+
+    // ─── Unhappy path tests ───
+
+    #[test]
+    fn empty_data() {
+        let err = MiniblockIterator::<i64>::try_new(&[]).err().unwrap();
+        let msg = format!("{err}");
+        // Empty input decodes block_size as 0, triggering the zero check.
+        assert!(
+            msg.contains("block size must be greater than zero"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn block_size_zero() {
+        let mut data = Vec::new();
+        write_uleb128(&mut data, 0); // block_size = 0
+        write_uleb128(&mut data, 4); // miniblocks_per_block
+        write_uleb128(&mut data, 1); // value_count
+        write_zigzag(&mut data, 0); // first_value
+
+        let err = MiniblockIterator::<i64>::try_new(&data).err().unwrap();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("block size must be greater than zero"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn miniblocks_per_block_zero() {
+        let mut data = Vec::new();
+        write_uleb128(&mut data, 128); // block_size
+        write_uleb128(&mut data, 0); // miniblocks_per_block = 0
+        write_uleb128(&mut data, 1); // value_count
+        write_zigzag(&mut data, 0); // first_value
+
+        let err = MiniblockIterator::<i64>::try_new(&data).err().unwrap();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("miniblocks-per-block must be greater than zero"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn block_size_not_divisible_by_miniblock_count() {
+        let mut data = Vec::new();
+        write_uleb128(&mut data, 100); // block_size = 100, not divisible by 3
+        write_uleb128(&mut data, 3); // miniblocks_per_block
+        write_uleb128(&mut data, 1); // value_count
+        write_zigzag(&mut data, 0); // first_value
+
+        let err = MiniblockIterator::<i64>::try_new(&data).err().unwrap();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("not divisible by miniblock count"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn miniblock_size_not_multiple_of_32() {
+        let mut data = Vec::new();
+        write_uleb128(&mut data, 48); // block_size = 48
+        write_uleb128(&mut data, 1); // miniblocks_per_block = 1 → miniblock_size = 48
+        write_uleb128(&mut data, 1); // value_count
+        write_zigzag(&mut data, 0); // first_value
+
+        let err = MiniblockIterator::<i64>::try_new(&data).err().unwrap();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("must be a non-zero multiple of 32"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn truncated_after_block_size() {
+        // block_size=128 [0x80, 0x01], then only a single byte left.
+        // ULEB128 decode is tolerant, but the decoded values will be nonsensical
+        // and downstream validation catches the error.
+        let data = vec![0x80, 0x01]; // block_size=128, miniblocks_per_block will decode as 0
+        let err = MiniblockIterator::<i64>::try_new(&data).err().unwrap();
+        let msg = format!("{err}");
+        // miniblocks_per_block decodes as 0, which triggers the zero check
+        assert!(
+            msg.contains("miniblocks-per-block must be greater than zero"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn truncated_block_missing_min_delta() {
+        // Valid header indicating 33 values (requiring blocks), but no block data at all.
+        let mut data = Vec::new();
+        write_uleb128(&mut data, 128); // block_size
+        write_uleb128(&mut data, 4); // miniblocks_per_block
+        write_uleb128(&mut data, 33); // value_count > 1, needs blocks
+        write_zigzag(&mut data, 0); // first_value
+                                    // Block needs min_delta + bitwidths + packed data, but nothing follows.
+
+        let err = MiniblockIterator::<i64>::try_new(&data).err().unwrap();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("block header exceeds page size")
+                || msg.contains("block offset out of bounds"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn header_only_no_block_data() {
+        // Valid header with value_count=5 but no block data after header.
+        // The decoder should fail when trying to advance to the first block.
+        let mut data = Vec::new();
+        write_uleb128(&mut data, 128);
+        write_uleb128(&mut data, 4);
+        write_uleb128(&mut data, 5);
+        write_zigzag(&mut data, 100); // first_value
+                                      // No block data follows
+
+        let err = MiniblockIterator::<i64>::try_new(&data).err().unwrap();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("block header exceeds page size")
+                || msg.contains("failed to decode min delta")
+                || msg.contains("block offset out of bounds"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn push_beyond_available_values() {
+        // Encode only 2 values but try to decode 5
+        let data = encode_delta_binary_packed(&[1, 2]);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        let result = {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN)
+                    .unwrap();
+            // We can decode up to block_size + 1 values (padded), but eventually run out of miniblocks.
+            // Requesting far more values than available triggers "not enough values to iterate".
+            decoder.reserve(200).unwrap();
+            decoder.push_slice(200)
+        };
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("not enough values"), "got: {msg}");
+    }
+
+    #[test]
+    fn truncated_block_data() {
+        // Build a valid header for multiple values but truncate the block data.
+        let mut data = Vec::new();
+        write_uleb128(&mut data, 128); // block_size
+        write_uleb128(&mut data, 4); // miniblocks_per_block
+        write_uleb128(&mut data, 33); // value_count (needs blocks)
+        write_zigzag(&mut data, 0); // first_value
+                                    // Block header needs min_delta + 4 bitwidth bytes + packed data, but we provide nothing.
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        let result = DeltaBinaryPackedDecoder::<i64, i64>::try_new(&data, &mut buffers, i64::MIN);
+        assert!(result.is_err());
+    }
+}
