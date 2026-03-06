@@ -93,6 +93,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.updateOp = null;
         this.statementName = null;
         this.operation = null;
+        this.cacheable = false;
         this.isExecutedAtParseTime = false;
         this.done = false;
     }
@@ -215,7 +216,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    @SuppressWarnings("unused")
+    public void ofAlterStoragePolicy() {
+        of(ALTER_STORAGE_POLICY);
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofAlterUser() {
         of(ALTER_USER);
         this.isExecutedAtParseTime = true;
@@ -273,7 +278,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    @SuppressWarnings("unused")
     public void ofCreateUser() {
         of(CREATE_USER);
         this.isExecutedAtParseTime = true;
@@ -313,9 +317,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    // although executor was there it had to fail back to the model
-    // used in enterprise version . Do NOT remove.
-    @SuppressWarnings("unused")
+    // although executor was there it had to fall back to the model
+    // used in enterprise version. Do NOT remove.
     public void ofNone() {
         of(NONE);
     }
@@ -407,14 +410,13 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.sqlStatement = sqlText;
     }
 
-    private CompiledQuery of(short type) {
-        return of(type, null);
+    private void of(short type) {
+        of(type, null);
     }
 
-    private CompiledQuery of(short type, RecordCursorFactory factory) {
+    private void of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
         this.affectedRowsCount = -1;
-        return this;
     }
 }

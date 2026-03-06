@@ -1499,16 +1499,7 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
-        if (tok != null && isTtlKeyword(tok)) {
-            final int ttlValuePos = lexer.getPosition();
-            final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
-            if (partitionBy != -1) {
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
-            }
-            tableOpBuilder.setTtlHoursOrMonths(ttlHoursOrMonths);
-            tableOpBuilder.setTtlPosition(ttlValuePos);
-            tok = optTok(lexer);
-        }
+        tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, tableOpBuilder, true);
 
         if (tok != null && isInKeyword(tok)) {
             parseInVolume(lexer, tableOpBuilder);
@@ -1660,13 +1651,7 @@ public class SqlParser {
             builder.setPartitionByExpr(partitionByExpr);
             tok = optTok(lexer);
 
-            if (tok != null && isTtlKeyword(tok)) {
-                final int ttlValuePos = lexer.getPosition();
-                final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
-                builder.setTtlHoursOrMonths(ttlHoursOrMonths);
-                tok = optTok(lexer);
-            }
+            tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, builder, false);
 
             if (tok != null) {
                 if (isWalKeyword(tok)) {
@@ -5091,7 +5076,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false);
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);

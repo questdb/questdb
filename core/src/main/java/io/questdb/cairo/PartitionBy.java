@@ -137,12 +137,12 @@ public final class PartitionBy {
                 }
                 break;
             case MONTH:
-                if (ttlHoursOrMonths < 0) {
+                if (ttlHoursOrMonths < 1) {
                     return;
                 }
                 break;
             case YEAR:
-                if (ttlHoursOrMonths < 0 && ttlHoursOrMonths % 12 == 0) {
+                if (ttlHoursOrMonths < 1 && ttlHoursOrMonths % 12 == 0) {
                     return;
                 }
                 break;

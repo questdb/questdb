@@ -173,6 +173,18 @@ public class TableUtilsTest extends AbstractTest {
     }
 
     @Test
+    public void testIsUnsolicitedTableLock() {
+        // Internal background job reasons are NOT unsolicited
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_WRITE_REASON));
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_RESUME_REASON));
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.SP_TABLE_WRITE_REASON));
+
+        // Any other reason IS unsolicited
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock("ALTER TABLE"));
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock("test"));
+    }
+
+    @Test
     public void testIsValidColumnName() {
         testIsValidColumnName('?', false);
         testIsValidColumnName('.', false);
