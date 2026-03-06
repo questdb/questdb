@@ -32,89 +32,47 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Exception thrown when parsing QWP v1 protocol data fails.
- * <p>
- * This exception is designed to be flyweight-friendly for error reporting
- * while avoiding allocations on hot paths by using cached instances for
- * common error types.
  */
 public class QwpParseException extends Exception implements Sinkable, FlyweightMessageContainer {
 
-    private static final QwpParseException BIT_READ_OVERFLOW = new QwpParseException(ErrorCode.BIT_READ_OVERFLOW, "attempt to read beyond available bits");
-    private static final QwpParseException HEADER_TOO_SHORT = new QwpParseException(ErrorCode.HEADER_TOO_SHORT, "message header too short");
-    // Pre-allocated instances for common errors to avoid allocation on hot paths
-    private static final QwpParseException INCOMPLETE_VARINT = new QwpParseException(ErrorCode.INCOMPLETE_VARINT, "incomplete varint: buffer underflow");
-    private static final QwpParseException INSUFFICIENT_DATA = new QwpParseException(ErrorCode.INSUFFICIENT_DATA, "insufficient data for column");
-    private static final QwpParseException INVALID_MAGIC = new QwpParseException(ErrorCode.INVALID_MAGIC, "invalid magic bytes");
-    private static final QwpParseException PAYLOAD_TOO_LARGE = new QwpParseException(ErrorCode.PAYLOAD_TOO_LARGE, "payload exceeds maximum size");
-    private static final QwpParseException UNSUPPORTED_VERSION = new QwpParseException(ErrorCode.UNSUPPORTED_VERSION, "unsupported protocol version");
-    private static final QwpParseException VARINT_OVERFLOW = new QwpParseException(ErrorCode.VARINT_OVERFLOW, "varint overflow: too many continuation bytes");
     private final ErrorCode errorCode;
     private final StringSink messageSink = new StringSink();
-    private long byteOffset = -1;
 
     public QwpParseException(ErrorCode errorCode, CharSequence message) {
         this.errorCode = errorCode;
         this.messageSink.put(message);
     }
 
-    /**
-     * Returns a cached exception for bit read overflow.
-     */
     public static QwpParseException bitReadOverflow() {
-        return BIT_READ_OVERFLOW;
+        return new QwpParseException(ErrorCode.BIT_READ_OVERFLOW, "attempt to read beyond available bits");
     }
 
-    /**
-     * Creates a new exception with a custom message.
-     *
-     * @param errorCode the error code
-     * @param message   the error message
-     * @return a new exception instance
-     */
     public static QwpParseException create(ErrorCode errorCode, CharSequence message) {
         return new QwpParseException(errorCode, message);
     }
 
-    /**
-     * Returns a cached exception for header too short.
-     */
     public static QwpParseException headerTooShort() {
-        return HEADER_TOO_SHORT;
+        return new QwpParseException(ErrorCode.HEADER_TOO_SHORT, "message header too short");
     }
 
-    /**
-     * Returns a cached exception for incomplete varint.
-     */
     public static QwpParseException incompleteVarint() {
-        return INCOMPLETE_VARINT;
+        return new QwpParseException(ErrorCode.INCOMPLETE_VARINT, "incomplete varint: buffer underflow");
     }
 
-    /**
-     * Returns a cached exception for invalid magic bytes.
-     */
     public static QwpParseException invalidMagic() {
-        return INVALID_MAGIC;
+        return new QwpParseException(ErrorCode.INVALID_MAGIC, "invalid magic bytes");
     }
 
-    /**
-     * Returns a cached exception for payload too large.
-     */
     public static QwpParseException payloadTooLarge() {
-        return PAYLOAD_TOO_LARGE;
+        return new QwpParseException(ErrorCode.PAYLOAD_TOO_LARGE, "payload exceeds maximum size");
     }
 
-    /**
-     * Returns a cached exception for unsupported version.
-     */
     public static QwpParseException unsupportedVersion() {
-        return UNSUPPORTED_VERSION;
+        return new QwpParseException(ErrorCode.UNSUPPORTED_VERSION, "unsupported protocol version");
     }
 
-    /**
-     * Returns a cached exception for varint overflow.
-     */
     public static QwpParseException varintOverflow() {
-        return VARINT_OVERFLOW;
+        return new QwpParseException(ErrorCode.VARINT_OVERFLOW, "varint overflow: too many continuation bytes");
     }
 
     public ErrorCode getErrorCode() {
@@ -128,18 +86,12 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
 
     @Override
     public String getMessage() {
-        if (byteOffset >= 0) {
-            return messageSink.toString() + " at byte offset " + byteOffset;
-        }
         return messageSink.toString();
     }
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.put(errorCode.name()).put(": ").put(messageSink);
-        if (byteOffset >= 0) {
-            sink.put(" at byte offset ").put(byteOffset);
-        }
     }
 
     /**
@@ -151,7 +103,6 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
         INVALID_MAGIC,
         HEADER_TOO_SHORT,
         PAYLOAD_TOO_LARGE,
-        INVALID_UTF8,
         INVALID_COLUMN_TYPE,
         SCHEMA_NOT_FOUND,
         INSUFFICIENT_DATA,
