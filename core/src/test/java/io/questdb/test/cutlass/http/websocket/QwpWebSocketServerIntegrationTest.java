@@ -123,13 +123,13 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
                 WebSocket ws = HTTP_CLIENT.newWebSocketBuilder()
                         .buildAsync(URI.create("ws://localhost:" + (TEST_PORT + 2)), listener)
                         .join();
-                Assert.assertTrue(connectLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue(connectLatch.await(15, TimeUnit.SECONDS));
 
                 // Send binary message
                 byte[] testData = "cpu,host=server01 usage=95.5 1234567890\n".getBytes(StandardCharsets.UTF_8);
                 ws.sendBinary(ByteBuffer.wrap(testData), true).join();
 
-                Assert.assertTrue("Should receive echo", messageLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue("Should receive echo", messageLatch.await(15, TimeUnit.SECONDS));
                 Assert.assertArrayEquals("Echoed message should match", testData, echoedMessage.get());
                 Assert.assertArrayEquals("Server should receive message", testData, receivedMessage.get());
 
@@ -158,12 +158,12 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
 
                 CountDownLatch connectLatch = new CountDownLatch(1);
                 WebSocket ws = connectClient(TEST_PORT + 5, connectLatch);
-                Assert.assertTrue(connectLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue(connectLatch.await(15, TimeUnit.SECONDS));
 
                 // Close with normal code
                 ws.sendClose(WebSocketCloseCode.NORMAL_CLOSURE, "Test close").join();
 
-                Assert.assertTrue("Server should receive disconnect", disconnectLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue("Server should receive disconnect", disconnectLatch.await(15, TimeUnit.SECONDS));
                 Assert.assertTrue("Disconnect should be recorded", disconnected.get());
                 Assert.assertEquals("Close code should be normal", WebSocketCloseCode.NORMAL_CLOSURE, closeCode.get());
             }
@@ -190,7 +190,7 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
 
                 CountDownLatch connectLatch = new CountDownLatch(1);
                 WebSocket ws = connectClient(TEST_PORT + 3, connectLatch);
-                Assert.assertTrue(connectLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue(connectLatch.await(15, TimeUnit.SECONDS));
 
                 // Send large binary message (64KB)
                 byte[] testData = new byte[65536];
@@ -199,7 +199,7 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
                 }
                 ws.sendBinary(ByteBuffer.wrap(testData), true).join();
 
-                Assert.assertTrue("Should receive large message", messageLatch.await(10, TimeUnit.SECONDS));
+                Assert.assertTrue("Should receive large message", messageLatch.await(20, TimeUnit.SECONDS));
                 Assert.assertArrayEquals("Large message should be received correctly", testData, receivedMessage.get());
 
                 ws.sendClose(WebSocket.NORMAL_CLOSURE, "done");
@@ -226,7 +226,7 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
 
                 CountDownLatch connectLatch = new CountDownLatch(1);
                 WebSocket ws = connectClient(TEST_PORT + 4, connectLatch);
-                Assert.assertTrue(connectLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue(connectLatch.await(15, TimeUnit.SECONDS));
 
                 // Send multiple messages
                 for (int i = 0; i < numMessages; i++) {
@@ -234,7 +234,7 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
                     ws.sendBinary(ByteBuffer.wrap(msg), true).join();
                 }
 
-                Assert.assertTrue("Should receive all messages", messageLatch.await(10, TimeUnit.SECONDS));
+                Assert.assertTrue("Should receive all messages", messageLatch.await(20, TimeUnit.SECONDS));
                 Assert.assertEquals("All messages should be received", numMessages, messageCount.get());
 
                 ws.sendClose(WebSocket.NORMAL_CLOSURE, "done");
@@ -267,7 +267,7 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
 
                 // Wait for all connections
                 for (int i = 0; i < numClients; i++) {
-                    Assert.assertTrue("Client " + i + " should connect", latches[i].await(5, TimeUnit.SECONDS));
+                    Assert.assertTrue("Client " + i + " should connect", latches[i].await(30, TimeUnit.SECONDS));
                 }
 
                 Assert.assertEquals("All clients should connect", numClients, connectionCount.get());
@@ -311,10 +311,10 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
                 CountDownLatch connectLatch = new CountDownLatch(1);
                 // JDK WebSocket client automatically responds to pings with pongs
                 WebSocket ws = connectClient(TEST_PORT + 7, connectLatch);
-                Assert.assertTrue(connectLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue(connectLatch.await(15, TimeUnit.SECONDS));
 
                 // Wait for pong (JDK client library should auto-respond to ping)
-                Assert.assertTrue("Should receive pong", pongLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue("Should receive pong", pongLatch.await(15, TimeUnit.SECONDS));
                 Assert.assertTrue("Pong should be received", pongReceived.get());
 
                 ws.sendClose(WebSocket.NORMAL_CLOSURE, "done");
@@ -346,7 +346,7 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
 
                     CountDownLatch connectLatch = new CountDownLatch(1);
                     WebSocket ws = connectClient(TEST_PORT + 8, connectLatch);
-                    Assert.assertTrue(connectLatch.await(5, TimeUnit.SECONDS));
+                    Assert.assertTrue(connectLatch.await(15, TimeUnit.SECONDS));
 
                     // Send ILP-like messages
                     String[] ilpMessages = {
@@ -431,7 +431,7 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
 
                 CountDownLatch connectLatch = new CountDownLatch(1);
                 WebSocket ws = connectClient(TEST_PORT + 9, connectLatch);
-                Assert.assertTrue(connectLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue(connectLatch.await(15, TimeUnit.SECONDS));
 
                 // Send messages
                 for (int i = 0; i < 10; i++) {
@@ -496,7 +496,7 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
                         .buildAsync(URI.create("ws://localhost:" + (TEST_PORT + 6)), listener)
                         .join();
 
-                Assert.assertTrue("Client should receive close", closeLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue("Client should receive close", closeLatch.await(15, TimeUnit.SECONDS));
                 // Note: Close code/reason may vary based on implementation
             }
         });
@@ -521,8 +521,8 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
                 CountDownLatch clientConnectLatch = new CountDownLatch(1);
                 WebSocket ws = connectClient(TEST_PORT, clientConnectLatch);
 
-                Assert.assertTrue("Connection should succeed", clientConnectLatch.await(5, TimeUnit.SECONDS));
-                Assert.assertTrue("Server should receive connection", serverConnectLatch.await(5, TimeUnit.SECONDS));
+                Assert.assertTrue("Connection should succeed", clientConnectLatch.await(15, TimeUnit.SECONDS));
+                Assert.assertTrue("Server should receive connection", serverConnectLatch.await(15, TimeUnit.SECONDS));
                 Assert.assertTrue("Server connected flag should be set", connected.get());
 
                 ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();

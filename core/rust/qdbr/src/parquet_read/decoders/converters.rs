@@ -23,6 +23,16 @@ where
     _marker: std::marker::PhantomData<(A, B)>,
 }
 
+impl<A, B> Default for PrimitiveConverter<A, B>
+where
+    B: 'static + Copy,
+    A: AsPrimitive<B>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<A, B> PrimitiveConverter<A, B>
 where
     B: 'static + Copy,
@@ -79,6 +89,12 @@ pub mod int32 {
         }
     }
 
+    impl Default for DayToMillisConverter {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl DayToMillisConverter {
         pub fn new() -> Self {
             Self
@@ -115,6 +131,12 @@ pub mod int96 {
         }
     }
 
+    impl Default for Int96ToTimestampConverter {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl Int96ToTimestampConverter {
         pub fn new() -> Self {
             Self
@@ -129,6 +151,12 @@ pub mod int128 {
 
     /// Converts Parquet UUID binary order into QuestDB in-memory order.
     pub struct Int128ToUuidConverter {}
+
+    impl Default for Int128ToUuidConverter {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
 
     impl Int128ToUuidConverter {
         pub fn new() -> Self {
