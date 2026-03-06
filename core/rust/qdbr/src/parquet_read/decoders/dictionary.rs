@@ -15,6 +15,9 @@ pub trait VarDictDecoder {
     fn get_dict_value(&self, index: u32) -> &[u8];
     fn avg_key_len(&self) -> f32;
     fn len(&self) -> u32;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Variable-width dictionary represented as slices into the dictionary page.
@@ -128,6 +131,10 @@ pub trait PrimitiveDictDecoder<T> {
 
     /// Number of values in this dictionary.
     fn len(&self) -> u32;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// A dictionary decoder for primitive types.

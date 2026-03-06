@@ -25,6 +25,7 @@ impl RepeatN {
     }
 
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u32> {
         if self.remaining > 0 {
             self.remaining -= 1;
@@ -58,6 +59,7 @@ pub enum RleIterator<'a> {
 #[allow(clippy::should_implement_trait)]
 impl RleIterator<'_> {
     #[inline(always)]
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u32> {
         match self {
             RleIterator::Bitpacked(iter) => iter.next(),

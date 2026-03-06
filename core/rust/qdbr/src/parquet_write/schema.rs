@@ -331,7 +331,7 @@ pub struct Column<'a> {
 }
 
 impl<'a> Column<'a> {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
     pub fn from_raw_data(
         id: i32,
         name: &'a str,

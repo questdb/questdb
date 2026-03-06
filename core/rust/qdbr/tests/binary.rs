@@ -19,12 +19,10 @@ fn generate_values(count: usize) -> Vec<ByteArray> {
 }
 
 fn assert_binary(nulls: &[bool], data: &[u8]) {
-    let row_count = nulls.len();
-
     // Binary format in QuestDB: each value is i64 length + raw bytes; null = i64(-1)
     let mut offset = 0;
-    for i in 0..row_count {
-        if nulls[i] {
+    for (i, &is_null) in nulls.iter().enumerate() {
+        if is_null {
             let len = i64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
             assert_eq!(len, -1, "row {i}: null binary should have length -1");
             offset += 8;
