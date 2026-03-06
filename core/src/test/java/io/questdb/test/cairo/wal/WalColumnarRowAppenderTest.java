@@ -4097,7 +4097,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             Unsafe.getUnsafe().putInt(offsetArrayAddr + (long) valueCount * 4, stringOffset);
 
             // Initialize cursor
-            cursor.of(dataAddress, dataLength, rowCount, (byte) 0x07, nullable);
+            cursor.of(dataAddress, rowCount, (byte) 0x07, nullable);
         }
 
         @Override

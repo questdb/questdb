@@ -62,7 +62,6 @@ public class QwpTableBlockCursor implements Mutable {
     // Type-bucketed column indices for monomorphic advanceRow() calls
     private int[] booleanColumnIndices = new int[16];
     // Wire position tracking
-    private int bytesConsumed;
     private int columnCount;
     // Column definitions from schema
     private QwpColumnDef[] columnDefs;
@@ -97,7 +96,6 @@ public class QwpTableBlockCursor implements Mutable {
         currentRow = -1;
         gorillaEnabled = false;
         columnDefs = null;
-        bytesConsumed = 0;
         connectionSymbolDict = null;
         deltaSymbolDictEnabled = false;
 
@@ -386,7 +384,6 @@ public class QwpTableBlockCursor implements Mutable {
             offset += consumed;
         }
 
-        this.bytesConsumed = offset;
         this.currentRow = -1;
 
         return offset;
@@ -486,7 +483,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, strCursor);
                 }
                 stringColumnIndices[stringColumnCount++] = colIndex;
-                return strCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
+                return strCursor.of(dataAddress, rowCount, typeCode, nullable);
 
             case TYPE_SYMBOL:
                 QwpSymbolColumnCursor symCursor;

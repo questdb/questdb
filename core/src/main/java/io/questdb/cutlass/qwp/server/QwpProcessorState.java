@@ -30,7 +30,6 @@ import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
-import io.questdb.cutlass.http.processors.SendStatus;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
@@ -48,7 +47,6 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -62,7 +60,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private final StringSink error = new StringSink();
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
-    private final QwpSchemaCache schemaCache;
     private final QwpStreamingDecoder streamingDecoder;
     // Per-connection symbol ID cache: clientSymbolId → tableSymbolId
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
@@ -73,7 +70,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private int bufferPosition;
     private int bufferSize;
     private Status currentStatus = Status.OK;
-    private long errorId;
     private long fd = -1;
 
     // WebSocket connection state — persists across ILP messages, reset by onDisconnected()
@@ -83,7 +79,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private int recvBufferLen;
     private SecurityContext securityContext;
     private SendState sendState = SendState.READY;
-    private SendStatus sendStatus = SendStatus.NONE;
     private long sequenceInBuffer = -1;
     private boolean wsHandshakeSent;
 
@@ -96,8 +91,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         assert initBufferSize > 0;
         this.maxBufferSize = Math.min(configuration.getMaxRecvBufferSize(), Integer.MAX_VALUE);
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
-        this.schemaCache = new QwpSchemaCache();
-        this.streamingDecoder = new QwpStreamingDecoder(schemaCache);
+        this.streamingDecoder = new QwpStreamingDecoder(new QwpSchemaCache());
         this.walAppender = new QwpWalAppender(
                 configuration.autoCreateNewColumns(),
                 engine.getConfiguration().getMaxFileNameLength()
@@ -138,7 +132,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         error.clear();
         currentStatus = Status.OK;
         bufferPosition = 0;
-        sendStatus = SendStatus.NONE;
         streamingDecoder.reset();
     }
 
@@ -349,15 +342,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
                 && highestProcessedSequence - lastAckedSequence >= batchSize;
     }
 
-    private static String generateErrorId() {
-        return UUID.randomUUID().toString().substring(24, 36);
-    }
-
     private void ensureCapacity(int required) {
         if (required > bufferSize) {
             int newSize = Math.max(bufferSize * 2, required);
-            long newAddress = Unsafe.realloc(bufferAddress, bufferSize, newSize, MemoryTag.NATIVE_HTTP_CONN);
-            bufferAddress = newAddress;
+            bufferAddress = Unsafe.realloc(bufferAddress, bufferSize, newSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferSize = newSize;
         }
     }
@@ -368,18 +356,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     public enum Status {
-        OK(null, 204),
-        PARSE_ERROR("invalid", 400),
-        SECURITY_ERROR("unauthorised", 403),
-        INTERNAL_ERROR("internal error", 500),
-        NOT_ACCEPTING_WRITES("not accepting writes", 421);
-
-        private final String codeStr;
-        private final int responseCode;
-
-        Status(String codeStr, int responseCode) {
-            this.codeStr = codeStr;
-            this.responseCode = responseCode;
-        }
+        OK,
+        PARSE_ERROR,
+        SECURITY_ERROR,
+        INTERNAL_ERROR,
+        NOT_ACCEPTING_WRITES
     }
 }

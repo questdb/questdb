@@ -56,7 +56,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     // Wire pointers
     private long nullBitmapAddress;
     private boolean nullable;
-    private int rowCount;
     private long secondTimestamp;
     // Configuration
     private byte typeCode;
@@ -96,7 +95,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     public void clear() {
         typeCode = 0;
         nullable = false;
-        rowCount = 0;
         gorillaEnabled = false;
         nullBitmapAddress = 0;
         valuesAddress = 0;
@@ -175,7 +173,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                   boolean gorillaEnabled) throws QwpParseException {
         this.typeCode = typeCode;
         this.nullable = nullable;
-        this.rowCount = rowCount;
 
         int offset = 0;
         int nullCount = 0;

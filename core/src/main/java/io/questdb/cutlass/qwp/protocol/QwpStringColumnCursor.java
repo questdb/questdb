@@ -128,13 +128,12 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
      * Initializes this cursor for the given column data.
      *
      * @param dataAddress address of column data
-     * @param dataLength  available bytes
      * @param rowCount    number of rows
      * @param typeCode    column type code (TYPE_STRING or TYPE_VARCHAR)
      * @param nullable    whether column is nullable
      * @return bytes consumed from dataAddress
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable) {
+    public int of(long dataAddress, int rowCount, byte typeCode, boolean nullable) {
         this.typeCode = typeCode;
         this.nullable = nullable;
 
