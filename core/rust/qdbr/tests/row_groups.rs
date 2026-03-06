@@ -71,7 +71,11 @@ fn test_filtered_fill_nulls() {
             assert_eq!(val, i as i64 * 100, "selected row {i} mismatch");
         } else {
             // Non-selected row: should be null sentinel
-            assert_eq!(val, nulls::LONG, "non-selected row {i} should be null sentinel");
+            assert_eq!(
+                val,
+                nulls::LONG,
+                "non-selected row {i} should be null sentinel"
+            );
         }
     }
 }
@@ -98,8 +102,8 @@ fn test_row_group_index_out_of_range() {
     let (_mt, _tu, allocator) = make_allocator();
     let buf_len = buf.len() as u64;
     let mut reader = Cursor::new(&buf);
-    let decoder =
-        ParquetDecoder::read(allocator.clone(), &mut reader, buf_len).expect("ParquetDecoder::read");
+    let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)
+        .expect("ParquetDecoder::read");
 
     let mut rgb = RowGroupBuffers::new(allocator.clone());
     let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
@@ -144,8 +148,8 @@ fn test_column_type_mismatch() {
     let (_mt, _tu, allocator) = make_allocator();
     let buf_len = buf.len() as u64;
     let mut reader = Cursor::new(&buf);
-    let decoder =
-        ParquetDecoder::read(allocator.clone(), &mut reader, buf_len).expect("ParquetDecoder::read");
+    let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)
+        .expect("ParquetDecoder::read");
 
     let mut rgb = RowGroupBuffers::new(allocator.clone());
     let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);

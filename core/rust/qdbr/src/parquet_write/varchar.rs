@@ -622,10 +622,7 @@ mod tests {
 
     #[test]
     fn test_is_column_ascii_true_for_ascii_entries() {
-        let aux = vec![
-            make_inlined_entry(b"hello"),
-            make_inlined_entry(b"world"),
-        ];
+        let aux = vec![make_inlined_entry(b"hello"), make_inlined_entry(b"world")];
         assert!(is_column_ascii(&aux));
     }
 
@@ -672,7 +669,8 @@ mod tests {
 
         // Offset should point to 0 (start of data_mem)
         let offset_lo = u16::from_le_bytes([aux_mem[10], aux_mem[11]]) as usize;
-        let offset_hi = u32::from_le_bytes([aux_mem[12], aux_mem[13], aux_mem[14], aux_mem[15]]) as usize;
+        let offset_hi =
+            u32::from_le_bytes([aux_mem[12], aux_mem[13], aux_mem[14], aux_mem[15]]) as usize;
         let offset = offset_lo | (offset_hi << 16);
         assert_eq!(offset, 0);
     }
