@@ -939,7 +939,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (tok != null && isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
                         final int columnNamePosition = lexer.lastTokenPosition();
-                        final int columnIndex = tableMetadata.getColumnIndexQuiet(tok);
+                        final int columnIndex = tableMetadata.getColumnIndexQuiet(unquote(tok));
                         if (columnIndex != -1) {
                             // peek at the type token to capture its position for error reporting
                             expectToken(lexer, "column type");
@@ -976,9 +976,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'not' expected");
                 }
             } else {
-                int index = tableMetadata.getColumnIndexQuiet(tok);
+                CharSequence unquotedTok = unquote(tok);
+                int index = tableMetadata.getColumnIndexQuiet(unquotedTok);
                 if (index != -1) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
+                    throw SqlException.$(lexer.lastTokenPosition(), "column '").put(unquotedTok).put("' already exists");
                 }
             }
 
@@ -1780,7 +1781,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 expectKeyword(lexer, "column");
                 final int columnNamePosition = lexer.getPosition();
                 tok = expectToken(lexer, "column name");
-                final CharSequence columnName = GenericLexer.immutableOf(tok);
+                final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
                 final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
                 if (columnIndex == -1) {
                     throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
@@ -2166,7 +2167,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (isColumnKeyword(tok)) {
                     final int columnNamePosition = lexer.getPosition();
                     tok = expectToken(lexer, "column name");
-                    final CharSequence columnName = GenericLexer.immutableOf(tok);
+                    final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
                     final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
                     if (columnIndex == -1) {
                         throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
