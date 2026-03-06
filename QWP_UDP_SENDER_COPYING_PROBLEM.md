@@ -7,28 +7,40 @@ This document focuses on one issue only:
 `QwpUdpSender` still moves row data through too many representations before the
 datagram leaves the process.
 
-This note reflects the current state after scatter-send, native row staging,
-native array staging, and rollback hardening have landed.
+This note reflects the current state after scatter-send, native array staging,
+symbol-hit allocation reduction, and direct-write row commit have landed.
 
 ## Current State
 
-Four important improvements are now in place.
+Five important improvements are now in place.
 
-### 1. No More Rollback And Replay
+### 1. Common-Path Row Commit No Longer Copies
 
-The sender no longer writes the in-progress row directly into
-`QwpTableBuffer` and then replays it on MTU overflow.
+The sender no longer stages the common-path row in a separate native row buffer
+and then copies it into `QwpTableBuffer` on commit.
 
-The row now stays staged until commit. That removed the worst old pattern:
+The normal path now writes directly into `QwpTableBuffer` while the row is in
+progress. Commit is just:
 
-- append into `ColumnBuffer`
-- copy into journal
-- truncate `ColumnBuffer`
-- replay journal back into `ColumnBuffer`
+- `nextRow(...)`
+- estimate bookkeeping
+- optional packet send later
 
-That part of the design is gone.
+That removes the former staged-row -> committed-column copy from the hot path.
 
-### 2. No More Final Contiguous Datagram Copy For Raw Blocks
+### 2. Rare Replay Replaced The Old Hot-Path Replay
+
+There is still a replay buffer, but it is no longer the steady-state owner of
+the in-progress row.
+
+It is now used only for rare cases:
+
+- MTU overflow when committed rows must flush before the current row can fit
+- schema widening after committed rows already exist in the current datagram
+
+That is a much smaller and more acceptable use of replay than before.
+
+### 3. No More Final Contiguous Datagram Copy For Raw Blocks
 
 The UDP path now supports scatter-send.
 
@@ -48,20 +60,20 @@ Examples include:
 - string offset and string data blocks
 - other already-contiguous native blocks emitted directly by the writer
 
-### 3. No More Object-Heavy `rowJournal`
+### 4. No More Object-Heavy `rowJournal`
 
-The sender no longer keeps the in-progress row in `ObjList<ColumnEntry>`.
+The sender no longer keeps replayable row state in `ObjList<ColumnEntry>`.
 
-The row is now staged in native memory:
+When replay is required, the row is now staged in native memory:
 
 - fixed-size native entry metadata
 - native UTF-8 var-data for string-like values
 - native array payloads for staged array values
 
-This is a real improvement, especially for hot fixed-width values and UTF-8
-strings. Arrays now follow the same direction.
+This is still a real improvement over the old Java-object journal, especially
+for UTF-8 strings and arrays.
 
-### 4. Failed Rows Now Roll Back To Committed State
+### 5. Failed Rows Now Roll Back To Committed State
 
 The sender now consistently rolls back to the last committed state when row
 staging or row finalization fails.
@@ -82,7 +94,7 @@ The old design had two major user-space copy problems:
 1. rollback and replay of in-progress rows
 2. copying committed column data into one final contiguous UDP buffer
 
-The current implementation removes both of those.
+The current implementation removes both of those from the hot path.
 
 That means the sender is no longer in the worst possible shape. For committed
 data, the design is materially closer to a QuestDB-style native-buffer send
@@ -94,60 +106,56 @@ staged sender state.
 
 ## What Still Copies
 
-The main copying problem is now concentrated in the handoff from staged row
-state to committed column state.
+The main copying problem is no longer common-path commit.
 
-### In-Progress Row Still Has Duplicate Ownership At Commit
+What remains is concentrated in rare replay paths and in encode-time
+transformations for types whose storage layout is not already wire-compatible.
 
-The sender no longer stages rows in Java objects, but it still owns the same
-row in two forms before send:
+### Rare Overflow / Schema-Flush Replay Still Copies A Row
 
-- staged native row state
-- committed `QwpTableBuffer` column state
+When a row must survive a flush boundary, the sender still snapshots it into a
+replay buffer and then re-appends it into `QwpTableBuffer`.
 
-For a simple fixed-width `long`, the current path is now:
+That path is no longer on every row, but it still exists for:
 
-- caller -> native staged row
-- native staged row -> `ColumnBuffer` on commit
-- `ColumnBuffer` -> kernel via scatter-send
+- MTU overflow handling
+- schema widening after committed rows already exist
 
-That is much better than before, but it is still not the ideal ownership model.
+So the remaining structural copy is now exceptional rather than steady-state.
 
-The copy direction is now cleaner, but the row still exists twice in
-sender-owned memory before send.
+### Strings Improved, Symbols Improved Partially
 
-### Strings Improved, Symbols Not Fully
+Strings stage as native UTF-8 and commit into `QwpTableBuffer` via raw UTF-8
+append helpers instead of round-tripping through a temporary Java `String`.
 
-Strings now stage as native UTF-8 and commit into `QwpTableBuffer` via raw
-UTF-8 append helpers instead of round-tripping through a temporary Java
-`String`.
+Symbols are better than before, but not fully there yet.
 
-Symbols are not fully there yet. They stage as native UTF-8, but commit still
-decodes to `String` once because the local symbol dictionary is still
-`CharSequence` / `String` based.
+They still stage as native UTF-8, but commit no longer allocates a fresh
+`String` on symbol-dictionary hits. Instead the UTF-8 bytes are decoded into a
+reusable UTF-16 sink for local-dictionary lookup, and a `String` is allocated
+only on dictionary miss when a new symbol must be inserted.
 
-So the string path improved materially. The symbol path improved only
-partially.
+So:
 
-### Arrays Improved, But Still Copy On Commit
+- string commit no longer needs a temporary Java `String`
+- symbol commit no longer needs a temporary Java `String` on hits
+- symbol misses still allocate once because the local dictionary is still
+  `String` based
+
+### Arrays Improved, And Now Follow The Direct-Write Model Too
 
 Array values no longer sit in Java sidecar objects while a row is staged.
 
-They now stage as native payload bytes and commit into `QwpTableBuffer` via raw
-payload append helpers. That removes one more object-heavy ownership layer and
-means staged array values are snapshotted at stage time, not read back from a
-mutable Java object later.
+They now snapshot as native payload bytes when replay is required, but the
+common path writes them directly into `QwpTableBuffer`.
 
 The `LongArray` wrapper path is also supported again, so arrays are no longer a
 special-case gap in the staging model.
 
-The remaining array cost is the same structural cost as fixed-width scalars:
+The remaining array cost is the same rare replay cost as other row data:
 
-- staged native array payload
-- committed `QwpTableBuffer` array state
-
-So arrays are no longer a special ownership outlier, but they still participate
-in the general staged-row -> committed-column copy.
+- `QwpTableBuffer` current row
+- replay snapshot buffer only when a flush boundary must be crossed
 
 ### Some Column Types Still Need Transform Encoding
 
@@ -183,8 +191,7 @@ The single-`long` path is still the right test.
 
 ### Current Path
 
-- caller -> native staged row
-- native staged row -> `ColumnBuffer`
+- caller -> `ColumnBuffer`
 - `ColumnBuffer` -> kernel
 
 ### Ideal Path
@@ -199,21 +206,22 @@ to one clear owner plus the unavoidable kernel copy.
 
 The remaining problem is now narrower than before:
 
-`QwpUdpSender` still uses a separate row-staging representation that is not the
-same as the committed datagram representation.
+`QwpUdpSender` now uses `QwpTableBuffer` as the common-path row owner, but it
+still needs a second replay representation when a row must survive a send
+boundary before commit.
 
 The current design has:
 
 - committed table state in `QwpTableBuffer`
-- in-progress row state in native row staging
+- in-progress row state directly in `QwpTableBuffer`
+- replay row state in native staging only for rare flush-boundary cases
 - scratch encode buffers only for header or transformed columns
 
 It also has explicit rollback paths that restore the sender to committed state
 when staging or finalization fails.
 
-That is a much better split than before, but it still means hot values are
-first accepted into staged native state and then copied into committed column
-state on commit.
+That is a much better split than before. The hot-path commit copy is gone.
+What remains is the rare cross-flush replay path.
 
 ## Bottom Line
 
@@ -227,34 +235,23 @@ The current design is now good enough to say:
 
 The main remaining issue is this:
 
-- the in-progress row is still not the same owning native form as committed
-  column state
+- rows that must cross a flush boundary still need snapshot-and-replay
 
 That is the next place to push.
 
 ## Next Steps
 
-### 1. Reduce Symbol Commit Allocation
+### 1. Reduce Or Eliminate Rare Replay Paths
 
-Goal:
+The better long-term model is now:
 
-- avoid decoding staged UTF-8 symbols to `String` during commit if possible
-- move symbol staging and dictionary interaction closer to final owned form
+- append into `QwpTableBuffer` once
+- flush committed prefixes without snapshotting the current row
+- cancel by rewinding row-local cursors only
 
-This is a narrower follow-up than the row-staging change, but it is now one of
-the remaining hot-path allocation smells.
+That would remove the remaining overflow/schema-flush replay copy.
 
-### 2. Move Toward Commit-By-Cursor Instead Of Commit-By-Copy
-
-The better long-term model is still:
-
-- append into sender-owned native state once
-- commit by advancing row counters or publish cursors
-- cancel by rewinding row-local cursors
-
-That would remove the current staged-row -> `QwpTableBuffer` commit copy.
-
-### 3. Keep Scatter-Send For Committed Raw Blocks
+### 2. Keep Scatter-Send For Committed Raw Blocks
 
 The scatter-send path should stay. It is already the right transport shape for
 UDP.
@@ -262,7 +259,30 @@ UDP.
 Future work should build on it, not fall back to a single final contiguous
 datagram buffer.
 
-### 4. Revisit Transformed Types After The Ownership Fixes
+### 3. Keep Shrinking Encode-Time Transform Work
+
+The remaining unavoidable copy work is increasingly concentrated in:
+
+- booleans
+- symbols
+- decimals
+- geohashes
+- array encoding
+
+Those should now be treated as the next optimization layer, after the rare
+replay path.
+
+### 3. Revisit Remaining Symbol And Transformed-Type Costs
+
+Symbols are better than before, but the local dictionary still requires:
+
+- UTF-8 -> UTF-16 decode for lookup
+- `String` allocation on symbol miss
+
+After the ownership model is improved further, revisit whether symbol handling
+should also move closer to a wire-ready or UTF-8-native representation.
+
+### 4. Revisit Other Transformed Types After The Ownership Fixes
 
 Once arrays and symbols are cleaned up, decide case by case whether some
 transformed column types should also move closer to wire-ready storage.
@@ -279,6 +299,7 @@ The current state described here is the one validated after:
 - native row staging for arrays
 - rollback on failed staging and failed row finalization
 - restored `LongArray` wrapper support
+- reduced symbol commit allocation on dictionary hits
 
 Relevant test coverage includes:
 
@@ -292,6 +313,10 @@ Focused coverage now also includes:
 
 - irregular-array staging failure does not leak schema into the same table
 - `LongArray` wrapper staging snapshots mutation correctly
+- direct `addSymbolUtf8()` reuses existing dictionary entries without growing the dictionary
+- direct `addSymbolUtf8()` rollback/cancel rewinds symbol dictionary correctly
+- direct `addSymbolUtf8()` rejects malformed UTF-8
+- repeated UTF-8 symbols round-trip through `QwpUdpSender`
 - `atNow()` oversize failure rolls back without explicit `cancelRow()`
 - `at(..., MICROS)` oversize failure does not leak designated-timestamp state
 - `at(..., NANOS)` oversize failure does not leak designated-timestamp state
