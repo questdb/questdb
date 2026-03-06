@@ -145,6 +145,13 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("grouping(").val(argColumnIndices).val(')');
+        sink.val("grouping(");
+        for (int i = 0, n = argColumnIndices.size(); i < n; i++) {
+            if (i > 0) {
+                sink.val(',');
+            }
+            sink.putColumnName(argColumnIndices.getQuick(i));
+        }
+        sink.val(')');
     }
 }

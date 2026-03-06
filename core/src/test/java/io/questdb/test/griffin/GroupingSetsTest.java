@@ -1182,6 +1182,21 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnWithGroupingSetsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE t (sym SYMBOL, v DOUBLE, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            assertException(
+                    "SELECT sym, SUM(v) FROM t LATEST ON ts PARTITION BY sym GROUP BY ROLLUP(sym)",
+                    65,
+                    "LATEST ON is not supported with GROUPING SETS, ROLLUP, or CUBE"
+            );
+        });
+    }
+
+    @Test
     public void testGroupByExpressionNotAffected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
@@ -1288,6 +1303,160 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "1\t300.0\n" +
                             "2\t300.0\n",
                     "SELECT t.a, SUM(v) FROM t GROUP BY ROLLUP(t.a) ORDER BY t.a"
+            );
+        });
+    }
+
+    @Test
+    public void testDataNullsVsRollupNulls() throws Exception {
+        // Data NULLs and rollup NULLs both produce NULL in the output,
+        // but GROUPING() returns 0 for data NULLs and 1 for rollup NULLs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a SYMBOL, v DOUBLE)");
+            execute("INSERT INTO t VALUES ('x', 10.0), (NULL, 20.0), ('x', 30.0)");
+            assertSql(
+                    "a\tSUM\tGROUPING\n" +
+                            "\t20.0\t0\n" +
+                            "x\t40.0\t0\n" +
+                            "\t60.0\t1\n",
+                    "SELECT a, SUM(v), GROUPING(a) FROM t GROUP BY ROLLUP(a) ORDER BY GROUPING(a), a"
+            );
+        });
+    }
+
+    @Test
+    public void testEmptyTableRollup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v DOUBLE)");
+            // Empty table produces no rows (map is empty, no data to aggregate)
+            assertSql(
+                    "a\tSUM\n",
+                    "SELECT a, SUM(v) FROM t GROUP BY ROLLUP(a)"
+            );
+        });
+    }
+
+    @Test
+    public void testEmptyTableCube() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            assertSql(
+                    "a\tb\tSUM\n",
+                    "SELECT a, b, SUM(v) FROM t GROUP BY CUBE(a, b)"
+            );
+        });
+    }
+
+    @Test
+    public void testRollupWithJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (product_id INT, qty INT)");
+            execute("CREATE TABLE products (id INT, name SYMBOL)");
+            execute("INSERT INTO products VALUES (1, 'A'), (2, 'B')");
+            execute("INSERT INTO orders VALUES (1, 10), (1, 20), (2, 30)");
+            assertSql(
+                    "name\tSUM\n" +
+                            "\t60\n" +
+                            "A\t30\n" +
+                            "B\t30\n",
+                    "SELECT p.name, SUM(o.qty) FROM orders o" +
+                            " JOIN products p ON o.product_id = p.id" +
+                            " GROUP BY ROLLUP(p.name) ORDER BY p.name"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestOnWithCubeRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE t (sym SYMBOL, v DOUBLE, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            assertException(
+                    "SELECT sym, SUM(v) FROM t LATEST ON ts PARTITION BY sym GROUP BY CUBE(sym)",
+                    65,
+                    "LATEST ON is not supported with GROUPING SETS, ROLLUP, or CUBE"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestOnWithExplicitGroupingSetsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE t (sym SYMBOL, v DOUBLE, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            assertException(
+                    "SELECT sym, SUM(v) FROM t LATEST ON ts PARTITION BY sym GROUP BY GROUPING SETS ((sym), ())",
+                    65,
+                    "LATEST ON is not supported with GROUPING SETS, ROLLUP, or CUBE"
+            );
+        });
+    }
+
+    @Test
+    public void testCursorReuse() throws Exception {
+        // Test that the cursor works correctly on repeated execution
+        // (toTop after partial iteration)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a SYMBOL, v DOUBLE)");
+            execute("INSERT INTO t VALUES ('x', 10.0), ('y', 20.0)");
+            String expected =
+                    "a\tSUM\n" +
+                            "\t30.0\n" +
+                            "x\t10.0\n" +
+                            "y\t20.0\n";
+            String query = "SELECT a, SUM(v) FROM t GROUP BY ROLLUP(a) ORDER BY a";
+            // Execute twice to trigger toTop/reuse
+            assertSql(expected, query);
+            assertSql(expected, query);
+        });
+    }
+
+    @Test
+    public void testGroupingSetsWithMultipleAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a SYMBOL, v DOUBLE)");
+            execute("INSERT INTO t VALUES ('x', 10.0), ('x', 20.0), ('y', 30.0)");
+            assertSql(
+                    "a\tSUM\tCOUNT\tAVG\n" +
+                            "\t60.0\t3\t20.0\n" +
+                            "x\t30.0\t2\t15.0\n" +
+                            "y\t30.0\t1\t30.0\n",
+                    "SELECT a, SUM(v), COUNT(v), AVG(v) FROM t GROUP BY ROLLUP(a) ORDER BY a"
+            );
+        });
+    }
+
+    @Test
+    public void testCubeSetCountCapApplied() throws Exception {
+        // CUBE(16 columns) would produce 2^16 = 65536 sets, exceeding the default 4096
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c1 INT, c2 INT, c3 INT, c4 INT, c5 INT," +
+                    " c6 INT, c7 INT, c8 INT, c9 INT, c10 INT," +
+                    " c11 INT, c12 INT, c13 INT, c14 INT, c15 INT, c16 INT, v INT)");
+            // CUBE supports at most 15 columns
+            assertException(
+                    "SELECT * FROM t GROUP BY CUBE(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15,c16)",
+                    25,
+                    "CUBE supports at most 15 columns"
+            );
+        });
+    }
+
+    @Test
+    public void testCubeTooManySets() throws Exception {
+        // CUBE(13 columns) produces 2^13 = 8192 sets, exceeding default 4096
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c1 INT, c2 INT, c3 INT, c4 INT, c5 INT," +
+                    " c6 INT, c7 INT, c8 INT, c9 INT, c10 INT," +
+                    " c11 INT, c12 INT, c13 INT, v INT)");
+            assertException(
+                    "SELECT * FROM t GROUP BY CUBE(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13)",
+                    25,
+                    "CUBE produces too many grouping sets"
             );
         });
     }

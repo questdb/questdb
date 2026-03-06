@@ -231,6 +231,8 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(cursor);
     }
 
+    // O(N) linear scan, called only during construction (not on the data path).
+    // N is the number of active key columns per set (small in practice).
     private static boolean containsValue(IntList list, int value) {
         for (int i = 0, n = list.size(); i < n; i++) {
             if (list.getQuick(i) == value) {

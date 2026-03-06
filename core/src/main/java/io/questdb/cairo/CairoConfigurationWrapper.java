@@ -1032,6 +1032,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxGroupingSets() {
+        return getDelegate().getSqlMaxGroupingSets();
+    }
+
+    @Override
     public int getSqlMaxNegativeLimit() {
         return getDelegate().getSqlMaxNegativeLimit();
     }
