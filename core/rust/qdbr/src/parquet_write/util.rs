@@ -414,7 +414,7 @@ pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
         &[]
     } else {
         debug_assert!(
-            slice.as_ptr() as usize % mem::align_of::<T>() == 0,
+            (slice.as_ptr() as usize).is_multiple_of(mem::align_of::<T>()),
             "transmute_slice: pointer {:p} is not aligned for {} (align = {})",
             slice.as_ptr(),
             std::any::type_name::<T>(),
