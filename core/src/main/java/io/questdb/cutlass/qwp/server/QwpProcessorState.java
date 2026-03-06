@@ -152,8 +152,12 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         } catch (Throwable th) {
             tudCache.setDistressed();
             currentStatus = Status.INTERNAL_ERROR;
-            errorId = ERROR_COUNT.incrementAndGet();
-            error.put("commit error: ").put(th.getMessage());
+            ERROR_COUNT.incrementAndGet();
+            String msg = th.getMessage();
+            error.put("commit error: ");
+            if (msg != null) {
+                error.put(msg, 0, Math.min(msg.length(), maxResponseErrorMessageLength));
+            }
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
         }
     }
@@ -315,8 +319,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void reject(Status status, String errorText, long fd) {
         currentStatus = status;
-        error.put(errorText);
-        errorId = ERROR_COUNT.incrementAndGet();
+        error.put(errorText, 0, Math.min(errorText.length(), maxResponseErrorMessageLength));
+        ERROR_COUNT.incrementAndGet();
         this.fd = fd;
         LOG.error().$('[').$(fd).$("] rejected [status=").$(status).$(", error=").$(errorText).$(']').$();
     }

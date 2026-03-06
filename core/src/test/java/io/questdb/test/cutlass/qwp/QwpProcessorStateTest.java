@@ -80,6 +80,50 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectTruncatesLongErrorMessage() throws Exception {
+        assertMemoryLeak(() -> {
+            // maxResponseContentLength=250 → maxResponseErrorMessageLength = (250-100)/1.5 = 100
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 250, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Build a 200-char error message, well above the 100-char limit
+                String longError = "x".repeat(200);
+                state.reject(QwpProcessorState.Status.INTERNAL_ERROR, longError, 1);
+
+                String errorText = state.getErrorText();
+                Assert.assertEquals(100, errorText.length());
+                Assert.assertEquals(longError.substring(0, 100), errorText);
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testRejectPreservesShortErrorMessage() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 250, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                String shortError = "something went wrong";
+                state.reject(QwpProcessorState.Status.PARSE_ERROR, shortError, 1);
+
+                Assert.assertEquals(shortError, state.getErrorText());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testCloseAfterDisconnectFreesNativeMemory() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
