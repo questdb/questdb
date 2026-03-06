@@ -82,7 +82,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // to exception message using TableUtils.setSinkForPartition.
     private final LongList extraInfo;
     private final ObjCharSequenceList extraStrInfo;
-    protected CharSequenceList activeExtraStrInfo;
+    private CharSequenceList activeExtraStrInfo;
     private short command;
     private MemoryFCRImpl deserializeMem;
     private boolean keepMatViewsValid;
