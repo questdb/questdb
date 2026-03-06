@@ -172,13 +172,11 @@ pub fn varchar_to_dict_pages(
     // Build dictionary: deduplicate strings
     let mut dict_map: HashMap<&[u8], u32> = HashMap::new();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
-    for slice in &utf8_slices {
-        if let Some(s) = slice {
-            if !dict_map.contains_key(s) {
-                let key = dict_entries.len() as u32;
-                dict_map.insert(s, key);
-                dict_entries.push(s);
-            }
+    for s in utf8_slices.iter().flatten() {
+        if !dict_map.contains_key(s) {
+            let key = dict_entries.len() as u32;
+            dict_map.insert(s, key);
+            dict_entries.push(s);
         }
     }
 

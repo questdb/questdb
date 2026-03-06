@@ -370,7 +370,7 @@ impl ParquetDecoder {
             ..
         } = ctx;
 
-        varchar_slice_buf_pool.extend(column_chunk_bufs.page_buffers.drain(..));
+        varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
         column_chunk_bufs.reset();
 
         let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
@@ -640,7 +640,7 @@ impl ParquetDecoder {
             ..
         } = ctx;
 
-        varchar_slice_buf_pool.extend(column_chunk_bufs.page_buffers.drain(..));
+        varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
         column_chunk_bufs.reset();
 
         let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();

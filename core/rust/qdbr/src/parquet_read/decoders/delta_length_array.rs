@@ -124,7 +124,7 @@ impl<'a> DeltaLAVarcharSliceDecoder<'a> {
     /// a pointer to the start of the string value.
     #[inline(always)]
     fn advance_data(&mut self, len: i32) -> ParquetResult<*const u8> {
-        if len < 0 || len > MAX_VARCHAR_LENGTH {
+        if !(0..=MAX_VARCHAR_LENGTH).contains(&len) {
             return Err(fmt_err!(
                 Layout,
                 "invalid string length in DELTA_LENGTH_BYTE_ARRAY page: {}",
@@ -242,7 +242,7 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
         macro_rules! checked_advance {
             ($len:expr, $pos:expr) => {{
                 let len = $len;
-                if len < 0 || len > MAX_VARCHAR_LENGTH || $pos + len as usize > data_len {
+                if !(0..=MAX_VARCHAR_LENGTH).contains(&len) || $pos + len as usize > data_len {
                     return Err(fmt_err!(Layout, "string data extends beyond page boundary"));
                 }
                 let ptr = unsafe { data.add($pos) };
@@ -368,7 +368,9 @@ impl Pushable for DeltaLAVarcharSliceDecoder<'_> {
                         .wrapping_add(self.values[self.value_index + i]),
                 );
                 let len = self.current_value;
-                if len < 0 || len > MAX_VARCHAR_LENGTH || self.pos + len as usize > self.data_len {
+                if !(0..=MAX_VARCHAR_LENGTH).contains(&len)
+                    || self.pos + len as usize > self.data_len
+                {
                     return Err(fmt_err!(Layout, "string data extends beyond page boundary"));
                 }
                 self.pos += len as usize;

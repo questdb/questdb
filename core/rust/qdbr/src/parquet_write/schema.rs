@@ -429,7 +429,7 @@ pub fn to_parquet_schema(
         };
 
         let ascii = if column.data_type.tag() == ColumnTypeTag::Varchar
-            && column.secondary_data.len() > 0
+            && !column.secondary_data.is_empty()
         {
             let aux: &[[u8; 16]] = unsafe { super::util::transmute_slice(column.secondary_data) };
             Some(super::varchar::is_column_ascii(aux))
