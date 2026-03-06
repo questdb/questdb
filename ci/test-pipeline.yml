@@ -259,15 +259,12 @@ stages:
               llvm-profdata merge -sparse -o questdbr.profdata "${MERGE_INPUTS[@]}"
 
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
+              # Use only libquestdbr.so as the object for Java test coverage.
+              # The test binary has different counter hashes (compiled as a
+              # different target) which causes mismatched-data warnings and
+              # silently drops coverage. Cargo test coverage is handled
+              # separately via LCOV from the lint job.
               OBJECT_ARGS=(--object "$COVERAGE_DIR/libquestdbr.so")
-              # Include the qdbr unit test binary if present.
-              # Only libquestdbr.so + one test binary are uploaded to avoid
-              # counter hash conflicts from multiple statically linked copies.
-              QUESTDBR_TEST_BIN="$COVERAGE_DIR/questdbr-test-binary"
-              if [ -f "$QUESTDBR_TEST_BIN" ]; then
-                chmod +x "$QUESTDBR_TEST_BIN"
-                OBJECT_ARGS+=(--object "$QUESTDBR_TEST_BIN")
-              fi
               ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
               if [ -z "$ORIG_PATH" ]; then
                 echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
