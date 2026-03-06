@@ -237,6 +237,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         Misc.free(parquetDecoder);
     }
 
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+    }
+
+    public void releaseParquetBuffers() {
+        freeParquetBuffers.addAll(cachedParquetBuffers);
+        cachedParquetBuffers.clear();
+        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
+        frameMemory.clear();
+    }
+
     /**
      * Switches the address cache for a different partition.
      * Invalidates the cached frame memory and Parquet buffer cache
@@ -251,20 +265,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // get re-decoded on the next navigateTo() call.
         freeParquetBuffers.addAll(cachedParquetBuffers);
         cachedParquetBuffers.clear();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
-    }
-
-    public void releaseParquetBuffers() {
-        freeParquetBuffers.addAll(cachedParquetBuffers);
-        cachedParquetBuffers.clear();
-        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
-        frameMemory.clear();
     }
 
     // We don't use additional data structures to speed up the lookups
