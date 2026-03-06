@@ -82,8 +82,9 @@ impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
         append_varchar_nulls(&mut self.buffers.aux_vec, &self.buffers.data_vec, count)
     }
 
-    fn skip(&mut self, count: usize) {
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         self.slicer.skip(count);
+        Ok(())
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -219,8 +220,9 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
         }
     }
 
-    fn skip(&mut self, count: usize) {
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         self.slicer.skip(count);
+        Ok(())
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -337,8 +339,9 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
         }
     }
 
-    fn skip(&mut self, count: usize) {
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         self.slicer.skip(count);
+        Ok(())
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -395,8 +398,9 @@ impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
         append_array_nulls(&mut self.buffers.aux_vec, &self.buffers.data_vec, count)
     }
 
-    fn skip(&mut self, count: usize) {
+    fn skip(&mut self, count: usize) -> ParquetResult<()> {
         self.slicer.skip(count);
+        Ok(())
     }
 
     fn result(&self) -> ParquetResult<()> {
