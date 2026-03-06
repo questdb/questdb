@@ -75,7 +75,7 @@ pub fn binary_to_page(
                 &mut buffer,
                 &mut stats,
                 bloom_hashes.as_deref_mut(),
-            );
+            )?;
             Ok(())
         }
         Encoding::DeltaLengthByteArray => {
@@ -86,7 +86,7 @@ pub fn binary_to_page(
                 &mut buffer,
                 &mut stats,
                 bloom_hashes,
-            );
+            )?;
             Ok(())
         }
         _ => Err(fmt_err!(
@@ -119,11 +119,13 @@ fn encode_plain(
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
-) {
+) -> ParquetResult<()> {
     let size_of_header = size_of::<i64>();
 
     for offset in offsets {
-        let offset = usize::try_from(*offset).expect("invalid offset value in binary aux column");
+        let offset = usize::try_from(*offset).map_err(|_| {
+            fmt_err!(Layout, "invalid offset value in binary aux column: {offset}")
+        })?;
         let len = types::decode::<i64>(&values[offset..offset + size_of_header]);
         if len < 0 {
             continue;
@@ -138,6 +140,7 @@ fn encode_plain(
             h.insert(hash_byte(value));
         }
     }
+    Ok(())
 }
 
 fn encode_delta(
@@ -147,13 +150,22 @@ fn encode_delta(
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
-) {
+) -> ParquetResult<()> {
     let size_of_header = size_of::<i64>();
     let row_count = offsets.len();
 
     if row_count == 0 {
         delta_bitpacked::encode(std::iter::empty(), buffer);
-        return;
+        return Ok(());
+    }
+
+    for &off in offsets {
+        if off < 0 {
+            return Err(fmt_err!(
+                Layout,
+                "invalid offset value in binary aux column: {off}"
+            ));
+        }
     }
 
     // Reserve buffer capacity for performance reasons only. No effect on correctness.
@@ -191,4 +203,5 @@ fn encode_delta(
             h.insert(hash_byte(value));
         }
     }
+    Ok(())
 }

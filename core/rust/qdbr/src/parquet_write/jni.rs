@@ -98,7 +98,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     updater: *mut ParquetUpdater,
 ) {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        return;
     }
 
     let _ = unsafe { Box::from_raw(updater) };
@@ -111,7 +111,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     updater: *mut ParquetUpdater,
 ) {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateFileMetadata");
+        return err.into_cairo_exception().throw(&mut env);
     }
 
     let parquet_updater = unsafe { &mut *updater };
@@ -144,10 +146,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     let orig_row_group_id = row_group_id;
     let row_group_id = Some(row_group_id);
 
-    assert!(
-        !parquet_updater.is_null(),
-        "parquet_updater pointer is null"
-    );
+    if parquet_updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
+    }
     let parquet_updater = unsafe { &mut *parquet_updater };
 
     let mut update = || -> ParquetResult<()> {
@@ -290,7 +293,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                     table_name_ptr,
                     table_name_size as usize,
                 ))
-                .expect("invalid table name utf8")
+                .unwrap_or("!!invalid table name utf8!!")
             };
             err.add_context(format!(
                 "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
@@ -317,7 +320,14 @@ fn create_partition_descriptor(
     let col_names_len = col_names_len as usize;
     let col_data_len = col_data_len as usize;
     const COL_DATA_ENTRY_SIZE: usize = 9;
-    assert_eq!(col_data_len % COL_DATA_ENTRY_SIZE, 0);
+    if !col_data_len.is_multiple_of(COL_DATA_ENTRY_SIZE) {
+        return Err(fmt_err!(
+            Layout,
+            "col_data_len {} is not a multiple of {}",
+            col_data_len,
+            COL_DATA_ENTRY_SIZE
+        ));
+    }
 
     let mut col_names = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))

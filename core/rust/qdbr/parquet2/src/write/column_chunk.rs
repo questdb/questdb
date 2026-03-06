@@ -59,7 +59,9 @@ where
     let bloom_filter_offset = {
         let bloom_ref = bloom_hashes;
         if let Some(bloom_arc) = bloom_ref {
-            let hashes = bloom_arc.lock().unwrap();
+            let hashes = bloom_arc
+                .lock()
+                .map_err(|_| Error::oos("bloom filter mutex poisoned"))?;
             if hashes.is_empty() {
                 None
             } else {

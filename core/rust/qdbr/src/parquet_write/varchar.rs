@@ -75,23 +75,28 @@ pub fn varchar_to_page(
         .map(|entry| {
             if is_null(entry.header) {
                 null_count += 1;
-                None
+                Ok(None)
             } else if is_inlined(entry.header) {
                 let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
-                Some(&entry.chars[..size])
+                Ok(Some(&entry.chars[..size]))
             } else {
                 let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
                 let header = entry.header;
                 let size = (header >> HEADER_FLAGS_WIDTH) as usize;
                 let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
-                assert!(
-                    offset + size <= data.len(),
-                    "Data corruption in VARCHAR column"
-                );
-                Some(&data[offset..][..size])
+                if offset + size > data.len() {
+                    return Err(fmt_err!(
+                        Layout,
+                        "data corruption in VARCHAR column: offset {} + size {} exceeds data length {}",
+                        offset,
+                        size,
+                        data.len()
+                    ));
+                }
+                Ok(Some(&data[offset..][..size]))
             }
         })
-        .collect();
+        .collect::<ParquetResult<Vec<_>>>()?;
 
     let deflevels_iter =
         (0..num_rows).map(|i| i >= column_top && utf8_slices[i - column_top].is_some());

@@ -58,16 +58,19 @@ impl ParquetUpdater {
         data_page_size: Option<usize>,
         bloom_filter_fpp: f64,
     ) -> ParquetResult<Self> {
-        fn from(value: i32) -> Version {
+        fn version_from_i32(value: i32) -> ParquetResult<Version> {
             match value {
-                1 => Version::V1,
-                2 => Version::V2,
-                _ => panic!("Invalid version number: {value}"),
+                1 => Ok(Version::V1),
+                2 => Ok(Version::V2),
+                _ => Err(ParquetError::with_descr(
+                    ParquetErrorReason::Unsupported,
+                    format!("unsupported parquet version number: {value}"),
+                )),
             }
         }
 
         let metadata = read_metadata_with_size(&mut reader, file_size)?;
-        let version = from(metadata.version);
+        let version = version_from_i32(metadata.version)?;
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
 
