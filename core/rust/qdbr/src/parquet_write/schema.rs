@@ -636,20 +636,11 @@ impl ParquetEncodingConfig {
                     .ok(),
             )),
             4 => Some(CompressionOptions::Brotli(
-                parquet2::compression::BrotliLevel::try_new(if level > 0 {
-                    level
-                } else {
-                    1
-                })
-                .ok(),
+                parquet2::compression::BrotliLevel::try_new(if level > 0 { level } else { 1 }).ok(),
             )),
             5 => Some(CompressionOptions::Zstd(
-                parquet2::compression::ZstdLevel::try_new(if level > 0 {
-                    level as i32
-                } else {
-                    1
-                })
-                .ok(),
+                parquet2::compression::ZstdLevel::try_new(if level > 0 { level as i32 } else { 1 })
+                    .ok(),
             )),
             6 => Some(CompressionOptions::Lz4Raw),
             _ => None,

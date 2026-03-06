@@ -8,7 +8,6 @@ use crate::parquet_write::util::{
 };
 use crate::parquet_write::Nullable;
 use parquet2::encoding::delta_bitpacked::encode;
-use qdb_core::col_type::nulls;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
@@ -18,6 +17,7 @@ use parquet2::statistics::{
 };
 use parquet2::types::NativeType;
 use parquet2::write::DynIter;
+use qdb_core::col_type::nulls;
 use rapidhash::RapidHashMap;
 
 pub fn decimal_slice_to_page_plain<T>(
@@ -463,7 +463,10 @@ impl SimdEncodable for i32 {
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
-        let iterator = slice.iter().filter(|&&x| x != nulls::INT).map(|&x| x as i64);
+        let iterator = slice
+            .iter()
+            .filter(|&&x| x != nulls::INT)
+            .map(|&x| x as i64);
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode(iterator, buffer);
         true

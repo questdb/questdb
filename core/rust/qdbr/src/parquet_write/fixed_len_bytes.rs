@@ -1,6 +1,8 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels};
+use crate::parquet_write::util::{
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels,
+};
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;

@@ -835,8 +835,7 @@ mod tests {
         let col2_data: Vec<i32> = (0..100).collect();
 
         // Pack config: encoding=4 (DeltaBinaryPacked), compression=0, level=0, explicit flag set
-        let delta_binary_config =
-            schema::ParquetEncodingConfig::new(4, 0, 0).raw();
+        let delta_binary_config = schema::ParquetEncodingConfig::new(4, 0, 0).raw();
 
         let col1 = Column::from_raw_data(
             0,
