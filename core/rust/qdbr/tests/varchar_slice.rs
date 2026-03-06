@@ -38,8 +38,7 @@ fn generate_values(count: usize) -> Vec<ByteArray> {
 fn read_aux_entry(aux: &[u8], row: usize) -> (u32, u32, u64) {
     let base = row * VARCHAR_SLICE_AUX_SIZE;
     let header = u32::from_le_bytes([aux[base], aux[base + 1], aux[base + 2], aux[base + 3]]);
-    let reserved =
-        u32::from_le_bytes([aux[base + 4], aux[base + 5], aux[base + 6], aux[base + 7]]);
+    let reserved = u32::from_le_bytes([aux[base + 4], aux[base + 5], aux[base + 6], aux[base + 7]]);
     let ptr = u64::from_le_bytes([
         aux[base + 8],
         aux[base + 9],
@@ -133,7 +132,8 @@ fn assert_varchar_slice_aux(
             );
             // bit 0 must always be set for non-null
             assert_ne!(
-                header & 1, 0,
+                header & 1,
+                0,
                 "row {i}: non-null varchar_slice header bit 0 must be set, got header={header:#x}"
             );
             // bit 2 (null flag) must be clear for non-null
@@ -170,8 +170,7 @@ fn assert_varchar_slice_aux(
 
                 // SAFETY: We verified the pointer is within a live buffer
                 // (file buffer, data_vec, or page_buffers).
-                let actual_bytes =
-                    unsafe { std::slice::from_raw_parts(ptr as *const u8, str_len) };
+                let actual_bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, str_len) };
                 assert_eq!(
                     actual_bytes, expected_bytes,
                     "row {i}: varchar_slice data mismatch, expected {:?}",
@@ -316,8 +315,7 @@ fn run_varchar_slice_test_with_compression(
 
             let nulls = generate_nulls(COUNT, *null);
             let values = generate_values(COUNT);
-            let expected_values: Vec<String> =
-                (0..COUNT).map(|i| format!("val_{i:04}")).collect();
+            let expected_values: Vec<String> = (0..COUNT).map(|i| format!("val_{i:04}")).collect();
 
             let schema = if matches!(null, Null::None) {
                 required_byte_array_schema("col", Some(LogicalType::String))
@@ -406,9 +404,7 @@ fn test_varchar_slice_empty_strings() {
 fn test_varchar_slice_long_strings() {
     let count = 1000;
     let values: Vec<ByteArray> = (0..count)
-        .map(|i| {
-            ByteArray::from(format!("this_is_a_long_string_value_for_row_{i:06}").as_str())
-        })
+        .map(|i| ByteArray::from(format!("this_is_a_long_string_value_for_row_{i:06}").as_str()))
         .collect();
     let expected_values: Vec<String> = (0..count)
         .map(|i| format!("this_is_a_long_string_value_for_row_{i:06}"))
@@ -476,7 +472,12 @@ fn test_varchar_slice_utf8() {
     for version in &VERSIONS {
         eprintln!("Testing UTF-8 strings with version={version:?}");
         let schema = required_byte_array_schema("col", Some(LogicalType::String));
-        let props = qdb_props_ascii(ColumnTypeTag::VarcharSlice, *version, Encoding::Plain, false);
+        let props = qdb_props_ascii(
+            ColumnTypeTag::VarcharSlice,
+            *version,
+            Encoding::Plain,
+            false,
+        );
         encode_decode_and_verify_varchar_slice(
             &values,
             &nulls,
@@ -604,7 +605,12 @@ fn test_varchar_slice_utf8_delta_length() {
             false,
         );
         encode_decode_and_verify_varchar_slice(
-            &values, &nulls, schema, props, &expected_values, false,
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            false,
         );
     }
 }
@@ -626,7 +632,12 @@ fn test_varchar_slice_utf8_delta_byte_array() {
             false,
         );
         encode_decode_and_verify_varchar_slice(
-            &values, &nulls, schema, props, &expected_values, false,
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            false,
         );
     }
 }
@@ -648,7 +659,12 @@ fn test_varchar_slice_utf8_rle_dictionary() {
             false,
         );
         encode_decode_and_verify_varchar_slice(
-            &values, &nulls, schema, props, &expected_values, false,
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            false,
         );
     }
 }
@@ -691,9 +707,7 @@ fn test_varchar_slice_empty_strings_all_encodings() {
 fn test_varchar_slice_long_strings_all_encodings() {
     let count = 1000;
     let values: Vec<ByteArray> = (0..count)
-        .map(|i| {
-            ByteArray::from(format!("this_is_a_long_string_value_for_row_{i:06}").as_str())
-        })
+        .map(|i| ByteArray::from(format!("this_is_a_long_string_value_for_row_{i:06}").as_str()))
         .collect();
     let expected_values: Vec<String> = (0..count)
         .map(|i| format!("this_is_a_long_string_value_for_row_{i:06}"))
@@ -715,13 +729,7 @@ fn test_varchar_slice_single_value() {
     let expected_values = vec!["single".to_string()];
     let nulls = vec![false];
 
-    run_varchar_slice_test_encoding_matrix(
-        "single value",
-        &values,
-        &nulls,
-        &expected_values,
-        true,
-    );
+    run_varchar_slice_test_encoding_matrix("single value", &values, &nulls, &expected_values, true);
 }
 
 #[test]
@@ -729,9 +737,9 @@ fn test_varchar_slice_mixed_nulls_and_empty() {
     let count = 100;
     let values: Vec<ByteArray> = (0..count)
         .map(|i| match i % 5 {
-            0 => ByteArray::from(""),         // empty string (non-null)
-            1 => ByteArray::from("hello"),    // normal value
-            2 => ByteArray::from(""),         // empty string (non-null)
+            0 => ByteArray::from(""),      // empty string (non-null)
+            1 => ByteArray::from("hello"), // normal value
+            2 => ByteArray::from(""),      // empty string (non-null)
             _ => ByteArray::from(format!("v_{i:03}").as_str()),
         })
         .collect();
@@ -797,7 +805,12 @@ fn test_varchar_slice_empty_strings_compressed() {
             true,
         );
         encode_decode_and_verify_varchar_slice(
-            &values, &nulls, schema, props, &expected_values, true,
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            true,
         );
     }
 }
@@ -806,9 +819,7 @@ fn test_varchar_slice_empty_strings_compressed() {
 fn test_varchar_slice_long_strings_compressed() {
     let count = 1000;
     let values: Vec<ByteArray> = (0..count)
-        .map(|i| {
-            ByteArray::from(format!("this_is_a_long_string_value_for_row_{i:06}").as_str())
-        })
+        .map(|i| ByteArray::from(format!("this_is_a_long_string_value_for_row_{i:06}").as_str()))
         .collect();
     let expected_values: Vec<String> = (0..count)
         .map(|i| format!("this_is_a_long_string_value_for_row_{i:06}"))
@@ -826,7 +837,12 @@ fn test_varchar_slice_long_strings_compressed() {
             true,
         );
         encode_decode_and_verify_varchar_slice(
-            &values, &nulls, schema, props, &expected_values, true,
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            true,
         );
     }
 }
@@ -849,7 +865,12 @@ fn test_varchar_slice_utf8_compressed() {
             false,
         );
         encode_decode_and_verify_varchar_slice(
-            &values, &nulls, schema, props, &expected_values, false,
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            false,
         );
     }
 }
@@ -872,7 +893,12 @@ fn test_varchar_slice_all_nulls_compressed() {
             true,
         );
         encode_decode_and_verify_varchar_slice(
-            &values, &nulls, schema, props, &expected_values, true,
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            true,
         );
     }
 }
@@ -890,18 +916,16 @@ fn test_varchar_slice_large_count() {
 
     for version in &VERSIONS {
         for encoding in &[Encoding::DeltaLengthByteArray, Encoding::DeltaByteArray] {
-            eprintln!(
-                "Testing large count with version={version:?}, encoding={encoding:?}"
-            );
+            eprintln!("Testing large count with version={version:?}, encoding={encoding:?}");
             let schema = required_byte_array_schema("col", Some(LogicalType::String));
-            let props = qdb_props_ascii(
-                ColumnTypeTag::VarcharSlice,
-                *version,
-                *encoding,
-                true,
-            );
+            let props = qdb_props_ascii(ColumnTypeTag::VarcharSlice, *version, *encoding, true);
             encode_decode_and_verify_varchar_slice(
-                &values, &nulls, schema, props, &expected_values, true,
+                &values,
+                &nulls,
+                schema,
+                props,
+                &expected_values,
+                true,
             );
         }
     }
@@ -971,14 +995,7 @@ fn encode_decode_and_verify_varchar_slice_filtered(
 
         decoder
             .decode_row_group_filtered::<false>(
-                &mut ctx,
-                &mut rgb,
-                0,
-                &columns,
-                rg_idx,
-                0,
-                rg_size,
-                &rg_filter,
+                &mut ctx, &mut rgb, 0, &columns, rg_idx, 0, rg_size, &rg_filter,
             )
             .unwrap_or_else(|e| panic!("decode row group filtered {rg_idx}: {e}"));
 
@@ -1057,8 +1074,7 @@ fn run_varchar_slice_filtered_test_with_compression(
             let count = COUNT;
             let nulls = generate_nulls(count, *null);
             let values = generate_values(count);
-            let expected_values: Vec<String> =
-                (0..count).map(|i| format!("val_{i:04}")).collect();
+            let expected_values: Vec<String> = (0..count).map(|i| format!("val_{i:04}")).collect();
             let rows_filter = every_other_row_filter(count);
 
             eprintln!(
@@ -1127,21 +1143,13 @@ fn test_varchar_slice_filtered_with_nulls() {
         let count = COUNT;
         let nulls = generate_nulls(count, Null::Dense);
         let values = generate_values(count);
-        let expected_values: Vec<String> =
-            (0..count).map(|i| format!("val_{i:04}")).collect();
+        let expected_values: Vec<String> = (0..count).map(|i| format!("val_{i:04}")).collect();
         let rows_filter = every_other_row_filter(count);
 
-        eprintln!(
-            "Testing filtered with dense nulls, version={version:?}"
-        );
+        eprintln!("Testing filtered with dense nulls, version={version:?}");
 
         let schema = optional_byte_array_schema("col", Some(LogicalType::String));
-        let props = qdb_props_ascii(
-            ColumnTypeTag::VarcharSlice,
-            *version,
-            Encoding::Plain,
-            true,
-        );
+        let props = qdb_props_ascii(ColumnTypeTag::VarcharSlice, *version, Encoding::Plain, true);
         encode_decode_and_verify_varchar_slice_filtered(
             &values,
             &nulls,
@@ -1164,9 +1172,7 @@ fn test_varchar_slice_rle_dict_single_distinct_value() {
     let nulls = vec![false; count];
 
     for version in &VERSIONS {
-        eprintln!(
-            "Testing RLE dict single distinct value with version={version:?}"
-        );
+        eprintln!("Testing RLE dict single distinct value with version={version:?}");
         let schema = required_byte_array_schema("col", Some(LogicalType::String));
         let props = qdb_props_ascii(
             ColumnTypeTag::VarcharSlice,
@@ -1206,16 +1212,9 @@ fn test_varchar_slice_consecutive_nulls() {
         .collect();
 
     for version in &VERSIONS {
-        eprintln!(
-            "Testing consecutive nulls with version={version:?}"
-        );
+        eprintln!("Testing consecutive nulls with version={version:?}");
         let schema = optional_byte_array_schema("col", Some(LogicalType::String));
-        let props = qdb_props_ascii(
-            ColumnTypeTag::VarcharSlice,
-            *version,
-            Encoding::Plain,
-            true,
-        );
+        let props = qdb_props_ascii(ColumnTypeTag::VarcharSlice, *version, Encoding::Plain, true);
         encode_decode_and_verify_varchar_slice(
             &values,
             &nulls,
@@ -1237,9 +1236,7 @@ fn test_varchar_slice_all_nulls_rle_dictionary() {
     let nulls = vec![true; count];
 
     for version in &VERSIONS {
-        eprintln!(
-            "Testing all nulls RLE dictionary with version={version:?}"
-        );
+        eprintln!("Testing all nulls RLE dictionary with version={version:?}");
         let schema = optional_byte_array_schema("col", Some(LogicalType::String));
         let props = qdb_props_ascii(
             ColumnTypeTag::VarcharSlice,

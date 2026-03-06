@@ -15,10 +15,10 @@ mod dictionary;
 mod plain;
 /// Lightweight iterators used by hybrid RLE dictionary decoding.
 mod rle;
-/// Hybrid RLE + dictionary index decoder (`RLE_DICTIONARY`).
-mod rle_dictionary;
 /// Specialized RLE dictionary decoder for VarcharSlice columns.
 mod rle_dict_varchar_slice;
+/// Hybrid RLE + dictionary index decoder (`RLE_DICTIONARY`).
+mod rle_dictionary;
 pub(crate) mod unpack;
 
 pub use self::dictionary::{
