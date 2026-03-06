@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Unsafe;
 
 /**
- * Decoder for TIMESTAMP columns in ILP v4 format.
+ * Decoder for TIMESTAMP columns in QWP v1 format.
  * <p>
  * Supports two encoding modes:
  * <ul>

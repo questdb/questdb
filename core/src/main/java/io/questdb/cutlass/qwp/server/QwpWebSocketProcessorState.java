@@ -30,7 +30,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
 /**
- * State management for ILP v4 WebSocket processing.
+ * State management for QWP v1 WebSocket processing.
  * <p>
  * Manages buffer accumulation for incoming binary data and tracks
  * processing status.

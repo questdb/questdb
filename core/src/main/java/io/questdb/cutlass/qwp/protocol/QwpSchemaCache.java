@@ -29,7 +29,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 /**
- * Simple cache for ILP v4 schemas.
+ * Simple cache for QWP v1 schemas.
  * <p>
  * Keyed by combined hash of (tableName, schemaHash).
  * Single-threaded, zero-allocation on lookups.
@@ -46,10 +46,6 @@ public class QwpSchemaCache {
 
     public QwpSchemaCache() {
         this.cache = new LongObjHashMap<>();
-    }
-
-    public QwpSchemaCache(int initialCapacity) {
-        this.cache = new LongObjHashMap<>(initialCapacity);
     }
 
     public void clear() {
@@ -106,13 +102,6 @@ public class QwpSchemaCache {
         return ((long) tableNameHash << 32) ^ schemaHash;
     }
 
-    private static class Entry {
-        final QwpSchema schema;
-        final String tableName;
-
-        Entry(String tableName, QwpSchema schema) {
-            this.tableName = tableName;
-            this.schema = schema;
-        }
+    private record Entry(String tableName, QwpSchema schema) {
     }
 }

@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Unsafe;
 
 /**
- * Variable-length integer encoding/decoding utilities for ILP v4 protocol.
+ * Variable-length integer encoding/decoding utilities for QWP v1 protocol.
  * Uses unsigned LEB128 (Little Endian Base 128) encoding.
  * <p>
  * The encoding scheme:
@@ -58,18 +58,6 @@ public final class QwpVarint {
 
     private QwpVarint() {
         // utility class
-    }
-
-    /**
-     * Decodes a varint from the given byte array.
-     *
-     * @param buf the buffer to read from
-     * @param pos the position to start reading
-     * @return the decoded value
-     * @throws QwpParseException if the varint is malformed (too many bytes)
-     */
-    public static long decode(byte[] buf, int pos) throws QwpParseException {
-        return decode(buf, pos, buf.length);
     }
 
     /**

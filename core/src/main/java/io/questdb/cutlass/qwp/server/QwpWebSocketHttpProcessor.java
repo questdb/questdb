@@ -33,7 +33,7 @@ import io.questdb.cutlass.qwp.websocket.WebSocketHandshake;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
- * HTTP request handler for ILP v4 WebSocket connections.
+ * HTTP request handler for QWP v1 WebSocket connections.
  * <p>
  * This handler detects WebSocket upgrade requests and returns an appropriate
  * processor to handle the WebSocket protocol upgrade and subsequent communication.
@@ -43,7 +43,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     private final QwpWebSocketUpgradeProcessor processor;
 
     /**
-     * Creates a new ILP v4 WebSocket HTTP processor.
+     * Creates a new QWP v1 WebSocket HTTP processor.
      *
      * @param engine            the Cairo engine for database access
      * @param httpConfiguration the HTTP server configuration

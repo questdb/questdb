@@ -2,30 +2,32 @@
 
 ## Overview
 
-This document describes the design for completing the `QwpWebSocketSender` implementation. The key goal is to enable **streaming to hide latency** through a pipeline of in-flight microbatches, achieving higher throughput than request-response patterns while maintaining lower latency than large batch HTTP sends.
+This document describes the design for completing the `QwpWebSocketSender` implementation. The key goal is to enable *
+*streaming to hide latency** through a pipeline of in-flight microbatches, achieving higher throughput than
+request-response patterns while maintaining lower latency than large batch HTTP sends.
 
 ## Current State
 
 ### What Exists
 
 1. **QwpWebSocketSender** (`core/src/main/java/io/questdb/cutlass/line/websocket/QwpWebSocketSender.java`)
-   - Implements `Sender` interface with fluent API
-   - Encodes ILP v4 binary messages
-   - Currently sends one row per message (no batching)
-   - **Missing:** References non-existent `WebSocketChannel` class
+    - Implements `Sender` interface with fluent API
+    - Encodes QWP v1 binary messages
+    - Currently sends one row per message (no batching)
+    - **Missing:** References non-existent `WebSocketChannel` class
 
 2. **Server-side WebSocket Infrastructure** (in `core/src/main/java/io/questdb/cutlass/http/websocket/`)
-   - `WebSocketFrameParser` - Zero-allocation RFC 6455 frame parser
-   - `WebSocketFrameWriter` - Frame header/payload writing
-   - `WebSocketHandshake` - RFC 6455 handshake validation
-   - `WebSocketConnectionContext` - Connection state management
-   - `WebSocketProcessor` - Event callback interface
-   - `QwpWebSocketProcessor` - Adapter for binary message processing
+    - `WebSocketFrameParser` - Zero-allocation RFC 6455 frame parser
+    - `WebSocketFrameWriter` - Frame header/payload writing
+    - `WebSocketHandshake` - RFC 6455 handshake validation
+    - `WebSocketConnectionContext` - Connection state management
+    - `WebSocketProcessor` - Event callback interface
+    - `QwpWebSocketProcessor` - Adapter for binary message processing
 
 3. **Test Infrastructure** (in `core/src/test/java/io/questdb/test/cutlass/http/websocket/`)
-   - `TestWebSocketServer` - Test server for integration tests
-   - `AbstractWebSocketIntegrationTest` - Base class with helper methods
-   - 15 test files covering frame parsing, handshake, connection, etc.
+    - `TestWebSocketServer` - Test server for integration tests
+    - `AbstractWebSocketIntegrationTest` - Base class with helper methods
+    - 15 test files covering frame parsing, handshake, connection, etc.
 
 ### Key Problem with Current Design
 
@@ -33,7 +35,7 @@ The current `QwpWebSocketSender` sends each row immediately in `sendRow()`:
 
 ```java
 private void sendRow() {
-    // Encode the single row as ILP v4 message
+    // Encode the single row as QWP v1 message
     // ...
     channel.sendBinary(bufferPtr, bufferPos);  // Blocking send!
     currentTableBuffer.reset();
@@ -41,6 +43,7 @@ private void sendRow() {
 ```
 
 This **blocks on every row**, negating the benefit of WebSocket's persistent connection. To hide latency, we need:
+
 1. A **dedicated sending thread** to handle I/O asynchronously
 2. **Microbatch buffering** to accumulate rows between sends
 3. **In-flight window tracking** to limit outstanding acknowledgments
@@ -50,9 +53,12 @@ This **blocks on every row**, negating the benefit of WebSocket's persistent con
 
 ### Thread Safety Contract
 
-**`Sender` instances are NOT thread-safe.** This is a fundamental contract of the `Sender` interface that users must respect. A single `Sender` instance must only be accessed from one thread at a time. This design choice simplifies the API and avoids synchronization overhead in the common single-threaded use case.
+**`Sender` instances are NOT thread-safe.** This is a fundamental contract of the `Sender` interface that users must
+respect. A single `Sender` instance must only be accessed from one thread at a time. This design choice simplifies the
+API and avoids synchronization overhead in the common single-threaded use case.
 
-However, `QwpWebSocketSender` is unique among `Sender` implementations because it **internally spawns an I/O thread**. This creates a producer-consumer pattern that must be carefully designed:
+However, `QwpWebSocketSender` is unique among `Sender` implementations because it **internally spawns an I/O thread**.
+This creates a producer-consumer pattern that must be carefully designed:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -108,7 +114,8 @@ However, `QwpWebSocketSender` is unique among `Sender` implementations because i
 
 ### Buffer Hand-Over Mechanism
 
-The critical concurrency challenge is **transferring ownership** of a filled buffer from the user thread to the I/O thread. We use a **double-buffering** scheme:
+The critical concurrency challenge is **transferring ownership** of a filled buffer from the user thread to the I/O
+thread. We use a **double-buffering** scheme:
 
 #### Double-Buffer Design
 
@@ -184,12 +191,12 @@ private void sendLoop() {
 
 #### Memory Ownership Rules
 
-| State | Owner | User Thread Can | I/O Thread Can |
-|-------|-------|-----------------|----------------|
-| FILLING | User | Read/Write | Nothing |
-| QUEUED | Queue | Nothing | Nothing |
-| SENDING | I/O | Nothing | Read |
-| RECYCLED | Pool | Reset & claim | Nothing |
+| State    | Owner | User Thread Can | I/O Thread Can |
+|----------|-------|-----------------|----------------|
+| FILLING  | User  | Read/Write      | Nothing        |
+| QUEUED   | Queue | Nothing         | Nothing        |
+| SENDING  | I/O   | Nothing         | Read           |
+| RECYCLED | Pool  | Reset & claim   | Nothing        |
 
 ### Critical Synchronization Points
 
@@ -317,6 +324,7 @@ These invariants must **always** hold:
 **Considered:** Use a lock-free ring buffer (LMAX Disruptor style) for buffer hand-over.
 
 **Rejected because:**
+
 - More complex implementation
 - Ring buffer requires power-of-two sizing
 - Double-buffer is simpler and sufficient for our needs
@@ -327,6 +335,7 @@ These invariants must **always** hold:
 **Considered:** Copy the buffer contents when handing over instead of ownership transfer.
 
 **Rejected because:**
+
 - Memory copy overhead for large batches
 - Doubles memory usage (source + destination)
 - Ownership transfer is zero-copy
@@ -336,6 +345,7 @@ These invariants must **always** hold:
 **Considered:** Single buffer protected by mutex, I/O thread locks to read.
 
 **Rejected because:**
+
 - Lock contention between user and I/O thread
 - User thread blocks during network I/O
 - Defeats the purpose of async sending
@@ -345,6 +355,7 @@ These invariants must **always** hold:
 **Considered:** User calls `poll()` or similar to drive I/O from their thread.
 
 **Rejected because:**
+
 - Changes the `Sender` API contract
 - Complicates user code
 - Inconsistent with other `Sender` implementations
@@ -355,6 +366,7 @@ These invariants must **always** hold:
 **Considered:** Use a thread pool for sending multiple batches concurrently.
 
 **Rejected because:**
+
 - Out-of-order sends could cause issues
 - More complex connection management
 - Single persistent connection is WebSocket's strength
@@ -384,30 +396,30 @@ B1:               FILLING → QUEUED → SENDING → RECYCLED → ...
 
 #### Unit Tests for Concurrency
 
-| Test | Purpose |
-|------|---------|
-| `MicrobatchBufferStateTransitionTest` | Verify state machine correctness |
-| `SendQueueBoundednessTest` | Verify queue doesn't grow unbounded |
-| `DoubleBufferSwapTest` | Verify buffer swap is safe |
-| `ShutdownCoordinationTest` | Verify clean shutdown |
+| Test                                  | Purpose                             |
+|---------------------------------------|-------------------------------------|
+| `MicrobatchBufferStateTransitionTest` | Verify state machine correctness    |
+| `SendQueueBoundednessTest`            | Verify queue doesn't grow unbounded |
+| `DoubleBufferSwapTest`                | Verify buffer swap is safe          |
+| `ShutdownCoordinationTest`            | Verify clean shutdown               |
 
 #### Stress Tests
 
-| Test | Scenario |
-|------|----------|
-| `HighThroughputStressTest` | Max rows/sec for 60 seconds |
-| `SlowServerBackpressureTest` | Server delays responses |
-| `BurstTrafficTest` | Alternating idle and burst |
-| `LongRunningStabilityTest` | 24-hour continuous operation |
+| Test                         | Scenario                     |
+|------------------------------|------------------------------|
+| `HighThroughputStressTest`   | Max rows/sec for 60 seconds  |
+| `SlowServerBackpressureTest` | Server delays responses      |
+| `BurstTrafficTest`           | Alternating idle and burst   |
+| `LongRunningStabilityTest`   | 24-hour continuous operation |
 
 #### Race Condition Tests
 
-| Test | Technique |
-|------|-----------|
-| `ConcurrentCloseTest` | Close during active sending |
-| `FlushDuringWriteTest` | Flush while adding rows |
-| `ReconnectDuringWriteTest` | Connection drop mid-batch |
-| `ThreadSanitizerTest` | Run with -fsanitize=thread |
+| Test                       | Technique                   |
+|----------------------------|-----------------------------|
+| `ConcurrentCloseTest`      | Close during active sending |
+| `FlushDuringWriteTest`     | Flush while adding rows     |
+| `ReconnectDuringWriteTest` | Connection drop mid-batch   |
+| `ThreadSanitizerTest`      | Run with -fsanitize=thread  |
 
 #### Deterministic Concurrency Tests
 
@@ -556,11 +568,13 @@ public class WebSocketChannel implements QuietCloseable {
 ```
 
 **Tests for Phase 1:**
+
 - `WebSocketChannelTest` - Unit tests for frame encoding/decoding
 - `WebSocketChannelHandshakeTest` - Handshake validation
 - `WebSocketChannelIntegrationTest` - Connect to `TestWebSocketServer`
 
 **Deliverables:**
+
 1. `WebSocketChannel` class with connect, sendBinary, close
 2. Client-side frame masking (RFC 6455 requirement)
 3. Basic error handling
@@ -571,15 +585,18 @@ public class WebSocketChannel implements QuietCloseable {
 Wire `QwpWebSocketSender` to use `WebSocketChannel` for basic functionality.
 
 **Changes to QwpWebSocketSender:**
+
 - Create `WebSocketChannel` in `ensureConnected()`
 - Implement `sendBinary()` calls
 - Handle connection errors
 
 **Tests for Phase 2:**
+
 - `QwpWebSocketSenderBasicTest` - Basic send operations
 - `QwpWebSocketSenderIntegrationTest` - Full round-trip with server
 
 **Deliverables:**
+
 1. Working synchronous sender (per-row send)
 2. Basic test coverage
 3. Verify data arrives at server correctly
@@ -608,23 +625,27 @@ class MicrobatchBuffer {
 ```
 
 **Changes to QwpWebSocketSender:**
+
 - Add `MicrobatchBuffer` instead of immediate send
 - Add flush triggers: row count, byte size, time
 - Keep `flush()` for explicit user control
 
 **Tests for Phase 3:**
+
 - `MicrobatchBufferTest` - Unit tests for buffering logic
 - `QwpWebSocketSenderBatchingTest` - Verify batching behavior
 - `QwpWebSocketSenderAutoFlushTest` - Row/time-based auto-flush
 
 **Deliverables:**
+
 1. Configurable microbatch buffering
 2. Auto-flush on row count, byte size, or time
 3. Tests verifying batch boundaries
 
 ### Phase 4: Asynchronous I/O Thread
 
-Introduce dedicated sending thread for non-blocking operation. **This is the critical phase for concurrency correctness.**
+Introduce dedicated sending thread for non-blocking operation. **This is the critical phase for concurrency correctness.
+**
 
 **New Class:** `WebSocketSendQueue`
 
@@ -671,21 +692,25 @@ class QwpWebSocketSender {
 **Tests for Phase 4:**
 
 *Unit Tests:*
+
 - `WebSocketSendQueueTest` - Queue operations
 - `MicrobatchBufferStateTest` - State transitions
 - `DoubleBufferSwapTest` - Buffer ownership transfer
 
 *Concurrency Tests:*
+
 - `ConcurrentEnqueueTest` - Verify thread-safe enqueue
 - `BackpressureTest` - Full queue blocks user
 - `ShutdownDuringActiveTest` - Clean shutdown mid-send
 - `BufferRecycleRaceTest` - No use-after-recycle
 
 *Integration Tests:*
+
 - `QwpWebSocketSenderAsyncTest` - Non-blocking sends work
 - `QwpWebSocketSenderThroughputTest` - Throughput improvement
 
 **Deliverables:**
+
 1. Dedicated I/O thread with proper lifecycle
 2. Double-buffering with safe hand-over
 3. Backpressure when queue full
@@ -718,16 +743,19 @@ class SentBatch {
 ```
 
 **Response Processing:**
+
 - Parse server acknowledgment frames
 - Update `InFlightWindow` on ack received
 - Handle error responses
 
 **Tests for Phase 5:**
+
 - `InFlightWindowTest` - Unit tests for window tracking
 - `QwpWebSocketSenderBackpressureTest` - Verify backpressure works
 - `QwpWebSocketSenderErrorHandlingTest` - Error recovery
 
 **Deliverables:**
+
 1. In-flight window with configurable size
 2. Backpressure when window full
 3. Acknowledgment parsing
@@ -738,18 +766,22 @@ class SentBatch {
 Add security features.
 
 **Authentication Methods:**
+
 1. Bearer token in WebSocket upgrade request
 2. Basic auth in upgrade request headers
 
 **Changes:**
+
 - Add auth headers to HTTP upgrade request
 - TLS socket creation using `SSLContext`
 
 **Tests for Phase 6:**
+
 - `QwpWebSocketSenderAuthTest` - Token and basic auth
 - `QwpWebSocketSenderTlsTest` - TLS connection
 
 **Deliverables:**
+
 1. Bearer token authentication
 2. Basic authentication
 3. TLS/WSS support
@@ -760,17 +792,20 @@ Add security features.
 Final polish for production use.
 
 **Features:**
+
 - Automatic reconnection on connection loss
 - Exponential backoff with jitter
 - Metrics/logging for debugging
 - Connection keepalive (ping/pong)
 
 **Tests for Phase 7:**
+
 - `QwpWebSocketSenderReconnectTest` - Auto-reconnect scenarios
 - `QwpWebSocketSenderStressTest` - Long-running stability
 - `QwpWebSocketSenderConcurrencyTest` - Multi-threaded access
 
 **Deliverables:**
+
 1. Robust reconnection logic
 2. Comprehensive logging
 3. Stress tests for stability
@@ -791,15 +826,15 @@ QwpWebSocketSender sender = Sender.builder(Sender.Transport.WEBSOCKET)
 
 ### Configuration Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `autoFlushRows` | int | 500 | Rows per microbatch |
-| `autoFlushBytes` | int | 1MB | Max bytes per microbatch |
-| `autoFlushInterval` | Duration | 100ms | Max time before flush |
-| `maxInFlight` | int | 8 | Max unacknowledged batches |
-| `connectTimeout` | Duration | 10s | Connection timeout |
-| `readTimeout` | Duration | 30s | Response timeout |
-| `retryTimeout` | Duration | 10s | Max retry duration |
+| Option              | Type     | Default | Description                |
+|---------------------|----------|---------|----------------------------|
+| `autoFlushRows`     | int      | 500     | Rows per microbatch        |
+| `autoFlushBytes`    | int      | 1MB     | Max bytes per microbatch   |
+| `autoFlushInterval` | Duration | 100ms   | Max time before flush      |
+| `maxInFlight`       | int      | 8       | Max unacknowledged batches |
+| `connectTimeout`    | Duration | 10s     | Connection timeout         |
+| `readTimeout`       | Duration | 30s     | Response timeout           |
+| `retryTimeout`      | Duration | 10s     | Max retry duration         |
 
 ### Usage Example
 
@@ -835,7 +870,7 @@ Sec-WebSocket-Version: 13
 Authorization: Bearer <token>
 ```
 
-### ILP v4 Binary Message Format
+### QWP v1 Binary Message Format
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -887,31 +922,31 @@ Authorization: Bearer <token>
 
 ### Unit Tests (Per Class)
 
-| Class | Test Class | Focus |
-|-------|------------|-------|
-| `WebSocketChannel` | `WebSocketChannelTest` | Frame encoding, masking |
-| `MicrobatchBuffer` | `MicrobatchBufferTest` | Buffer management |
-| `WebSocketSendQueue` | `WebSocketSendQueueTest` | Queue operations |
-| `InFlightWindow` | `InFlightWindowTest` | Window tracking |
+| Class                | Test Class               | Focus                   |
+|----------------------|--------------------------|-------------------------|
+| `WebSocketChannel`   | `WebSocketChannelTest`   | Frame encoding, masking |
+| `MicrobatchBuffer`   | `MicrobatchBufferTest`   | Buffer management       |
+| `WebSocketSendQueue` | `WebSocketSendQueueTest` | Queue operations        |
+| `InFlightWindow`     | `InFlightWindowTest`     | Window tracking         |
 
 ### Integration Tests
 
-| Test Class | Scenario |
-|------------|----------|
-| `QwpWebSocketSenderBasicIntegrationTest` | Simple send/receive |
-| `QwpWebSocketSenderBatchingIntegrationTest` | Batch accumulation |
-| `QwpWebSocketSenderBackpressureIntegrationTest` | Window limiting |
-| `QwpWebSocketSenderReconnectIntegrationTest` | Connection recovery |
-| `QwpWebSocketSenderTlsIntegrationTest` | TLS connections |
-| `QwpWebSocketSenderAuthIntegrationTest` | Authentication |
+| Test Class                                      | Scenario            |
+|-------------------------------------------------|---------------------|
+| `QwpWebSocketSenderBasicIntegrationTest`        | Simple send/receive |
+| `QwpWebSocketSenderBatchingIntegrationTest`     | Batch accumulation  |
+| `QwpWebSocketSenderBackpressureIntegrationTest` | Window limiting     |
+| `QwpWebSocketSenderReconnectIntegrationTest`    | Connection recovery |
+| `QwpWebSocketSenderTlsIntegrationTest`          | TLS connections     |
+| `QwpWebSocketSenderAuthIntegrationTest`         | Authentication      |
 
 ### Performance Tests
 
-| Test | Metric |
-|------|--------|
+| Test       | Metric                             |
+|------------|------------------------------------|
 | Throughput | Rows/second at various batch sizes |
-| Latency | p50/p99 time from send to ack |
-| Memory | Buffer allocation under load |
+| Latency    | p50/p99 time from send to ack      |
+| Memory     | Buffer allocation under load       |
 
 ## Success Criteria
 
@@ -923,21 +958,23 @@ Authorization: Bearer <token>
 
 ## Risks and Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Server doesn't send acks | No flow control | Implement timeout-based window advance |
-| Memory pressure under load | OOM | Bounded queues, backpressure |
-| Thread safety bugs | Data corruption | Careful locking, concurrent tests |
-| Protocol incompatibility | Connection failures | Extensive handshake tests |
+| Risk                       | Impact              | Mitigation                             |
+|----------------------------|---------------------|----------------------------------------|
+| Server doesn't send acks   | No flow control     | Implement timeout-based window advance |
+| Memory pressure under load | OOM                 | Bounded queues, backpressure           |
+| Thread safety bugs         | Data corruption     | Careful locking, concurrent tests      |
+| Protocol incompatibility   | Connection failures | Extensive handshake tests              |
 
 ## Implementation Schedule
 
 Work proceeds phase-by-phase. Each phase must have:
+
 1. All tests passing before moving forward
 2. Code review completed
 3. No known bugs or shortcuts
 
 **Phase completion order:**
+
 1. Phase 1: WebSocketChannel - Foundation
 2. Phase 2: Basic QwpWebSocketSender - Verification
 3. Phase 3: Microbatching - Batching logic
@@ -949,6 +986,7 @@ Work proceeds phase-by-phase. Each phase must have:
 ## File Locations Summary
 
 **Main Source (`core/src/main/java/io/questdb/cutlass/line/websocket/`):**
+
 - `QwpWebSocketSender.java` (exists, needs updates)
 - `WebSocketChannel.java` (new)
 - `MicrobatchBuffer.java` (new)
@@ -956,8 +994,10 @@ Work proceeds phase-by-phase. Each phase must have:
 - `InFlightWindow.java` (new)
 
 **Test Source (`core/src/test/java/io/questdb/test/cutlass/line/websocket/`):**
+
 - (new test directory)
 - All test classes as listed above
 
 **Shared Infrastructure (`core/src/main/java/io/questdb/cutlass/http/websocket/`):**
+
 - Reuse existing frame parser/writer classes

@@ -1,6 +1,7 @@
-# ILP v4 WebSocket Sender Internals
+# QWP v1 WebSocket Sender Internals
 
-This document describes the internal architecture of `QwpWebSocketSender`, focusing on data flow, buffering, flushing behavior, and flow control.
+This document describes the internal architecture of `QwpWebSocketSender`, focusing on data flow, buffering, flushing
+behavior, and flow control.
 
 ## Architecture Overview
 
@@ -53,6 +54,7 @@ buffer1: [FILLING]────────────────────[F
 ```
 
 **Buffer States:**
+
 - `FILLING` - User thread is writing data
 - `SEALED` - Buffer is complete, waiting to be sent
 - `SENDING` - I/O thread is transmitting
@@ -62,15 +64,15 @@ buffer1: [FILLING]────────────────────[F
 
 The sender automatically flushes (seals current buffer and enqueues for sending) when ANY of these conditions is met:
 
-| Trigger | Default | Configurable | Description |
-|---------|---------|--------------|-------------|
-| `autoFlushRows` | 500 rows | ✅ Yes | Flush after N rows accumulated |
-| `autoFlushBytes` | 1 MB | ✅ Yes | Flush when buffer reaches N bytes |
-| `autoFlushInterval` | 100 ms | ✅ Yes | Flush if oldest row is older than N |
+| Trigger             | Default  | Configurable | Description                         |
+|---------------------|----------|--------------|-------------------------------------|
+| `autoFlushRows`     | 500 rows | ✅ Yes        | Flush after N rows accumulated      |
+| `autoFlushBytes`    | 1 MB     | ✅ Yes        | Flush when buffer reaches N bytes   |
+| `autoFlushInterval` | 100 ms   | ✅ Yes        | Flush if oldest row is older than N |
 
-### ILP v4 Message Structure
+### QWP v1 Message Structure
 
-In ILP v4, each row is encoded as a **separate binary message** with its own header:
+In QWP v1, each row is encoded as a **separate binary message** with its own header:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -84,16 +86,20 @@ In ILP v4, each row is encoded as a **separate binary message** with its own hea
 ```
 
 Each message contains:
+
 - **4-byte length prefix** - total message size
 - **Table name** - length-prefixed string
 - **Columns** - type tag + name + value for each column
 - **Timestamp** - 8-byte designated timestamp
 
-**Example:** A row like `metrics,host=server1 value=42i 1704067200000000` becomes approximately 50-100 bytes depending on column names and types.
+**Example:** A row like `metrics,host=server1 value=42i 1704067200000000` becomes approximately 50-100 bytes depending
+on column names and types.
 
-With `autoFlushRows=500` (the default), a single batch contains **500 concatenated messages** in one WebSocket binary frame. The server parses them sequentially and commits them atomically as a single transaction.
+With `autoFlushRows=500` (the default), a single batch contains **500 concatenated messages** in one WebSocket binary
+frame. The server parses them sequentially and commits them atomically as a single transaction.
 
 **Why this matters:**
+
 - More rows per batch = better throughput (fewer round-trips)
 - Fewer rows per batch = lower latency (faster commits)
 - Each batch is one WebSocket frame = one TCP send = one server ACK
@@ -144,18 +150,20 @@ This prevents unbounded memory growth and ensures the client doesn't overwhelm t
 
 ### Capacity Calculation
 
-| Setting | Default | Configurable | Description |
-|---------|---------|--------------|-------------|
-| **InFlightWindow** | 8 batches | ✅ Yes | Max unacknowledged batches |
-| **SendQueue** | 16 batches | ✅ Yes | Max batches waiting to send |
-| **autoFlushRows** | 500 rows | ✅ Yes | Rows per batch |
+| Setting            | Default    | Configurable | Description                 |
+|--------------------|------------|--------------|-----------------------------|
+| **InFlightWindow** | 8 batches  | ✅ Yes        | Max unacknowledged batches  |
+| **SendQueue**      | 16 batches | ✅ Yes        | Max batches waiting to send |
+| **autoFlushRows**  | 500 rows   | ✅ Yes        | Rows per batch              |
 
 **Maximum rows in flight (with defaults):**
+
 ```
 (8 in-flight + 16 queued + 2 buffers) × 500 rows = 13,000 rows
 ```
 
 **Maximum memory usage (approximate):**
+
 ```
 26 batches × 1MB max per batch ≈ 26 MB (worst case)
 ```
@@ -175,6 +183,7 @@ QwpWebSocketSender.connectAsync(host, port, false,
 ```
 
 Or via command line with the allocation test client:
+
 ```bash
 ./run-alloc-test.sh client --protocol=qwp-websocket \
     --in-flight-window=16 --send-queue=32
@@ -182,11 +191,11 @@ Or via command line with the allocation test client:
 
 ## Threading Model
 
-| Thread | Responsibility |
-|--------|----------------|
-| **User Thread** | Writes rows, triggers auto-flush, calls explicit flush() |
-| **I/O Thread** | Dequeues batches, adds to in-flight window, sends over WebSocket |
-| **Response Reader** | Reads server ACKs, removes from in-flight window |
+| Thread              | Responsibility                                                   |
+|---------------------|------------------------------------------------------------------|
+| **User Thread**     | Writes rows, triggers auto-flush, calls explicit flush()         |
+| **I/O Thread**      | Dequeues batches, adds to in-flight window, sends over WebSocket |
+| **Response Reader** | Reads server ACKs, removes from in-flight window                 |
 
 ### Thread Safety
 
@@ -214,6 +223,7 @@ sender.flush();  // Blocks until ALL data is acknowledged by server
 ```
 
 **What `flush()` does:**
+
 1. Flushes any pending rows from TableBuffers to MicrobatchBuffer
 2. Seals and enqueues the current MicrobatchBuffer (if it has data)
 3. Waits for SendQueue to drain (all batches sent)
@@ -230,11 +240,13 @@ Client sends:     [batch seq=0] [batch seq=1] [batch seq=2]
 Server responds:  [ACK seq=0]   [ACK seq=1]   [ACK seq=2]
 ```
 
-The server processes batches **in order** and sends ACKs as each batch commits. The client's InFlightWindow removes batches as ACKs arrive.
+The server processes batches **in order** and sends ACKs as each batch commits. The client's InFlightWindow removes
+batches as ACKs arrive.
 
 ### Error Handling
 
 If the server returns an error instead of ACK:
+
 1. `InFlightWindow.fail()` is called with the error
 2. All waiting threads are notified
 3. Subsequent operations throw `LineSenderException`
@@ -244,6 +256,7 @@ If the server returns an error instead of ACK:
 ### Throughput Optimization
 
 For maximum throughput:
+
 - Use large `autoFlushRows` (e.g., 10,000+)
 - Use async mode (default for `connectAsync()`)
 - Pipeline is deep: 8 in-flight + 16 queued = 24 batches in parallel
@@ -251,6 +264,7 @@ For maximum throughput:
 ### Latency Optimization
 
 For minimum latency:
+
 - Use small `autoFlushRows` (e.g., 1-100)
 - Use shorter `autoFlushInterval`
 - Trade-off: more overhead per row, lower throughput
@@ -258,6 +272,7 @@ For minimum latency:
 ### Memory Usage
 
 Memory is bounded by:
+
 ```
 (maxInFlight + queueCapacity + 2) × bufferSize
 = (8 + 16 + 2) × 64KB = 1.6MB (default)
@@ -283,6 +298,7 @@ try (Sender sender = QwpWebSocketSender.connectAsync("localhost", 9000, false,
 ```
 
 **Data flow for 100M rows:**
+
 - 10,000 batches created (100M / 10K rows each)
 - At any time: up to 8 batches awaiting ACK, 16 in queue, 2 in buffers
 - Backpressure automatically throttles if server is slow

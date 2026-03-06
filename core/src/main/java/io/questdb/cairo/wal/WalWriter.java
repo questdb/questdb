@@ -386,7 +386,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * <p>
      * The columnar appender provides an alternative to the row-by-row API,
      * allowing entire columns to be written at once for better performance
-     * when ingesting columnar data (like ILP v4).
+     * when ingesting columnar data (like QWP v1).
      *
      * @return the columnar row appender for this writer
      */

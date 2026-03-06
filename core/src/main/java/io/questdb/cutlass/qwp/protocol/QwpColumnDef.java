@@ -30,7 +30,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
 
 /**
- * Represents a column definition in an ILP v4 schema.
+ * Represents a column definition in an QWP v1 schema.
  * <p>
  * This class is immutable and safe for caching.
  */
@@ -44,7 +44,7 @@ public final class QwpColumnDef {
      * Creates a column definition.
      *
      * @param name     the column name (UTF-8)
-     * @param typeCode the ILP v4 type code (0x01-0x0F, optionally OR'd with 0x80 for nullable)
+     * @param typeCode the QWP v1 type code (0x01-0x0F, optionally OR'd with 0x80 for nullable)
      */
     public QwpColumnDef(String name, byte typeCode) {
         this.name = name;

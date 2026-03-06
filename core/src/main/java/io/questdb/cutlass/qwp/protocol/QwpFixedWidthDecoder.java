@@ -29,7 +29,7 @@ import io.questdb.std.Unsafe;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 
 /**
- * Decoder for fixed-width column types in ILP v4 format.
+ * Decoder for fixed-width column types in QWP v1 format.
  * <p>
  * Supported types: BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, UUID, LONG256
  * <p>
@@ -49,7 +49,7 @@ public final class QwpFixedWidthDecoder implements QwpColumnDecoder {
     /**
      * Creates a decoder for a specific fixed-width type.
      *
-     * @param typeCode the ILP v4 type code
+     * @param typeCode the QWP v1 type code
      * @throws IllegalArgumentException if type is not fixed-width
      */
     public QwpFixedWidthDecoder(byte typeCode) {
@@ -286,20 +286,6 @@ public final class QwpFixedWidthDecoder implements QwpColumnDecoder {
         }
         size += (rowCount - nullCount) * valueSize;
         return size;
-    }
-
-    /**
-     * Gets the type code this decoder handles.
-     */
-    public byte getTypeCode() {
-        return typeCode;
-    }
-
-    /**
-     * Gets the size in bytes of each value.
-     */
-    public int getValueSize() {
-        return valueSize;
     }
 
     private void decodeBytes(long valuesAddress, long nullBitmapAddress, int rowCount, boolean nullable, ColumnSink sink) {

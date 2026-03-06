@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Unsafe;
 
 /**
- * Utility class for reading and writing null bitmaps in ILP v4 format.
+ * Utility class for reading and writing null bitmaps in QWP v1 format.
  * <p>
  * Null bitmap format:
  * <ul>
@@ -71,9 +71,7 @@ public final class QwpNullBitmap {
         if (remainingBits > 0) {
             byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
             int mask = (1 << remainingBits) - 1;
-            if ((b & mask) != mask) {
-                return false;
-            }
+            return (b & mask) == mask;
         }
 
         return true;
@@ -218,10 +216,7 @@ public final class QwpNullBitmap {
      * @return true if the row is null
      */
     public static boolean isNull(long address, int rowIndex) {
-        int byteIndex = rowIndex >>> 3; // rowIndex / 8
-        int bitIndex = rowIndex & 7;    // rowIndex % 8
-        byte b = Unsafe.getUnsafe().getByte(address + byteIndex);
-        return (b & (1 << bitIndex)) != 0;
+        return QwpBooleanDecoder.getBit(address, rowIndex);
     }
 
     /**
@@ -233,10 +228,7 @@ public final class QwpNullBitmap {
      * @return true if the row is null
      */
     public static boolean isNull(byte[] bitmap, int offset, int rowIndex) {
-        int byteIndex = rowIndex >>> 3;
-        int bitIndex = rowIndex & 7;
-        byte b = bitmap[offset + byteIndex];
-        return (b & (1 << bitIndex)) != 0;
+        return QwpBooleanDecoder.getBit(bitmap, offset, rowIndex);
     }
 
     /**
@@ -262,9 +254,7 @@ public final class QwpNullBitmap {
         if (remainingBits > 0) {
             byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
             int mask = (1 << remainingBits) - 1;
-            if ((b & mask) != 0) {
-                return false;
-            }
+            return (b & mask) == 0;
         }
 
         return true;
@@ -277,12 +267,7 @@ public final class QwpNullBitmap {
      * @param rowIndex row index to set as null
      */
     public static void setNull(long address, int rowIndex) {
-        int byteIndex = rowIndex >>> 3;
-        int bitIndex = rowIndex & 7;
-        long addr = address + byteIndex;
-        byte b = Unsafe.getUnsafe().getByte(addr);
-        b |= (1 << bitIndex);
-        Unsafe.getUnsafe().putByte(addr, b);
+        QwpBooleanDecoder.setBit(address, rowIndex);
     }
 
     /**
@@ -293,9 +278,7 @@ public final class QwpNullBitmap {
      * @param rowIndex row index to set as null
      */
     public static void setNull(byte[] bitmap, int offset, int rowIndex) {
-        int byteIndex = rowIndex >>> 3;
-        int bitIndex = rowIndex & 7;
-        bitmap[offset + byteIndex] |= (1 << bitIndex);
+        QwpBooleanDecoder.setBit(bitmap, offset, rowIndex);
     }
 
     /**

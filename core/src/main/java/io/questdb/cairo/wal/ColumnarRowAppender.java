@@ -40,7 +40,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
  * <p>
  * This interface provides an alternative to the row-by-row {@link io.questdb.cairo.TableWriter.Row} API,
  * allowing entire columns to be written at once. This is particularly efficient when the source
- * data is already in columnar format (like ILP v4).
+ * data is already in columnar format (like QWP v1).
  * <p>
  * <b>Lifecycle:</b>
  * <ol>
@@ -110,7 +110,7 @@ public interface ColumnarRowAppender {
     /**
      * Writes a BOOLEAN column.
      * <p>
-     * Boolean values are bit-packed in ILP v4 wire format but stored as bytes in WAL.
+     * Boolean values are bit-packed in QWP v1 wire format but stored as bytes in WAL.
      *
      * @param columnIndex the column index in the table
      * @param cursor      the boolean column cursor

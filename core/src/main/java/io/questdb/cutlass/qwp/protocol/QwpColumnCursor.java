@@ -25,10 +25,9 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Mutable;
-import io.questdb.std.str.DirectUtf8Sequence;
 
 /**
- * Base interface for streaming column cursors in ILP v4.
+ * Base interface for streaming column cursors in QWP v1.
  * <p>
  * Column cursors provide zero-allocation access to column values by reading
  * directly from wire-format memory. Values are accessed one row at a time
@@ -65,26 +64,7 @@ public interface QwpColumnCursor extends Mutable {
     void clear();
 
     /**
-     * Returns the current row index (0-based).
-     * <p>
-     * Returns -1 before the first {@link #advanceRow()} call.
-     *
-     * @return current row index
-     */
-    int getCurrentRow();
-
-    /**
-     * Returns the column name as a UTF-8 sequence.
-     * <p>
-     * The returned sequence is a flyweight pointing to wire memory.
-     * Valid until cursor is cleared or reinitialized.
-     *
-     * @return column name as UTF-8 sequence
-     */
-    DirectUtf8Sequence getNameUtf8();
-
-    /**
-     * Returns the ILP v4 type code for this column.
+     * Returns the QWP v1 type code for this column.
      *
      * @return type code (without nullable flag)
      * @see QwpConstants
@@ -99,13 +79,6 @@ public interface QwpColumnCursor extends Mutable {
      * @return true if current row is NULL
      */
     boolean isNull();
-
-    /**
-     * Returns whether this column is nullable.
-     *
-     * @return true if column can contain NULL values
-     */
-    boolean isNullable();
 
     /**
      * Resets the cursor to before the first row.

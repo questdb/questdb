@@ -33,7 +33,7 @@ import java.util.Arrays;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_COLUMN_NAME_LENGTH;
 
 /**
- * Represents an ILP v4 table schema (immutable, safe for caching).
+ * Represents an QWP v1 table schema (immutable, safe for caching).
  * <p>
  * A schema consists of an ordered list of column definitions.
  * The schema hash is computed as XXH64 over the full schema bytes.
@@ -73,17 +73,6 @@ public final class QwpSchema {
     public static QwpSchema create(QwpColumnDef[] columns) {
         long hash = computeSchemaHash(columns);
         return new QwpSchema(columns.clone(), hash);
-    }
-
-    /**
-     * Creates a schema from column definitions with a pre-computed hash.
-     *
-     * @param columns    the column definitions
-     * @param schemaHash the pre-computed schema hash
-     * @return the schema
-     */
-    public static QwpSchema createWithHash(QwpColumnDef[] columns, long schemaHash) {
-        return new QwpSchema(columns.clone(), schemaHash);
     }
 
     /**
@@ -322,7 +311,7 @@ public final class QwpSchema {
 
     @Override
     public int hashCode() {
-        return (int) (schemaHash ^ (schemaHash >>> 32));
+        return Long.hashCode(schemaHash);
     }
 
     @Override

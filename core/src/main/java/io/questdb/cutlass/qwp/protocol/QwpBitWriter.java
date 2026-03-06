@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 
 /**
- * Bit-level writer for ILP v4 protocol.
+ * Bit-level writer for QWP v1 protocol.
  * <p>
  * This class writes bits to a buffer in LSB-first order within each byte.
  * Bits are packed sequentially, spanning byte boundaries as needed.

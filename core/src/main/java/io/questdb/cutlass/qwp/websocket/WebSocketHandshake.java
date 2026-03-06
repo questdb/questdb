@@ -41,13 +41,10 @@ import java.util.Base64;
  */
 public final class WebSocketHandshake {
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
-    public static final Utf8String HEADER_SEC_WEBSOCKET_ACCEPT = new Utf8String("Sec-WebSocket-Accept");
     public static final Utf8String HEADER_SEC_WEBSOCKET_KEY = new Utf8String("Sec-WebSocket-Key");
-    public static final Utf8String HEADER_SEC_WEBSOCKET_PROTOCOL = new Utf8String("Sec-WebSocket-Protocol");
     public static final Utf8String HEADER_SEC_WEBSOCKET_VERSION = new Utf8String("Sec-WebSocket-Version");
     // Header names (case-insensitive)
     public static final Utf8String HEADER_UPGRADE = new Utf8String("Upgrade");
-    public static final Utf8String VALUE_UPGRADE = new Utf8String("upgrade");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
     /**
@@ -129,8 +126,8 @@ public final class WebSocketHandshake {
             return false;
         }
         // Connection header may contain multiple values, e.g., "keep-alive, Upgrade"
-        // Perform case-insensitive substring search
-        return containsIgnoreCaseAscii(connectionHeader, VALUE_UPGRADE);
+        // Perform case-insensitive substring search for "upgrade"
+        return containsUpgrade(connectionHeader);
     }
 
     /**
@@ -380,37 +377,19 @@ public final class WebSocketHandshake {
         return offset;
     }
 
-    /**
-     * Checks if the sequence contains the given substring (case-insensitive).
-     */
-    private static boolean containsIgnoreCaseAscii(Utf8Sequence seq, Utf8Sequence substring) {
+    private static boolean containsUpgrade(Utf8Sequence seq) {
         int seqLen = seq.size();
-        int subLen = substring.size();
-
-        if (subLen > seqLen) {
-            return false;
-        }
-        if (subLen == 0) {
-            return true;
-        }
-
-        outer:
-        for (int i = 0; i <= seqLen - subLen; i++) {
-            for (int j = 0; j < subLen; j++) {
-                byte a = seq.byteAt(i + j);
-                byte b = substring.byteAt(j);
-                // Convert to lowercase for comparison
-                if (a >= 'A' && a <= 'Z') {
-                    a = (byte) (a + 32);
-                }
-                if (b >= 'A' && b <= 'Z') {
-                    b = (byte) (b + 32);
-                }
-                if (a != b) {
-                    continue outer;
-                }
+        // "upgrade" is 7 bytes
+        for (int i = 0, n = seqLen - 6; i < n; i++) {
+            if ((seq.byteAt(i) | 32) == 'u'
+                    && (seq.byteAt(i + 1) | 32) == 'p'
+                    && (seq.byteAt(i + 2) | 32) == 'g'
+                    && (seq.byteAt(i + 3) | 32) == 'r'
+                    && (seq.byteAt(i + 4) | 32) == 'a'
+                    && (seq.byteAt(i + 5) | 32) == 'd'
+                    && (seq.byteAt(i + 6) | 32) == 'e') {
+                return true;
             }
-            return true;
         }
         return false;
     }

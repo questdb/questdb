@@ -25,7 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 /**
- * Interface for ILP v4 column decoders.
+ * Interface for QWP v1 column decoders.
  * <p>
  * Different column types require different decoding strategies:
  * <ul>
@@ -186,8 +186,5 @@ public interface QwpColumnDecoder {
             values[rowIndex] = new long[]{hi, lo};
         }
 
-        public int size() {
-            return values.length;
-        }
     }
 }

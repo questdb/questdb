@@ -25,7 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 /**
- * Gorilla delta-of-delta decoder for timestamps in ILP v4 format.
+ * Gorilla delta-of-delta decoder for timestamps in QWP v1 format.
  * <p>
  * Gorilla encoding uses delta-of-delta compression where:
  * <pre>
@@ -60,15 +60,6 @@ public class QwpGorillaDecoder {
      */
     public QwpGorillaDecoder() {
         this.bitReader = new QwpBitReader();
-    }
-
-    /**
-     * Creates a decoder using an existing bit reader.
-     *
-     * @param bitReader the bit reader to use
-     */
-    public QwpGorillaDecoder(QwpBitReader bitReader) {
-        this.bitReader = bitReader;
     }
 
     /**
@@ -150,33 +141,6 @@ public class QwpGorillaDecoder {
      */
     public long getBitPosition() {
         return bitReader.getBitPosition();
-    }
-
-    /**
-     * Gets the previous delta (for debugging/testing).
-     *
-     * @return the last computed delta
-     */
-    public long getPrevDelta() {
-        return prevDelta;
-    }
-
-    /**
-     * Gets the previous timestamp (for debugging/testing).
-     *
-     * @return the last decoded timestamp
-     */
-    public long getPrevTimestamp() {
-        return prevTimestamp;
-    }
-
-    /**
-     * Returns whether there are more bits available in the reader.
-     *
-     * @return true if more bits available
-     */
-    public boolean hasMoreBits() {
-        return bitReader.hasMoreBits();
     }
 
     /**

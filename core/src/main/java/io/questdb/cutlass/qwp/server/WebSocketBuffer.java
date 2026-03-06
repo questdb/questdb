@@ -59,13 +59,6 @@ public class WebSocketBuffer implements Mutable, QuietCloseable {
         writePos += bytes;
     }
 
-    /**
-     * Returns the buffer capacity.
-     */
-    public int capacity() {
-        return capacity;
-    }
-
     @Override
     public void clear() {
         readPos = 0;
@@ -158,13 +151,6 @@ public class WebSocketBuffer implements Mutable, QuietCloseable {
             result[i] = Unsafe.getUnsafe().getByte(address + readPos + i);
         }
         return result;
-    }
-
-    /**
-     * Returns the number of writable bytes without resizing.
-     */
-    public long writableBytes() {
-        return capacity - writePos;
     }
 
     /**

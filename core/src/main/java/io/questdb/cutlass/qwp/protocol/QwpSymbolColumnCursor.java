@@ -53,7 +53,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     private final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
     // Pre-allocated dictionary storage (flyweights pointing to wire memory)
     private final ObjList<DirectUtf8String> dictionaryUtf8 = new ObjList<>();
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final StringSink utf16Sink = new StringSink();
     // External dictionary reference (for delta mode)
     private ObjList<String> connectionDict;
@@ -70,7 +69,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     private long nullBitmapAddress;
     // Configuration
     private boolean nullable;
-    private int rowCount;
 
     @Override
     public boolean advanceRow() throws QwpParseException {
@@ -95,9 +93,7 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        nameUtf8.clear();
         nullable = false;
-        rowCount = 0;
         dictionarySize = 0;
         deltaMode = false;
         connectionDict = null;
@@ -109,36 +105,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             dictionaryUtf8.getQuick(i).clear();
         }
         resetRowPosition();
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    /**
-     * Returns a dictionary entry by index as UTF-8.
-     *
-     * @param index dictionary index
-     * @return UTF-8 sequence, or null if delta mode
-     */
-    public DirectUtf8Sequence getDictionaryEntry(int index) {
-        if (deltaMode) {
-            return null;
-        }
-        return dictionaryUtf8.getQuick(index);
-    }
-
-    /**
-     * Returns the dictionary size.
-     */
-    public int getDictionarySize() {
-        return dictionarySize;
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
     }
 
     /**
@@ -209,11 +175,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
         return currentIsNull;
     }
 
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
     /**
      * Initializes this cursor for the given column data.
      *
@@ -221,14 +182,11 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
      * @param dataLength  available bytes
      * @param rowCount    number of rows
      * @param nullable    whether column is nullable
-     * @param nameAddress address of column name UTF-8 bytes
-     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
-    public int of(long dataAddress, int dataLength, int rowCount, boolean nullable,
-                  long nameAddress, int nameLength) throws QwpParseException {
-        return of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength, null);
+    public int of(long dataAddress, int dataLength, int rowCount, boolean nullable) throws QwpParseException {
+        return of(dataAddress, dataLength, rowCount, nullable, null);
     }
 
     /**
@@ -238,8 +196,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
      * @param dataLength     available bytes
      * @param rowCount       number of rows
      * @param nullable       whether column is nullable
-     * @param nameAddress    address of column name UTF-8 bytes
-     * @param nameLength     column name length in bytes
      * @param connectionDict connection-level symbol dictionary (if not null, uses delta mode)
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
@@ -249,13 +205,9 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             int dataLength,
             int rowCount,
             boolean nullable,
-            long nameAddress,
-            int nameLength,
             ObjList<String> connectionDict
     ) throws QwpParseException {
         this.nullable = nullable;
-        this.rowCount = rowCount;
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength);
         this.deltaMode = connectionDict != null;
         this.connectionDict = connectionDict;
 

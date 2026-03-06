@@ -25,9 +25,6 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DOUBLE_ARRAY;
 
@@ -47,31 +44,24 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
 
     private static final int INITIAL_ROW_CAPACITY = 64;
     private static final int MAX_DIMS = 32;
-    // Shape buffer for current row (reused)
     private final int[] currentShape = new int[MAX_DIMS];
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private int currentElementCount;
     private boolean currentIsNull;
     private int currentNDims;
-    // Iteration state
     private int currentRow;
-    private int currentValueIndex; // index into non-null rows
     private long currentValuesAddress;
     private long dataAddress;
     private boolean isDoubleArray;
-    // Wire pointers
     private long nullBitmapAddress;
     private boolean nullable;
-    private int rowCount;
-    private int[] rowDims = new int[INITIAL_ROW_CAPACITY]; // nDims per row
-    private int[] rowElementCounts = new int[INITIAL_ROW_CAPACITY]; // total elements per row
+    private int[] rowDims = new int[INITIAL_ROW_CAPACITY];
+    private int[] rowElementCounts = new int[INITIAL_ROW_CAPACITY];
     // Pre-computed row offsets for fast random access
     private long[] rowOffsets = new long[INITIAL_ROW_CAPACITY];
-    // Configuration
     private byte typeCode;
 
     @Override
-    public boolean advanceRow() throws QwpParseException {
+    public boolean advanceRow() {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0 && QwpNullBitmap.isNull(nullBitmapAddress, currentRow)) {
@@ -97,25 +87,17 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         }
 
         currentValuesAddress = rowAddr;
-        currentValueIndex++;
         return false;
     }
 
     @Override
     public void clear() {
-        nameUtf8.clear();
         typeCode = TYPE_DOUBLE_ARRAY;
         nullable = false;
-        rowCount = 0;
         isDoubleArray = true;
         nullBitmapAddress = 0;
         dataAddress = 0;
         resetRowPosition();
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
     }
 
     /**
@@ -129,53 +111,12 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
     }
 
     /**
-     * Returns the double value at the specified flat index.
-     * <p>
-     * Values are stored in row-major order.
-     *
-     * @param index flat index (0 to totalElements-1)
-     * @return double value
-     */
-    public double getDoubleAt(int index) {
-        return Unsafe.getUnsafe().getDouble(currentValuesAddress + (long) index * 8);
-    }
-
-    /**
-     * Returns the long value at the specified flat index.
-     * <p>
-     * Values are stored in row-major order.
-     *
-     * @param index flat index (0 to totalElements-1)
-     * @return long value
-     */
-    public long getLongAt(int index) {
-        return Unsafe.getUnsafe().getLong(currentValuesAddress + (long) index * 8);
-    }
-
-    /**
      * Returns the number of dimensions for the current row's array.
      *
      * @return number of dimensions (1-32), or 0 if null
      */
     public int getNDims() {
         return currentNDims;
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
-    /**
-     * Returns the shape array for the current row.
-     * <p>
-     * The returned array is reused across rows. Only the first {@link #getNDims()}
-     * elements are valid.
-     *
-     * @return shape array (internal buffer, do not modify)
-     */
-    public int[] getShape() {
-        return currentShape;
     }
 
     /**
@@ -215,11 +156,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         return currentIsNull;
     }
 
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
     /**
      * Initializes this cursor for the given column data.
      *
@@ -228,27 +164,25 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
      * @param rowCount    number of rows
      * @param typeCode    column type code (TYPE_DOUBLE_ARRAY or TYPE_LONG_ARRAY)
      * @param nullable    whether column is nullable
-     * @param nameAddress address of column name UTF-8 bytes
-     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
-                  long nameAddress, int nameLength) throws QwpParseException {
+    public int of(
+            long dataAddress,
+            int dataLength,
+            int rowCount,
+            byte typeCode,
+            boolean nullable
+    ) throws QwpParseException {
         this.typeCode = typeCode;
         this.nullable = nullable;
-        this.rowCount = rowCount;
         this.isDoubleArray = (typeCode == TYPE_DOUBLE_ARRAY);
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength, Utf8s.isAscii(nameAddress, nameLength));
 
         ensureRowCapacity(rowCount);
-
         int offset = 0;
-        int nullCount = 0;
 
         if (nullable) {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             this.nullBitmapAddress = dataAddress;
-            nullCount = QwpNullBitmap.countNulls(dataAddress, rowCount);
             offset += bitmapSize;
         } else {
             this.nullBitmapAddress = 0;
@@ -259,7 +193,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
 
         // Pre-scan all non-null rows to build offset table
         long scanAddr = this.dataAddress;
-        int valueIndex = 0;
         for (int row = 0; row < rowCount; row++) {
             if (nullable && QwpNullBitmap.isNull(nullBitmapAddress, row)) {
                 rowOffsets[row] = -1; // Mark as null
@@ -329,7 +262,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
 
                 // Skip values (8 bytes each for both double and long)
                 scanAddr += valueBytes;
-                valueIndex++;
             }
         }
 
@@ -341,7 +273,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
     @Override
     public void resetRowPosition() {
         currentRow = -1;
-        currentValueIndex = 0;
         currentIsNull = false;
         currentNDims = 0;
         currentElementCount = 0;

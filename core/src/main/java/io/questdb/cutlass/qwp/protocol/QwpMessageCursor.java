@@ -32,7 +32,7 @@ import io.questdb.std.str.Utf8s;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
 
 /**
- * Streaming cursor over an ILP v4 message.
+ * Streaming cursor over an QWP v1 message.
  * <p>
  * Provides iteration through table blocks in a message without allocating
  * intermediate objects. The single {@link QwpTableBlockCursor} is reused
@@ -82,36 +82,6 @@ public class QwpMessageCursor implements Mutable {
     }
 
     /**
-     * Returns the current table block cursor without advancing.
-     * <p>
-     * Must be called after {@link #nextTable()}.
-     */
-    public QwpTableBlockCursor getCurrentTable() {
-        return tableBlockCursor;
-    }
-
-    /**
-     * Returns the current table index (0-based).
-     */
-    public int getCurrentTableIndex() {
-        return currentTableIndex;
-    }
-
-    /**
-     * Returns the message header for diagnostics.
-     */
-    public QwpMessageHeader getMessageHeader() {
-        return messageHeader;
-    }
-
-    /**
-     * Returns the number of tables in this message.
-     */
-    public int getTableCount() {
-        return tableCount;
-    }
-
-    /**
      * Returns whether there are more tables to iterate.
      */
     public boolean hasNextTable() {
@@ -119,24 +89,10 @@ public class QwpMessageCursor implements Mutable {
     }
 
     /**
-     * Returns whether delta symbol dictionary mode is enabled.
-     */
-    public boolean isDeltaSymbolDictEnabled() {
-        return deltaSymbolDictEnabled;
-    }
-
-    /**
-     * Returns whether Gorilla timestamp encoding is enabled.
-     */
-    public boolean isGorillaEnabled() {
-        return gorillaEnabled;
-    }
-
-    /**
      * Advances to the next table and returns the table block cursor.
      * <p>
      * <b>Important:</b> The returned cursor is reused across calls.
-     * It is invalidated on the next call to {@link #nextTable()} or {@link #clear()}.
+     * It is invalidated on the next call to nextTable() or {@link #clear()}.
      *
      * @return table block cursor positioned at the new table
      * @throws QwpParseException if parsing fails

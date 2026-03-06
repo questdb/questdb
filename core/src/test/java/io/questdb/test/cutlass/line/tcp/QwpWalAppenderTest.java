@@ -39,87 +39,16 @@ public class QwpWalAppenderTest {
     // ==================== Type Mapping Tests ====================
 
     @Test
-    public void testMapQwpTypeToQuestDBBoolean() {
-        assertEquals(ColumnType.BOOLEAN, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_BOOLEAN));
+    public void testConstructor() {
+        QwpWalAppender appender = new QwpWalAppender(true, 127);
+        assertNotNull(appender);
     }
 
     @Test
-    public void testMapQwpTypeToQuestDBByte() {
-        assertEquals(ColumnType.BYTE, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_BYTE));
+    public void testConstructorAutoCreateDisabled() {
+        QwpWalAppender appender = new QwpWalAppender(false, 255);
+        assertNotNull(appender);
     }
-
-    @Test
-    public void testMapQwpTypeToQuestDBShort() {
-        assertEquals(ColumnType.SHORT, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_SHORT));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBInt() {
-        assertEquals(ColumnType.INT, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_INT));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBLong() {
-        assertEquals(ColumnType.LONG, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_LONG));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBFloat() {
-        assertEquals(ColumnType.FLOAT, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_FLOAT));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBDouble() {
-        assertEquals(ColumnType.DOUBLE, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_DOUBLE));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBString() {
-        // ILP v4 TYPE_STRING maps to VARCHAR (not STRING) for consistency
-        assertEquals(ColumnType.VARCHAR, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_STRING));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBVarchar() {
-        assertEquals(ColumnType.VARCHAR, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_VARCHAR));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBSymbol() {
-        assertEquals(ColumnType.SYMBOL, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_SYMBOL));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBTimestamp() {
-        assertEquals(ColumnType.TIMESTAMP, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_TIMESTAMP));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBDate() {
-        assertEquals(ColumnType.DATE, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_DATE));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBUUID() {
-        assertEquals(ColumnType.UUID, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_UUID));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBLong256() {
-        assertEquals(ColumnType.LONG256, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_LONG256));
-    }
-
-    @Test
-    public void testMapQwpTypeToQuestDBGeoHash() {
-        assertEquals(ColumnType.GEOLONG, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_GEOHASH));
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void testMapQwpTypeToQuestDBUnknown() {
-        QwpWalAppender.mapQwpTypeToQuestDB(0xFF);
-    }
-
-    // ==================== Reverse Mapping Tests ====================
 
     @Test
     public void testMapQuestDBTypeToQwpBoolean() {
@@ -132,8 +61,38 @@ public class QwpWalAppenderTest {
     }
 
     @Test
-    public void testMapQuestDBTypeToQwpShort() {
-        assertEquals(QwpConstants.TYPE_SHORT, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.SHORT));
+    public void testMapQuestDBTypeToQwpDate() {
+        assertEquals(QwpConstants.TYPE_DATE, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.DATE));
+    }
+
+    @Test
+    public void testMapQuestDBTypeToQwpDouble() {
+        assertEquals(QwpConstants.TYPE_DOUBLE, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.DOUBLE));
+    }
+
+    @Test
+    public void testMapQuestDBTypeToQwpFloat() {
+        assertEquals(QwpConstants.TYPE_FLOAT, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.FLOAT));
+    }
+
+    @Test
+    public void testMapQuestDBTypeToQwpGeoByte() {
+        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOBYTE));
+    }
+
+    @Test
+    public void testMapQuestDBTypeToQwpGeoInt() {
+        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOINT));
+    }
+
+    @Test
+    public void testMapQuestDBTypeToQwpGeoLong() {
+        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOLONG));
+    }
+
+    @Test
+    public void testMapQuestDBTypeToQwpGeoShort() {
+        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOSHORT));
     }
 
     @Test
@@ -147,13 +106,13 @@ public class QwpWalAppenderTest {
     }
 
     @Test
-    public void testMapQuestDBTypeToQwpFloat() {
-        assertEquals(QwpConstants.TYPE_FLOAT, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.FLOAT));
+    public void testMapQuestDBTypeToQwpLong256() {
+        assertEquals(QwpConstants.TYPE_LONG256, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.LONG256));
     }
 
     @Test
-    public void testMapQuestDBTypeToQwpDouble() {
-        assertEquals(QwpConstants.TYPE_DOUBLE, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.DOUBLE));
+    public void testMapQuestDBTypeToQwpShort() {
+        assertEquals(QwpConstants.TYPE_SHORT, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.SHORT));
     }
 
     @Test
@@ -161,10 +120,7 @@ public class QwpWalAppenderTest {
         assertEquals(QwpConstants.TYPE_STRING, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.STRING));
     }
 
-    @Test
-    public void testMapQuestDBTypeToQwpVarchar() {
-        assertEquals(QwpConstants.TYPE_VARCHAR, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.VARCHAR));
-    }
+    // ==================== Reverse Mapping Tests ====================
 
     @Test
     public void testMapQuestDBTypeToQwpSymbol() {
@@ -177,47 +133,105 @@ public class QwpWalAppenderTest {
     }
 
     @Test
-    public void testMapQuestDBTypeToQwpDate() {
-        assertEquals(QwpConstants.TYPE_DATE, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.DATE));
-    }
-
-    @Test
     public void testMapQuestDBTypeToQwpUUID() {
         assertEquals(QwpConstants.TYPE_UUID, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.UUID));
     }
 
-    @Test
-    public void testMapQuestDBTypeToQwpLong256() {
-        assertEquals(QwpConstants.TYPE_LONG256, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.LONG256));
-    }
-
-    @Test
-    public void testMapQuestDBTypeToQwpGeoByte() {
-        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOBYTE));
-    }
-
-    @Test
-    public void testMapQuestDBTypeToQwpGeoShort() {
-        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOSHORT));
-    }
-
-    @Test
-    public void testMapQuestDBTypeToQwpGeoInt() {
-        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOINT));
-    }
-
-    @Test
-    public void testMapQuestDBTypeToQwpGeoLong() {
-        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOLONG));
-    }
-
     @Test(expected = IllegalArgumentException.class)
     public void testMapQuestDBTypeToQwpUnsupported() {
-        // IPV4 is not supported in ILP v4
+        // IPV4 is not supported in QWP v1
         QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.IPv4);
     }
 
+    @Test
+    public void testMapQuestDBTypeToQwpVarchar() {
+        assertEquals(QwpConstants.TYPE_VARCHAR, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.VARCHAR));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBBoolean() {
+        assertEquals(ColumnType.BOOLEAN, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_BOOLEAN));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBByte() {
+        assertEquals(ColumnType.BYTE, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_BYTE));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBDate() {
+        assertEquals(ColumnType.DATE, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_DATE));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBDouble() {
+        assertEquals(ColumnType.DOUBLE, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_DOUBLE));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBFloat() {
+        assertEquals(ColumnType.FLOAT, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_FLOAT));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBGeoHash() {
+        assertEquals(ColumnType.GEOLONG, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_GEOHASH));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBInt() {
+        assertEquals(ColumnType.INT, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_INT));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBLong() {
+        assertEquals(ColumnType.LONG, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_LONG));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBLong256() {
+        assertEquals(ColumnType.LONG256, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_LONG256));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBShort() {
+        assertEquals(ColumnType.SHORT, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_SHORT));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBString() {
+        // QWP v1 TYPE_STRING maps to VARCHAR (not STRING) for consistency
+        assertEquals(ColumnType.VARCHAR, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_STRING));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBSymbol() {
+        assertEquals(ColumnType.SYMBOL, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_SYMBOL));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBTimestamp() {
+        assertEquals(ColumnType.TIMESTAMP, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_TIMESTAMP));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBUUID() {
+        assertEquals(ColumnType.UUID, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_UUID));
+    }
+
     // ==================== Round-trip Tests ====================
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testMapQwpTypeToQuestDBUnknown() {
+        QwpWalAppender.mapQwpTypeToQuestDB(0xFF);
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBVarchar() {
+        assertEquals(ColumnType.VARCHAR, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_VARCHAR));
+    }
+
+    // ==================== Constructor Test ====================
 
     @Test
     public void testRoundTripAllTypes() {
@@ -250,25 +264,11 @@ public class QwpWalAppenderTest {
     @Test
     public void testStringToVarcharMapping() {
         // TYPE_STRING intentionally maps to VARCHAR (lossy conversion)
-        // This is by design: both STRING and VARCHAR in ILP v4 become VARCHAR in QuestDB
+        // This is by design: both STRING and VARCHAR in QWP v1 become VARCHAR in QuestDB
         int questdbType = QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_STRING);
         assertEquals(ColumnType.VARCHAR, questdbType);
 
         byte mappedBack = QwpWalAppender.mapQuestDBTypeToQwp(questdbType);
         assertEquals(QwpConstants.TYPE_VARCHAR, mappedBack);
-    }
-
-    // ==================== Constructor Test ====================
-
-    @Test
-    public void testConstructor() {
-        QwpWalAppender appender = new QwpWalAppender(true, 127);
-        assertNotNull(appender);
-    }
-
-    @Test
-    public void testConstructorAutoCreateDisabled() {
-        QwpWalAppender appender = new QwpWalAppender(false, 255);
-        assertNotNull(appender);
     }
 }

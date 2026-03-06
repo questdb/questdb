@@ -169,7 +169,7 @@ public class HttpServer implements Closeable {
                 }
             });
 
-            // ILP v4 endpoint (WebSocket only)
+            // QWP v1 endpoint (WebSocket only)
             server.bind(new HttpRequestHandlerFactory() {
                 @Override
                 public ObjHashSet<String> getUrls() {

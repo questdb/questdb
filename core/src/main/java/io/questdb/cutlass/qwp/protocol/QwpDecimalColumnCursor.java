@@ -25,9 +25,6 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 
@@ -50,7 +47,6 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  */
 public final class QwpDecimalColumnCursor implements QwpColumnCursor {
 
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private boolean currentIsNull;
     // Iteration state
     private int currentRow;
@@ -69,7 +65,6 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     // Wire pointers
     private long nullBitmapAddress;
     private boolean nullable;
-    private int rowCount;
     private byte scale;
     // Configuration
     private byte typeCode;
@@ -77,7 +72,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     private long valuesAddress;
 
     @Override
-    public boolean advanceRow() throws QwpParseException {
+    public boolean advanceRow() {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
@@ -98,20 +93,13 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        nameUtf8.clear();
         typeCode = TYPE_DECIMAL64;
         nullable = false;
-        rowCount = 0;
         valueSize = 8;
         scale = 0;
         nullBitmapAddress = 0;
         valuesAddress = 0;
         resetRowPosition();
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
     }
 
     /**
@@ -177,11 +165,6 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         return currentValue64;
     }
 
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
     /**
      * Returns the scale (number of decimal places) for this column.
      * All values in the column share the same scale.
@@ -202,30 +185,19 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         return currentIsNull;
     }
 
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
     /**
      * Initializes this cursor for the given column data.
      *
      * @param dataAddress address of column data
-     * @param dataLength  available bytes
      * @param rowCount    number of rows
      * @param typeCode    column type code (TYPE_DECIMAL64, TYPE_DECIMAL128, or TYPE_DECIMAL256)
      * @param nullable    whether column is nullable
-     * @param nameAddress address of column name UTF-8 bytes
-     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
-                  long nameAddress, int nameLength) {
+    public int of(long dataAddress, int rowCount, byte typeCode, boolean nullable) {
         this.typeCode = typeCode;
         this.nullable = nullable;
-        this.rowCount = rowCount;
         this.valueSize = getDecimalValueSize(typeCode);
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength, Utf8s.isAscii(nameAddress, nameLength));
 
         int offset = 0;
         int nullCount = 0;

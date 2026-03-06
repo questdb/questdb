@@ -25,8 +25,6 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8String;
 
 import static io.questdb.cutlass.qwp.protocol.QwpTimestampDecoder.ENCODING_GORILLA;
 import static io.questdb.cutlass.qwp.protocol.QwpTimestampDecoder.ENCODING_UNCOMPRESSED;
@@ -45,7 +43,6 @@ import static io.questdb.cutlass.qwp.protocol.QwpTimestampDecoder.ENCODING_UNCOM
 public final class QwpTimestampColumnCursor implements QwpColumnCursor {
 
     private final QwpGorillaDecoder gorillaDecoder = new QwpGorillaDecoder();
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private boolean currentIsNull;
     // Iteration state
     private int currentRow;
@@ -59,7 +56,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     // Wire pointers
     private long nullBitmapAddress;
     private boolean nullable;
-    private int rowCount;
     private long secondTimestamp;
     // Configuration
     private byte typeCode;
@@ -97,10 +93,8 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        nameUtf8.clear();
         typeCode = 0;
         nullable = false;
-        rowCount = 0;
         gorillaEnabled = false;
         nullBitmapAddress = 0;
         valuesAddress = 0;
@@ -112,16 +106,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
         resetRowPosition();
     }
 
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
-    }
-
     /**
      * Returns the address of the null bitmap, or 0 if not nullable.
      *
@@ -129,15 +113,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
      */
     public long getNullBitmapAddress() {
         return nullBitmapAddress;
-    }
-
-    /**
-     * Returns the total row count (including nulls).
-     *
-     * @return total row count
-     */
-    public int getRowCount() {
-        return rowCount;
     }
 
     /**
@@ -177,11 +152,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
         return currentIsNull;
     }
 
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
     /**
      * Initializes this cursor for the given column data.
      *
@@ -190,18 +160,14 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
      * @param rowCount       number of rows
      * @param typeCode       column type code (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
      * @param nullable       whether column is nullable
-     * @param nameAddress    address of column name UTF-8 bytes
-     * @param nameLength     column name length in bytes
      * @param gorillaEnabled whether Gorilla encoding is enabled
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
     public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
-                  long nameAddress, int nameLength, boolean gorillaEnabled) throws QwpParseException {
+                  boolean gorillaEnabled) throws QwpParseException {
         this.typeCode = typeCode;
         this.nullable = nullable;
-        this.rowCount = rowCount;
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength);
 
         int offset = 0;
         int nullCount = 0;
@@ -235,9 +201,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
             } else if (encoding == ENCODING_GORILLA) {
                 this.gorillaEnabled = true;
 
-                if (valueCount == 0) {
-                    // All nulls, nothing more to read
-                } else if (valueCount == 1) {
+                if (valueCount == 1) {
                     // First timestamp only
                     this.firstTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
                     offset += 8;

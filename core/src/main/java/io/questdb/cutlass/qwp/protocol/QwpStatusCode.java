@@ -25,7 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 /**
- * ILP v4 response status codes.
+ * QWP v1 response status codes.
  * <p>
  * Status codes are sent as the first byte of every response to indicate
  * the result of batch processing.

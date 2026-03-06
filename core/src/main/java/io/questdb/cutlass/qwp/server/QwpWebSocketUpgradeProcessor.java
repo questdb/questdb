@@ -49,13 +49,13 @@ import io.questdb.std.str.Utf8Sequence;
 import java.nio.charset.StandardCharsets;
 
 /**
- * HTTP request processor that handles WebSocket upgrade for ILP v4.
+ * HTTP request processor that handles WebSocket upgrade for QWP v1.
  * <p>
  * This processor:
  * 1. Validates the WebSocket handshake
  * 2. Sends the 101 Switching Protocols response
  * 3. Switches to WebSocket protocol for subsequent communication
- * 4. Parses WebSocket frames and processes ILP v4 messages
+ * 4. Parses WebSocket frames and processes QWP v1 messages
  * <p>
  * Per-connection state is stored in {@link QwpProcessorState} via {@link LocalValue},
  * so a single processor instance can safely be shared across connections on the same worker.
@@ -287,7 +287,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void onRequestComplete(HttpConnectionContext context) {
         // For WebSocket, after the handshake is sent, we just return normally.
         // The framework will call reset() and then loop back to handleClientRecv().
         // Since we called switchProtocol() in onHeadersReady, the framework will
@@ -347,10 +347,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 recvBufferLen += read;
                 LOG.debug().$("WebSocket recv [fd=").$(context.getFd()).$(", bytes=").$(read).$(", total=").$(recvBufferLen).I$();
 
-                FrameProcessResult frameProcessResult = processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
-                if (frameProcessResult == FrameProcessResult.NEED_MORE_DATA) {
-                    // Partial frame is buffered and compacted; continue reading immediately.
-                }
+                processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
             }
 
         } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
@@ -416,7 +413,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
 
-            // Process the ILP v4 message
+            // Process the QWP v1 message
             state.processMessage();
 
             if (state.isOk()) {
@@ -566,7 +563,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private FrameProcessResult processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
+    private void processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         long bufferEnd = buffer + bufferLen;
         long pos = buffer;
@@ -620,7 +617,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             state.setRecvBufferLen(remaining);
         }
 
-        return result;
     }
 
     private void rejectFragmentedFrame(HttpConnectionContext context, QwpProcessorState state, int opcode)

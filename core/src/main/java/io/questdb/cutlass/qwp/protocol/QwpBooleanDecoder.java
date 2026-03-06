@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Unsafe;
 
 /**
- * Decoder for BOOLEAN columns in ILP v4 format.
+ * Decoder for BOOLEAN columns in QWP v1 format.
  * <p>
  * Format:
  * <pre>
@@ -146,15 +146,70 @@ public final class QwpBooleanDecoder implements QwpColumnDecoder {
         for (int i = 0; i < rowCount; i++) {
             if (nullable && nulls[i]) continue;
             if (values[i]) {
-                int byteIndex = valueOffset >>> 3;
-                int bitOffset = valueOffset & 7;
-                buf[offset + byteIndex] |= (1 << bitOffset);
+                setBit(buf, offset, valueOffset);
             }
             valueOffset++;
         }
         offset += valueBitmapSize;
 
         return offset;
+    }
+
+    /**
+     * Gets a bit from a bit-packed array (direct memory, LSB first within each byte).
+     *
+     * @param address  bitmap start address
+     * @param bitIndex bit index to check
+     * @return true if the bit is set
+     */
+    public static boolean getBit(long address, int bitIndex) {
+        int byteIndex = bitIndex >>> 3;
+        int bitOffset = bitIndex & 7;
+        byte b = Unsafe.getUnsafe().getByte(address + byteIndex);
+        return (b & (1 << bitOffset)) != 0;
+    }
+
+    /**
+     * Gets a bit from a bit-packed array (byte array, LSB first within each byte).
+     *
+     * @param bitmap   bitmap byte array
+     * @param offset   starting offset in array
+     * @param bitIndex bit index to check
+     * @return true if the bit is set
+     */
+    public static boolean getBit(byte[] bitmap, int offset, int bitIndex) {
+        int byteIndex = bitIndex >>> 3;
+        int bitOffset = bitIndex & 7;
+        byte b = bitmap[offset + byteIndex];
+        return (b & (1 << bitOffset)) != 0;
+    }
+
+    /**
+     * Sets a bit in a bit-packed array (direct memory, LSB first within each byte).
+     *
+     * @param address  bitmap start address
+     * @param bitIndex bit index to set
+     */
+    public static void setBit(long address, int bitIndex) {
+        int byteIndex = bitIndex >>> 3;
+        int bitOffset = bitIndex & 7;
+        long addr = address + byteIndex;
+        byte b = Unsafe.getUnsafe().getByte(addr);
+        b |= (1 << bitOffset);
+        Unsafe.getUnsafe().putByte(addr, b);
+    }
+
+    /**
+     * Sets a bit in a bit-packed array (byte array, LSB first within each byte).
+     *
+     * @param bitmap   bitmap byte array
+     * @param offset   starting offset in array
+     * @param bitIndex bit index to set
+     */
+    public static void setBit(byte[] bitmap, int offset, int bitIndex) {
+        int byteIndex = bitIndex >>> 3;
+        int bitOffset = bitIndex & 7;
+        bitmap[offset + byteIndex] |= (1 << bitOffset);
     }
 
     @Override
@@ -218,27 +273,5 @@ public final class QwpBooleanDecoder implements QwpColumnDecoder {
             size += QwpNullBitmap.sizeInBytes(rowCount); // null bitmap
         }
         return size;
-    }
-
-    /**
-     * Sets a bit in a bit-packed array (LSB first within each byte).
-     */
-    private static void setBit(long address, int bitIndex) {
-        int byteIndex = bitIndex >>> 3;
-        int bitOffset = bitIndex & 7;
-        long addr = address + byteIndex;
-        byte b = Unsafe.getUnsafe().getByte(addr);
-        b |= (1 << bitOffset);
-        Unsafe.getUnsafe().putByte(addr, b);
-    }
-
-    /**
-     * Gets a bit from a bit-packed array (LSB first within each byte).
-     */
-    private boolean getBit(long address, int bitIndex) {
-        int byteIndex = bitIndex >>> 3;
-        int bitOffset = bitIndex & 7;
-        byte b = Unsafe.getUnsafe().getByte(address + byteIndex);
-        return (b & (1 << bitOffset)) != 0;
     }
 }

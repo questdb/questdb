@@ -25,8 +25,6 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8String;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
 
@@ -43,7 +41,6 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
  */
 public final class QwpBooleanColumnCursor implements QwpColumnCursor {
 
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private boolean currentIsNull;
     // Iteration state
     private int currentRow;
@@ -53,11 +50,10 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
     private long nullBitmapAddress;
     // Configuration
     private boolean nullable;
-    private int rowCount;
     private long valueBitmapAddress;
 
     @Override
-    public boolean advanceRow() throws QwpParseException {
+    public boolean advanceRow() {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
@@ -80,22 +76,10 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        nameUtf8.clear();
         nullable = false;
-        rowCount = 0;
         nullBitmapAddress = 0;
         valueBitmapAddress = 0;
         resetRowPosition();
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
     }
 
     @Override
@@ -115,27 +99,20 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
         return currentIsNull;
     }
 
-    @Override
-    public boolean isNullable() {
-        return nullable;
-    }
-
     /**
      * Initializes this cursor for the given column data.
      *
      * @param dataAddress address of column data
-     * @param dataLength  available bytes
      * @param rowCount    number of rows
      * @param nullable    whether column is nullable
-     * @param nameAddress address of column name UTF-8 bytes
-     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      */
-    public int of(long dataAddress, int dataLength, int rowCount, boolean nullable,
-                  long nameAddress, int nameLength) {
+    public int of(
+            long dataAddress,
+            int rowCount,
+            boolean nullable
+    ) {
         this.nullable = nullable;
-        this.rowCount = rowCount;
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength);
 
         int offset = 0;
         int nullCount = 0;
