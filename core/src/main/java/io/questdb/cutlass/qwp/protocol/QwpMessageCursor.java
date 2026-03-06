@@ -92,7 +92,7 @@ public class QwpMessageCursor implements Mutable {
      * Advances to the next table and returns the table block cursor.
      * <p>
      * <b>Important:</b> The returned cursor is reused across calls.
-     * It is invalidated on the next call to {@link #nextTable()} or {@link #clear()}.
+     * It is invalidated on the next call to nextTable() or {@link #clear()}.
      *
      * @return table block cursor positioned at the new table
      * @throws QwpParseException if parsing fails

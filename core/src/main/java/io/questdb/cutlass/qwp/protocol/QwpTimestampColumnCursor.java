@@ -106,11 +106,6 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
         resetRowPosition();
     }
 
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
     /**
      * Returns the address of the null bitmap, or 0 if not nullable.
      *

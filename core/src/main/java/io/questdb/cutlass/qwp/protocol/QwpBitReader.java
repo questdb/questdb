@@ -81,15 +81,6 @@ public class QwpBitReader {
     }
 
     /**
-     * Returns true if there are more bits to read.
-     *
-     * @return true if bits available
-     */
-    public boolean hasMoreBits() {
-        return totalBitsRead < totalBitsAvailable;
-    }
-
-    /**
      * Peeks at the next bit without consuming it.
      *
      * @return 0 or 1, or -1 if no more bits

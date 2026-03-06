@@ -107,11 +107,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
         resetRowPosition();
     }
 
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
     /**
      * Returns current row's symbol value as a CharSequence (UTF-16).
      * <p>

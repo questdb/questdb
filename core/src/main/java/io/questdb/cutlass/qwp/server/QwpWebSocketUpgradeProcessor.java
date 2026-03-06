@@ -287,7 +287,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    public void onRequestComplete(HttpConnectionContext context) {
         // For WebSocket, after the handshake is sent, we just return normally.
         // The framework will call reset() and then loop back to handleClientRecv().
         // Since we called switchProtocol() in onHeadersReady, the framework will
@@ -563,7 +563,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private FrameProcessResult processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
+    private void processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         long bufferEnd = buffer + bufferLen;
         long pos = buffer;
@@ -617,7 +617,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             state.setRecvBufferLen(remaining);
         }
 
-        return result;
     }
 
     private void rejectFragmentedFrame(HttpConnectionContext context, QwpProcessorState state, int opcode)

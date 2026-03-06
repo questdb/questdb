@@ -64,15 +64,6 @@ public interface QwpColumnCursor extends Mutable {
     void clear();
 
     /**
-     * Returns the current row index (0-based).
-     * <p>
-     * Returns -1 before the first {@link #advanceRow()} call.
-     *
-     * @return current row index
-     */
-    int getCurrentRow();
-
-    /**
      * Returns the QWP v1 type code for this column.
      *
      * @return type code (without nullable flag)

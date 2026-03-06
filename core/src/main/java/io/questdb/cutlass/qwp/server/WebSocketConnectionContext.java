@@ -325,7 +325,7 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
     /**
      * Handles a close frame.
      */
-    private boolean handleCloseFrame(long payloadPtr, int payloadLength, WebSocketProcessor processor) {
+    private void handleCloseFrame(long payloadPtr, int payloadLength, WebSocketProcessor processor) {
         int code = -1;
         long reasonPtr = 0;
         int reasonLength = 0;
@@ -341,7 +341,6 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
 
         processor.onClose(code, reasonPtr, reasonLength);
         onCloseFrameReceived();
-        return true;
     }
 
     /**
@@ -360,7 +359,10 @@ public class WebSocketConnectionContext implements Mutable, QuietCloseable {
                 processor.onPong(payloadPtr, payloadLength);
                 yield true;
             }
-            case WebSocketOpcode.CLOSE -> handleCloseFrame(payloadPtr, payloadLength, processor);
+            case WebSocketOpcode.CLOSE -> {
+                handleCloseFrame(payloadPtr, payloadLength, processor);
+                yield true;
+            }
             default -> {
                 processor.onError(WebSocketCloseCode.PROTOCOL_ERROR, "Unknown control opcode");
                 yield false;

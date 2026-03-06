@@ -64,7 +64,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     private long valuesAddress;
 
     @Override
-    public boolean advanceRow() throws QwpParseException {
+    public boolean advanceRow() {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
@@ -92,11 +92,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
         nullBitmapAddress = 0;
         valuesAddress = 0;
         resetRowPosition();
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
     }
 
     /**

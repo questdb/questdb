@@ -71,9 +71,7 @@ public final class QwpNullBitmap {
         if (remainingBits > 0) {
             byte b = Unsafe.getUnsafe().getByte(address + fullBytes);
             int mask = (1 << remainingBits) - 1;
-            if ((b & mask) != mask) {
-                return false;
-            }
+            return (b & mask) == mask;
         }
 
         return true;

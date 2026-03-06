@@ -60,7 +60,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     private byte typeCode;
 
     @Override
-    public boolean advanceRow() throws QwpParseException {
+    public boolean advanceRow() {
         currentRow++;
 
         if (nullable && nullBitmapAddress != 0) {
@@ -95,11 +95,6 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         offsetArrayAddress = 0;
         stringDataAddress = 0;
         resetRowPosition();
-    }
-
-    @Override
-    public int getCurrentRow() {
-        return currentRow;
     }
 
     @Override
