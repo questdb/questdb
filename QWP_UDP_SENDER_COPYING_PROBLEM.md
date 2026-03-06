@@ -7,12 +7,12 @@ This document focuses on one issue only:
 `QwpUdpSender` still moves row data through too many representations before the
 datagram leaves the process.
 
-This note reflects the current state after the native row-staging slice has
-landed.
+This note reflects the current state after scatter-send, native row staging,
+native array staging, and rollback hardening have landed.
 
 ## Current State
 
-Three important improvements are now in place.
+Four important improvements are now in place.
 
 ### 1. No More Rollback And Replay
 
@@ -56,10 +56,24 @@ The row is now staged in native memory:
 
 - fixed-size native entry metadata
 - native UTF-8 var-data for string-like values
-- sidecar objects only where this slice did not finish native staging yet
+- native array payloads for staged array values
 
 This is a real improvement, especially for hot fixed-width values and UTF-8
-strings.
+strings. Arrays now follow the same direction.
+
+### 4. Failed Rows Now Roll Back To Committed State
+
+The sender now consistently rolls back to the last committed state when row
+staging or row finalization fails.
+
+That includes:
+
+- failed column staging
+- failed designated-timestamp staging inside `at(...)`
+- failed `commitCurrentRow()` / `atNow()`
+
+This is mainly a correctness improvement, not a copying optimization, but it is
+part of the current steady-state design and validation story.
 
 ## What Improved
 
@@ -73,6 +87,10 @@ The current implementation removes both of those.
 That means the sender is no longer in the worst possible shape. For committed
 data, the design is materially closer to a QuestDB-style native-buffer send
 path.
+
+Failed-row recovery is also materially better now: rows that fail during staging
+or finalization no longer rely on the caller to manually clean up partially
+staged sender state.
 
 ## What Still Copies
 
@@ -111,13 +129,25 @@ decodes to `String` once because the local symbol dictionary is still
 So the string path improved materially. The symbol path improved only
 partially.
 
-### Arrays Still Use Sidecar Objects
+### Arrays Improved, But Still Copy On Commit
 
-Array values are still staged with sidecar Java objects and then materialized
-into `QwpTableBuffer` on commit.
+Array values no longer sit in Java sidecar objects while a row is staged.
 
-That means the native row-staging slice did not yet clean up the array path.
-This is now one of the clearest remaining ownership problems.
+They now stage as native payload bytes and commit into `QwpTableBuffer` via raw
+payload append helpers. That removes one more object-heavy ownership layer and
+means staged array values are snapshotted at stage time, not read back from a
+mutable Java object later.
+
+The `LongArray` wrapper path is also supported again, so arrays are no longer a
+special-case gap in the staging model.
+
+The remaining array cost is the same structural cost as fixed-width scalars:
+
+- staged native array payload
+- committed `QwpTableBuffer` array state
+
+So arrays are no longer a special ownership outlier, but they still participate
+in the general staged-row -> committed-column copy.
 
 ### Some Column Types Still Need Transform Encoding
 
@@ -178,6 +208,9 @@ The current design has:
 - in-progress row state in native row staging
 - scratch encode buffers only for header or transformed columns
 
+It also has explicit rollback paths that restore the sender to committed state
+when staging or finalization fails.
+
 That is a much better split than before, but it still means hot values are
 first accepted into staged native state and then copied into committed column
 state on commit.
@@ -201,18 +234,7 @@ That is the next place to push.
 
 ## Next Steps
 
-### 1. Replace Sidecar Array Staging With Native Array Staging
-
-The next implementation step should stay focused on the in-progress row.
-
-Goal:
-
-- stop staging arrays as Java sidecar objects
-- move array row state into native memory too
-
-This is now the highest-value copy/ownership fix left in row staging.
-
-### 2. Reduce Symbol Commit Allocation
+### 1. Reduce Symbol Commit Allocation
 
 Goal:
 
@@ -222,7 +244,7 @@ Goal:
 This is a narrower follow-up than the row-staging change, but it is now one of
 the remaining hot-path allocation smells.
 
-### 3. Move Toward Commit-By-Cursor Instead Of Commit-By-Copy
+### 2. Move Toward Commit-By-Cursor Instead Of Commit-By-Copy
 
 The better long-term model is still:
 
@@ -232,7 +254,7 @@ The better long-term model is still:
 
 That would remove the current staged-row -> `QwpTableBuffer` commit copy.
 
-### 4. Keep Scatter-Send For Committed Raw Blocks
+### 3. Keep Scatter-Send For Committed Raw Blocks
 
 The scatter-send path should stay. It is already the right transport shape for
 UDP.
@@ -240,7 +262,7 @@ UDP.
 Future work should build on it, not fall back to a single final contiguous
 datagram buffer.
 
-### 5. Revisit Transformed Types After The Ownership Fixes
+### 4. Revisit Transformed Types After The Ownership Fixes
 
 Once arrays and symbols are cleaned up, decide case by case whether some
 transformed column types should also move closer to wire-ready storage.
@@ -254,6 +276,9 @@ The current state described here is the one validated after:
 - rollback/replay removal
 - scatter-send for UDP payloads
 - native row staging for scalars, decimals, timestamps, and UTF-8 strings
+- native row staging for arrays
+- rollback on failed staging and failed row finalization
+- restored `LongArray` wrapper support
 
 Relevant test coverage includes:
 
@@ -261,3 +286,12 @@ Relevant test coverage includes:
 - `LineSenderBuilderUdpTest`
 - `QwpUdpInsertTest`
 - `QwpUdpAllTypesTest`
+- `QwpTableBufferTest`
+
+Focused coverage now also includes:
+
+- irregular-array staging failure does not leak schema into the same table
+- `LongArray` wrapper staging snapshots mutation correctly
+- `atNow()` oversize failure rolls back without explicit `cancelRow()`
+- `at(..., MICROS)` oversize failure does not leak designated-timestamp state
+- `at(..., NANOS)` oversize failure does not leak designated-timestamp state
