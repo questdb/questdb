@@ -2767,7 +2767,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "alter table x convert to parquet list '1970-01-01' to '1970-01-02'",
                 ddl,
                 22,
-                "'partition' expected"
+                "'partition' or 'partitions' expected"
         );
     }
 
