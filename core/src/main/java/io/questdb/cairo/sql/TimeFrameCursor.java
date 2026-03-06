@@ -25,7 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.std.LongList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 
@@ -47,15 +47,15 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     long TIME_FRAME_ROW_ID_MARKER = 1L << 43;
 
     // Finds the partition-local page frame index containing the given row.
-    // The cumulativeRows list stores cumulative row counts: cumulativeRows[i]
+    // The cumulativeRows list stores cumulative row counts: cumulativeRows[pageFrameStart + i]
     // is the total number of rows in page frames 0..i. So page frame i covers
-    // rows [cumulativeRows[i-1], cumulativeRows[i]). Uses linear scan for
-    // small partitions and binary search for larger ones.
-    static int findPageFrame(int pageFrameStart, int pageFrameCount, LongList cumulativeRows, long rowInPartition) {
+    // rows [cumulativeRows[pageFrameStart + i - 1], cumulativeRows[pageFrameStart + i]).
+    // Uses linear scan for small partitions and binary search for larger ones.
+    static int findPageFrame(int pageFrameStart, int pageFrameCount, DirectLongList cumulativeRows, long rowInPartition) {
         int lo;
         if (pageFrameCount <= PAGE_FRAME_SCAN_THRESHOLD) {
             lo = 0;
-            while (lo < pageFrameCount - 1 && cumulativeRows.getQuick(pageFrameStart + lo) <= rowInPartition) {
+            while (lo < pageFrameCount - 1 && cumulativeRows.get(pageFrameStart + lo) <= rowInPartition) {
                 lo++;
             }
         } else {
@@ -63,7 +63,7 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
             int hi = pageFrameCount - 1;
             while (lo < hi) {
                 int mid = (lo + hi) >>> 1;
-                if (cumulativeRows.getQuick(pageFrameStart + mid) <= rowInPartition) {
+                if (cumulativeRows.get(pageFrameStart + mid) <= rowInPartition) {
                     lo = mid + 1;
                 } else {
                     hi = mid;

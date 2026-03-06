@@ -95,6 +95,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     // clear without "zeroing" memory
+    @Override
     public void clear() {
         pos = address;
     }

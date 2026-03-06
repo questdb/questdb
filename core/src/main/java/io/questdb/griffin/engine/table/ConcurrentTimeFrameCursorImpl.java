@@ -38,7 +38,6 @@ import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.cairo.sql.TimeFrameMemoryRecord;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -208,11 +207,9 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
 
                 final PageFrameMemory lastPF = frameMemoryPool.navigateTo(pfCount - 1);
                 // Compute row count in the last page frame
-                final int pfStart = sharedState.getPartitionPageFrameStart(partitionIndex);
-                final int lastPfGlobalIndex = pfStart + pfCount - 1;
-                final LongList cumulativeRows = sharedState.getPageFrameCumulativeRows();
-                final long lastPfRows = cumulativeRows.getQuick(lastPfGlobalIndex)
-                        - (pfCount > 1 ? cumulativeRows.getQuick(lastPfGlobalIndex - 1) : 0);
+                final DirectLongList cumulativeRows = sharedState.getPartitionCumulativeRows(partitionIndex);
+                final long lastPfRows = cumulativeRows.get(pfCount - 1)
+                        - (pfCount > 1 ? cumulativeRows.get(pfCount - 2) : 0);
                 timestampHi = Unsafe.getUnsafe().getLong(
                         lastPF.getPageAddress(timestampIndex) + (lastPfRows - 1) * 8);
 
@@ -328,9 +325,8 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     private void navigateToRow(Record record, int partitionIndex, long rowInPartition) {
         switchToPartition(partitionIndex);
 
-        final int pfStart = sharedState.getPartitionPageFrameStart(partitionIndex);
         final int pfCount = sharedState.getPartitionPageFrameCount(partitionIndex);
-        final LongList cumulativeRows = sharedState.getPageFrameCumulativeRows();
+        final DirectLongList cumulativeRows = sharedState.getPartitionCumulativeRows(partitionIndex);
 
         // Adjacent page frame check: before falling back to scan/binary search,
         // check whether the row is in the next or previous page frame. This is an
@@ -340,24 +336,24 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
         if (lastPfIndex >= 0 && lastPfIndex < pfCount) {
             final int nextPf = lastPfIndex + 1;
             if (nextPf < pfCount && rowInPartition >= currentPageFrameRowHi
-                    && rowInPartition < cumulativeRows.getQuick(pfStart + nextPf)) {
+                    && rowInPartition < cumulativeRows.get(nextPf)) {
                 lo = nextPf;
             } else if (lastPfIndex > 0 && rowInPartition < currentPageFrameRowLo) {
-                final long prevPfRowLo = lastPfIndex > 1 ? cumulativeRows.getQuick(pfStart + lastPfIndex - 2) : 0;
+                final long prevPfRowLo = lastPfIndex > 1 ? cumulativeRows.get(lastPfIndex - 2) : 0;
                 if (rowInPartition >= prevPfRowLo) {
                     lo = lastPfIndex - 1;
                 } else {
-                    lo = TimeFrameCursor.findPageFrame(pfStart, pfCount, cumulativeRows, rowInPartition);
+                    lo = TimeFrameCursor.findPageFrame(0, pfCount, cumulativeRows, rowInPartition);
                 }
             } else {
-                lo = TimeFrameCursor.findPageFrame(pfStart, pfCount, cumulativeRows, rowInPartition);
+                lo = TimeFrameCursor.findPageFrame(0, pfCount, cumulativeRows, rowInPartition);
             }
         } else {
-            lo = TimeFrameCursor.findPageFrame(pfStart, pfCount, cumulativeRows, rowInPartition);
+            lo = TimeFrameCursor.findPageFrame(0, pfCount, cumulativeRows, rowInPartition);
         }
 
-        final long pfRowLo = lo > 0 ? cumulativeRows.getQuick(pfStart + lo - 1) : 0;
-        final long pfRowHi = cumulativeRows.getQuick(pfStart + lo);
+        final long pfRowLo = lo > 0 ? cumulativeRows.get(lo - 1) : 0;
+        final long pfRowHi = cumulativeRows.get(lo);
 
         // Navigate using partition-local page frame index (the pool has per-partition cache)
         frameMemoryPool.navigateTo(lo, (PageFrameMemoryRecord) record);

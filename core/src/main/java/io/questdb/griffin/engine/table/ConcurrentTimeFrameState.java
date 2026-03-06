@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -55,25 +57,23 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  */
 public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     private final Object openLock = new Object();
-    // Shared cumulative row counts across all partitions.
-    // Indexed as: partitionPageFrameStart[p] + localPfIndex.
-    // LongList uses Java heap arrays, so resize is safe for concurrent
-    // readers (old arrays survive until GC).
-    private final LongList pageFrameCumulativeRows = new LongList();
     // Lazily created, reused across queries. Only opened partitions
     // have non-null entries.
     private final ObjList<PageFrameAddressCache> partitionCaches = new ObjList<>();
     private final LongList partitionCeilings = new LongList();
+    // Per-partition cumulative row counts (off-heap). Each partition's list
+    // is 0-based and populated under openLock, then made visible via the
+    // AtomicIntegerArray release fence. Readers access it after the acquire
+    // fence — no shared mutable state, no race.
+    private final ObjList<DirectLongList> partitionCumulativeRows = new ObjList<>();
     private final LongList partitionTimestamps = new LongList();
     private IntList columnIndexes;
     private TablePageFrameCursor frameCursor;
     private boolean isExternal;
     private RecordMetadata metadata;
-    private int pageFrameCount;
     private int partitionCount;
     private AtomicIntegerArray partitionOpened;
     private int[] partitionPageFrameCount;
-    private int[] partitionPageFrameStart;
     private long[] partitionTotalRows;
 
     @Override
@@ -85,8 +85,6 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
                 cache.clear();
             }
         }
-        pageFrameCumulativeRows.clear();
-        pageFrameCount = 0;
         frameCursor = null;
     }
 
@@ -94,6 +92,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     public void close() {
         Misc.freeObjList(partitionCaches);
         partitionCaches.clear();
+        Misc.freeObjListAndKeepObjects(partitionCumulativeRows);
         frameCursor = null;
     }
 
@@ -125,8 +124,15 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
             }
             cache.of(metadata, columnIndexes, isExternal);
 
+            DirectLongList cumulativeRows = partitionCumulativeRows.getQuick(partitionIndex);
+            if (cumulativeRows == null) {
+                cumulativeRows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                partitionCumulativeRows.setQuick(partitionIndex, cumulativeRows);
+            } else {
+                cumulativeRows.reopen();
+            }
+
             frameCursor.toPartition(partitionIndex);
-            int pfStart = pageFrameCount;
             long totalRows = 0;
             int pfCount = 0;
             PageFrame frame;
@@ -134,21 +140,15 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
                 cache.add(pfCount, frame);
                 long pfRows = frame.getPartitionHi() - frame.getPartitionLo();
                 totalRows += pfRows;
-                pageFrameCumulativeRows.add(totalRows);
-                pageFrameCount++;
+                cumulativeRows.add(totalRows);
                 pfCount++;
             }
 
-            partitionPageFrameStart[partitionIndex] = pfStart;
             partitionPageFrameCount[partitionIndex] = pfCount;
             partitionTotalRows[partitionIndex] = totalRows;
             partitionOpened.set(partitionIndex, 1); // release fence
             return cache;
         }
-    }
-
-    public LongList getPageFrameCumulativeRows() {
-        return pageFrameCumulativeRows;
     }
 
     public long getPartitionCeiling(int index) {
@@ -159,12 +159,12 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         return partitionCount;
     }
 
-    public int getPartitionPageFrameCount(int index) {
-        return partitionPageFrameCount[index];
+    public DirectLongList getPartitionCumulativeRows(int index) {
+        return partitionCumulativeRows.getQuick(index);
     }
 
-    public int getPartitionPageFrameStart(int index) {
-        return partitionPageFrameStart[index];
+    public int getPartitionPageFrameCount(int index) {
+        return partitionPageFrameCount[index];
     }
 
     public long getPartitionTimestamp(int index) {
@@ -194,8 +194,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         this.partitionCount = partitionTimestamps.size();
 
         // Resize flat arrays if partition count changed; reuse if large enough.
-        if (partitionPageFrameStart == null || partitionPageFrameStart.length < partitionCount) {
-            partitionPageFrameStart = new int[partitionCount];
+        if (partitionPageFrameCount == null || partitionPageFrameCount.length < partitionCount) {
             partitionPageFrameCount = new int[partitionCount];
             partitionTotalRows = new long[partitionCount];
         }
@@ -209,10 +208,9 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
             }
         }
 
-        // Ensure ObjList is sized (null entries for not-yet-opened partitions).
-        for (int i = partitionCaches.size(); i < partitionCount; i++) {
-            partitionCaches.add(null);
-        }
+        // Ensure ObjLists are sized (null entries for not-yet-opened partitions).
+        partitionCaches.setPos(Math.max(partitionCaches.size(), partitionCount));
+        partitionCumulativeRows.setPos(Math.max(partitionCumulativeRows.size(), partitionCount));
         // Clear caches from previous query.
         for (int i = 0, n = Math.min(partitionCaches.size(), partitionCount); i < n; i++) {
             PageFrameAddressCache cache = partitionCaches.getQuick(i);
@@ -220,9 +218,10 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
                 cache.clear();
             }
         }
+        // Close per-partition cumulative rows from previous query (frees native
+        // memory but keeps objects for reuse via reopen() in ensurePartitionOpened).
+        Misc.freeObjListAndKeepObjects(partitionCumulativeRows);
 
-        pageFrameCumulativeRows.clear();
-        pageFrameCount = 0;
         return this;
     }
 }

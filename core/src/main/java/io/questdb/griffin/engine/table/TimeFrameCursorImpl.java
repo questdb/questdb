@@ -68,7 +68,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final DirectLongList frameTimestampCache;
     private final RecordMetadata metadata;
     // Cumulative row counts per page frame (for row-to-page-frame resolution)
-    private final LongList pageFrameCumulativeRows = new LongList();
+    private final DirectLongList pageFrameCumulativeRows;
     private final LongList partitionCeilings = new LongList();
     private final LongList partitionRowCounts = new LongList();
     private final LongList partitionTimestamps = new LongList();
@@ -100,6 +100,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             this.frameAddressCache = new PageFrameAddressCache();
             this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
+            this.pageFrameCumulativeRows = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
             close();
             throw th;
@@ -111,6 +112,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         Misc.free(frameMemoryPool);
         Misc.free(frameAddressCache);
         Misc.free(frameTimestampCache);
+        Misc.free(pageFrameCumulativeRows);
         frameCursor = Misc.free(frameCursor);
     }
 
@@ -229,10 +231,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                 timestampLo = Unsafe.getUnsafe().getLong(firstPageFrame.getPageAddress(tsColumnIndex));
                 final int lastPageFrameIndex = pageFrameStart + pageFrameCountInPartition - 1;
                 final PageFrameMemory lastPageFrame = frameMemoryPool.navigateTo(lastPageFrameIndex);
-                final long lastPageFrameRows = pageFrameCumulativeRows.getQuick(lastPageFrameIndex)
-                        - (lastPageFrameIndex > pageFrameStart ? pageFrameCumulativeRows.getQuick(lastPageFrameIndex - 1) : 0);
-                timestampHi = Unsafe.getUnsafe().getLong(
-                        lastPageFrame.getPageAddress(tsColumnIndex) + (lastPageFrameRows - 1) * 8);
+                final long lastPageFrameRows = pageFrameCumulativeRows.get(lastPageFrameIndex)
+                        - (lastPageFrameIndex > pageFrameStart ? pageFrameCumulativeRows.get(lastPageFrameIndex - 1) : 0);
+                timestampHi = Unsafe.getUnsafe().getLong(lastPageFrame.getPageAddress(tsColumnIndex) + (lastPageFrameRows - 1) * 8);
                 frameTimestampCache.set(cacheOffset, timestampLo);
                 frameTimestampCache.set(cacheOffset + 1, timestampHi);
             }
@@ -365,7 +366,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         partitionPageFrameCount = new int[partitionCount];
         partitionTotalRows = new long[partitionCount];
         pageFrameCount = 0;
-        pageFrameCumulativeRows.clear();
+        pageFrameCumulativeRows.reopen();
 
         final int cacheSize = 2 * partitionCount;
         if (cacheSize > 0) {
@@ -417,10 +418,10 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         if (lastLocalPfIndex >= 0 && lastLocalPfIndex < pfCount && partitionIndex == currentPartition) {
             final int nextPf = lastLocalPfIndex + 1;
             if (nextPf < pfCount && rowInPartition >= currentPageFrameRowHi
-                    && rowInPartition < pageFrameCumulativeRows.getQuick(pageFrameStart + nextPf)) {
+                    && rowInPartition < pageFrameCumulativeRows.get(pageFrameStart + nextPf)) {
                 lo = nextPf;
             } else if (lastLocalPfIndex > 0 && rowInPartition < currentPageFrameRowLo) {
-                final long prevPfRowLo = lastLocalPfIndex > 1 ? pageFrameCumulativeRows.getQuick(pageFrameStart + lastLocalPfIndex - 2) : 0;
+                final long prevPfRowLo = lastLocalPfIndex > 1 ? pageFrameCumulativeRows.get(pageFrameStart + lastLocalPfIndex - 2) : 0;
                 if (rowInPartition >= prevPfRowLo) {
                     lo = lastLocalPfIndex - 1;
                 } else {
@@ -434,8 +435,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         }
 
         final int pageFrameIndex = pageFrameStart + lo;
-        final long pageFrameRowLo = lo > 0 ? pageFrameCumulativeRows.getQuick(pageFrameIndex - 1) : 0;
-        final long pageFrameRowHi = pageFrameCumulativeRows.getQuick(pageFrameIndex);
+        final long pageFrameRowLo = lo > 0 ? pageFrameCumulativeRows.get(pageFrameIndex - 1) : 0;
+        final long pageFrameRowHi = pageFrameCumulativeRows.get(pageFrameIndex);
 
         frameMemoryPool.navigateTo(pageFrameIndex, (PageFrameMemoryRecord) record);
         ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, pageFrameRowLo);
