@@ -3958,6 +3958,54 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableParquetCompressionWithSymbol() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "sym SYMBOL capacity 128 cache parquet compression snappy," +
+                        " ts TIMESTAMP)" +
+                        " timestamp(ts)" +
+                        " partition by DAY",
+                "create table x (" +
+                        "sym SYMBOL PARQUET COMPRESSION SNAPPY, " +
+                        "ts TIMESTAMP) " +
+                        "timestamp(ts) " +
+                        "partition by DAY"
+        );
+    }
+
+    @Test
+    public void testCreateTableParquetCompressionWithSymbolCapacityCache() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "sym SYMBOL capacity 64 cache parquet compression snappy," +
+                        " ts TIMESTAMP)" +
+                        " timestamp(ts)" +
+                        " partition by DAY",
+                "create table x (" +
+                        "sym SYMBOL CAPACITY 64 CACHE PARQUET COMPRESSION SNAPPY, " +
+                        "ts TIMESTAMP) " +
+                        "timestamp(ts) " +
+                        "partition by DAY"
+        );
+    }
+
+    @Test
+    public void testCreateTableParquetCompressionWithSymbolIndex() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "sym SYMBOL capacity 128 cache index capacity 256 parquet compression snappy," +
+                        " ts TIMESTAMP)" +
+                        " timestamp(ts)" +
+                        " partition by DAY",
+                "create table x (" +
+                        "sym SYMBOL INDEX PARQUET COMPRESSION SNAPPY, " +
+                        "ts TIMESTAMP) " +
+                        "timestamp(ts) " +
+                        "partition by DAY"
+        );
+    }
+
+    @Test
     public void testCreateTableParquetEncoding() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
