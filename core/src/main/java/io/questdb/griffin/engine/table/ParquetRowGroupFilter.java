@@ -389,7 +389,7 @@ public final class ParquetRowGroupFilter {
             }
 
             final long baseAddress = filterValues.getAddress();
-            for (int i = 1, n = (int) filterList.size(); i < n; i += LONGS_PER_FILTER) {
+            for (long i = 1, n = filterList.size(); i < n; i += LONGS_PER_FILTER) {
                 filterList.set(i, baseAddress + filterList.get(i));
             }
             return true;
