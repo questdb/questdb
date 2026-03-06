@@ -60,7 +60,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 
 /**
- * Cache for table update details in ILP v4 processing.
+ * Cache for table update details in QWP v1 processing.
  */
 public class QwpTudCache implements QuietCloseable {
     private final boolean autoCreateNewColumns;
@@ -236,7 +236,7 @@ public class QwpTudCache implements QuietCloseable {
                 return null;
             }
 
-            // Create table using ILP v4 schema
+            // Create table using QWP v1 schema
             QwpTableStructureAdapter tsa = new QwpTableStructureAdapter(
                     engine.getConfiguration(),
                     tableNameUtf16.toString(),
@@ -260,7 +260,7 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Table structure adapter for ILP v4 schema.
+     * Table structure adapter for QWP v1 schema.
      * <p>
      * When no timestamp column is provided in the schema, this adapter automatically
      * adds a "timestamp" column as the designated timestamp. This matches the behavior
@@ -387,7 +387,7 @@ public class QwpTudCache implements QuietCloseable {
 
         @Override
         public boolean isWalEnabled() {
-            return true; // ILP v4 uses WAL
+            return true; // QWP v1 uses WAL
         }
     }
 }

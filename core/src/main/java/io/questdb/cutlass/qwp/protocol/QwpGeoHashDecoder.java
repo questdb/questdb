@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Unsafe;
 
 /**
- * Decoder for GEOHASH columns in ILP v4 format.
+ * Decoder for GEOHASH columns in QWP v1 format.
  * <p>
  * GeoHash encoding:
  * <pre>

@@ -31,7 +31,7 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Exception thrown when parsing ILP v4 protocol data fails.
+ * Exception thrown when parsing QWP v1 protocol data fails.
  * <p>
  * This exception is designed to be flyweight-friendly for error reporting
  * while avoiding allocations on hot paths by using cached instances for
@@ -192,7 +192,7 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
     }
 
     /**
-     * Error codes for ILP v4 parsing errors.
+     * Error codes for QWP v1 parsing errors.
      */
     public enum ErrorCode {
         INCOMPLETE_VARINT,

@@ -31,7 +31,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 
 /**
- * Streaming cursor over a decoded ILP v4 table block.
+ * Streaming cursor over a decoded QWP v1 table block.
  * <p>
  * Provides zero-allocation row-by-row iteration through the table data.
  * Column cursors are managed internally and reused across table blocks.

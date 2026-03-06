@@ -25,7 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 /**
- * Constants for the ILP v4 binary protocol.
+ * Constants for the QWP v1 binary protocol.
  */
 public final class QwpConstants {
 

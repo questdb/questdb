@@ -53,7 +53,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * State management for ILP v4 processing.
+ * State management for QWP v1 processing.
  */
 public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
@@ -315,7 +315,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             }
 
         } catch (QwpParseException e) {
-            LOG.error().$('[').$(fd).$("] ILP v4 parse error: ").$(e.getMessage()).$();
+            LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getMessage()).$();
             reject(Status.PARSE_ERROR, e.getMessage(), fd);
         } catch (CommitFailedException e) {
             LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();

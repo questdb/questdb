@@ -28,7 +28,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Unsafe;
 
 /**
- * XXHash64 implementation for schema hashing in ILP v4 protocol.
+ * XXHash64 implementation for schema hashing in QWP v1 protocol.
  * <p>
  * The schema hash is computed over column definitions (name + type) to enable
  * schema caching. When a client sends a schema reference (hash), the server
@@ -41,7 +41,7 @@ import io.questdb.std.Unsafe;
  */
 public final class QwpSchemaHash {
 
-    // Default seed (0 for ILP v4)
+    // Default seed (0 for QWP v1)
     private static final long DEFAULT_SEED = 0L;
     // XXHash64 constants
     private static final long PRIME64_1 = 0x9E3779B185EBCA87L;
@@ -55,7 +55,7 @@ public final class QwpSchemaHash {
     }
 
     /**
-     * Computes the schema hash for ILP v4 using String column names.
+     * Computes the schema hash for QWP v1 using String column names.
      * Note: Iterates over String chars and converts to UTF-8 bytes directly to avoid getBytes() allocation.
      *
      * @param columnNames array of column names

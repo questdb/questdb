@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
- * Integration tests for ILP v4 WebSocket server functionality.
+ * Integration tests for QWP v1 WebSocket server functionality.
  * These tests verify the complete WebSocket upgrade and message flow
  * using JDK's built-in WebSocket client.
  */
@@ -330,7 +330,7 @@ public class QwpWebSocketServerIntegrationTest extends AbstractWebSocketTest {
                 try (TestWebSocketServer server = new TestWebSocketServer(TEST_PORT + 8, new TestWebSocketServer.WebSocketServerHandler() {
                     @Override
                     public void onBinaryMessage(TestWebSocketServer.ClientHandler client, byte[] data) {
-                        // Simulate ILP v4 processing
+                        // Simulate QWP v1 processing
                         long ptr = allocateAndWrite(data);
                         try {
                             state.addData(ptr, ptr + data.length);

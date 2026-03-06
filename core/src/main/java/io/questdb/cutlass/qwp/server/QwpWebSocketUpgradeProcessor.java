@@ -49,13 +49,13 @@ import io.questdb.std.str.Utf8Sequence;
 import java.nio.charset.StandardCharsets;
 
 /**
- * HTTP request processor that handles WebSocket upgrade for ILP v4.
+ * HTTP request processor that handles WebSocket upgrade for QWP v1.
  * <p>
  * This processor:
  * 1. Validates the WebSocket handshake
  * 2. Sends the 101 Switching Protocols response
  * 3. Switches to WebSocket protocol for subsequent communication
- * 4. Parses WebSocket frames and processes ILP v4 messages
+ * 4. Parses WebSocket frames and processes QWP v1 messages
  * <p>
  * Per-connection state is stored in {@link QwpProcessorState} via {@link LocalValue},
  * so a single processor instance can safely be shared across connections on the same worker.
@@ -413,7 +413,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
 
-            // Process the ILP v4 message
+            // Process the QWP v1 message
             state.processMessage();
 
             if (state.isOk()) {

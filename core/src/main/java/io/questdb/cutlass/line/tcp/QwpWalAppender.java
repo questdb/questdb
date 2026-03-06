@@ -53,12 +53,12 @@ import io.questdb.std.QuietCloseable;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 
 /**
- * Appends decoded ILP v4 table blocks to WAL.
+ * Appends decoded QWP v1 table blocks to WAL.
  * <p>
- * This class handles the conversion from ILP v4 columnar format to QuestDB's
+ * This class handles the conversion from QWP v1 columnar format to QuestDB's
  * WAL row-based format. It supports:
  * <ul>
- *   <li>All ILP v4 column types</li>
+ *   <li>All QWP v1 column types</li>
  *   <li>Nullable columns</li>
  *   <li>Auto column creation</li>
  *   <li>Timestamp column handling</li>
@@ -93,10 +93,10 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Maps a QuestDB column type to ILP v4 type code.
+     * Maps a QuestDB column type to QWP v1 type code.
      *
      * @param columnType QuestDB column type
-     * @return ILP v4 type code
+     * @return QWP v1 type code
      */
     public static byte mapQuestDBTypeToQwp(int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
@@ -121,9 +121,9 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Maps an ILP v4 type code to QuestDB column type.
+     * Maps an QWP v1 type code to QuestDB column type.
      *
-     * @param ilpType ILP v4 type code
+     * @param ilpType QWP v1 type code
      * @return QuestDB column type
      */
     public static int mapQwpTypeToQuestDB(int ilpType) {
@@ -150,7 +150,7 @@ public class QwpWalAppender implements QuietCloseable {
             case TYPE_DECIMAL64 -> ColumnType.DECIMAL64;
             case TYPE_DECIMAL128 -> ColumnType.DECIMAL128;
             case TYPE_DECIMAL256 -> ColumnType.DECIMAL256;
-            default -> throw new IllegalArgumentException("Unknown ILP v4 type: " + ilpType);
+            default -> throw new IllegalArgumentException("Unknown QWP v1 type: " + ilpType);
         };
     }
 
@@ -219,9 +219,9 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Returns a human-readable name for an ILP v4 type code.
+     * Returns a human-readable name for an QWP v1 type code.
      *
-     * @param ilpType ILP v4 type code
+     * @param ilpType QWP v1 type code
      * @return human-readable type name
      */
     private static String getIlpTypeName(byte ilpType) {
@@ -296,9 +296,9 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Maps an ILP v4 type code to QuestDB column type, with cursor access for decimal scale.
+     * Maps an QWP v1 type code to QuestDB column type, with cursor access for decimal scale.
      *
-     * @param ilpType    ILP v4 type code
+     * @param ilpType    QWP v1 type code
      * @param tableBlock table block cursor for accessing decimal scale
      * @param colIndex   column index
      * @return QuestDB column type
@@ -865,7 +865,7 @@ public class QwpWalAppender implements QuietCloseable {
         }
 
         // Phase 2: Write data - always use columnar path
-        // Writer is always a WalWriter in this context (ILP v4 only supports WAL tables)
+        // Writer is always a WalWriter in this context (QWP v1 only supports WAL tables)
         WalWriter walWriter = (WalWriter) writer;
         appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud);
     }

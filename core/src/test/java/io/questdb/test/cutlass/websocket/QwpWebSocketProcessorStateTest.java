@@ -33,7 +33,7 @@ import org.junit.Test;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
- * Tests for ILP v4 WebSocket processor state management.
+ * Tests for QWP v1 WebSocket processor state management.
  */
 public class QwpWebSocketProcessorStateTest extends AbstractWebSocketTest {
 

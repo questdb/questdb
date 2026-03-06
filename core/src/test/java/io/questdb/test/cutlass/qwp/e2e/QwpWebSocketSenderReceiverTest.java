@@ -49,7 +49,7 @@ import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_DATE;
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
 
 /**
- * End-to-end integration tests for ILP v4 WebSocket sender and receiver.
+ * End-to-end integration tests for QWP v1 WebSocket sender and receiver.
  * <p>
  * These tests mirror the HTTP sender/receiver tests to ensure feature parity
  * between HTTP and WebSocket transports.
@@ -3257,7 +3257,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
     /**
      * Tests DOUBLE to FLOAT narrowing by pre-creating a table with FLOAT column
-     * and sending DOUBLE values over ILP v4.
+     * and sending DOUBLE values over QWP v1.
      */
     @Test
     public void testNarrowing_DoubleToFloat() throws Exception {
@@ -3302,7 +3302,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
     /**
      * Tests LONG to BYTE narrowing by pre-creating a table with BYTE column
-     * and sending LONG values over ILP v4.
+     * and sending LONG values over QWP v1.
      */
     @Test
     public void testNarrowing_LongToByte() throws Exception {
@@ -3346,7 +3346,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
     /**
      * Tests LONG to INT narrowing by pre-creating a table with INT column
-     * and sending LONG values over ILP v4.
+     * and sending LONG values over QWP v1.
      */
     @Test
     public void testNarrowing_LongToInt() throws Exception {
@@ -3390,7 +3390,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
 
     /**
      * Tests LONG to SHORT narrowing by pre-creating a table with SHORT column
-     * and sending LONG values over ILP v4.
+     * and sending LONG values over QWP v1.
      */
     @Test
     public void testNarrowing_LongToShort() throws Exception {
@@ -3457,9 +3457,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractBootstrapTest {
     }
 
     /**
-     * Tests that ILP v4 rejects writes to non-WAL tables.
+     * Tests that QWP v1 rejects writes to non-WAL tables.
      * <p>
-     * ILP v4 only supports WAL tables. When attempting to write to a non-WAL table
+     * QWP v1 only supports WAL tables. When attempting to write to a non-WAL table
      * (created with BYPASS WAL), the server should return an error.
      */
     @Test

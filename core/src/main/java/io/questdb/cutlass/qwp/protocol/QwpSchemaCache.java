@@ -29,7 +29,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 /**
- * Simple cache for ILP v4 schemas.
+ * Simple cache for QWP v1 schemas.
  * <p>
  * Keyed by combined hash of (tableName, schemaHash).
  * Single-threaded, zero-allocation on lookups.

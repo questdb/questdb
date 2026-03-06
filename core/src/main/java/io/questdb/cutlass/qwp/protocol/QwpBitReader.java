@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Unsafe;
 
 /**
- * Bit-level reader for ILP v4 protocol.
+ * Bit-level reader for QWP v1 protocol.
  * <p>
  * This class reads bits from a buffer in LSB-first order within each byte.
  * Bits are read sequentially, spanning byte boundaries as needed.

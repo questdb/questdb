@@ -31,7 +31,7 @@ import io.questdb.std.Unsafe;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Encodes ILP v4 responses to binary format.
+ * Encodes QWP v1 responses to binary format.
  * <p>
  * Response format for OK:
  * <pre>

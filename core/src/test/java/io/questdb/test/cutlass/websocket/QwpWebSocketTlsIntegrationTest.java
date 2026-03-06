@@ -49,7 +49,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
- * TLS integration tests for ILP v4 WebSocket server functionality.
+ * TLS integration tests for QWP v1 WebSocket server functionality.
  * These tests verify WebSocket upgrade and message flow over TLS
  * using JDK's built-in WebSocket client.
  */

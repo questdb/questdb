@@ -34,7 +34,7 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 /**
- * Tests for ILP v4 response generation and parsing.
+ * Tests for QWP v1 response generation and parsing.
  */
 public class QwpResponseTest {
 

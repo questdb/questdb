@@ -71,7 +71,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * Implementation of {@link ColumnarRowAppender} for WAL writers.
  * <p>
  * This class provides optimized bulk column writes, avoiding per-row overhead
- * when ingesting columnar data (like ILP v4).
+ * when ingesting columnar data (like QWP v1).
  * <p>
  * <b>Thread Safety:</b> Not thread-safe. Each WalWriter should have its own instance.
  */

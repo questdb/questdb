@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.*;
 
 /**
- * End-to-end integration tests for ILP v4 WebSocket sender.
+ * End-to-end integration tests for QWP v1 WebSocket sender.
  * <p>
  * These tests verify that data sent via QwpWebSocketSender over WebSocket
  * is correctly written to QuestDB tables and can be queried.

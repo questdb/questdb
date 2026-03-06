@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.ObjList;
 
 /**
- * Represents an ILP v4 response to be sent to the client.
+ * Represents an QWP v1 response to be sent to the client.
  * <p>
  * Response format:
  * <pre>

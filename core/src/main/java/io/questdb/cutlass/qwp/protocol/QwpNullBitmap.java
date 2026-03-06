@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Unsafe;
 
 /**
- * Utility class for reading and writing null bitmaps in ILP v4 format.
+ * Utility class for reading and writing null bitmaps in QWP v1 format.
  * <p>
  * Null bitmap format:
  * <ul>

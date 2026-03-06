@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Unsafe;
 
 /**
- * Decoder for BOOLEAN columns in ILP v4 format.
+ * Decoder for BOOLEAN columns in QWP v1 format.
  * <p>
  * Format:
  * <pre>

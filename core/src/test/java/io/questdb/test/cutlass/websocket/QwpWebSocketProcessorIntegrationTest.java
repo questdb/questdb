@@ -39,9 +39,9 @@ import java.util.List;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 /**
- * Integration tests for ILP v4 WebSocket processor and state working together.
+ * Integration tests for QWP v1 WebSocket processor and state working together.
  * These tests verify the complete flow from receiving WebSocket messages
- * to processing ILP v4 data.
+ * to processing QWP v1 data.
  */
 public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest {
 
@@ -641,7 +641,7 @@ public class QwpWebSocketProcessorIntegrationTest extends AbstractWebSocketTest 
 
         @Override
         public void onTextMessage(long payload, int length) {
-            // ILP v4 ignores text messages
+            // QWP v1 ignores text messages
         }
     }
 }

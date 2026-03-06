@@ -27,9 +27,9 @@ package io.questdb.cutlass.qwp.server;
 import io.questdb.cutlass.qwp.websocket.WebSocketProcessor;
 
 /**
- * WebSocket processor for ILP v4 binary protocol.
+ * WebSocket processor for QWP v1 binary protocol.
  * <p>
- * This processor handles WebSocket messages containing ILP v4 binary data
+ * This processor handles WebSocket messages containing QWP v1 binary data
  * and delegates processing to a callback.
  */
 public class QwpWebSocketProcessor implements WebSocketProcessor {
@@ -72,7 +72,7 @@ public class QwpWebSocketProcessor implements WebSocketProcessor {
 
     @Override
     public void onTextMessage(long payload, int length) {
-        // ILP v4 is binary only - text messages are ignored
+        // QWP v1 is binary only - text messages are ignored
         if (callback != null) {
             callback.onTextMessage(payload, length);
         }
@@ -88,7 +88,7 @@ public class QwpWebSocketProcessor implements WebSocketProcessor {
     }
 
     /**
-     * Callback interface for ILP v4 WebSocket processing events.
+     * Callback interface for QWP v1 WebSocket processing events.
      */
     public interface Callback {
         /**
@@ -118,7 +118,7 @@ public class QwpWebSocketProcessor implements WebSocketProcessor {
 
         /**
          * Called when a text message is received.
-         * ILP v4 is binary-only, so this is typically ignored.
+         * QWP v1 is binary-only, so this is typically ignored.
          */
         void onTextMessage(long payload, int length);
     }

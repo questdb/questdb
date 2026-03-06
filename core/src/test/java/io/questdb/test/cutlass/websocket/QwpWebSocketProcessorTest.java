@@ -36,7 +36,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Tests for ILP v4 WebSocket processor.
+ * Tests for QWP v1 WebSocket processor.
  */
 public class QwpWebSocketProcessorTest extends AbstractWebSocketTest {
 
@@ -341,7 +341,7 @@ public class QwpWebSocketProcessorTest extends AbstractWebSocketTest {
         QwpWebSocketProcessor processor = new QwpWebSocketProcessor();
         processor.setCallback(callback);
 
-        // Text messages should be ignored (ILP v4 is binary only)
+        // Text messages should be ignored (QWP v1 is binary only)
         byte[] data = "hello".getBytes(StandardCharsets.UTF_8);
         long ptr = allocateAndWrite(data);
         try {

@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Mutable;
 
 /**
- * Base interface for streaming column cursors in ILP v4.
+ * Base interface for streaming column cursors in QWP v1.
  * <p>
  * Column cursors provide zero-allocation access to column values by reading
  * directly from wire-format memory. Values are accessed one row at a time
@@ -73,7 +73,7 @@ public interface QwpColumnCursor extends Mutable {
     int getCurrentRow();
 
     /**
-     * Returns the ILP v4 type code for this column.
+     * Returns the QWP v1 type code for this column.
      *
      * @return type code (without nullable flag)
      * @see QwpConstants

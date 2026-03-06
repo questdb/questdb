@@ -35,7 +35,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_COLUMNS_PER_TABLE
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_TABLE_NAME_LENGTH;
 
 /**
- * Parser for ILP v4 table headers.
+ * Parser for QWP v1 table headers.
  * <p>
  * Table header structure:
  * <pre>

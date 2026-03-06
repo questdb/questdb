@@ -33,9 +33,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
 /**
- * Zero-allocation streaming decoder for ILP v4 messages.
+ * Zero-allocation streaming decoder for QWP v1 messages.
  * <p>
- * This decoder provides streaming access to ILP v4 message content without
+ * This decoder provides streaming access to QWP v1 message content without
  * materializing intermediate Java objects. It uses flyweight cursors that
  * read directly from wire-format memory.
  * <p>
@@ -44,7 +44,7 @@ import io.questdb.std.QuietCloseable;
  *   <li>Zero-allocation on the hot decode path after warmup</li>
  *   <li>Reusable cursors for tables, rows, and columns</li>
  *   <li>Flyweight string access via {@link io.questdb.std.str.DirectUtf8Sequence}</li>
- *   <li>Support for all ILP v4 column types including Gorilla timestamps</li>
+ *   <li>Support for all QWP v1 column types including Gorilla timestamps</li>
  * </ul>
  * <p>
  * <b>Usage:</b>
@@ -103,13 +103,13 @@ public class QwpStreamingDecoder implements QuietCloseable {
     }
 
     /**
-     * Decodes an ILP v4 message from direct memory with delta symbol dictionary support.
+     * Decodes an QWP v1 message from direct memory with delta symbol dictionary support.
      * <p>
      * If the message has FLAG_DELTA_SYMBOL_DICT set, the delta symbols are accumulated
      * to the provided connection dictionary. Symbol columns then reference this dictionary
      * using global IDs.
      *
-     * @param messageAddress       address of the complete ILP v4 message
+     * @param messageAddress       address of the complete QWP v1 message
      * @param messageLength        total message length in bytes
      * @param connectionSymbolDict connection-level symbol dictionary for delta mode (may be null)
      * @return message cursor for streaming access
@@ -123,14 +123,14 @@ public class QwpStreamingDecoder implements QuietCloseable {
     }
 
     /**
-     * Decodes an ILP v4 message from direct memory.
+     * Decodes an QWP v1 message from direct memory.
      * <p>
      * The returned cursor is valid until the next call to {@link #decode} or {@link #reset()}.
      * <p>
      * <b>Zero-allocation:</b> After warmup, this method does not allocate
      * any new objects. Cursors are reused across calls.
      *
-     * @param messageAddress address of the complete ILP v4 message (header + payload)
+     * @param messageAddress address of the complete QWP v1 message (header + payload)
      * @param messageLength  total message length in bytes
      * @return message cursor for streaming access
      * @throws QwpParseException if the message is malformed

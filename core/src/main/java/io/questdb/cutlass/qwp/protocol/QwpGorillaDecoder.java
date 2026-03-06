@@ -25,7 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 /**
- * Gorilla delta-of-delta decoder for timestamps in ILP v4 format.
+ * Gorilla delta-of-delta decoder for timestamps in QWP v1 format.
  * <p>
  * Gorilla encoding uses delta-of-delta compression where:
  * <pre>

@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.Unsafe;
 
 /**
- * Variable-length integer encoding/decoding utilities for ILP v4 protocol.
+ * Variable-length integer encoding/decoding utilities for QWP v1 protocol.
  * Uses unsigned LEB128 (Little Endian Base 128) encoding.
  * <p>
  * The encoding scheme:

@@ -35,7 +35,7 @@ import org.junit.Test;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Tests for ILP v4 WebSocket upgrade processor.
+ * Tests for QWP v1 WebSocket upgrade processor.
  */
 public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
 

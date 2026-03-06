@@ -30,7 +30,7 @@ import io.questdb.std.Unsafe;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Decoder for SYMBOL columns in ILP v4 format.
+ * Decoder for SYMBOL columns in QWP v1 format.
  * <p>
  * Symbols use dictionary encoding:
  * <pre>
