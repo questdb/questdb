@@ -4381,9 +4381,8 @@ mod tests {
         let rows_filter = vec![0i64, 2, 4]; // Select rows 0, 2, 4
 
         let mut expected = Vec::new();
-        for row in 0..indices.len() {
+        for (row, &idx) in indices.iter().enumerate() {
             if rows_filter.contains(&(row as i64)) {
-                let idx = indices[row];
                 let millis = (dict_days[idx as usize] as i64) * MILLIS_PER_DAY;
                 expected.extend_from_slice(&millis.to_le_bytes());
             } else {

@@ -1119,7 +1119,7 @@ mod tests {
 
         // col > day -1: max_stat = day -1 = -86_400_000 ms, filter = -1*86_400_000.
         // -86_400_000 <= -86_400_000 → skip.
-        let v: Vec<i64> = vec![-1 * millis_per_day];
+        let v: Vec<i64> = vec![-millis_per_day];
         let filters = [make_filter_with_op_and_type(
             0,
             1,
