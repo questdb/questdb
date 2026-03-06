@@ -2894,6 +2894,65 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerPostJoinAndMixedConstFilter() throws Exception {
+        // When constWhereClause mixes compile-time and non-compile-time terms
+        // (e.g. false AND NOW() = NOW()), the optimizer splits them: false stays
+        // as constWhereClause and the code generator folds it to EmptyTableRecordCursorFactory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    "val\tval1\n",
+                    "SELECT T1.val, T2.val FROM t T1 " +
+                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                            "WHERE T1.val > 0 AND 1 > 10 AND NOW() = NOW()",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testJoinInnerPostJoinAndMixedConstTrueFilter() throws Exception {
+        // When constWhereClause has true AND NOW() = NOW(), the optimizer merges
+        // NOW() = NOW() into postJoinWhereClause and the code generator folds
+        // the remaining constant true away.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            String query = "SELECT T1.val, T2.val FROM t T1 " +
+                    "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                    "WHERE T1.val > 0 AND 1 < 10 AND NOW() = NOW()";
+            assertQueryNoLeakCheck(
+                    """
+                            val\tval1
+                            1\t2
+                            """,
+                    query,
+                    null, false, false
+            );
+            // Verify: no Empty table (1 < 10 folded as constant true), and
+            // now()=now() merged from constWhereClause into a post-join filter.
+            assertPlanNoLeakCheck(query, """
+                    SelectedRecord
+                        Filter filter: (T1.ts<T2.ts and now()=now())
+                            Cross Join
+                                Async JIT Filter workers: 1
+                                  filter: 0<val
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+        });
+    }
+
+    @Test
     public void testJoinInnerPostJoinMultipleJoinsFilter() throws Exception {
         // Tests multi-way join with post-join WHERE conditions referencing
         // columns from different join pairs.

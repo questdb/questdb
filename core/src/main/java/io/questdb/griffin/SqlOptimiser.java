@@ -407,6 +407,30 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static void extractAndTerms(ExpressionNode node, ObjList<ExpressionNode> terms) {
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isAndKeyword(node.token)) {
+            extractAndTerms(node.lhs, terms);
+            extractAndTerms(node.rhs, terms);
+        } else {
+            terms.add(node);
+        }
+    }
+
+    // Returns true when every leaf in the expression tree is a literal constant
+    // (no function calls, bind variables, or column references). Used to decide
+    // whether a constWhereClause can be evaluated at compile time by the code
+    // generator (e.g. folded to EmptyTableRecordCursorFactory when false).
+    private static boolean isCompileTimeConstant(ExpressionNode node) {
+        if (node == null) {
+            return true;
+        }
+        return switch (node.type) {
+            case ExpressionNode.CONSTANT -> true;
+            case ExpressionNode.OPERATION -> isCompileTimeConstant(node.lhs) && isCompileTimeConstant(node.rhs);
+            default -> false;
+        };
+    }
+
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
@@ -1666,6 +1690,7 @@ public class SqlOptimiser implements Mutable {
 
     // pushing predicates to sample by model is only allowed for sample by fill none align to calendar and expressions on non-timestamp columns
     // pushing for other fill options or sample by first observation could alter a result
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     private boolean canPushToSampleBy(final QueryModel model, ObjList<CharSequence> expressionColumns) {
         ObjList<ExpressionNode> fill = model.getSampleByFill();
         int fillCount = fill.size();
@@ -4525,29 +4550,35 @@ public class SqlOptimiser implements Mutable {
 
     private void mergeConstIntoPostJoinWhereClause(QueryModel model) {
         ExpressionNode constWhere = model.getConstWhereClause();
-        if (constWhere != null && !isCompileTimeConstant(constWhere)) {
+        if (constWhere == null) {
+            return;
+        }
+        boolean legacy = configuration.getCairoSqlLegacyOperatorPrecedence();
+        ExpressionNode compileTimeTerms = null;
+        ExpressionNode runtimeTerms = null;
+        // Flatten the AND-tree and classify each conjunct.
+        tempExprs.clear();
+        extractAndTerms(constWhere, tempExprs);
+        for (int i = 0, n = tempExprs.size(); i < n; i++) {
+            ExpressionNode term = tempExprs.getQuick(i);
+            if (isCompileTimeConstant(term)) {
+                compileTimeTerms = concatFilters(legacy, expressionNodePool, compileTimeTerms, term);
+            } else {
+                runtimeTerms = concatFilters(legacy, expressionNodePool, runtimeTerms, term);
+            }
+        }
+        model.setConstWhereClause(compileTimeTerms);
+        if (runtimeTerms != null) {
             IntList ordered = model.getOrderedJoinModels();
             int lastIndex = ordered.getQuick(ordered.size() - 1);
             QueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
             lastModel.setPostJoinWhereClause(concatFilters(
-                    configuration.getCairoSqlLegacyOperatorPrecedence(),
+                    legacy,
                     expressionNodePool,
                     lastModel.getPostJoinWhereClause(),
-                    constWhere
+                    runtimeTerms
             ));
-            model.setConstWhereClause(null);
         }
-    }
-
-    private static boolean isCompileTimeConstant(ExpressionNode node) {
-        if (node == null) {
-            return true;
-        }
-        return switch (node.type) {
-            case ExpressionNode.CONSTANT -> true;
-            case ExpressionNode.OPERATION -> isCompileTimeConstant(node.lhs) && isCompileTimeConstant(node.rhs);
-            default -> false;
-        };
     }
 
     private JoinContext moveClauses(QueryModel parent, JoinContext from, JoinContext to, IntList positions) {
