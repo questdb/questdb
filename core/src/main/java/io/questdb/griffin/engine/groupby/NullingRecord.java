@@ -263,7 +263,14 @@ public class NullingRecord implements Record {
             for (int i = 0, n = nulledColumns.size(); i < n; i++) {
                 maxCol = Math.max(maxCol, nulledColumns.getQuick(i));
             }
-            this.isColumnNulled = new boolean[maxCol + 1];
+            int requiredLength = maxCol + 1;
+            if (this.isColumnNulled == null || this.isColumnNulled.length < requiredLength) {
+                this.isColumnNulled = new boolean[requiredLength];
+            } else {
+                for (int i = 0, n = this.isColumnNulled.length; i < n; i++) {
+                    this.isColumnNulled[i] = false;
+                }
+            }
             for (int i = 0, n = nulledColumns.size(); i < n; i++) {
                 isColumnNulled[nulledColumns.getQuick(i)] = true;
             }
