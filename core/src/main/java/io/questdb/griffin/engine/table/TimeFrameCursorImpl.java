@@ -34,13 +34,13 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
-import io.questdb.cairo.sql.TimeFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.cairo.sql.TimeFrameMemoryRecord;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -62,7 +62,6 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  * should start with a {@link #next()} call.
  */
 public final class TimeFrameCursorImpl implements TimeFrameCursor {
-    private static final int PAGE_FRAME_SCAN_THRESHOLD = 64;
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
     // Cache for partition timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...]
@@ -76,7 +75,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final TimeFrameMemoryRecord recordA = new TimeFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrameMemoryRecord recordB = new TimeFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
-    private int currentPageFrameGlobalIndex = -1;
+    // Page frame tracking for same-page-frame fast paths in recordAt/recordAtRowIndex.
+    // Avoids repeated page frame lookups when consecutive calls target the same page frame.
+    private int currentPageFrameGlobalIndex = -1; // global (single shared address cache)
     private long currentPageFrameRowHi;
     private long currentPageFrameRowLo;
     private int currentPartition = -1;
@@ -272,8 +273,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         assert TimeFrameCursor.isTimeFrameRowID(rowId) : "not a time frame row ID";
         final int partitionIndex = TimeFrameCursor.toPartitionIndex(rowId);
         final long rowInPartition = TimeFrameCursor.toLocalRowID(rowId);
-        if (currentPageFrameGlobalIndex >= 0
-                && partitionIndex == currentPartition
+        // Same-page-frame fast path: just update the row offset.
+        // The >= 0 guard prevents false hits after reset (both fields are -1).
+        if (currentPageFrameGlobalIndex >= 0 && partitionIndex == currentPartition
                 && rowInPartition >= currentPageFrameRowLo && rowInPartition < currentPageFrameRowHi
                 && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameGlobalIndex) {
             ((TimeFrameMemoryRecord) record).setRowIndex(partitionIndex, rowInPartition, currentPageFrameRowLo);
@@ -285,8 +287,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
     @Override
     public void recordAt(Record record, int frameIndex, long rowIndex) {
-        if (currentPageFrameGlobalIndex >= 0
-                && frameIndex == currentPartition
+        // Same-page-frame fast path, see recordAt(Record, long) above.
+        if (currentPageFrameGlobalIndex >= 0 && frameIndex == currentPartition
                 && rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi
                 && ((PageFrameMemoryRecord) record).getFrameIndex() == currentPageFrameGlobalIndex) {
             ((TimeFrameMemoryRecord) record).setRowIndex(frameIndex, rowIndex, currentPageFrameRowLo);
@@ -298,6 +300,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
     @Override
     public void recordAtRowIndex(Record record, long rowIndex) {
+        // Same-page-frame fast path for within-partition linear scans.
         if (rowIndex >= currentPageFrameRowLo && rowIndex < currentPageFrameRowHi) {
             ((TimeFrameMemoryRecord) record).setRowIndex(rowIndex, currentPageFrameRowLo);
             return;
@@ -402,33 +405,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         partitionOpened[partitionIndex] = true;
     }
 
-    private static int findPageFrame(int pfStart, int pfCount, LongList cumulativeRows, long rowInPartition) {
-        int lo;
-        if (pfCount <= PAGE_FRAME_SCAN_THRESHOLD) {
-            lo = 0;
-            while (lo < pfCount - 1
-                    && cumulativeRows.getQuick(pfStart + lo) <= rowInPartition) {
-                lo++;
-            }
-        } else {
-            lo = 0;
-            int hi = pfCount - 1;
-            while (lo < hi) {
-                int mid = (lo + hi) >>> 1;
-                if (cumulativeRows.getQuick(pfStart + mid) <= rowInPartition) {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-        }
-        return lo;
-    }
-
     private void navigateToRow(Record record, int partitionIndex, long rowInPartition) {
         final int pageFrameStart = partitionPageFrameStart[partitionIndex];
         final int pfCount = partitionPageFrameCount[partitionIndex];
 
+        // Adjacent page frame check: before falling back to scan/binary search,
+        // check whether the row is in the next or previous page frame. This is an
+        // O(1) shortcut for sequential access patterns that cross page frame boundaries.
         int lo;
         final int lastLocalPfIndex = currentPageFrameGlobalIndex - pageFrameStart;
         if (lastLocalPfIndex >= 0 && lastLocalPfIndex < pfCount && partitionIndex == currentPartition) {
@@ -441,13 +424,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
                 if (rowInPartition >= prevPfRowLo) {
                     lo = lastLocalPfIndex - 1;
                 } else {
-                    lo = findPageFrame(pageFrameStart, pfCount, pageFrameCumulativeRows, rowInPartition);
+                    lo = TimeFrameCursor.findPageFrame(pageFrameStart, pfCount, pageFrameCumulativeRows, rowInPartition);
                 }
             } else {
-                lo = findPageFrame(pageFrameStart, pfCount, pageFrameCumulativeRows, rowInPartition);
+                lo = TimeFrameCursor.findPageFrame(pageFrameStart, pfCount, pageFrameCumulativeRows, rowInPartition);
             }
         } else {
-            lo = findPageFrame(pageFrameStart, pfCount, pageFrameCumulativeRows, rowInPartition);
+            lo = TimeFrameCursor.findPageFrame(pageFrameStart, pfCount, pageFrameCumulativeRows, rowInPartition);
         }
 
         final int pageFrameIndex = pageFrameStart + lo;

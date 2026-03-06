@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 
@@ -33,6 +34,9 @@ import io.questdb.std.Rows;
  * and random row access.
  */
 public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
+    // Page frame count threshold: use linear scan below this, binary search above.
+    int PAGE_FRAME_SCAN_THRESHOLD = 64;
+
     // Marker bit set on all TimeFrameCursor row IDs (bit 43). This bit falls
     // within the local row ID range (bits 0-43) of the Rows encoding, so it
     // does not affect the partition index (bits 44-62). It reduces the max
@@ -41,6 +45,33 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     // with Long.MIN_VALUE sentinels in join helpers. Row IDs stay positive,
     // preserving the sign-based found/not-found convention in memoized cursors.
     long TIME_FRAME_ROW_ID_MARKER = 1L << 43;
+
+    // Finds the partition-local page frame index containing the given row.
+    // The cumulativeRows list stores cumulative row counts: cumulativeRows[i]
+    // is the total number of rows in page frames 0..i. So page frame i covers
+    // rows [cumulativeRows[i-1], cumulativeRows[i]). Uses linear scan for
+    // small partitions and binary search for larger ones.
+    static int findPageFrame(int pageFrameStart, int pageFrameCount, LongList cumulativeRows, long rowInPartition) {
+        int lo;
+        if (pageFrameCount <= PAGE_FRAME_SCAN_THRESHOLD) {
+            lo = 0;
+            while (lo < pageFrameCount - 1 && cumulativeRows.getQuick(pageFrameStart + lo) <= rowInPartition) {
+                lo++;
+            }
+        } else {
+            lo = 0;
+            int hi = pageFrameCount - 1;
+            while (lo < hi) {
+                int mid = (lo + hi) >>> 1;
+                if (cumulativeRows.getQuick(pageFrameStart + mid) <= rowInPartition) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+        }
+        return lo;
+    }
 
     static boolean isTimeFrameRowID(long rowId) {
         return (rowId & TIME_FRAME_ROW_ID_MARKER) != 0;
