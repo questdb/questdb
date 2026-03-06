@@ -64,7 +64,7 @@ pub fn column_type_to_parquet_type(
             name,
             PhysicalType::Int32,
             repetition,
-            Some(PrimitiveConvertedType::Int16),
+            Some(PrimitiveConvertedType::Uint16),
             Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)),
             Some(column_id),
         )?),
