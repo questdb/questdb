@@ -235,9 +235,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
             } else if (encoding == ENCODING_GORILLA) {
                 this.gorillaEnabled = true;
 
-                if (valueCount == 0) {
-                    // All nulls, nothing more to read
-                } else if (valueCount == 1) {
+                if (valueCount == 1) {
                     // First timestamp only
                     this.firstTimestamp = Unsafe.getUnsafe().getLong(dataAddress + offset);
                     offset += 8;

@@ -347,10 +347,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 recvBufferLen += read;
                 LOG.debug().$("WebSocket recv [fd=").$(context.getFd()).$(", bytes=").$(read).$(", total=").$(recvBufferLen).I$();
 
-                FrameProcessResult frameProcessResult = processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
-                if (frameProcessResult == FrameProcessResult.NEED_MORE_DATA) {
-                    // Partial frame is buffered and compacted; continue reading immediately.
-                }
+                processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
             }
 
         } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
