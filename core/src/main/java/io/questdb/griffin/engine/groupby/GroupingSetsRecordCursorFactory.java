@@ -281,6 +281,9 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                 this.nulledColumnsPerSet = nulledColumnsPerSet;
                 this.setCount = setCount;
 
+                // One map per grouping set. Maps start with a small initial
+                // capacity and grow lazily during the scan, so the upfront
+                // allocation cost is modest for typical set counts (< 20).
                 this.dataMaps = new ObjList<>(setCount);
                 for (int i = 0; i < setCount; i++) {
                     dataMaps.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes));
