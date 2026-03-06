@@ -62,7 +62,7 @@ pub fn generate_data<T: PrimitiveType>(count: usize) -> (Vec<<T::U as DataType>:
     (parquet, native)
 }
 
-fn rnd(s: usize) -> usize {
+pub fn rnd(s: usize) -> usize {
     // Use a simple xorshift to generate pseudo-random data that changes more between rows, which can help catch edge cases in encoding/decoding.
     let mut l0 = s as i64 + 1;
     let mut l1 = s as i64 + 2;
