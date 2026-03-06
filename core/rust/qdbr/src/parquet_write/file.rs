@@ -322,6 +322,7 @@ impl FallibleStreamingIterator for CompressedPages {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_row_group(
     partition: &Partition,
     offset: usize,
@@ -418,6 +419,7 @@ pub fn create_row_group(
 /// * `encoding` - Encoding for each column
 /// * `options` - Write options
 /// * `parallel` - Whether to process columns in parallel
+#[allow(clippy::too_many_arguments)]
 pub fn create_row_group_from_partitions(
     partitions: &[&Partition],
     first_partition_start: usize,

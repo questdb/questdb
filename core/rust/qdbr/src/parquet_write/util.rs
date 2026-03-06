@@ -381,7 +381,7 @@ pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
         &[]
     } else {
         debug_assert!(
-            slice.as_ptr() as usize % mem::align_of::<T>() == 0,
+            (slice.as_ptr() as usize).is_multiple_of(mem::align_of::<T>()),
             "transmute_slice: pointer {:p} is not aligned for {} (align = {})",
             slice.as_ptr(),
             std::any::type_name::<T>(),
@@ -397,10 +397,12 @@ pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
 mod tests {
     use parquet2::encoding::bitpacked;
     use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
-    use parquet2::schema::types::PrimitiveType;
     use parquet2::schema::types::PhysicalType;
+    use parquet2::schema::types::PrimitiveType;
 
-    use crate::parquet_write::util::{binary_upper_bound, encode_primitive_def_levels, BinaryMaxMinStats};
+    use crate::parquet_write::util::{
+        binary_upper_bound, encode_primitive_def_levels, BinaryMaxMinStats,
+    };
 
     #[test]
     fn decode_bitmap_v2() {
@@ -505,7 +507,8 @@ mod tests {
 
     #[test]
     fn test_binary_stats_all_ff_keeps_max() {
-        let primitive_type = PrimitiveType::from_physical("test".to_string(), PhysicalType::ByteArray);
+        let primitive_type =
+            PrimitiveType::from_physical("test".to_string(), PhysicalType::ByteArray);
         let mut stats = BinaryMaxMinStats::new(&primitive_type);
         stats.update(&[0xFF; 9]);
 
