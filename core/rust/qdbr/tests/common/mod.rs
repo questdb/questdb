@@ -150,7 +150,7 @@ pub fn decode_file(buf: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let mut all_aux = Vec::new();
 
     for rg_idx in 0..row_group_count {
-        let rg_size = decoder.row_group_sizes[rg_idx as usize] as u32;
+        let rg_size = decoder.row_group_sizes[rg_idx as usize];
         decoder
             .decode_row_group(&mut ctx, &mut rgb, &columns, rg_idx, 0, rg_size)
             .unwrap_or_else(|e| panic!("decode row group {rg_idx}: {e}"));
@@ -191,7 +191,7 @@ pub fn decode_file_filtered(buf: &[u8], rows_filter: &[i64]) -> (Vec<u8>, Vec<u8
     let mut all_aux = Vec::new();
 
     for rg_idx in 0..row_group_count {
-        let rg_size = decoder.row_group_sizes[rg_idx as usize] as u32;
+        let rg_size = decoder.row_group_sizes[rg_idx as usize];
         decoder
             .decode_row_group_filtered::<false>(
                 &mut ctx,

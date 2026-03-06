@@ -27,9 +27,9 @@ fn generate_values(count: usize) -> Vec<ByteArray> {
 }
 
 fn expected_str_value(i: usize) -> String {
-    if i % 11 == 0 {
+    if i.is_multiple_of(11) {
         format!("caf\u{00e9}_{i}")
-    } else if i % 13 == 0 {
+    } else if i.is_multiple_of(13) {
         format!("emoji\u{1F600}_{i}")
     } else {
         format!("str_{i:04}")
@@ -86,17 +86,27 @@ fn assert_string(nulls: &[bool], data: &[u8], aux: &[u8]) {
 
 fn assert_string_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: &[i64]) {
     let filtered_count = rows_filter.len();
-    assert_eq!(aux.len(), (filtered_count + 1) * 8, "filtered string aux size mismatch");
+    assert_eq!(
+        aux.len(),
+        (filtered_count + 1) * 8,
+        "filtered string aux size mismatch"
+    );
 
     let initial_offset = u64::from_le_bytes(aux[0..8].try_into().unwrap());
-    assert_eq!(initial_offset, 0, "filtered string initial aux offset should be 0");
+    assert_eq!(
+        initial_offset, 0,
+        "filtered string initial aux offset should be 0"
+    );
 
     let mut data_offset = 0usize;
     for (fi, &row) in rows_filter.iter().enumerate() {
         let i = row as usize;
         if nulls[i] {
             let len = i32::from_le_bytes(data[data_offset..data_offset + 4].try_into().unwrap());
-            assert_eq!(len, -1, "filtered row {fi} (orig {i}): null string should have length -1");
+            assert_eq!(
+                len, -1,
+                "filtered row {fi} (orig {i}): null string should have length -1"
+            );
             data_offset += 4;
         } else {
             let expected_str = expected_str_value(i);
@@ -128,7 +138,11 @@ fn assert_string_filtered(nulls: &[bool], data: &[u8], aux: &[u8], rows_filter: 
             "filtered row {fi} (orig {i}): string aux offset mismatch"
         );
     }
-    assert_eq!(data_offset, data.len(), "filtered string data length mismatch");
+    assert_eq!(
+        data_offset,
+        data.len(),
+        "filtered string data length mismatch"
+    );
 }
 
 fn run_string_test(name: &str, encoding: Encoding) {
@@ -159,7 +173,8 @@ fn run_string_test(name: &str, encoding: Encoding) {
                 optional_byte_array_schema("col", Some(LogicalType::String))
             };
             let props_f = qdb_props(ColumnTypeTag::String, *version, encoding);
-            let (data_f, aux_f) = encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
+            let (data_f, aux_f) =
+                encode_decode_byte_array_filtered(&values, &nulls, schema_f, props_f, &rows_filter);
             assert_string_filtered(&nulls, &data_f, &aux_f, &rows_filter);
         }
     }
