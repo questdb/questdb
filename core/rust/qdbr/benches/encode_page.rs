@@ -186,12 +186,10 @@ fn make_i8_data(row_count: usize, null_pct: u8, null_value: i8) -> Vec<i8> {
         };
         let v = if is_null_at(i, null_pct) {
             null_value
+        } else if base == null_value {
+            base.wrapping_add(1)
         } else {
-            if base == null_value {
-                base.wrapping_add(1)
-            } else {
-                base
-            }
+            base
         };
         data.push(v);
     }
@@ -208,12 +206,10 @@ fn make_i16_data(row_count: usize, null_pct: u8, null_value: i16) -> Vec<i16> {
         };
         let v = if is_null_at(i, null_pct) {
             null_value
+        } else if base == null_value {
+            base.wrapping_add(1)
         } else {
-            if base == null_value {
-                base.wrapping_add(1)
-            } else {
-                base
-            }
+            base
         };
         data.push(v);
     }
