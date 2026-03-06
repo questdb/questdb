@@ -97,6 +97,50 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
 
+  - template: install-llvm.yml
+    parameters:
+      shouldRun: |
+        and(
+          ${{ parameters.shouldRun }},
+          eq(variables['System.PullRequest.IsFork'], 'false')
+        )
+
+  - bash: |
+      set -eux
+      export PATH=$LLVM_TOOLS_PATH:$PATH
+
+      PARQUET2_TARGET=core/rust/qdbr/parquet2/target/debug
+      PROFRAW_DIR=$(Build.SourcesDirectory)/rust-lint-profraw
+
+      # Merge parquet2 profraw files into a single profdata.
+      mapfile -t P2_PROFRAW < <(find "$PROFRAW_DIR" -name 'parquet2-*.profraw' | sort)
+      if [ ${#P2_PROFRAW[@]} -eq 0 ]; then
+        echo "No parquet2 profraw files found, skipping"
+        exit 0
+      fi
+      llvm-profdata merge -sparse -o "$PROFRAW_DIR/parquet2.profdata" "${P2_PROFRAW[@]}"
+
+      # Collect parquet2 test binaries as --object args for llvm-cov.
+      mapfile -d '' -t BINS < <(find "$PARQUET2_TARGET/deps" -maxdepth 1 -type f -executable ! -name '*.so' ! -name '*.dylib' ! -name '*.dll' ! -name '*.d' -print0 | sort -z)
+      OBJECT_ARGS=()
+      for bin in "${BINS[@]}"; do
+        OBJECT_ARGS+=(--object "$bin")
+      done
+
+      # Export LCOV coverage report — only parquet2 source, no cargo registry noise.
+      llvm-cov export \
+        --format=lcov \
+        --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+        "${OBJECT_ARGS[@]}" \
+        --instr-profile="$PROFRAW_DIR/parquet2.profdata" \
+        > "$PROFRAW_DIR/parquet2.lcov"
+    displayName: "parquet2: create coverage report (LCOV)"
+    condition: |
+      and(
+        ${{ parameters.shouldRun }},
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+
   - task: PublishBuildArtifacts@1
     displayName: "Upload Rust lint coverage profraw files"
     condition: |

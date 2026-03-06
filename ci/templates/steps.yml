@@ -290,23 +290,21 @@ steps:
   - bash: |
       set -eux
       RUST_TEST_TARGET_DIR=core/target/rust-maven-plugin/qdbr/debug
-      mkdir -p rust-coverage-binaries/deps
+      mkdir -p rust-coverage-binaries
       if [ ! -d "$RUST_TEST_TARGET_DIR/deps" ]; then
         echo "Rust test deps directory not found: $RUST_TEST_TARGET_DIR/deps"
         exit 1
       fi
       cp "$RUST_TEST_TARGET_DIR/libquestdbr.so" rust-coverage-binaries/
-      # Include all Rust test binaries (unit + integration) so llvm-cov can map all counters.
-      mapfile -d '' -t RUST_TEST_BINARIES < <(find "$RUST_TEST_TARGET_DIR/deps" -maxdepth 1 -type f -executable ! -name '*.so' ! -name '*.dylib' ! -name '*.dll' -print0 | sort -z)
-      if [ ${#RUST_TEST_BINARIES[@]} -eq 0 ]; then
-        echo "No Rust test binaries found in $RUST_TEST_TARGET_DIR/deps"
-        exit 1
+      # Include only the qdbr unit test binary. Including all integration test
+      # binaries (arrays, binary, decimal, etc.) causes counter hash conflicts
+      # with libquestdbr.so, making llvm-cov report "functions have mismatched
+      # data" and silently drop coverage for statically linked crates (parquet2).
+      QUESTDBR_TEST_BIN=$(find "$RUST_TEST_TARGET_DIR/deps" -maxdepth 1 -name 'questdbr-*' -type f -executable | head -1)
+      if [ -n "$QUESTDBR_TEST_BIN" ]; then
+        cp "$QUESTDBR_TEST_BIN" rust-coverage-binaries/questdbr-test-binary
       fi
-      for rust_test_binary in "${RUST_TEST_BINARIES[@]}"; do
-        cp "$rust_test_binary" rust-coverage-binaries/deps/
-      done
       ls -al rust-coverage-binaries
-      ls -al rust-coverage-binaries/deps
     displayName: "Prepare Rust binaries for upload"
     condition: |
       and(

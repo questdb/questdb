@@ -254,28 +254,23 @@ stages:
 
               # Merge partial profdata files and raw profraw files from all jobs
               MERGE_INPUTS=( $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata )
-              if ls $(Pipeline.Workspace)/rust-llvm-coverage/rust-lint-profraw/*.profraw 1>/dev/null 2>&1; then
-                MERGE_INPUTS+=( $(Pipeline.Workspace)/rust-llvm-coverage/rust-lint-profraw/*.profraw )
+              # Include qdbr/qdb-core profraw but not parquet2 (parquet2 coverage is handled via LCOV)
+              mapfile -t LINT_PROFRAW < <(find $(Pipeline.Workspace)/rust-llvm-coverage/rust-lint-profraw -name '*.profraw' ! -name 'parquet2-*' 2>/dev/null | sort)
+              if [ ${#LINT_PROFRAW[@]} -gt 0 ]; then
+                MERGE_INPUTS+=( "${LINT_PROFRAW[@]}" )
               fi
               llvm-profdata merge -sparse -o questdbr.profdata "${MERGE_INPUTS[@]}"
 
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
-              if [ ! -d "$COVERAGE_DIR/deps" ]; then
-                echo "##vso[task.logissue type=error]Rust coverage objects directory not found: $COVERAGE_DIR/deps"
-                exit 1
-              fi
-              # Restore execute permissions lost during artifact download
-              # (PublishBuildArtifacts does not preserve Unix permissions)
-              find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -exec chmod +x {} +
-              mapfile -d '' -t RUST_TEST_OBJECTS < <(find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -executable -print0 | sort -z)
-              if [ ${#RUST_TEST_OBJECTS[@]} -eq 0 ]; then
-                echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
-                exit 1
-              fi
               OBJECT_ARGS=(--object "$COVERAGE_DIR/libquestdbr.so")
-              for rust_test_object in "${RUST_TEST_OBJECTS[@]}"; do
-                OBJECT_ARGS+=(--object "$rust_test_object")
-              done
+              # Include the qdbr unit test binary if present.
+              # Only libquestdbr.so + one test binary are uploaded to avoid
+              # counter hash conflicts from multiple statically linked copies.
+              QUESTDBR_TEST_BIN="$COVERAGE_DIR/questdbr-test-binary"
+              if [ -f "$QUESTDBR_TEST_BIN" ]; then
+                chmod +x "$QUESTDBR_TEST_BIN"
+                OBJECT_ARGS+=(--object "$QUESTDBR_TEST_BIN")
+              fi
               ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
               if [ -z "$ORIG_PATH" ]; then
                 echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
@@ -300,6 +295,13 @@ stages:
                 "${OBJECT_ARGS[@]}" \
                 --instr-profile=questdbr.profdata \
                 --output-dir $(Build.SourcesDirectory)/rust-coverage
+
+              # Append parquet2 LCOV (produced in the lint job) to the qdbr LCOV
+              PARQUET2_LCOV="$COVERAGE_DIR/rust-lint-profraw/parquet2.lcov"
+              if [ -f "$PARQUET2_LCOV" ]; then
+                cat "$PARQUET2_LCOV" >> questdbr.lcov.dat
+                echo "Appended parquet2 coverage data"
+              fi
 
               # Merge LCOV coverage results from multiple objects into a single report
               python3 ./ci/merge_lcov_paths.py questdbr.lcov.dat questdbr-patched.lcov.dat
