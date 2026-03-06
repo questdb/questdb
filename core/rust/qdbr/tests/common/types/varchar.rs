@@ -14,9 +14,9 @@ pub fn read_offset(aux: &[u8], base: usize) -> usize {
 pub fn generate_values(count: usize) -> Vec<ByteArray> {
     (0..count)
         .map(|i| {
-            if i % 7 == 0 {
+            if i.is_multiple_of(7) {
                 ByteArray::from(format!("overflow_value_{i:06}").as_str())
-            } else if i % 11 == 0 {
+            } else if i.is_multiple_of(11) {
                 ByteArray::from(format!("caf\u{00e9}_{i}").as_str())
             } else {
                 ByteArray::from(format!("val_{i:04}").as_str())
@@ -26,9 +26,9 @@ pub fn generate_values(count: usize) -> Vec<ByteArray> {
 }
 
 pub fn expected_varchar_str(i: usize) -> String {
-    if i % 7 == 0 {
+    if i.is_multiple_of(7) {
         format!("overflow_value_{i:06}")
-    } else if i % 11 == 0 {
+    } else if i.is_multiple_of(11) {
         format!("caf\u{00e9}_{i}")
     } else {
         format!("val_{i:04}")

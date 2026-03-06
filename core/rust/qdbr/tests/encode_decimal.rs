@@ -55,8 +55,8 @@ fn test_encode_decimal32() {
             let mut data: Vec<i32> = Vec::with_capacity(COUNT);
             let mut expected: Vec<Option<i128>> = Vec::with_capacity(COUNT);
             let mut val_idx = 0;
-            for i in 0..COUNT {
-                if nulls[i] {
+            for null in nulls.iter().take(COUNT) {
+                if *null {
                     data.push(i32::MIN); // Decimal32 null sentinel
                     expected.push(None);
                 } else {
@@ -112,8 +112,8 @@ fn test_encode_decimal64() {
             let mut data: Vec<i64> = Vec::with_capacity(COUNT);
             let mut expected: Vec<Option<i128>> = Vec::with_capacity(COUNT);
             let mut val_idx = 0;
-            for i in 0..COUNT {
-                if nulls[i] {
+            for null in nulls.iter().take(COUNT) {
+                if *null {
                     data.push(i64::MIN); // Decimal64 null sentinel
                     expected.push(None);
                 } else {
@@ -169,8 +169,8 @@ fn test_encode_decimal8() {
             let mut data: Vec<i8> = Vec::with_capacity(COUNT);
             let mut expected: Vec<Option<i128>> = Vec::with_capacity(COUNT);
             let mut val_idx = 0;
-            for i in 0..COUNT {
-                if nulls[i] {
+            for null in nulls.iter().take(COUNT) {
+                if *null {
                     data.push(i8::MIN); // Decimal8 null sentinel
                     expected.push(None);
                 } else {
@@ -226,8 +226,8 @@ fn test_encode_decimal16() {
             let mut data: Vec<i16> = Vec::with_capacity(COUNT);
             let mut expected: Vec<Option<i128>> = Vec::with_capacity(COUNT);
             let mut val_idx = 0;
-            for i in 0..COUNT {
-                if nulls[i] {
+            for null in nulls.iter().take(COUNT) {
+                if *null {
                     data.push(i16::MIN); // Decimal16 null sentinel
                     expected.push(None);
                 } else {
@@ -284,8 +284,8 @@ fn test_encode_decimal128() {
             let mut data_bytes: Vec<u8> = Vec::with_capacity(COUNT * 16);
             let mut expected: Vec<Option<i128>> = Vec::with_capacity(COUNT);
             let mut val_idx = 0;
-            for i in 0..COUNT {
-                if nulls[i] {
+            for null in nulls.iter().take(COUNT) {
+                if *null {
                     // Null: (i64::MIN, 0)
                     data_bytes.extend_from_slice(&i64::MIN.to_le_bytes());
                     data_bytes.extend_from_slice(&0u64.to_le_bytes());
@@ -349,8 +349,8 @@ fn test_encode_decimal256() {
             let mut data_bytes: Vec<u8> = Vec::with_capacity(COUNT * 32);
             let mut expected: Vec<Option<arrow::datatypes::i256>> = Vec::with_capacity(COUNT);
             let mut val_idx = 0;
-            for i in 0..COUNT {
-                if nulls[i] {
+            for null in nulls.iter().take(COUNT) {
+                if *null {
                     // Null: (i64::MIN, 0, 0, 0)
                     data_bytes.extend_from_slice(&i64::MIN.to_le_bytes());
                     data_bytes.extend_from_slice(&0u64.to_le_bytes());

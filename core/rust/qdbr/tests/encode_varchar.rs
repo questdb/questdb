@@ -21,7 +21,7 @@ fn test_encode_varchar() {
     for encoding in &VARCHAR_ENCODINGS {
         for null_pattern in &ALL_NULL_PATTERNS {
             let nulls = generate_nulls(COUNT, *null_pattern);
-            let values: Vec<String> = (0..COUNT).map(|i| expected_varchar_str(i)).collect();
+            let values: Vec<String> = (0..COUNT).map(expected_varchar_str).collect();
             let value_refs: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
 
             let (overflow_data, aux_data) = build_qdb_varchar_data(&value_refs, &nulls);

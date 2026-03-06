@@ -273,8 +273,8 @@ fn run_encode_test<T: EncodeVerify>(name: &str) {
                 let mut data = Vec::with_capacity(COUNT);
                 let mut expected = Vec::with_capacity(COUNT);
                 let mut val_idx = 0;
-                for i in 0..COUNT {
-                    if nulls[i] {
+                for null in nulls.iter().take(COUNT) {
+                    if *null {
                         data.push(T::NULL);
                         expected.push(None);
                     } else {

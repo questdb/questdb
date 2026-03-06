@@ -928,7 +928,7 @@ mod tests {
                 .downcast_ref::<arrow::array::Int32Array>()
                 .expect("downcast");
             let collected: Vec<_> = arr0.iter().collect();
-            let expected: Vec<_> = (0..100).map(|i| Some(i as i32)).collect();
+            let expected: Vec<_> = (0..100).map(Some).collect();
             assert_eq!(collected, expected);
         }
     }

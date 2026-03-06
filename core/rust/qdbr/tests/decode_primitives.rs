@@ -60,9 +60,9 @@ fn assert_decoding<T: PrimitiveType>(expected: Vec<T::T>, nulls: Vec<bool>, actu
 
     let actual = actual.as_ptr().cast::<T::T>();
     let mut expected_offset = 0;
-    for i in 0..nulls.len() {
+    for (i, null) in nulls.iter().enumerate() {
         let current = unsafe { std::ptr::read_unaligned(actual.add(i)) };
-        let expected = if nulls[i] {
+        let expected = if *null {
             T::NULL
         } else {
             let exp = expected[expected_offset];
@@ -107,8 +107,8 @@ fn run_primitive_test_filtered<T: PrimitiveType>(
 
     let mut full_expected: Vec<T::T> = Vec::with_capacity(COUNT);
     let mut val_idx = 0;
-    for i in 0..COUNT {
-        if nulls[i] {
+    for null in nulls.iter().take(COUNT) {
+        if *null {
             full_expected.push(T::NULL);
         } else {
             full_expected.push(native[val_idx]);

@@ -92,7 +92,7 @@ fn write_uleb128(buf: &mut Vec<u8>, value: u64) {
 /// `values.len()` must be a multiple of 8.
 fn write_bitpacked_run(buf: &mut Vec<u8>, values: &[u32], num_bits: usize) {
     debug_assert!(
-        values.len() % 8 == 0,
+        values.len().is_multiple_of(8),
         "bitpacked run length must be a multiple of 8, got {}",
         values.len()
     );
@@ -103,9 +103,9 @@ fn write_bitpacked_run(buf: &mut Vec<u8>, values: &[u32], num_bits: usize) {
     // chunk needing (32 * num_bits + 7) / 8 bytes. Allocate enough for full
     // chunks even if the last one is partial.
     let pack_chunk_size = 32;
-    let bytes_per_chunk = (pack_chunk_size * num_bits + 7) / 8;
+    let bytes_per_chunk = (pack_chunk_size * num_bits).div_ceil(8);
     let full_chunks = values.len() / pack_chunk_size;
-    let has_remainder = (values.len() % pack_chunk_size) > 0;
+    let has_remainder = !values.len().is_multiple_of(pack_chunk_size);
     let bytes_needed = (full_chunks + has_remainder as usize) * bytes_per_chunk;
     let start = buf.len();
     buf.resize(start + bytes_needed, 0);
@@ -213,7 +213,7 @@ fn encode_hybrid_rle_mixed(indices: &[u32], num_bits: usize, rle_pct: u8) -> Vec
         }
 
         // Round up to a multiple of 8 (pad with zeros if at the very end).
-        let bp_len_aligned = ((bp_len + 7) / 8) * 8;
+        let bp_len_aligned = bp_len.div_ceil(8) * 8;
         let mut chunk = Vec::with_capacity(bp_len_aligned);
         chunk.extend_from_slice(&indices[pos..pos + bp_len]);
         chunk.resize(bp_len_aligned, 0);

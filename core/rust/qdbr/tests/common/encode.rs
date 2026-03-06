@@ -83,6 +83,7 @@ pub fn make_primitive_column(
 /// Create a Column for a String or Binary type (with secondary_data = offsets).
 ///
 /// SAFETY: The caller must ensure `primary_data` and `secondary_data` outlive the returned Column.
+#[allow(clippy::too_many_arguments)]
 pub fn make_string_column(
     name: &'static str,
     column_type: i32,
@@ -115,6 +116,7 @@ pub fn make_string_column(
 /// Create a Column for a Varchar type (primary_data = overflow data, secondary_data = aux entries).
 ///
 /// SAFETY: The caller must ensure `primary_data` and `secondary_data` outlive the returned Column.
+#[allow(clippy::too_many_arguments)]
 pub fn make_varchar_column(
     name: &'static str,
     column_type: i32,
@@ -148,6 +150,7 @@ pub fn make_varchar_column(
 /// symbol_offsets = offsets into dictionary).
 ///
 /// SAFETY: The caller must ensure all data outlive the returned Column.
+#[allow(clippy::too_many_arguments)]
 pub fn make_symbol_column(
     name: &'static str,
     column_type: i32,
