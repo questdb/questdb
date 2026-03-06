@@ -2160,6 +2160,9 @@ public class ExpressionParser {
                             if (en == null) {
                                 throw SqlException.$(lastPos, "qualifier expected");
                             }
+                            if (en.type != ExpressionNode.LITERAL && en.type != ExpressionNode.CONSTANT) {
+                                throw SqlException.$(lastPos, "unexpected dot");
+                            }
                             // two possibilities here:
                             // 1. 'a.b'
                             // 2. 'a. b'

@@ -1303,6 +1303,17 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftParenthesisUnexpectedDot() {
+        assertFail("SELECT - sym AS a2 FROM t1 a4 WHERE (. = 0);", 39, "too few arguments for '=' [found=1,expected=2]");
+        assertFail("SELECT - sym AS a2 FROM t1 a4 WHERE (.a4 = 0);", 37, "unexpected dot");
+        assertFail("SELECT - sym AS a2 FROM t1 a4 WHERE (. a4 = 0);", 37, "unexpected dot");
+        assertFail("SELECT - sym AS a2 FROM t1 a4 WHERE (.a4.col4 = 0);", 37, "unexpected dot");
+        assertFail("SELECT - sym AS a2 FROM t1 a4 WHERE (. a4.col4 = 0);", 37, "unexpected dot");
+        assertFail("SELECT - sym AS a2 FROM t1 a4 WHERE (.a4. = 0);", 37, "unexpected dot");
+        assertFail("SELECT - sym AS a2 FROM t1 a4 WHERE (. a4. = 0);", 37, "unexpected dot");
+    }
+
+    @Test
     public void testListOfValues() throws SqlException {
         x("a.b", "a.b, c");
     }
