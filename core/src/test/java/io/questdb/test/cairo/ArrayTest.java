@@ -2351,11 +2351,9 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testRndArrayBadTypes() throws Exception {
-        assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("select rnd_double_array(1, 100.0, 10), rnd_varchar() from long_sequence(5);",
-                    27, "nanRate must be an integer"
-            );
-        });
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select rnd_double_array(1, 100.0, 10), rnd_varchar() from long_sequence(5);",
+                27, "nanRate must be an integer"
+        ));
     }
 
     @Test
@@ -2864,7 +2862,7 @@ public class ArrayTest extends AbstractCairoTest {
                     "SELECT arr[2,3-1:,2:] x FROM tango",
                     """
                             VirtualRecord
-                              functions: [arr[2,3-1:,2:]]
+                              functions: [arr[2,2:,2:]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tango

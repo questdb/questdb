@@ -93,9 +93,9 @@ fn assert_decoding<T: PrimitiveType>(expected: Vec<T::T>, nulls: Vec<bool>, actu
 
     let actual = actual.as_ptr().cast::<T::T>();
     let mut expected_offset = 0;
-    for i in 0..nulls.len() {
+    for (i, &is_null) in nulls.iter().enumerate() {
         let current = unsafe { std::ptr::read_unaligned(actual.add(i)) };
-        let expected = if nulls[i] {
+        let expected = if is_null {
             T::NULL
         } else {
             let exp = expected[expected_offset];
@@ -142,8 +142,8 @@ fn run_primitive_test_filtered<T: PrimitiveType>(
     // then select only the filtered (even-indexed) rows.
     let mut full_expected: Vec<T::T> = Vec::with_capacity(COUNT);
     let mut val_idx = 0;
-    for i in 0..COUNT {
-        if nulls[i] {
+    for &is_null in nulls.iter().take(COUNT) {
+        if is_null {
             full_expected.push(T::NULL);
         } else {
             full_expected.push(native[val_idx]);
@@ -152,7 +152,10 @@ fn run_primitive_test_filtered<T: PrimitiveType>(
     }
 
     // Select only filtered rows
-    let filtered_expected: Vec<T::T> = rows_filter.iter().map(|&r| full_expected[r as usize]).collect();
+    let filtered_expected: Vec<T::T> = rows_filter
+        .iter()
+        .map(|&r| full_expected[r as usize])
+        .collect();
     let (data, aux) = decode_file_filtered(&parquet_file, &rows_filter);
 
     // The filtered data should have exactly rows_filter.len() elements
@@ -221,7 +224,7 @@ impl PrimitiveType for Boolean {
     const ENCODINGS: &[Encoding] = &[Encoding::Plain, Encoding::RleDictionary];
 
     fn generate_data(s: usize) -> (<Self::U as DataType>::T, Self::T) {
-        let v = s % 2 == 0;
+        let v = s.is_multiple_of(2);
         (v, v as u8)
     }
 }

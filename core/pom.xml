@@ -244,6 +244,7 @@
                             </execution>
                         </executions>
                         <configuration>
+                            <doclint>all,-missing</doclint>
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
@@ -269,6 +270,7 @@
                             </execution>
                         </executions>
                         <configuration>
+                            <doclint>all,-missing</doclint>
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>

@@ -73,6 +73,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.bool.AndFunctionFactory;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
@@ -369,6 +370,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_NANO_HOUR_INT = 2;
     public static final int GKK_VANILLA_INT = 0;
     public static final boolean[] joinsRequiringTimestamp = new boolean[JOIN_MAX + 1];
+    private static final AndFunctionFactory AND_FUNCTION_FACTORY = new AndFunctionFactory();
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, timestampIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
@@ -3306,7 +3308,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
         }
-        return new FilteredRecordCursorFactory(factory, filter);
+        return wrapWithFilter(factory, filter, executionContext);
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -5057,9 +5059,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 SqlHints.hasEnablePreTouchHint(model, masterAlias)
                         );
                     } else {
-                        master = new FilteredRecordCursorFactory(
+                        master = wrapWithFilter(
                                 master,
-                                compileJoinFilter(filterExpr, master.getMetadata(), executionContext)
+                                compileJoinFilter(filterExpr, master.getMetadata(), executionContext),
+                                executionContext
                         );
                     }
                 }
@@ -5120,7 +5123,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 SqlHints.hasEnablePreTouchHint(model, masterAlias)
                         );
                     } else {
-                        master = new FilteredRecordCursorFactory(master, filter);
+                        master = wrapWithFilter(master, filter, executionContext);
                     }
                 }
             }
@@ -9003,6 +9006,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         "ASOF/LT JOIN cannot use designated timestamp as a join key");
             }
         }
+    }
+
+    private RecordCursorFactory wrapWithFilter(
+            RecordCursorFactory factory,
+            Function filter,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (factory instanceof FilteredRecordCursorFactory existingFiltered) {
+            Function existingFilter = existingFiltered.getFilter();
+            RecordCursorFactory base = existingFiltered.getBaseFactory();
+            // Build combined filter before halfClose() for exception safety:
+            // if newInstance() threw, existingFiltered would still own base and existingFilter.
+            ObjList<Function> andArgs = new ObjList<>(2);
+            andArgs.add(existingFilter);
+            andArgs.add(filter);
+            IntList argPositions = new IntList(2);
+            argPositions.add(0);
+            argPositions.add(0);
+            filter = AND_FUNCTION_FACTORY.newInstance(0, andArgs, argPositions, configuration, executionContext);
+            RecordCursorFactory wrapped = new FilteredRecordCursorFactory(base, filter);
+            existingFiltered.halfClose();
+            return wrapped;
+        }
+        return new FilteredRecordCursorFactory(factory, filter);
     }
 
     // used in tests
