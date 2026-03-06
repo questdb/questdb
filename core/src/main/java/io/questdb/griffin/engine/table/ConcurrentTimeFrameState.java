@@ -68,6 +68,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     private final ObjList<DirectLongList> partitionCumulativeRows = new ObjList<>();
     private final LongList partitionTimestamps = new LongList();
     private IntList columnIndexes;
+    // Only access via openLock (toPartition/next are not thread-safe).
     private TablePageFrameCursor frameCursor;
     private boolean isExternal;
     private RecordMetadata metadata;
@@ -90,8 +91,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
-        Misc.freeObjList(partitionCaches);
-        partitionCaches.clear();
+        Misc.freeObjListAndKeepObjects(partitionCaches);
         Misc.freeObjListAndKeepObjects(partitionCumulativeRows);
         frameCursor = null;
     }
@@ -207,15 +207,8 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         // Ensure ObjLists are sized (null entries for not-yet-opened partitions).
         partitionCaches.setPos(Math.max(partitionCaches.size(), partitionCount));
         partitionCumulativeRows.setPos(Math.max(partitionCumulativeRows.size(), partitionCount));
-        // Clear caches from previous query.
-        for (int i = 0, n = Math.min(partitionCaches.size(), partitionCount); i < n; i++) {
-            PageFrameAddressCache cache = partitionCaches.getQuick(i);
-            if (cache != null) {
-                cache.clear();
-            }
-        }
-        // Close per-partition cumulative rows from previous query (frees native
-        // memory but keeps objects for reuse via reopen() in ensurePartitionOpened).
+        // Free native memory from previous query but keep objects for reuse.
+        Misc.freeObjListAndKeepObjects(partitionCaches);
         Misc.freeObjListAndKeepObjects(partitionCumulativeRows);
 
         return this;
