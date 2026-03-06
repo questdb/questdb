@@ -708,7 +708,7 @@ public final class Files {
                     path.trimTo(len).concat(nameUtf8Ptr).$();
                     type = findType(pFind);
                     if (type == Files.DT_FILE) {
-                        if (!remove(path.ptr())) {
+                        if (!remove(path.$())) {
                             if (haltOnFail || Files.isSecurityError(Os.errno())) {
                                 return -maxDepth - 1;
                             }

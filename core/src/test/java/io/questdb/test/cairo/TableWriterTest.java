@@ -1810,6 +1810,53 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMetadataVersionAfterDropRecreateWithStaleFdCache() throws Exception {
+        // Reproduces a bug where Files.rmdir() bypasses FdCache when deleting files.
+        // If _meta is in the FdCache when the table is dropped, the stale fd survives
+        // and a subsequent writer open reads old metadata (wrong version) from the
+        // deleted inode instead of the freshly created file.
+        assertMemoryLeak(() -> {
+            String tableName = "testMetaVerDropRecreate";
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // Do several DDL operations to bump the _meta BlockFile version
+            for (int i = 0; i < 5; i++) {
+                execute("ALTER TABLE " + tableName + " ADD COLUMN col" + i + " INT");
+            }
+
+            // Prime FdCache: open _meta RO and keep the fd, simulating a concurrent
+            // reader that holds a cached fd across the drop+recreate cycle.
+            TableToken tt = engine.verifyTableName(tableName);
+            try (Path path = new Path()) {
+                path.of(root).concat(tt).concat(TableUtils.META_FILE_NAME).$();
+                long staleFd = Files.openRO(path.$());
+                Assert.assertTrue("failed to open _meta", staleFd > 0);
+
+                try {
+                    // Drop the table. The engine's drop uses rmdir which currently
+                    // calls the native remove(long), bypassing FdCache.remove().
+                    // The FdCache entry for _meta survives with the stale fd.
+                    execute("DROP TABLE " + tableName);
+
+                    // Recreate the table with original schema (fewer columns).
+                    // New _meta has BlockFile version 1, new _txn has metadata version 0.
+                    execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+                    // Open a writer. openMetaFile() reads _meta through FdCache.
+                    // If the stale entry is still there, it returns the old fd and
+                    // reads BlockFile version 6 (5 addColumn + 1 create), logical
+                    // version 5, while _txn says 0 → version mismatch.
+                    try (TableWriter writer = getWriter(tableName)) {
+                        Assert.assertEquals(0, writer.getMetadataVersion());
+                    }
+                } finally {
+                    Files.close(staleFd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNonStandardPageSize() throws Exception {
         populateTable(new TestFilesFacadeImpl() {
             @Override

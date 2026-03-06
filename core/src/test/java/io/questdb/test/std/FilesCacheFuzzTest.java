@@ -530,6 +530,70 @@ public class FilesCacheFuzzTest extends AbstractTest {
     }
 
     @Test
+    public void testRmdirBypassesFdCache() throws Exception {
+        // Demonstrates that Files.rmdir() deletes files without notifying FdCache,
+        // causing subsequent openRO calls to return a stale fd that reads old data.
+        TestUtils.assertMemoryLeak(() -> {
+            String dirName = "rmdir_fdcache_" + System.nanoTime();
+            File subDir = temp.newFolder(dirName);
+            File testFile = new File(subDir, "data.d");
+
+            long oldValue = 0xDEAD_BEEF_CAFE_BABEL;
+            long newValue = 0x1234_5678_9ABC_DEF0L;
+            long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+            try (Path dirPath = new Path(); Path filePath = new Path()) {
+                dirPath.of(subDir.getAbsolutePath()).$();
+                filePath.of(testFile.getAbsolutePath()).$();
+
+                // Write old value to the file
+                long wfd = Files.openRW(filePath.$());
+                Assert.assertTrue("failed to create file", wfd > 0);
+                Unsafe.getUnsafe().putLong(buf, oldValue);
+                Files.write(wfd, buf, 8, 0);
+                Files.close(wfd);
+
+                // Open the file RO to prime FdCache (count=1)
+                long cachedFd = Files.openRO(filePath.$());
+                Assert.assertTrue("failed to open file RO", cachedFd > 0);
+
+                // Verify we can read the old value through this fd
+                Assert.assertEquals(8, Files.read(cachedFd, buf, 8, 0));
+                Assert.assertEquals(oldValue, Unsafe.getUnsafe().getLong(buf));
+
+                try {
+                    // Delete via rmdir — bypasses FdCache, stale entry survives
+                    Assert.assertTrue("rmdir failed", Files.rmdir(dirPath, true));
+
+                    // Recreate directory and file with new value
+                    Assert.assertTrue("mkdir failed", subDir.mkdirs());
+                    long wfd2 = Files.openRW(filePath.$());
+                    Assert.assertTrue("failed to recreate file", wfd2 > 0);
+                    Unsafe.getUnsafe().putLong(buf, newValue);
+                    Files.write(wfd2, buf, 8, 0);
+                    Files.close(wfd2);
+
+                    // Open the file again via FdCache.
+                    // With the bug: FdCache returns stale fd -> reads old value.
+                    // Without bug: FdCache entry was evicted by rmdir -> fresh fd -> new value.
+                    long reopenedFd = Files.openRO(filePath.$());
+                    Assert.assertTrue("failed to reopen file", reopenedFd > 0);
+                    try {
+                        Assert.assertEquals(8, Files.read(reopenedFd, buf, 8, 0));
+                        long readValue = Unsafe.getUnsafe().getLong(buf);
+                        Assert.assertEquals("stale fd returned old data", newValue, readValue);
+                    } finally {
+                        Files.close(reopenedFd);
+                    }
+                } finally {
+                    Files.close(cachedFd);
+                }
+            } finally {
+                Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testRemovedAndReopen() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(NUM_THREADS);
