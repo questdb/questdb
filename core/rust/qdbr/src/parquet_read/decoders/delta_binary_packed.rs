@@ -1210,7 +1210,7 @@ mod tests {
         write_uleb128(&mut data, 4); // miniblocks_per_block
         write_uleb128(&mut data, 33); // value_count (needs 1 block)
         write_zigzag(&mut data, 0); // first_value
-        // Block: min_delta
+                                    // Block: min_delta
         write_zigzag(&mut data, 0);
         // Bitwidths: first miniblock has bitwidth 33 (invalid for i32), rest are 0
         data.push(33);
@@ -1218,7 +1218,7 @@ mod tests {
         data.push(0);
         data.push(0);
         // Provide enough packed data for a 33-bit miniblock (33*32/8 = 132 bytes)
-        data.extend_from_slice(&vec![0u8; 132]);
+        data.extend_from_slice(&[0u8; 132]);
 
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
