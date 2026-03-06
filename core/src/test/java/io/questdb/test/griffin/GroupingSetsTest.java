@@ -1182,6 +1182,22 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByExpressionNotAffected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            execute("INSERT INTO t VALUES (1, 2, 100.0), (1, 2, 200.0), (3, 4, 300.0)");
+            // Plain GROUP BY with expressions must still work (no
+            // column-reference restriction outside ROLLUP/CUBE/GROUPING SETS).
+            assertSql(
+                    "column\tSUM\n" +
+                            "3\t300.0\n" +
+                            "7\t300.0\n",
+                    "SELECT a + b, SUM(v) FROM t GROUP BY a + b ORDER BY 1"
+            );
+        });
+    }
+
+    @Test
     public void testGroupingFillPreservesValue() throws Exception {
         assertMemoryLeak(() -> {
             execute(

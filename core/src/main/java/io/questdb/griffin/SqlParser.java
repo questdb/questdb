@@ -859,12 +859,17 @@ public class SqlParser {
             for (int j = i + 1; j < n; j++) {
                 ExpressionNode b = groupByColumns.getQuick(j);
                 if (isSameColumnMixedQualification(a.token, b.token)) {
-                    throw SqlException.$(b.position, "mixing qualified and unqualified references to the same column in GROUPING SETS");
+                    throw SqlException.$(b.position, "mixing qualified and unqualified references to the same column");
                 }
             }
         }
     }
 
+    /**
+     * Validates that all nodes in the list are column references (LITERAL).
+     * Rejects expressions in ROLLUP/CUBE/GROUPING SETS to avoid ambiguity
+     * in set membership resolution.
+     */
     private static void ensureColumnReferences(ObjList<ExpressionNode> columns, int kwPos) throws SqlException {
         for (int i = 0, n = columns.size(); i < n; i++) {
             ExpressionNode node = columns.getQuick(i);
@@ -885,10 +890,13 @@ public class SqlParser {
             // Both qualified or both unqualified - no mixed issue
             return false;
         }
-        // One is qualified, the other is not. Compare the column name parts.
-        CharSequence aCol = aDot >= 0 ? a.subSequence(aDot + 1, a.length()) : a;
-        CharSequence bCol = bDot >= 0 ? b.subSequence(bDot + 1, b.length()) : b;
-        return Chars.equalsIgnoreCase(aCol, bCol);
+        // One is qualified, the other is not. Compare the column name
+        // part of the qualified token with the full unqualified token.
+        if (aDot >= 0) {
+            return Chars.equalsIgnoreCase(b, a, aDot + 1, a.length());
+        } else {
+            return Chars.equalsIgnoreCase(a, b, bDot + 1, b.length());
+        }
     }
 
     private static void expandCube(QueryModel model, int startIdx, int cubeColumnCount, int position) throws SqlException {
@@ -3497,7 +3505,7 @@ public class SqlParser {
                     for (int ci = 0, cn = columnIndex.size(); ci < cn; ci++) {
                         CharSequence existing = columnIndex.keys().getQuick(ci);
                         if (existing != null && isSameColumnMixedQualification(n.token, existing)) {
-                            throw SqlException.$(n.position, "mixing qualified and unqualified references to the same column in GROUPING SETS");
+                            throw SqlException.$(n.position, "mixing qualified and unqualified references to the same column");
                         }
                     }
                     int idx = columnIndex.keyIndex(n.token);
