@@ -54,7 +54,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Rows;
+
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -344,7 +344,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
-            long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+            long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
             for (; ; ) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
@@ -367,7 +367,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         break;
                     }
                     slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                    baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     // don't forget to switch the record to the new frame
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                 }
@@ -484,7 +484,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
-            long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+            long baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
 
             // First, check if one of the first rows matching the join filter is also at the slaveTimestampLo timestamp.
             // If so, we don't need to do backward scan to find the prevailing row.
@@ -496,7 +496,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         break;
                     }
                     slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                    baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     // don't forget to switch the record to the new frame
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                 }
@@ -537,7 +537,7 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         break;
                     }
                     slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
-                    baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    baseSlaveRowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     // don't forget to switch the record to the new frame
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                 }

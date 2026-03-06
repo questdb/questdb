@@ -44,7 +44,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
     @Override
     public @Nullable PartitionFrame next(long skipTarget) {
-        while (partitionIndex < partitionHi) {
+        while (partitionIndex < partitionScanHi) {
             final long hi = reader.getPartitionRowCountFromMetadata(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
@@ -71,6 +71,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public void toTop() {
         partitionIndex = 0;
+        partitionScanHi = partitionHi;
     }
 
     private FullTablePartitionFrame nextSlow() {

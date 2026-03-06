@@ -25,45 +25,76 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.std.DirectIntList;
-import io.questdb.std.LongList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rows;
 
 /**
  * Cursor for time-based navigation. Supports lazy navigation in both directions
  * and random row access.
  */
 public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
+    // Page frame count threshold: use linear scan below this, binary search above.
+    int PAGE_FRAME_SCAN_THRESHOLD = 64;
 
-    static void findSeekEstimate(
-            long timestamp,
-            int frameCount,
-            DirectIntList framePartitionIndexes,
-            LongList partitionCeilings,
-            LongList partitionTimestamps,
-            TimeFrame timeFrame
-    ) {
-        if (frameCount == 0) {
-            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
-            return;
-        }
-        int lo = 0, hi = frameCount - 1, result = -1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            int partIdx = framePartitionIndexes.get(mid);
-            if (partitionCeilings.getQuick(partIdx) <= timestamp) {
-                result = mid;
-                lo = mid + 1;
-            } else {
-                hi = mid - 1;
+    // Marker bit set on all TimeFrameCursor row IDs (bit 43). This bit falls
+    // within the local row ID range (bits 0-43) of the Rows encoding, so it
+    // does not affect the partition index (bits 44-62). It reduces the max
+    // rows per partition from 2^44 to 2^43 (~8.8T), which is more than enough.
+    // Bit 43 ensures toRowID(0, 0) != Long.MIN_VALUE, avoiding collisions
+    // with Long.MIN_VALUE sentinels in join helpers. Row IDs stay positive,
+    // preserving the sign-based found/not-found convention in memoized cursors.
+    long TIME_FRAME_ROW_ID_MARKER = 1L << 43;
+
+    // Finds the partition-local page frame index containing the given row.
+    // The cumulativeRows list stores cumulative row counts: cumulativeRows[pageFrameStart + i]
+    // is the total number of rows in page frames 0..i. So page frame i covers
+    // rows [cumulativeRows[pageFrameStart + i - 1], cumulativeRows[pageFrameStart + i]).
+    // Uses linear scan for small partitions and binary search for larger ones.
+    static int findPageFrame(int pageFrameStart, int pageFrameCount, DirectLongList cumulativeRows, long rowInPartition) {
+        int lo;
+        if (pageFrameCount <= PAGE_FRAME_SCAN_THRESHOLD) {
+            lo = 0;
+            while (lo < pageFrameCount - 1 && cumulativeRows.get(pageFrameStart + lo) <= rowInPartition) {
+                lo++;
+            }
+        } else {
+            lo = 0;
+            int hi = pageFrameCount - 1;
+            while (lo < hi) {
+                int mid = (lo + hi) >>> 1;
+                if (cumulativeRows.get(pageFrameStart + mid) <= rowInPartition) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
             }
         }
-        if (result >= 0) {
-            int partIdx = framePartitionIndexes.get(result);
-            timeFrame.ofEstimate(result, partitionTimestamps.getQuick(partIdx), partitionCeilings.getQuick(partIdx));
-        } else {
-            timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
-        }
+        return lo;
+    }
+
+    static boolean isTimeFrameRowID(long rowId) {
+        return (rowId & TIME_FRAME_ROW_ID_MARKER) != 0;
+    }
+
+    static long toLocalRowID(long timeFrameRowId) {
+        return Rows.toLocalRowID(timeFrameRowId & ~TIME_FRAME_ROW_ID_MARKER);
+    }
+
+    static int toPartitionIndex(long timeFrameRowId) {
+        return Rows.toPartitionIndex(timeFrameRowId & ~TIME_FRAME_ROW_ID_MARKER);
+    }
+
+    /**
+     * Encodes a time frame index and row index into a row ID with the
+     * {@link #TIME_FRAME_ROW_ID_MARKER} bit set.
+     *
+     * @param frameIndex time frame index (partition index)
+     * @param rowIndex   row index within the time frame
+     * @return encoded row ID with marker bit set
+     */
+    static long toRowID(int frameIndex, long rowIndex) {
+        return Rows.toRowID(frameIndex, rowIndex) | TIME_FRAME_ROW_ID_MARKER;
     }
 
     /**
@@ -117,6 +148,12 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      */
     void jumpTo(int frameIndex);
 
+    /**
+     * Advances the cursor to the next non-empty time frame. Empty partitions
+     * (0 rows after interval filtering) are skipped automatically.
+     *
+     * @return true if a non-empty frame was found, false if no more frames
+     */
     boolean next();
 
     /**
@@ -130,6 +167,12 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      */
     long open();
 
+    /**
+     * Moves the cursor to the previous non-empty time frame. Empty partitions
+     * (0 rows after interval filtering) are skipped automatically.
+     *
+     * @return true if a non-empty frame was found, false if no more frames
+     */
     boolean prev();
 
     /**
@@ -170,6 +213,11 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      * so this method positions at the last frame in the matching partition.
      * <p>
      * The timestamp must be in the cursor's native timestamp space.
+     * <p>
+     * This method operates on partition-level metadata (timestamps and ceilings)
+     * without opening partitions. It does not skip empty partitions because
+     * emptiness is only known after {@link #open()}. Callers must handle the
+     * case where the seeked frame turns out to be empty.
      * <p>
      * This is useful for ASOF-style lookups where we need to skip to the area
      * near a target timestamp without scanning all preceding frames.

@@ -251,6 +251,22 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         frameMemory.clear();
     }
 
+    /**
+     * Switches the address cache for a different partition.
+     * Invalidates the cached frame memory and Parquet buffer cache
+     * because partition-local frame indices (0-based) can collide
+     * across partitions, and cached buffers from a previous partition
+     * must not be reused.
+     */
+    public void switchAddressCache(PageFrameAddressCache addressCache) {
+        this.addressCache = addressCache;
+        frameMemory.clear();
+        // Move cached parquet buffers back to the free pool so they
+        // get re-decoded on the next navigateTo() call.
+        freeParquetBuffers.addAll(cachedParquetBuffers);
+        cachedParquetBuffers.clear();
+    }
+
     // We don't use additional data structures to speed up the lookups
     // such as <frame_index, buffers> hash table. That's because we don't
     // expect the cache size to be large.

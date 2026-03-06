@@ -43,6 +43,17 @@ public interface TablePageFrameCursor extends PageFrameCursor {
     TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows);
 
     /**
+     * Positions the cursor at the given partition. The next call to
+     * {@link #next()} will return the first page frame for this partition.
+     * Iteration is limited to this single partition.
+     *
+     * @param partitionIndex the target partition index
+     */
+    default void toPartition(int partitionIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Enables or disables streaming mode for the underlying TableReader.
      * When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
      * to release page cache after reading. This is useful for large sequential scans

@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.std.Rows;
 
 /**
  * Abstract base class for keyed ASOF JOIN fast record cursors.
@@ -64,7 +63,7 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         if (origSlaveRowId != -1) {
             slaveTimeFrameCursor.jumpTo(origSlaveFrameIndex);
             slaveTimeFrameCursor.open();
-            slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(origSlaveFrameIndex, origSlaveRowId));
+            slaveTimeFrameCursor.recordAt(slaveRecB, TimeFrameCursor.toRowID(origSlaveFrameIndex, origSlaveRowId));
         }
         record.hasSlave(origHasSlave);
 
@@ -86,8 +85,8 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
 
         // Common row ID backup logic
         long rowId = slaveRecB.getRowId();
-        origSlaveFrameIndex = Rows.toPartitionIndex(rowId);
-        origSlaveRowId = Rows.toLocalRowID(rowId);
+        origSlaveFrameIndex = TimeFrameCursor.toPartitionIndex(rowId);
+        origSlaveRowId = TimeFrameCursor.toLocalRowID(rowId);
 
         // Reset slave cursor to the current timeframe (nextSlave() call might have moved it)
         TimeFrame timeFrame = slaveTimeFrameCursor.getTimeFrame();

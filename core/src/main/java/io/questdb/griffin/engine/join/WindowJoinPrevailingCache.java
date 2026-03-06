@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntLongHashMap;
 import io.questdb.std.MemoryTag;
@@ -120,7 +121,7 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
                     final int matchingMasterKey = slaveSymbolLookupMap.get(AsyncWindowJoinFastAtom.toSymbolMapKey(slaveKey));
                     if (matchingMasterKey == masterKey) {
                         // Hurray! We've found the key.
-                        final long rowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), r);
+                        final long rowId = TimeFrameCursor.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), r);
                         cache.put(masterCacheKey, rowId);
                         rowIndex = r - 1;
                         return rowId;
@@ -128,7 +129,7 @@ public class WindowJoinPrevailingCache implements QuietCloseable, Mutable, Reope
                         // It's another matching key. Cache it if it's not already there.
                         cache.putIfAbsent(
                                 AsyncWindowJoinFastAtom.toSymbolMapKey(matchingMasterKey),
-                                Rows.toRowID(frameIndex, r)
+                                TimeFrameCursor.toRowID(frameIndex, r)
                         );
                     }
                 }

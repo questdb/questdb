@@ -43,7 +43,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -237,8 +236,8 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             // first, we have to set the time frame cursor to the record found by the non-filtering algo
             // and then we have to traverse the slave cursor backwards until we find a match
             long rowId = slaveRecB.getRowId();
-            final int initialFilteredFrameIndex = Rows.toPartitionIndex(rowId);
-            final long initialFilteredRowId = Rows.toLocalRowID(rowId);
+            final int initialFilteredFrameIndex = TimeFrameCursor.toPartitionIndex(rowId);
+            final long initialFilteredRowId = TimeFrameCursor.toLocalRowID(rowId);
 
             slaveTimeFrameCursor.jumpTo(initialFilteredFrameIndex);
             slaveTimeFrameCursor.open();
@@ -284,7 +283,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
                     // invariant: when exiting from this branch then either we fully exhausted the slave cursor
                     // or slaveRecB is set to the current filteredFrameIndex so the outside loop can continue
                     // searching for a match by just moving filteredRowId down
-                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
+                    slaveTimeFrameCursor.recordAt(slaveRecB, TimeFrameCursor.toRowID(filteredFrameIndex, filteredRowId));
                 }
                 slaveTimeFrameCursor.recordAtRowIndex(slaveRecB, filteredRowId);
             }

@@ -31,7 +31,6 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
-import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
@@ -132,8 +131,8 @@ public class HorizonJoinTimeFrameHelper {
             effectiveStart = startRowId;
         }
 
-        int frameIndex = Rows.toPartitionIndex(effectiveStart);
-        long rowIndex = Rows.toLocalRowID(effectiveStart);
+        int frameIndex = TimeFrameCursor.toPartitionIndex(effectiveStart);
+        long rowIndex = TimeFrameCursor.toLocalRowID(effectiveStart);
 
         // Jump to the starting frame
         timeFrameCursor.jumpTo(frameIndex);
@@ -149,7 +148,7 @@ public class HorizonJoinTimeFrameHelper {
         final long masterHash = masterKey.hash();
 
         while (true) {
-            final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
+            final long currentRowId = TimeFrameCursor.toRowID(frameIndex, rowIndex);
 
             // Update backward watermark
             if (backwardWatermark == Long.MAX_VALUE || currentRowId < backwardWatermark) {
@@ -255,7 +254,7 @@ public class HorizonJoinTimeFrameHelper {
                                 timeFrameCursor.recordAtRowIndex(record, nextRowIndex);
                                 final long nextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
                                 if (nextRowTs > targetTimestamp) {
-                                    final long result = Rows.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
+                                    final long result = TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
                                     cachedAsOfRowId = result;
                                     cachedNextRowTs = nextRowTs;
                                     return result;
@@ -367,7 +366,7 @@ public class HorizonJoinTimeFrameHelper {
                         if (bestRowIndex != Long.MIN_VALUE) {
                             bookmarkedFrameIndex = bestFrameIndex;
                             bookmarkedRowIndex = bestRowIndex;
-                            return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                            return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
                         }
                         // Bookmark current frame so subsequent searches with larger timestamps can find it
                         bookmarkCurrentFrame(0);
@@ -378,7 +377,7 @@ public class HorizonJoinTimeFrameHelper {
                     if (bestRowIndex != Long.MIN_VALUE) {
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
-                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                        return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
                     }
                     // Bookmark current frame so subsequent searches with larger timestamps can find it
                     bookmarkCurrentFrame(0);
@@ -390,7 +389,7 @@ public class HorizonJoinTimeFrameHelper {
                     if (bestRowIndex != Long.MIN_VALUE) {
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
-                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                        return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
                     }
                     return Long.MIN_VALUE;
                 }
@@ -399,19 +398,19 @@ public class HorizonJoinTimeFrameHelper {
 
         // Search within the current frame for the ASOF row
         bookmarkCurrentFrame(rowLo);
-        timeFrameCursor.recordAt(record, timeFrame.getFrameIndex(), timeFrame.getRowLo());
+        timeFrameCursor.recordAt(record, timeFrame.getFrameIndex(), rowLo);
 
         // Try linear scan first
         long scanResult = linearScanAsOf(targetTimestamp, rowLo);
         if (scanResult >= 0) {
             bookmarkCurrentFrame(scanResult);
-            return Rows.toRowID(timeFrame.getFrameIndex(), scanResult);
+            return TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), scanResult);
         } else if (scanResult == Long.MIN_VALUE) {
             // All rows in scan range are > target, check if we have a previous best
             if (bestRowIndex != Long.MIN_VALUE) {
                 bookmarkedFrameIndex = bestFrameIndex;
                 bookmarkedRowIndex = bestRowIndex;
-                return Rows.toRowID(bestFrameIndex, bestRowIndex);
+                return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
             }
             return Long.MIN_VALUE;
         }
@@ -421,7 +420,7 @@ public class HorizonJoinTimeFrameHelper {
         final long searchResult = binarySearchAsOf(targetTimestamp, searchStart);
         if (searchResult != Long.MIN_VALUE) {
             bookmarkCurrentFrame(searchResult);
-            return Rows.toRowID(timeFrame.getFrameIndex(), searchResult);
+            return TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), searchResult);
         }
 
         // Binary search found no rows <= target from searchStart onward.
@@ -429,7 +428,7 @@ public class HorizonJoinTimeFrameHelper {
         // so the ASOF match is the last one: searchStart - 1.
         final long lastLinearRow = searchStart - 1;
         bookmarkCurrentFrame(lastLinearRow);
-        return Rows.toRowID(timeFrame.getFrameIndex(), lastLinearRow);
+        return TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), lastLinearRow);
     }
 
     /**
@@ -486,8 +485,8 @@ public class HorizonJoinTimeFrameHelper {
             startRowIndex = timeFrame.getRowLo();
         } else {
             // Start from just after forward watermark
-            startFrameIndex = Rows.toPartitionIndex(forwardWatermark);
-            startRowIndex = Rows.toLocalRowID(forwardWatermark) + 1;
+            startFrameIndex = TimeFrameCursor.toPartitionIndex(forwardWatermark);
+            startRowIndex = TimeFrameCursor.toLocalRowID(forwardWatermark) + 1;
 
             timeFrameCursor.jumpTo(startFrameIndex);
             if (timeFrameCursor.open() == 0 || startRowIndex >= timeFrame.getRowHi()) {
@@ -512,7 +511,7 @@ public class HorizonJoinTimeFrameHelper {
         timeFrameCursor.recordAt(record, frameIndex, rowIndex);
 
         while (true) {
-            long currentRowId = Rows.toRowID(frameIndex, rowIndex);
+            long currentRowId = TimeFrameCursor.toRowID(frameIndex, rowIndex);
 
             // Check if we've reached the target
             if (currentRowId > targetRowId) {
