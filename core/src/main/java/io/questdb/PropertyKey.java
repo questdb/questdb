@@ -590,6 +590,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL("cairo.partition.encoder.parquet.compression.level"),
     CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE("cairo.partition.encoder.parquet.row.group.size"),
     CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE("cairo.partition.encoder.parquet.data.page.size"),
+    CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES("cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes"),
+    CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO("cairo.partition.encoder.parquet.o3.rewrite.unused.ratio"),
     HTTP_MIN_SEND_BUFFER_SIZE("http.min.send.buffer.size"),
     HTTP_MIN_RECV_BUFFER_SIZE("http.min.recv.buffer.size"),
     HTTP_MIN_RECEIVE_BUFFER_SIZE("http.min.receive.buffer.size"), // deprecated

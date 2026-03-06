@@ -37,6 +37,7 @@ import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.LogRecordSinkAdapter;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -2581,6 +2582,7 @@ public final class TestUtils {
         public LeakCheck() {
             Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -2607,6 +2609,7 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             CLOSEABLE.forEach(Misc::free);
             if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
                 Assert.fail(

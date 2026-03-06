@@ -18,14 +18,40 @@ use parquet2::metadata::{KeyValue, SortingColumn};
 use parquet2::write::Version;
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    rg_index: jshort,
+) {
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.copyRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+    match parquet_updater.copy_row_group(rg_index) {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context(format!("could not copy row group {rg_index}"));
+            err.add_context("error in PartitionUpdater.copyRowGroup");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_create(
     mut env: JNIEnv,
     _class: JClass,
     allocator: *const QdbAllocator,
     src_path_len: u32,
     src_path_ptr: *const u8,
-    raw_fd: i32,
-    file_size: u64,
+    reader_fd: i32,
+    read_file_size: u64,
+    writer_fd: i32,
+    write_file_size: u64,
     timestamp_index: jint,
     compression_codec: jlong,
     statistics_enabled: jboolean,
@@ -34,6 +60,17 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     data_page_size: jlong,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
+        // reader_fd and writer_fd must be distinct OS file descriptors.
+        // Both are closed by Rust when ParquetUpdater is dropped.
+        // Passing the same fd would cause a double-close bug.
+        if reader_fd == writer_fd {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "reader_fd and writer_fd must be different file descriptors, got {}",
+                reader_fd
+            ));
+        }
+
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
         let allocator = unsafe { &*allocator }.clone();
@@ -61,8 +98,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
         ParquetUpdater::new(
             allocator,
-            unsafe { File::from_raw_fd_i32(raw_fd) },
-            file_size,
+            unsafe { File::from_raw_fd_i32(reader_fd) },
+            read_file_size,
+            unsafe { File::from_raw_fd_i32(writer_fd) },
+            write_file_size,
             sorting_columns,
             statistics_enabled,
             raw_array_encoding,
@@ -88,12 +127,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_destroy(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
 ) {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.destroy");
+        return err.into_cairo_exception().throw(&mut env);
     }
 
     let _ = unsafe { Box::from_raw(updater) };
@@ -104,20 +145,38 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
-) {
+) -> jlong {
     if updater.is_null() {
-        panic!("ParquetUpdater pointer is null");
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateFileMetadata");
+        return err.into_cairo_exception().throw::<jlong>(&mut env);
     }
 
     let parquet_updater = unsafe { &mut *updater };
     match parquet_updater.end(None) {
-        Ok(_) => (),
+        Ok(file_size) => file_size as jlong,
         Err(mut err) => {
             err.add_context("could not update partition metadata");
             err.add_context("error in PartitionUpdater.updateFileMetadata");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw::<jlong>(&mut env)
         }
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_getResultUnusedBytes(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *const ParquetUpdater,
+) -> jlong {
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.getResultUnusedBytes");
+        return err.into_cairo_exception().throw::<jlong>(&mut env);
+    }
+
+    let parquet_updater = unsafe { &*updater };
+    parquet_updater.result_unused_bytes() as jlong
 }
 
 #[no_mangle]
@@ -136,20 +195,17 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     row_count: jlong,
 ) {
-    let orig_row_group_id = row_group_id;
-    let row_group_id = Some(row_group_id);
-
-    assert!(
-        !parquet_updater.is_null(),
-        "parquet_updater pointer is null"
-    );
+    if parquet_updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
+    }
     let parquet_updater = unsafe { &mut *parquet_updater };
 
     let mut update = || -> ParquetResult<()> {
-        let table_name = "update";
         let partition = create_partition_descriptor(
-            table_name.as_ptr(),
-            table_name.len() as i32,
+            table_name_ptr,
+            table_name_len as i32,
             col_count,
             col_names_ptr,
             col_names_len,
@@ -158,11 +214,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        if let Some(row_group_id) = row_group_id {
-            parquet_updater.replace_row_group(&partition, row_group_id)
-        } else {
-            parquet_updater.append_row_group(&partition)
-        }
+        parquet_updater.replace_row_group(&partition, row_group_id)
     };
 
     match update() {
@@ -173,9 +225,63 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             let table_name =
                 std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
             err.add_context(format!(
-                "could not update row group {orig_row_group_id} for table {table_name}"
+                "could not update row group {row_group_id} for table {table_name}"
             ));
             err.add_context("error in PartitionUpdater.updateRowGroup");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_insertRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    parquet_updater: *mut ParquetUpdater,
+    table_name_len: u32,
+    table_name_ptr: *const u8,
+    position: jshort,
+    col_count: jint,
+    col_names_ptr: *const u8,
+    col_names_len: jint,
+    col_data_ptr: *const i64,
+    col_data_len: jlong,
+    timestamp_index: jint,
+    row_count: jlong,
+) {
+    if parquet_updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.insertRowGroup");
+        return err.into_cairo_exception().throw(&mut env);
+    }
+    let parquet_updater = unsafe { &mut *parquet_updater };
+
+    let mut insert = || -> ParquetResult<()> {
+        let partition = create_partition_descriptor(
+            table_name_ptr,
+            table_name_len as i32,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            row_count,
+            timestamp_index,
+        )?;
+        parquet_updater.insert_row_group(&partition, position)
+    };
+
+    match insert() {
+        Ok(_) => (),
+        Err(mut err) => {
+            let table_name =
+                unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
+            let table_name =
+                std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
+            err.add_context(format!(
+                "could not insert row group at position {position} for table {table_name}"
+            ));
+            err.add_context("error in PartitionUpdater.insertRowGroup");
             err.into_cairo_exception().throw(&mut env)
         }
     }
@@ -297,7 +403,7 @@ fn create_partition_descriptor(
     col_data_len: jlong,
     row_count: jlong,
     timestamp_index: jint,
-) -> ParquetResult<Partition> {
+) -> ParquetResult<Partition<'static>> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
     let col_data_len = col_data_len as usize;
@@ -446,7 +552,7 @@ impl Write for BufferWriter {
 }
 
 pub struct StreamingParquetWriter {
-    partition: Partition,
+    partition: Partition<'static>,
     // We need Box<Vec<u8>> here to ensure the Vec itself has a stable heap address
     #[allow(clippy::box_collection)]
     current_buffer: Box<Vec<u8, QdbAllocator>>,
@@ -455,7 +561,7 @@ pub struct StreamingParquetWriter {
 
     // Fields for accumulating partitions across multiple writeChunk calls
     row_group_size: usize,
-    pending_partitions: Vec<Partition>,
+    pending_partitions: Vec<Partition<'static>>,
     first_partition_start: usize,
     accumulated_rows: usize,
     // Cumulative count of rows that have been fully written to row groups.
@@ -777,7 +883,7 @@ fn create_partition_template(
     col_meta_data_ptr: *const i64,
     timestamp_index: jint,
     timestamp_descending: jboolean,
-) -> ParquetResult<Partition> {
+) -> ParquetResult<Partition<'static>> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
 
@@ -820,7 +926,7 @@ fn create_partition_template(
 }
 
 fn update_partition_data(
-    partition: &mut Partition,
+    partition: &mut Partition<'static>,
     col_data_ptr: *const i64,
     row_count: usize,
 ) -> ParquetResult<()> {
@@ -945,11 +1051,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 }
 
 fn convert_row_group_buffers_to_partition(
-    partition_template: &Partition,
+    partition_template: &Partition<'static>,
     row_group_bufs: &crate::parquet_read::RowGroupBuffers,
     row_count: usize,
     symbol_data_ptr: jlong,
-) -> ParquetResult<Partition> {
+) -> ParquetResult<Partition<'static>> {
     use qdb_core::col_type::ColumnTypeTag;
 
     let mut new_partition = Partition {

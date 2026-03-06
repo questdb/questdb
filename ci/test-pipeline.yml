@@ -183,6 +183,7 @@ stages:
     dependsOn:
       - CheckChanges
       - SelfHostedRunTestsCoverageBranches
+      - JavaAndRustLint
     jobs:
       - job: CoverageReport
         displayName: "Coverage Report"
@@ -251,26 +252,19 @@ stages:
               export PATH=$LLVM_TOOLS_PATH:$PATH
               ls -al $(Pipeline.Workspace)/rust-llvm-coverage
 
-              # Merge partial profdata files from all jobs into the complete report
-              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
+              # Merge partial profdata files from coverage test jobs.
+              # Lint-job profraw files are NOT included here: their coverage
+              # is captured as LCOV and appended after the llvm-cov export step.
+              MERGE_INPUTS=( $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata )
+              llvm-profdata merge -sparse -o questdbr.profdata "${MERGE_INPUTS[@]}"
 
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
-              if [ ! -d "$COVERAGE_DIR/deps" ]; then
-                echo "##vso[task.logissue type=error]Rust coverage objects directory not found: $COVERAGE_DIR/deps"
-                exit 1
-              fi
-              # Restore execute permissions lost during artifact download
-              # (PublishBuildArtifacts does not preserve Unix permissions)
-              find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -exec chmod +x {} +
-              mapfile -d '' -t RUST_TEST_OBJECTS < <(find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -executable -print0 | sort -z)
-              if [ ${#RUST_TEST_OBJECTS[@]} -eq 0 ]; then
-                echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
-                exit 1
-              fi
+              # Use only libquestdbr.so as the object for Java test coverage.
+              # The test binary has different counter hashes (compiled as a
+              # different target) which causes mismatched-data warnings and
+              # silently drops coverage. Cargo test coverage is handled
+              # separately via LCOV from the lint job.
               OBJECT_ARGS=(--object "$COVERAGE_DIR/libquestdbr.so")
-              for rust_test_object in "${RUST_TEST_OBJECTS[@]}"; do
-                OBJECT_ARGS+=(--object "$rust_test_object")
-              done
               ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
               if [ -z "$ORIG_PATH" ]; then
                 echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
@@ -296,6 +290,13 @@ stages:
                 --instr-profile=questdbr.profdata \
                 --output-dir $(Build.SourcesDirectory)/rust-coverage
 
+              # Append qdb-core and parquet2 LCOV (produced in the lint job)
+              for LCOV_FILE in "$COVERAGE_DIR"/*.lcov; do
+                [ -f "$LCOV_FILE" ] || continue
+                cat "$LCOV_FILE" >> questdbr.lcov.dat
+                echo "Appended $(basename "$LCOV_FILE")"
+              done
+
               # Merge LCOV coverage results from multiple objects into a single report
               python3 ./ci/merge_lcov_paths.py questdbr.lcov.dat questdbr-patched.lcov.dat
 
@@ -303,6 +304,20 @@ stages:
               python3 ./ci/lcov_cobertura.py questdbr-patched.lcov.dat --output cobertura.xml --base-dir core/rust
             displayName: "Merge partial Rust reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Upload Rust coverage report"
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+            inputs:
+              pathToPublish: "$(Build.SourcesDirectory)/cobertura.xml"
+              artifactName: "rust-coverage"
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Upload merged JaCoCo report"
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
+            inputs:
+              pathToPublish: "$(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml"
+              artifactName: "jacoco-merged-coverage-report"
 
           - bash: |
               set -eux

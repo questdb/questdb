@@ -17,6 +17,7 @@ pub struct RepeatN {
     pub remaining: usize,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl RepeatN {
     #[inline]
     pub fn new(value: u32, count: usize) -> Self {
@@ -55,6 +56,7 @@ pub enum RleIterator<'a> {
     },
 }
 
+#[allow(clippy::should_implement_trait)]
 impl RleIterator<'_> {
     #[inline(always)]
     #[allow(clippy::should_implement_trait)]
