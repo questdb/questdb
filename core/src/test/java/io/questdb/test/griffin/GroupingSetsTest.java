@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -1426,6 +1427,50 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "x\t30.0\t2\t15.0\n" +
                             "y\t30.0\t1\t30.0\n",
                     "SELECT a, SUM(v), COUNT(v), AVG(v) FROM t GROUP BY ROLLUP(a) ORDER BY a"
+            );
+        });
+    }
+
+    @Test
+    public void testCube15ColumnsAccepted() throws Exception {
+        // CUBE(15 columns) = 2^15 = 32768 sets. Within the hard parser cap of 15.
+        // Use 12 columns (2^12 = 4096) to stay at default config limit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cube12 (" +
+                    "c1 INT, c2 INT, c3 INT, c4 INT, c5 INT, " +
+                    "c6 INT, c7 INT, c8 INT, c9 INT, c10 INT, " +
+                    "c11 INT, c12 INT, v INT)");
+            // 12 columns = 4096 sets, exactly at default limit; must not error
+            assertSql(
+                    "c1\tSUM\n",
+                    "SELECT c1, SUM(v) FROM cube12" +
+                            " GROUP BY CUBE(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12)"
+            );
+        });
+    }
+
+    @Test
+    public void testCteWithRollup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE trades (symbol SYMBOL, side SYMBOL, quantity DOUBLE, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            execute(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC', 'buy', 10, '2024-01-01T00:00:00.000000Z')," +
+                            "('BTC', 'sell', 20, '2024-01-01T00:01:00.000000Z')," +
+                            "('ETH', 'buy', 30, '2024-01-01T00:02:00.000000Z')"
+            );
+
+            assertSql(
+                    "symbol\tSUM\n" +
+                            "BTC\t30.0\n" +
+                            "ETH\t30.0\n" +
+                            "\t60.0\n",
+                    "WITH base AS (SELECT symbol, quantity FROM trades)" +
+                            " SELECT symbol, SUM(quantity) FROM base GROUP BY ROLLUP(symbol)" +
+                            " ORDER BY GROUPING(symbol), symbol"
             );
         });
     }
