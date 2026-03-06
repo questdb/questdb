@@ -4523,6 +4523,33 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void mergeConstIntoPostJoinWhereClause(QueryModel model) {
+        ExpressionNode constWhere = model.getConstWhereClause();
+        if (constWhere != null && !isCompileTimeConstant(constWhere)) {
+            IntList ordered = model.getOrderedJoinModels();
+            int lastIndex = ordered.getQuick(ordered.size() - 1);
+            QueryModel lastModel = model.getJoinModels().getQuick(lastIndex);
+            lastModel.setPostJoinWhereClause(concatFilters(
+                    configuration.getCairoSqlLegacyOperatorPrecedence(),
+                    expressionNodePool,
+                    lastModel.getPostJoinWhereClause(),
+                    constWhere
+            ));
+            model.setConstWhereClause(null);
+        }
+    }
+
+    private static boolean isCompileTimeConstant(ExpressionNode node) {
+        if (node == null) {
+            return true;
+        }
+        return switch (node.type) {
+            case ExpressionNode.CONSTANT -> true;
+            case ExpressionNode.OPERATION -> isCompileTimeConstant(node.lhs) && isCompileTimeConstant(node.rhs);
+            default -> false;
+        };
+    }
+
     private JoinContext moveClauses(QueryModel parent, JoinContext from, JoinContext to, IntList positions) {
         int p = 0;
         int m = positions.size();
@@ -5138,6 +5165,7 @@ public class SqlOptimiser implements Mutable {
             assignFilters(model);
             alignJoinClauses(model);
             addTransitiveFilters(model);
+            mergeConstIntoPostJoinWhereClause(model);
         }
 
         for (int i = 0; i < n; i++) {
@@ -8801,7 +8829,7 @@ public class SqlOptimiser implements Mutable {
         // This must run before SELECT column rewriting, which replaces aggregate functions
         // and GROUP BY column references with aliases, making the original AST unrecognizable.
         if (isHorizonJoin && hasGroupByClause) {
-            validateHorizonJoinGroupBy(columns, groupBy, baseModel);
+            validateHorizonJoinGroupBy(columns, groupBy);
         }
 
         tempBoolList.setAll(groupBy.size(), false);
@@ -9994,8 +10022,7 @@ public class SqlOptimiser implements Mutable {
 
     private void validateHorizonJoinGroupBy(
             ObjList<QueryColumn> selectColumns,
-            ObjList<ExpressionNode> groupByColumns,
-            QueryModel baseModel
+            ObjList<ExpressionNode> groupByColumns
     ) throws SqlException {
         // Validate each GROUP BY column matches a non-aggregate SELECT column
         for (int i = 0, n = groupByColumns.size(); i < n; i++) {

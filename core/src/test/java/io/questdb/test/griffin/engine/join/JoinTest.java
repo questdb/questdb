@@ -2867,9 +2867,9 @@ public class JoinTest extends AbstractCairoTest {
     public void testJoinInnerPostJoinAndConstFilter() throws Exception {
         // Regression test for https://github.com/questdb/questdb/issues/6762
         // When WHERE has both a column-referencing condition (postJoinWhereClause)
-        // and a non-column, non-constant condition (constWhereClause), the code
-        // generator must combine them into a single filter rather than nesting
-        // two FilteredRecordCursorFactory instances (which triggers an assertion).
+        // and a non-column, non-constant condition (constWhereClause like NOW() = NOW()),
+        // the optimizer merges them into a single postJoinWhereClause so the code
+        // generator applies one filter instead of nesting FilteredRecordCursorFactory.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2895,9 +2895,8 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoinInnerPostJoinMultipleJoinsFilter() throws Exception {
-        // When multiple joins each have a post-join WHERE clause and parallel filter
-        // is disabled, successive iterations of the join loop must combine filters
-        // rather than nesting FilteredRecordCursorFactory instances.
+        // Tests multi-way join with post-join WHERE conditions referencing
+        // columns from different join pairs.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t2 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -3656,24 +3655,22 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoiningSubqueryWithDotInColumnName() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
-                            "foo.bar"	1
-                            1	1
-                            2	1
-                            3	1
-                            4	1
-                            5	1
-                            """,
-                    """
-                            SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
-                            LEFT JOIN (select 1) ON true;
-                            """,
-                    null,
-                    false
-            );
-        });
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        "foo.bar"	1
+                        1	1
+                        2	1
+                        3	1
+                        4	1
+                        5	1
+                        """,
+                """
+                        SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
+                        LEFT JOIN (select 1) ON true;
+                        """,
+                null,
+                false
+        ));
     }
 
     @Test
