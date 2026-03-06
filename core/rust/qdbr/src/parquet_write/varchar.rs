@@ -482,3 +482,225 @@ pub fn append_varchar_nulls(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::allocator::TestAllocatorState;
+    use parquet2::schema::types::PhysicalType;
+
+    fn test_allocator() -> (TestAllocatorState, crate::allocator::QdbAllocator) {
+        let state = TestAllocatorState::new();
+        let alloc = state.allocator();
+        (state, alloc)
+    }
+
+    fn test_write_options() -> WriteOptions {
+        WriteOptions {
+            write_statistics: true,
+            version: parquet2::write::Version::V2,
+            compression: parquet2::compression::CompressionOptions::Uncompressed,
+            row_group_size: None,
+            data_page_size: None,
+            raw_array_encoding: false,
+        }
+    }
+
+    fn test_primitive_type() -> PrimitiveType {
+        PrimitiveType::from_physical("test_col".to_string(), PhysicalType::ByteArray)
+    }
+
+    /// Build a 16-byte inlined aux entry for a short ASCII string (≤9 bytes).
+    fn make_inlined_entry(value: &[u8]) -> [u8; 16] {
+        assert!(value.len() <= VARCHAR_MAX_BYTES_FULLY_INLINED);
+        let mut entry = [0u8; 16];
+        let flags = HEADER_FLAG_INLINED | HEADER_FLAG_ASCII;
+        entry[0] = ((value.len() as u8) << HEADER_FLAGS_WIDTH) | flags;
+        entry[1..1 + value.len()].copy_from_slice(value);
+        // offset bytes (10..16) left as zero
+        entry
+    }
+
+    /// Build a 16-byte split aux entry for a longer string (>9 bytes).
+    /// `offset` is the byte offset into the data buffer where the full string starts.
+    fn make_split_entry(value: &[u8], offset: usize) -> [u8; 16] {
+        assert!(value.len() > VARCHAR_MAX_BYTES_FULLY_INLINED);
+        let mut entry = [0u8; 16];
+        let header: u32 = ((value.len() as u32) << HEADER_FLAGS_WIDTH) | HEADER_FLAG_ASCII_32;
+        entry[0..4].copy_from_slice(&header.to_le_bytes());
+        entry[4..10].copy_from_slice(&value[..VARCHAR_INLINED_PREFIX_BYTES]);
+        entry[10..12].copy_from_slice(&(offset as u16).to_le_bytes());
+        entry[12..16].copy_from_slice(&((offset >> 16) as u32).to_le_bytes());
+        entry
+    }
+
+    /// Build a 16-byte null aux entry.
+    fn make_null_entry() -> [u8; 16] {
+        let mut entry = [0u8; 16];
+        entry[0] = HEADER_FLAG_NULL;
+        entry
+    }
+
+    #[test]
+    fn test_varchar_to_dict_pages() {
+        let short1 = b"hi";
+        let short2 = b"bye";
+        let long1 = b"hello world!!";
+
+        let mut data = Vec::new();
+        let long1_offset = 0usize;
+        data.extend_from_slice(long1);
+
+        let aux = vec![
+            make_inlined_entry(short1),
+            make_null_entry(),
+            make_split_entry(long1, long1_offset),
+            make_inlined_entry(short2),
+            make_inlined_entry(short1), // duplicate of short1
+        ];
+
+        let options = test_write_options();
+        let pt = test_primitive_type();
+
+        let result = varchar_to_dict_pages(&aux, &data, 0, options, pt);
+        assert!(result.is_ok());
+
+        let pages: Vec<_> = result.unwrap().collect();
+        assert_eq!(pages.len(), 2);
+        assert!(matches!(&pages[0], Ok(Page::Dict(_))));
+        assert!(matches!(&pages[1], Ok(Page::Data(_))));
+    }
+
+    #[test]
+    fn test_unsupported_encoding_error() {
+        let aux = vec![make_inlined_entry(b"abc")];
+        let data = vec![];
+        let options = test_write_options();
+        let pt = test_primitive_type();
+
+        let result = varchar_to_page(&aux, &data, 0, options, pt, Encoding::BitPacked);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("unsupported encoding"),
+            "expected 'unsupported encoding' in: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_append_varchar_nulls_bulk_matches_individual() {
+        let (_state, alloc) = test_allocator();
+        let data_mem: Vec<u8> = vec![1, 2, 3]; // non-empty so offset is non-zero
+
+        let count = 10;
+
+        // Bulk path (count >= 5)
+        let mut bulk_aux = AcVec::new_in(alloc.clone());
+        append_varchar_nulls(&mut bulk_aux, &data_mem, count).unwrap();
+
+        // Individual path
+        let mut ind_aux = AcVec::new_in(alloc.clone());
+        for _ in 0..count {
+            append_varchar_null(&mut ind_aux, &data_mem).unwrap();
+        }
+
+        assert_eq!(bulk_aux.len(), ind_aux.len());
+        assert_eq!(bulk_aux.as_slice(), ind_aux.as_slice());
+    }
+
+    #[test]
+    fn test_is_column_ascii_false_for_non_ascii() {
+        // Entry with INLINED flag set but ASCII flag clear => non-ASCII, non-null
+        let mut entry = [0u8; 16];
+        entry[0] = (3u8 << HEADER_FLAGS_WIDTH) | HEADER_FLAG_INLINED; // 3 chars, inlined, NOT ascii
+        entry[1] = 0xC3; // UTF-8 byte > 127
+        entry[2] = 0xA9;
+        entry[3] = 0x21;
+        let aux = vec![entry];
+        assert!(!is_column_ascii(&aux));
+    }
+
+    #[test]
+    fn test_is_column_ascii_true_for_ascii_entries() {
+        let aux = vec![
+            make_inlined_entry(b"hello"),
+            make_inlined_entry(b"world"),
+        ];
+        assert!(is_column_ascii(&aux));
+    }
+
+    #[test]
+    fn test_is_column_ascii_true_for_all_nulls() {
+        let aux = vec![make_null_entry(), make_null_entry(), make_null_entry()];
+        assert!(is_column_ascii(&aux));
+    }
+
+    #[test]
+    fn test_is_column_ascii_true_for_empty() {
+        let aux: Vec<[u8; 16]> = vec![];
+        assert!(is_column_ascii(&aux));
+    }
+
+    #[test]
+    fn test_append_varchar_split_path() {
+        let (_state, alloc) = test_allocator();
+        let mut aux_mem = AcVec::new_in(alloc.clone());
+        let mut data_mem = AcVec::new_in(alloc.clone());
+
+        let value = b"hello world!!"; // 13 bytes, > 9
+        append_varchar(&mut aux_mem, &mut data_mem, value).unwrap();
+
+        // aux_mem should be exactly 16 bytes
+        assert_eq!(aux_mem.len(), 16);
+
+        // Parse back as split entry
+        let header = u32::from_le_bytes([aux_mem[0], aux_mem[1], aux_mem[2], aux_mem[3]]);
+        let size = (header >> HEADER_FLAGS_WIDTH) as usize;
+        assert_eq!(size, 13);
+
+        // INLINED flag should NOT be set (bit 0 of the u8 view)
+        assert_eq!(header & (HEADER_FLAG_INLINED as u32), 0);
+
+        // ASCII flag should be set
+        assert_ne!(header & HEADER_FLAG_ASCII_32, 0);
+
+        // Prefix bytes (4..10) should match first 6 bytes of value
+        assert_eq!(&aux_mem[4..10], &value[..6]);
+
+        // data_mem should contain the full value
+        assert_eq!(data_mem.as_slice(), value);
+
+        // Offset should point to 0 (start of data_mem)
+        let offset_lo = u16::from_le_bytes([aux_mem[10], aux_mem[11]]) as usize;
+        let offset_hi = u32::from_le_bytes([aux_mem[12], aux_mem[13], aux_mem[14], aux_mem[15]]) as usize;
+        let offset = offset_lo | (offset_hi << 16);
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn test_append_varchar_inlined_path() {
+        let (_state, alloc) = test_allocator();
+        let mut aux_mem = AcVec::new_in(alloc.clone());
+        let mut data_mem = AcVec::new_in(alloc.clone());
+
+        let value = b"hi"; // 2 bytes, ≤ 9
+        append_varchar(&mut aux_mem, &mut data_mem, value).unwrap();
+
+        assert_eq!(aux_mem.len(), 16);
+
+        let header = aux_mem[0];
+        let size = (header >> HEADER_FLAGS_WIDTH) as usize;
+        assert_eq!(size, 2);
+
+        // INLINED flag should be set
+        assert_ne!(header & HEADER_FLAG_INLINED, 0);
+        // ASCII flag should be set
+        assert_ne!(header & HEADER_FLAG_ASCII, 0);
+
+        // chars at bytes 1..3 should be "hi"
+        assert_eq!(&aux_mem[1..3], b"hi");
+
+        // data_mem should be empty (inlined, nothing written to data)
+        assert!(data_mem.is_empty());
+    }
+}

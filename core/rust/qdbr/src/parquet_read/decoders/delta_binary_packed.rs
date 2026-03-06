@@ -1174,6 +1174,71 @@ mod tests {
     }
 
     #[test]
+    fn get_end_pointer_multiple_remaining_blocks() {
+        // 400+ values => 4+ blocks of 128 values each
+        let values: Vec<i64> = (0..401).map(|i| i * 5 + 3).collect();
+        let data = encode_delta_binary_packed(&values);
+        let (mut iter, _first) = MiniblockIterator::<i64>::try_new(&data).unwrap();
+
+        // Consume only 2 miniblocks from the first block
+        let _mb1 = iter.next_miniblock().unwrap().unwrap();
+        let _mb2 = iter.next_miniblock().unwrap().unwrap();
+
+        let end = iter.get_end_pointer().unwrap();
+        let data_end = unsafe { data.as_ptr().add(data.len()) };
+
+        // End pointer must advance past the consumed portion
+        assert!(end > iter.page_data.as_ptr());
+        // End pointer must not exceed the data buffer
+        assert!(end <= data_end);
+    }
+
+    #[test]
+    fn push_slice_partial_pack_tail() {
+        // 51 values: 1 initial + 50 deltas = 1 full pack of 32 + 18 in tail loop
+        let values: Vec<i64> = (0..51).map(|i| i * 7 + 10).collect();
+        let data = encode_delta_binary_packed(&values);
+        let result = decode_i64_push_slice(&data, values.len());
+        assert_eq!(result, values);
+    }
+
+    #[test]
+    fn bit_width_exceeds_target_width_i32() {
+        // Manually craft a page where a miniblock's bitwidth is 33 (exceeds 32 for i32).
+        let mut data = Vec::new();
+        write_uleb128(&mut data, 128); // block_size
+        write_uleb128(&mut data, 4); // miniblocks_per_block
+        write_uleb128(&mut data, 33); // value_count (needs 1 block)
+        write_zigzag(&mut data, 0); // first_value
+        // Block: min_delta
+        write_zigzag(&mut data, 0);
+        // Bitwidths: first miniblock has bitwidth 33 (invalid for i32), rest are 0
+        data.push(33);
+        data.push(0);
+        data.push(0);
+        data.push(0);
+        // Provide enough packed data for a 33-bit miniblock (33*32/8 = 132 bytes)
+        data.extend_from_slice(&vec![0u8; 132]);
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut buffers = create_buffers(&allocator);
+        let result = {
+            let mut decoder =
+                DeltaBinaryPackedDecoder::<i32, i32>::try_new(&data, &mut buffers, i32::MIN)
+                    .unwrap();
+            decoder.reserve(33).unwrap();
+            decoder.push_slice(33)
+        };
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("bit width") && msg.contains("exceeds"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
     fn truncated_block_data() {
         // Build a valid header for multiple values but truncate the block data.
         let mut data = Vec::new();

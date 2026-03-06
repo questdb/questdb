@@ -163,6 +163,56 @@ pub fn decode_file(buf: &[u8]) -> (Vec<u8>, Vec<u8>) {
     (all_data, all_aux)
 }
 
+/// Decode a single column from Parquet bytes using QuestDB's filtered decoder (fill-nulls mode).
+/// All rows in the row group are output; non-selected rows are filled with null sentinels.
+/// Returns (data_vec bytes, aux_vec bytes).
+pub fn decode_file_filtered_fill_nulls(buf: &[u8], rows_filter: &[i64]) -> (Vec<u8>, Vec<u8>) {
+    let ta = TestAlloc::new();
+    let allocator = ta.allocator();
+
+    let buf_len = buf.len() as u64;
+    let mut reader = Cursor::new(buf);
+    let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)
+        .expect("ParquetDecoder::read");
+
+    assert_eq!(decoder.col_count, 1, "expected single column");
+    let col_type = decoder.columns[0]
+        .column_type
+        .expect("column type should be recognized");
+
+    let row_group_count = decoder.row_group_count;
+
+    let mut rgb = RowGroupBuffers::new(allocator);
+    let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+
+    let columns = vec![(0i32, col_type)];
+
+    let mut all_data = Vec::new();
+    let mut all_aux = Vec::new();
+
+    for rg_idx in 0..row_group_count {
+        let rg_size = decoder.row_group_sizes[rg_idx as usize];
+        decoder
+            .decode_row_group_filtered::<true>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                rg_idx,
+                0,
+                rg_size,
+                rows_filter,
+            )
+            .unwrap_or_else(|e| panic!("decode row group filtered fill_nulls {rg_idx}: {e}"));
+
+        let bufs = &rgb.column_buffers()[0];
+        all_data.extend_from_slice(&bufs.data_vec);
+        all_aux.extend_from_slice(&bufs.aux_vec);
+    }
+
+    (all_data, all_aux)
+}
+
 /// Decode a single column from Parquet bytes using QuestDB's filtered decoder (skip mode).
 /// Only the rows specified in `rows_filter` (relative indices) are decoded.
 /// Returns (data_vec bytes, aux_vec bytes).
@@ -386,6 +436,25 @@ pub fn encode_decode_byte_array(
         Arc::new(props),
     );
     decode_file(&buf)
+}
+
+/// Build QDB metadata JSON for a column type tag with a custom column_top value.
+pub fn qdb_meta_with_column_top(tag: ColumnTypeTag, column_top: usize) -> String {
+    format!(
+        r#"{{"version":1,"schema":[{{"column_type":{},"column_top":{}}}]}}"#,
+        tag as u8, column_top
+    )
+}
+
+/// Build writer properties with QDB metadata including a custom column_top.
+pub fn qdb_props_with_column_top(
+    tag: ColumnTypeTag,
+    version: WriterVersion,
+    encoding: Encoding,
+    column_top: usize,
+) -> WriterProperties {
+    let qdb_json = qdb_meta_with_column_top(tag, column_top);
+    qdb_props_with_json(qdb_json, version, encoding)
 }
 
 /// Encode + decode a ByteArray column with the given values, nulls, schema, and props,

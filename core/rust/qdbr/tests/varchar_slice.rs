@@ -1226,6 +1226,122 @@ fn test_varchar_slice_consecutive_nulls() {
     }
 }
 
+// --- Filtered non-ASCII and encoding matrix ---
+
+#[test]
+fn test_varchar_slice_filtered_utf8() {
+    let count = 100;
+    let values = utf8_values(count);
+    let expected_values = utf8_expected(count);
+    let nulls = vec![false; count];
+    let rows_filter = every_other_row_filter(count);
+
+    for version in &VERSIONS {
+        eprintln!("Testing filtered UTF-8 with version={version:?}");
+        let schema = required_byte_array_schema("col", Some(LogicalType::String));
+        let props = qdb_props_ascii(
+            ColumnTypeTag::VarcharSlice,
+            *version,
+            Encoding::Plain,
+            false,
+        );
+        encode_decode_and_verify_varchar_slice_filtered(
+            &values,
+            &nulls,
+            schema,
+            props,
+            &expected_values,
+            false,
+            &rows_filter,
+        );
+    }
+}
+
+/// Helper that runs a filtered test across all 4 encodings x compressed/uncompressed x parquet versions.
+fn run_varchar_slice_filtered_test_encoding_matrix(
+    name: &str,
+    values: &[ByteArray],
+    nulls: &[bool],
+    expected_values: &[String],
+    ascii: bool,
+) {
+    let encodings = [
+        Encoding::Plain,
+        Encoding::DeltaLengthByteArray,
+        Encoding::DeltaByteArray,
+        Encoding::RleDictionary,
+    ];
+    let compressions = [Compression::UNCOMPRESSED, Compression::SNAPPY];
+    let rows_filter = every_other_row_filter(nulls.len());
+
+    let has_nulls = nulls.iter().any(|&n| n);
+    for version in &VERSIONS {
+        for encoding in &encodings {
+            for compression in &compressions {
+                eprintln!(
+                    "Testing filtered {name} with version={version:?}, encoding={encoding:?}, \
+                     compression={compression:?}"
+                );
+
+                let schema = if has_nulls {
+                    optional_byte_array_schema("col", Some(LogicalType::String))
+                } else {
+                    required_byte_array_schema("col", Some(LogicalType::String))
+                };
+
+                let props = qdb_props_compressed_ascii(
+                    ColumnTypeTag::VarcharSlice,
+                    *version,
+                    *encoding,
+                    *compression,
+                    ascii,
+                );
+                encode_decode_and_verify_varchar_slice_filtered(
+                    values,
+                    nulls,
+                    schema,
+                    props,
+                    expected_values,
+                    ascii,
+                    &rows_filter,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_varchar_slice_filtered_encoding_matrix() {
+    let count = COUNT;
+    let values = generate_values(count);
+    let expected_values: Vec<String> = (0..count).map(|i| format!("val_{i:04}")).collect();
+    let nulls = generate_nulls(count, Null::Sparse);
+
+    run_varchar_slice_filtered_test_encoding_matrix(
+        "encoding matrix",
+        &values,
+        &nulls,
+        &expected_values,
+        true,
+    );
+}
+
+#[test]
+fn test_varchar_slice_filtered_utf8_encoding_matrix() {
+    let count = 100;
+    let values = utf8_values(count);
+    let expected_values = utf8_expected(count);
+    let nulls = vec![false; count];
+
+    run_varchar_slice_filtered_test_encoding_matrix(
+        "UTF-8 encoding matrix",
+        &values,
+        &nulls,
+        &expected_values,
+        false,
+    );
+}
+
 // --- All-null with RLE dictionary encoding ---
 
 #[test]
