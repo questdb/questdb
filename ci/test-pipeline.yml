@@ -252,13 +252,10 @@ stages:
               export PATH=$LLVM_TOOLS_PATH:$PATH
               ls -al $(Pipeline.Workspace)/rust-llvm-coverage
 
-              # Merge partial profdata files and raw profraw files from all jobs
+              # Merge partial profdata files from coverage test jobs.
+              # Lint-job profraw files are NOT included here: their coverage
+              # is captured as LCOV and appended after the llvm-cov export step.
               MERGE_INPUTS=( $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata )
-              # Include qdbr/qdb-core profraw but not parquet2 (parquet2 coverage is handled via LCOV)
-              mapfile -t LINT_PROFRAW < <(find $(Pipeline.Workspace)/rust-llvm-coverage/rust-lint-profraw -name '*.profraw' ! -name 'parquet2-*' 2>/dev/null | sort)
-              if [ ${#LINT_PROFRAW[@]} -gt 0 ]; then
-                MERGE_INPUTS+=( "${LINT_PROFRAW[@]}" )
-              fi
               llvm-profdata merge -sparse -o questdbr.profdata "${MERGE_INPUTS[@]}"
 
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
@@ -296,12 +293,12 @@ stages:
                 --instr-profile=questdbr.profdata \
                 --output-dir $(Build.SourcesDirectory)/rust-coverage
 
-              # Append parquet2 LCOV (produced in the lint job) to the qdbr LCOV
-              PARQUET2_LCOV="$COVERAGE_DIR/rust-lint-profraw/parquet2.lcov"
-              if [ -f "$PARQUET2_LCOV" ]; then
-                cat "$PARQUET2_LCOV" >> questdbr.lcov.dat
-                echo "Appended parquet2 coverage data"
-              fi
+              # Append qdb-core and parquet2 LCOV (produced in the lint job)
+              for LCOV_FILE in "$COVERAGE_DIR"/*.lcov; do
+                [ -f "$LCOV_FILE" ] || continue
+                cat "$LCOV_FILE" >> questdbr.lcov.dat
+                echo "Appended $(basename "$LCOV_FILE")"
+              done
 
               # Merge LCOV coverage results from multiple objects into a single report
               python3 ./ci/merge_lcov_paths.py questdbr.lcov.dat questdbr-patched.lcov.dat
