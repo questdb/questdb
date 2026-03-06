@@ -141,18 +141,15 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (getMetadata().getColumnCount() > fillValues.size() + 1) {
-            if (fillValues.size() == 1) {
-                // Auto-expand a single fill value to cover all non-timestamp
-                // columns. SYMBOL columns represent GROUP BY keys (never
-                // aggregates), so they get NULL in fill rows. Other columns
-                // get the user-specified fill value.
+            if (fillValues.size() == 1 && cursor.hasKeyColumns) {
+                // Grouping sets path: auto-expand a single fill value to cover
+                // all non-timestamp columns. SYMBOL columns are GROUP BY keys
+                // (never aggregates), so they get NULL in fill rows. Other
+                // columns get the user-specified fill value.
                 final Function singleFill = fillValues.getQuick(0);
                 final Function fillFunc = singleFill.isNullConstant() ? NullConstant.NULL : singleFill;
                 final RecordMetadata metadata = getMetadata();
                 final int columnCount = metadata.getColumnCount();
-                // Clear and rebuild. Each entry maps to a non-timestamp column
-                // in column order. SYMBOL columns are GROUP BY keys (never
-                // aggregates), so they get NULL in fill rows.
                 fillValues.clear();
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
@@ -163,6 +160,12 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     } else {
                         fillValues.add(fillFunc);
                     }
+                }
+            } else if (fillValues.size() == 1 && fillValues.getQuick(0).isNullConstant()) {
+                // Non-grouping-sets path: only auto-expand FILL(NULL)
+                final int diff = getMetadata().getColumnCount() - 1;
+                for (int i = 1; i < diff; i++) {
+                    fillValues.add(NullConstant.NULL);
                 }
             } else {
                 throw SqlException.$(-1, "not enough fill values");
@@ -257,6 +260,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private Map keyMap;
         private RecordCursor keyMapCursor;
         private Record keyMapRecord;
+        private boolean isValueFuncsInitialized;
         private long lastTimestamp = Long.MIN_VALUE;
         private long maxTimestamp;
         private long minTimestamp;
@@ -454,6 +458,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void initValueFuncs(ObjList<Function> valueFuncs) {
+            if (isValueFuncsInitialized) {
+                return;
+            }
+            isValueFuncsInitialized = true;
+
             // can't just check null, as we use this as the placeholder value
             if (valueFuncs.size() - 1 < timestampIndex) {
                 // timestamp is the last column, so we add it

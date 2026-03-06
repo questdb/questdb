@@ -489,6 +489,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlMaxArrayElementCount;
+    private final int sqlMaxGroupingSets;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
@@ -1526,6 +1527,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlViewLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY, 8);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
+            this.sqlMaxGroupingSets = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_GROUPING_SETS, 4096);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 128 * 1024);
             this.sqlSortKeyMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, Integer.MAX_VALUE);
@@ -4394,6 +4396,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlMapMaxResizes() {
             return sqlMapMaxResizes;
+        }
+
+        @Override
+        public int getSqlMaxGroupingSets() {
+            return sqlMaxGroupingSets;
         }
 
         @Override

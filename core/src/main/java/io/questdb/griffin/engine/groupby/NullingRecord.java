@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.cairo.sql.Record;
@@ -134,22 +135,22 @@ public class NullingRecord implements Record {
 
     @Override
     public byte getGeoByte(int col) {
-        return isNulled(col) ? 0 : base.getGeoByte(col);
+        return isNulled(col) ? GeoHashes.BYTE_NULL : base.getGeoByte(col);
     }
 
     @Override
     public int getGeoInt(int col) {
-        return isNulled(col) ? Numbers.INT_NULL : base.getGeoInt(col);
+        return isNulled(col) ? GeoHashes.INT_NULL : base.getGeoInt(col);
     }
 
     @Override
     public long getGeoLong(int col) {
-        return isNulled(col) ? Numbers.LONG_NULL : base.getGeoLong(col);
+        return isNulled(col) ? GeoHashes.NULL : base.getGeoLong(col);
     }
 
     @Override
     public short getGeoShort(int col) {
-        return isNulled(col) ? 0 : base.getGeoShort(col);
+        return isNulled(col) ? GeoHashes.SHORT_NULL : base.getGeoShort(col);
     }
 
     @Override

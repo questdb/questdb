@@ -1107,6 +1107,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxGroupingSets() {
+        return 4096;
+    }
+
+    @Override
     public int getSqlMaxNegativeLimit() {
         return 10_000;
     }

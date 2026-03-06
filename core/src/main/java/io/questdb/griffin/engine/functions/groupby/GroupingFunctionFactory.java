@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
  * grouping set. For multi-column bitmasks, use GROUPING_ID(col1, col2, ...).
  *
  * <p>This function is only valid in queries that use GROUPING SETS, ROLLUP,
- * or CUBE. The {@link GroupingSetsRecordCursorFactory} wires up the function
+ * or CUBE. The {@link io.questdb.griffin.engine.groupby.GroupingSetsRecordCursorFactory} wires up the function
  * at construction time with the actual grouping set layout.</p>
  */
 public class GroupingFunctionFactory implements FunctionFactory {

@@ -94,7 +94,6 @@ import static io.questdb.std.GenericLexer.assertNoDotsAndSlashes;
 import static io.questdb.std.GenericLexer.unquote;
 
 public class SqlParser {
-    public static final int MAX_GROUPING_SETS = 4096;
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
@@ -854,6 +853,8 @@ public class SqlParser {
      * mixed forms would create separate entries and incorrect sets.
      */
     private static void checkMixedQualification(ObjList<ExpressionNode> groupByColumns) throws SqlException {
+        // O(N²) but N is the number of GROUP BY columns, bounded at ~31 by the
+        // GROUPING_ID bitmask width. Not worth a HashSet for such small N.
         for (int i = 0, n = groupByColumns.size(); i < n; i++) {
             ExpressionNode a = groupByColumns.getQuick(i);
             for (int j = i + 1; j < n; j++) {
@@ -879,6 +880,12 @@ public class SqlParser {
         }
     }
 
+    private static void guardAgainstLatestOnWithGroupingSets(QueryModel model, int kwPos) throws SqlException {
+        if (model.getLatestBy().size() > 0) {
+            throw SqlException.$(kwPos, "LATEST ON is not supported with GROUPING SETS, ROLLUP, or CUBE");
+        }
+    }
+
     /**
      * Returns true if two column tokens refer to the same column but one
      * is qualified (t.col) and the other is not (col).
@@ -899,12 +906,12 @@ public class SqlParser {
         }
     }
 
-    private static void expandCube(QueryModel model, int startIdx, int cubeColumnCount, int position) throws SqlException {
+    private static void expandCube(QueryModel model, int startIdx, int cubeColumnCount, int position, int maxGroupingSets) throws SqlException {
         // 2^N subsets, from the full set (all bits set) down to empty set (0)
         int totalSets = 1 << cubeColumnCount;
-        if (totalSets > MAX_GROUPING_SETS) {
+        if (totalSets > maxGroupingSets) {
             throw SqlException.$(position, "CUBE produces too many grouping sets (")
-                    .put(totalSets).put(", maximum ").put(MAX_GROUPING_SETS).put(')');
+                    .put(totalSets).put(", maximum ").put(maxGroupingSets).put(')');
         }
         for (int mask = totalSets - 1; mask >= 0; mask--) {
             IntList set = new IntList();
@@ -921,11 +928,11 @@ public class SqlParser {
      * Expands CUBE with composite plain columns prepended to every set.
      * GROUP BY a, CUBE(b, c) -> sets: (a,b,c), (a,b), (a,c), (a).
      */
-    private static void expandCubeComposite(QueryModel model, int plainCount, int rollupStart, int cubeColumnCount, int position) throws SqlException {
+    private static void expandCubeComposite(QueryModel model, int plainCount, int rollupStart, int cubeColumnCount, int position, int maxGroupingSets) throws SqlException {
         int totalSets = 1 << cubeColumnCount;
-        if (totalSets > MAX_GROUPING_SETS) {
+        if (totalSets > maxGroupingSets) {
             throw SqlException.$(position, "CUBE produces too many grouping sets (")
-                    .put(totalSets).put(", maximum ").put(MAX_GROUPING_SETS).put(')');
+                    .put(totalSets).put(", maximum ").put(maxGroupingSets).put(')');
         }
         for (int mask = totalSets - 1; mask >= 0; mask--) {
             IntList set = new IntList();
@@ -950,11 +957,11 @@ public class SqlParser {
      * @param startIdx          index of the first ROLLUP column in model.groupBy
      * @param rollupColumnCount number of ROLLUP columns
      */
-    private static void expandRollup(QueryModel model, int startIdx, int rollupColumnCount, int position) throws SqlException {
+    private static void expandRollup(QueryModel model, int startIdx, int rollupColumnCount, int position, int maxGroupingSets) throws SqlException {
         int totalSets = rollupColumnCount + 1;
-        if (totalSets > MAX_GROUPING_SETS) {
+        if (totalSets > maxGroupingSets) {
             throw SqlException.$(position, "ROLLUP produces too many grouping sets (")
-                    .put(totalSets).put(", maximum ").put(MAX_GROUPING_SETS).put(')');
+                    .put(totalSets).put(", maximum ").put(maxGroupingSets).put(')');
         }
         // N+1 sets: from all columns down to empty set
         for (int setSize = rollupColumnCount; setSize >= 0; setSize--) {
@@ -970,11 +977,11 @@ public class SqlParser {
      * Expands ROLLUP with composite plain columns prepended to every set.
      * GROUP BY a, ROLLUP(b, c) -> sets: (a,b,c), (a,b), (a).
      */
-    private static void expandRollupComposite(QueryModel model, int plainCount, int rollupStart, int rollupColumnCount, int position) throws SqlException {
+    private static void expandRollupComposite(QueryModel model, int plainCount, int rollupStart, int rollupColumnCount, int position, int maxGroupingSets) throws SqlException {
         int totalSets = rollupColumnCount + 1;
-        if (totalSets > MAX_GROUPING_SETS) {
+        if (totalSets > maxGroupingSets) {
             throw SqlException.$(position, "ROLLUP produces too many grouping sets (")
-                    .put(totalSets).put(", maximum ").put(MAX_GROUPING_SETS).put(')');
+                    .put(totalSets).put(", maximum ").put(maxGroupingSets).put(')');
         }
         for (int setSize = rollupColumnCount; setSize >= 0; setSize--) {
             IntList set = new IntList();
@@ -3002,6 +3009,7 @@ public class SqlParser {
             // support SAMPLE BY 1h ROLLUP(symbol, side)
             if (tok != null && (isRollupKeyword(tok) || isCubeKeyword(tok))) {
                 int kwPos = lexer.lastTokenPosition();
+                guardAgainstLatestOnWithGroupingSets(model, kwPos);
                 boolean isRollup = isRollupKeyword(tok);
                 ObjList<ExpressionNode> columnList = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
                 if (columnList.size() == 0) {
@@ -3016,13 +3024,15 @@ public class SqlParser {
                 for (int i = 0, n = columnList.size(); i < n; i++) {
                     model.addGroupBy(columnList.getQuick(i));
                 }
+                int maxSets = configuration.getSqlMaxGroupingSets();
                 if (isRollup) {
-                    expandRollup(model, startIdx, columnList.size(), kwPos);
+                    expandRollup(model, startIdx, columnList.size(), kwPos, maxSets);
                 } else {
-                    expandCube(model, startIdx, columnList.size(), kwPos);
+                    expandCube(model, startIdx, columnList.size(), kwPos, maxSets);
                 }
                 tok = optTok(lexer);
             } else if (tok != null && isGroupingKeyword(tok)) {
+                guardAgainstLatestOnWithGroupingSets(model, lexer.lastTokenPosition());
                 CharSequence next = tok(lexer, "'SETS'");
                 if (!isSetsKeyword(next)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "expected SETS after GROUPING");
@@ -3375,6 +3385,7 @@ public class SqlParser {
         // Check for ROLLUP/CUBE/GROUPING SETS as the first token
         if (isRollupKeyword(tok) || isCubeKeyword(tok)) {
             int kwPos = lexer.lastTokenPosition();
+            guardAgainstLatestOnWithGroupingSets(model, kwPos);
             boolean isRollup = isRollupKeyword(tok);
             ObjList<ExpressionNode> columns = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
             if (columns.size() == 0) {
@@ -3388,16 +3399,18 @@ public class SqlParser {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 model.addGroupBy(columns.getQuick(i));
             }
+            int maxSets = configuration.getSqlMaxGroupingSets();
             if (isRollup) {
-                expandRollup(model, 0, columns.size(), kwPos);
+                expandRollup(model, 0, columns.size(), kwPos, maxSets);
             } else {
-                expandCube(model, 0, columns.size(), kwPos);
+                expandCube(model, 0, columns.size(), kwPos, maxSets);
             }
             return optTok(lexer);
         }
 
         if (isGroupingKeyword(tok)) {
             int kwPos = lexer.lastTokenPosition();
+            guardAgainstLatestOnWithGroupingSets(model, kwPos);
             tok = optTok(lexer);
             if (tok == null || !isSetsKeyword(tok)) {
                 throw SqlException.$(kwPos, "expected SETS after GROUPING");
@@ -3414,6 +3427,7 @@ public class SqlParser {
             // Check if the current token is ROLLUP/CUBE (composite syntax)
             if (isRollupKeyword(tok) || isCubeKeyword(tok)) {
                 int kwPos = lexer.lastTokenPosition();
+                guardAgainstLatestOnWithGroupingSets(model, kwPos);
                 boolean isRollup = isRollupKeyword(tok);
                 int plainCount = plainColumns.size();
                 for (int i = 0; i < plainCount; i++) {
@@ -3433,10 +3447,11 @@ public class SqlParser {
                 }
                 // Check all columns (plain + rollup) for mixed qualification
                 checkMixedQualification(model.getGroupBy());
+                int maxSets = configuration.getSqlMaxGroupingSets();
                 if (isRollup) {
-                    expandRollupComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos);
+                    expandRollupComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos, maxSets);
                 } else {
-                    expandCubeComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos);
+                    expandCubeComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos, maxSets);
                 }
                 return optTok(lexer);
             }
@@ -3527,8 +3542,9 @@ public class SqlParser {
                 } while (true);
             }
             model.addGroupingSet(setIndices);
-            if (model.getGroupingSets().size() > MAX_GROUPING_SETS) {
-                throw SqlException.$(lexer.lastTokenPosition(), "too many grouping sets (maximum " + MAX_GROUPING_SETS + ")");
+            int maxSets = configuration.getSqlMaxGroupingSets();
+            if (model.getGroupingSets().size() > maxSets) {
+                throw SqlException.$(lexer.lastTokenPosition(), "too many grouping sets (maximum " + maxSets + ")");
             }
 
             // Use SqlUtil.fetchNext to avoid subQueryMode swallowing ')'
