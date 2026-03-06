@@ -49,3 +49,59 @@ steps:
       cargo fmt --check
     displayName: "qdbr: cargo fmt"
     condition: ${{ parameters.shouldRun }}
+
+  # ── Rust coverage collection ──────────────────────────────────────────
+  # Run all Rust tests with coverage instrumentation and upload the raw
+  # profraw files. The CoverageReports stage merges them with Java runs.
+  - bash: |
+      set -eux
+      mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw
+      export RUSTFLAGS="-C instrument-coverage -D warnings"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdb-core-%p-%m.profraw"
+      cd core/rust/qdb-core
+      cargo test --all-targets --no-fail-fast
+    displayName: "qdb-core: cargo test (coverage)"
+    condition: |
+      and(
+        ${{ parameters.shouldRun }},
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+
+  - bash: |
+      set -eux
+      mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw
+      export RUSTFLAGS="-C instrument-coverage -D warnings"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdbr-%p-%m.profraw"
+      cd core/rust/qdbr
+      cargo test --all-targets --no-fail-fast
+    displayName: "qdbr: cargo test (coverage)"
+    condition: |
+      and(
+        ${{ parameters.shouldRun }},
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+
+  - bash: |
+      set -eux
+      mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw
+      export RUSTFLAGS="-C instrument-coverage -D warnings"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/parquet2-%p-%m.profraw"
+      cd core/rust/qdbr/parquet2
+      cargo test --all-targets --no-fail-fast
+    displayName: "parquet2: cargo test (coverage)"
+    condition: |
+      and(
+        ${{ parameters.shouldRun }},
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+
+  - task: PublishBuildArtifacts@1
+    displayName: "Upload Rust lint coverage profraw files"
+    condition: |
+      and(
+        ${{ parameters.shouldRun }},
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+    inputs:
+      pathToPublish: $(Build.SourcesDirectory)/rust-lint-profraw
+      artifactName: rust-llvm-coverage

@@ -183,6 +183,7 @@ stages:
     dependsOn:
       - CheckChanges
       - SelfHostedRunTestsCoverageBranches
+      - JavaAndRustLint
     jobs:
       - job: CoverageReport
         displayName: "Coverage Report"
@@ -251,8 +252,12 @@ stages:
               export PATH=$LLVM_TOOLS_PATH:$PATH
               ls -al $(Pipeline.Workspace)/rust-llvm-coverage
 
-              # Merge partial profdata files from all jobs into the complete report
-              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
+              # Merge partial profdata files and raw profraw files from all jobs
+              MERGE_INPUTS=( $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata )
+              if ls $(Pipeline.Workspace)/rust-llvm-coverage/rust-lint-profraw/*.profraw 1>/dev/null 2>&1; then
+                MERGE_INPUTS+=( $(Pipeline.Workspace)/rust-llvm-coverage/rust-lint-profraw/*.profraw )
+              fi
+              llvm-profdata merge -sparse -o questdbr.profdata "${MERGE_INPUTS[@]}"
 
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
               if [ ! -d "$COVERAGE_DIR/deps" ]; then
