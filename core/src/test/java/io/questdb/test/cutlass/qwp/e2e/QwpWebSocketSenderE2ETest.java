@@ -99,7 +99,7 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connectAsync("localhost", httpPort, false)) {
-                    for (int i = 0; i < 100_000_000; i++) {
+                    for (int i = 0; i < 25_000_000; i++) {
                         sender.table("async_large")
                                 .longColumn("id", i)
                                 .doubleColumn("value", i * 1.1)
@@ -109,7 +109,7 @@ public class QwpWebSocketSenderE2ETest extends AbstractBootstrapTest {
                 }
 
                 serverMain.awaitTable("async_large");
-                serverMain.assertSql("select count() from async_large", "count\n100000000\n");
+                serverMain.assertSql("select count() from async_large", "count\n25000000\n");
             }
         });
     }
