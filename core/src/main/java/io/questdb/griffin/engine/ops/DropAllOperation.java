@@ -15,7 +15,7 @@ import org.jetbrains.annotations.Nullable;
 public class DropAllOperation implements Operation {
     public static final DropAllOperation INSTANCE = new DropAllOperation();
 
-    protected DropAllOperation() {
+    private DropAllOperation() {
     }
 
     @Override

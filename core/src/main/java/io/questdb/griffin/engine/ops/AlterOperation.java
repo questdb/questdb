@@ -729,20 +729,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.squashPartitions();
     }
 
-    protected CairoEngine getCairoEngine() {
+    private CairoEngine getCairoEngine() {
         assert sqlExecutionContext != null;
         return sqlExecutionContext.getCairoEngine();
     }
 
-    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+    private AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
         return new AlterOperation(extraInfo, extraStrInfo);
     }
 
-    protected void removeColumn(MetadataService svc, CharSequence columnName) {
+    private void removeColumn(MetadataService svc, CharSequence columnName) {
         svc.removeColumn(columnName, securityContext);
     }
 
-    protected interface CharSequenceList extends Mutable {
+    private interface CharSequenceList extends Mutable {
         CharSequence getStrA(int i);
 
         CharSequence getStrB(int i);

@@ -45,7 +45,7 @@ public class AlterOperationBuilder implements Mutable {
 
     // the builder and the operation it builds share the extraInfo list
     public AlterOperationBuilder() {
-        this.op = createAlterOperation(extraInfo, extraStrInfo);
+        this.op = new AlterOperation(extraInfo, extraStrInfo);
     }
 
     public void addColumnToList(
@@ -327,9 +327,5 @@ public class AlterOperationBuilder implements Mutable {
 
     public void setDedupKeyFlag(int writerColumnIndex) {
         extraInfo.add(writerColumnIndex);
-    }
-
-    protected AlterOperation createAlterOperation(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
-        return new AlterOperation(extraInfo, extraStrInfo);
     }
 }
