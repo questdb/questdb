@@ -25,8 +25,6 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8String;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 
@@ -43,7 +41,6 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  */
 public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
 
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private double currentDouble;   // For FLOAT, DOUBLE
     private boolean currentIsNull;
     // Current value storage (to avoid reading twice)
@@ -88,7 +85,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        nameUtf8.clear();
         typeCode = 0;
         nullable = false;
         rowCount = 0;
@@ -171,11 +167,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
      */
     public long getLong256_3() {
         return currentLong256_3;
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
     }
 
     /**
@@ -281,21 +272,21 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
      * Initializes this cursor for the given column data.
      *
      * @param dataAddress address of column data (starts at null bitmap if nullable, else values)
-     * @param dataLength  available bytes
      * @param rowCount    number of rows
      * @param typeCode    column type code
      * @param nullable    whether column is nullable
-     * @param nameAddress address of column name UTF-8 bytes
-     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
-                  long nameAddress, int nameLength) {
+    public int of(
+            long dataAddress,
+            int rowCount,
+            byte typeCode,
+            boolean nullable
+    ) {
         this.typeCode = typeCode;
         this.nullable = nullable;
         this.rowCount = rowCount;
         this.valueSize = QwpConstants.getFixedTypeSize(typeCode);
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength);
 
         int offset = 0;
         int nullCount = 0;

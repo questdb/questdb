@@ -25,7 +25,6 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Mutable;
-import io.questdb.std.str.DirectUtf8Sequence;
 
 /**
  * Base interface for streaming column cursors in ILP v4.
@@ -72,16 +71,6 @@ public interface QwpColumnCursor extends Mutable {
      * @return current row index
      */
     int getCurrentRow();
-
-    /**
-     * Returns the column name as a UTF-8 sequence.
-     * <p>
-     * The returned sequence is a flyweight pointing to wire memory.
-     * Valid until cursor is cleared or reinitialized.
-     *
-     * @return column name as UTF-8 sequence
-     */
-    DirectUtf8Sequence getNameUtf8();
 
     /**
      * Returns the ILP v4 type code for this column.

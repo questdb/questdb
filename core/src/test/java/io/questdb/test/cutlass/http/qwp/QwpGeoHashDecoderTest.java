@@ -79,7 +79,7 @@ public class QwpGeoHashDecoderTest {
 
             // Initialize cursor
             QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
-            int consumed = cursor.of(address, allocSize, rowCount, true, 0, 0);
+            int consumed = cursor.of(address, allocSize, rowCount, true);
 
             // Verify bytes consumed matches packed format
             Assert.assertEquals("Bytes consumed should match packed format size", packedSize, consumed);

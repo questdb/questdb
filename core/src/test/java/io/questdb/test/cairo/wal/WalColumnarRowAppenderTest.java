@@ -723,9 +723,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 1 + 8 + 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
 
-            byte[] nameBytes = "extra_ts".getBytes(StandardCharsets.UTF_8);
-            long nameAddress = Unsafe.malloc(nameBytes.length, MemoryTag.NATIVE_DEFAULT);
-
             try {
                 // Write Gorilla encoding flag
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 0x01); // ENCODING_GORILLA
@@ -734,14 +731,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(dataAddress + 1, timestamps[0]);
                 Unsafe.getUnsafe().putLong(dataAddress + 9, timestamps[1]);
 
-                // Write name
-                for (int i = 0; i < nameBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(nameAddress + i, nameBytes[i]);
-                }
-
                 // Initialize cursor with gorillaEnabled=true
                 tsCursor.of(dataAddress, dataLength, 2, QwpConstants.TYPE_TIMESTAMP,
-                        false, nameAddress, nameBytes.length, true);
+                        false, true);
 
                 // Verify Gorilla encoding is detected
                 assertFalse("Gorilla-encoded timestamp should NOT support direct access",
@@ -756,7 +748,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(nameAddress, nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -781,9 +772,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 32; // 4 longs
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
 
-            byte[] nameBytes = "long256_col".getBytes(StandardCharsets.UTF_8);
-            long nameAddress = Unsafe.malloc(nameBytes.length, MemoryTag.NATIVE_DEFAULT);
-
             try {
                 // Write in little-endian order
                 Unsafe.getUnsafe().putLong(dataAddress, expected0);
@@ -791,14 +779,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(dataAddress + 16, expected2);
                 Unsafe.getUnsafe().putLong(dataAddress + 24, expected3);
 
-                // Write name
-                for (int i = 0; i < nameBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(nameAddress + i, nameBytes[i]);
-                }
-
                 // Initialize cursor
-                cursor.of(dataAddress, dataLength, 1, QwpConstants.TYPE_LONG256,
-                        false, nameAddress, nameBytes.length);
+                cursor.of(dataAddress, 1, QwpConstants.TYPE_LONG256,
+                        false);
 
                 // Read and verify
                 cursor.advanceRow();
@@ -816,7 +799,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(nameAddress, nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -1093,8 +1075,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Wire format: [scale: 1 byte][values: rowCount * 32 bytes, big-endian]
             int dataLength = 1 + rowCount * 32;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            byte[] nameBytes = "value".getBytes(StandardCharsets.UTF_8);
-            long nameAddress = Unsafe.malloc(nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 2);
                 // Value 1: 12345 (= 123.45), sign-extended to 256-bit big-endian (hh, hl, lh, ll)
@@ -1110,13 +1090,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(dataAddress + offset + 16, Long.reverseBytes(-1L));
                 Unsafe.getUnsafe().putLong(dataAddress + offset + 24, Long.reverseBytes(-9999L));
 
-                for (int i = 0; i < nameBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(nameAddress + i, nameBytes[i]);
-                }
-
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL256,
-                        false, nameAddress, nameBytes.length);
+                        false);
 
                 long[] timestamps = makeTimestamps(rowCount);
 
@@ -1142,7 +1118,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 );
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(nameAddress, nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -1161,21 +1136,15 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // Wire format: [scale: 1 byte][values: rowCount * 8 bytes, big-endian]
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            byte[] nameBytes = "value".getBytes(StandardCharsets.UTF_8);
-            long nameAddress = Unsafe.malloc(nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 2);
                 // Values: 12345 (= 123.45), -9999 (= -99.99) in big-endian
                 Unsafe.getUnsafe().putLong(dataAddress + 1, Long.reverseBytes(12345L));
                 Unsafe.getUnsafe().putLong(dataAddress + 9, Long.reverseBytes(-9999L));
 
-                for (int i = 0; i < nameBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(nameAddress + i, nameBytes[i]);
-                }
-
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64,
-                        false, nameAddress, nameBytes.length);
+                        false);
 
                 long[] timestamps = makeTimestamps(rowCount);
 
@@ -1201,7 +1170,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 );
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(nameAddress, nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -1220,8 +1188,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int rowCount = 2;
             int dataLength = 1 + rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            byte[] nameBytes = "value".getBytes(StandardCharsets.UTF_8);
-            long nameAddress = Unsafe.malloc(nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 // Wire scale = 2
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 2);
@@ -1229,13 +1195,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putLong(dataAddress + 1, Long.reverseBytes(12345L));
                 Unsafe.getUnsafe().putLong(dataAddress + 9, Long.reverseBytes(-9999L));
 
-                for (int i = 0; i < nameBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(nameAddress + i, nameBytes[i]);
-                }
-
                 QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
                 cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64,
-                        false, nameAddress, nameBytes.length);
+                        false);
 
                 long[] timestamps = makeTimestamps(rowCount);
 
@@ -1261,7 +1223,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 );
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(nameAddress, nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -2855,19 +2816,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             int dataLength = rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            byte[] nameBytes = "value".getBytes(StandardCharsets.UTF_8);
-            long nameAddress = Unsafe.malloc(nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putDouble(dataAddress + (long) i * 8, values[i]);
                 }
-                for (int i = 0; i < nameBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(nameAddress + i, nameBytes[i]);
-                }
 
                 QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DOUBLE,
-                        false, nameAddress, nameBytes.length);
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DOUBLE,
+                        false);
 
                 long[] timestamps = makeTimestamps(rowCount);
 
@@ -2896,7 +2852,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 );
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(nameAddress, nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -2915,17 +2870,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int rowCount = 1;
             int dataLength = rowCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            byte[] nameBytes = "value".getBytes(StandardCharsets.UTF_8);
-            long nameAddress = Unsafe.malloc(nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putDouble(dataAddress, 1.25);
-                for (int i = 0; i < nameBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(nameAddress + i, nameBytes[i]);
-                }
 
                 QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DOUBLE,
-                        false, nameAddress, nameBytes.length);
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DOUBLE,
+                        false);
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
@@ -2941,7 +2891,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(nameAddress, nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -2964,8 +2913,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int dataLength = bitmapSize + valueCount * 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-            byte[] nameBytes = "value".getBytes(StandardCharsets.UTF_8);
-            long nameAddress = Unsafe.malloc(nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             try {
                 QwpNullBitmap.fillNoneNull(dataAddress, rowCount);
                 QwpNullBitmap.setNull(dataAddress, 0);
@@ -2975,13 +2922,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 for (int i = 0; i < valueCount; i++) {
                     Unsafe.getUnsafe().putDouble(valuesStart + (long) i * 8, nonNullValues[i]);
                 }
-                for (int i = 0; i < nameBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(nameAddress + i, nameBytes[i]);
-                }
 
                 QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
-                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DOUBLE,
-                        true, nameAddress, nameBytes.length);
+                cursor.of(dataAddress, rowCount, QwpConstants.TYPE_DOUBLE,
+                        true);
 
                 long[] timestamps = makeTimestamps(rowCount);
 
@@ -3009,7 +2953,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 );
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(nameAddress, nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -3960,22 +3903,14 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int dataLength = 16; // 2 longs
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
 
-            byte[] nameBytes = "uuid_col".getBytes(StandardCharsets.UTF_8);
-            long nameAddress = Unsafe.malloc(nameBytes.length, MemoryTag.NATIVE_DEFAULT);
-
             try {
                 // Write in little-endian order: lo first, then hi
                 Unsafe.getUnsafe().putLong(dataAddress, expectedLo);
                 Unsafe.getUnsafe().putLong(dataAddress + 8, expectedHi);
 
-                // Write name
-                for (int i = 0; i < nameBytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(nameAddress + i, nameBytes[i]);
-                }
-
                 // Initialize cursor
-                cursor.of(dataAddress, dataLength, 1, QwpConstants.TYPE_UUID,
-                        false, nameAddress, nameBytes.length);
+                cursor.of(dataAddress, 1, QwpConstants.TYPE_UUID,
+                        false);
 
                 // Read and verify
                 cursor.advanceRow();
@@ -3988,7 +3923,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(nameAddress, nameBytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -4030,8 +3964,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         final QwpBooleanColumnCursor cursor = new QwpBooleanColumnCursor();
         long dataAddress;
         int dataLength;
-        long nameAddress;
-        int nameLength;
 
         BooleanColumnWireFormat(Boolean[] values, boolean nullable) {
             int rowCount = values.length;
@@ -4081,22 +4013,13 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
             }
 
-            // Prepare name
-            byte[] name = "col".getBytes(StandardCharsets.UTF_8);
-            nameLength = name.length;
-            nameAddress = Unsafe.malloc(nameLength, MemoryTag.NATIVE_DEFAULT);
-            for (int i = 0; i < nameLength; i++) {
-                Unsafe.getUnsafe().putByte(nameAddress + i, name[i]);
-            }
-
             // Initialize cursor
-            cursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength);
+            cursor.of(dataAddress, rowCount, nullable);
         }
 
         @Override
         public void close() {
             Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(nameAddress, nameLength, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -4111,8 +4034,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         final QwpStringColumnCursor cursor = new QwpStringColumnCursor();
         long dataAddress;
         int dataLength;
-        long nameAddress;
-        int nameLength;
 
         StringColumnWireFormat(String[] values, boolean nullable) {
             // Calculate null count and prepare byte arrays
@@ -4175,22 +4096,13 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
             Unsafe.getUnsafe().putInt(offsetArrayAddr + (long) valueCount * 4, stringOffset);
 
-            // Prepare name
-            byte[] name = "col".getBytes(StandardCharsets.UTF_8);
-            nameLength = name.length;
-            nameAddress = Unsafe.malloc(nameLength, MemoryTag.NATIVE_DEFAULT);
-            for (int i = 0; i < nameLength; i++) {
-                Unsafe.getUnsafe().putByte(nameAddress + i, name[i]);
-            }
-
             // Initialize cursor
-            cursor.of(dataAddress, dataLength, rowCount, (byte) 0x07, nullable, nameAddress, nameLength);
+            cursor.of(dataAddress, dataLength, rowCount, (byte) 0x07, nullable);
         }
 
         @Override
         public void close() {
             Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(nameAddress, nameLength, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -4206,8 +4118,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         final QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
         long dataAddress;
         int dataLength;
-        long nameAddress;
-        int nameLength;
 
         SymbolColumnWireFormat(String[] values, boolean nullable) throws QwpParseException {
             int rowCount = values.length;
@@ -4284,22 +4194,13 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
             }
 
-            // Prepare name
-            byte[] name = "col".getBytes(StandardCharsets.UTF_8);
-            nameLength = name.length;
-            nameAddress = Unsafe.malloc(nameLength, MemoryTag.NATIVE_DEFAULT);
-            for (int i = 0; i < nameLength; i++) {
-                Unsafe.getUnsafe().putByte(nameAddress + i, name[i]);
-            }
-
             // Initialize cursor
-            cursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength);
+            cursor.of(dataAddress, dataLength, rowCount, nullable);
         }
 
         @Override
         public void close() {
             Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(nameAddress, nameLength, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }

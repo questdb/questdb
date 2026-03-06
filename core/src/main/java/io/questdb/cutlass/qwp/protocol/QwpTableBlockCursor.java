@@ -328,20 +328,22 @@ public class QwpTableBlockCursor implements Mutable {
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
-    public int of(long dataAddress, int dataLength, boolean gorillaEnabled, QwpSchemaCache schemaCache,
-                  ObjList<String> connectionSymbolDict, boolean deltaSymbolDictEnabled)
-            throws QwpParseException {
+    public int of(
+            long dataAddress,
+            int dataLength,
+            boolean gorillaEnabled,
+            QwpSchemaCache schemaCache,
+            ObjList<String> connectionSymbolDict,
+            boolean deltaSymbolDictEnabled
+    ) throws QwpParseException {
         this.gorillaEnabled = gorillaEnabled;
         this.schemaCache = schemaCache;
         this.connectionSymbolDict = connectionSymbolDict;
         this.deltaSymbolDictEnabled = deltaSymbolDictEnabled;
 
-        int offset = 0;
-        long limit = dataAddress + dataLength;
-
         // Parse table header
         tableHeader.parse(dataAddress, dataLength);
-        offset = tableHeader.getBytesConsumed();
+        int offset = tableHeader.getBytesConsumed();
 
         this.rowCount = (int) tableHeader.getRowCount();
         this.columnCount = tableHeader.getColumnCount();
@@ -397,9 +399,7 @@ public class QwpTableBlockCursor implements Mutable {
                     dataLength - offset,
                     rowCount,
                     typeCode,
-                    nullable,
-                    0,
-                    0  // Column mapping uses index-based lookup
+                    nullable
             );
             offset += consumed;
         }
@@ -444,11 +444,8 @@ public class QwpTableBlockCursor implements Mutable {
             int dataLength,
             int rowCount,
             byte typeCode,
-            boolean nullable,
-            long nameAddress,
-            int nameLength
-    )
-            throws QwpParseException {
+            boolean nullable
+    ) throws QwpParseException {
         int type = typeCode & TYPE_MASK;
 
         QwpColumnCursor cursor = columnCursors.getQuick(colIndex);
@@ -463,7 +460,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, boolCursor);
                 }
                 booleanColumnIndices[booleanColumnCount++] = colIndex;
-                return boolCursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength);
+                return boolCursor.of(dataAddress, rowCount, nullable);
 
             case TYPE_BYTE:
             case TYPE_SHORT:
@@ -483,7 +480,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, fixedCursor);
                 }
                 fixedWidthColumnIndices[fixedWidthColumnCount++] = colIndex;
-                return fixedCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength);
+                return fixedCursor.of(dataAddress, rowCount, typeCode, nullable);
 
             case TYPE_TIMESTAMP:
             case TYPE_TIMESTAMP_NANOS:
@@ -495,7 +492,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, tsCursor);
                 }
                 timestampColumnIndices[timestampColumnCount++] = colIndex;
-                return tsCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength, gorillaEnabled);
+                return tsCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, gorillaEnabled);
 
             case TYPE_STRING:
             case TYPE_VARCHAR:
@@ -507,7 +504,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, strCursor);
                 }
                 stringColumnIndices[stringColumnCount++] = colIndex;
-                return strCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength);
+                return strCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
 
             case TYPE_SYMBOL:
                 QwpSymbolColumnCursor symCursor;
@@ -520,7 +517,7 @@ public class QwpTableBlockCursor implements Mutable {
                 symbolColumnIndices[symbolColumnCount++] = colIndex;
                 // In delta mode, pass connection dictionary; otherwise null (per-column dict)
                 ObjList<String> dictForSymbol = deltaSymbolDictEnabled ? connectionSymbolDict : null;
-                return symCursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength, dictForSymbol);
+                return symCursor.of(dataAddress, dataLength, rowCount, nullable, dictForSymbol);
 
             case TYPE_GEOHASH:
                 QwpGeoHashColumnCursor geoCursor;
@@ -531,7 +528,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, geoCursor);
                 }
                 geoHashColumnIndices[geoHashColumnCount++] = colIndex;
-                return geoCursor.of(dataAddress, dataLength, rowCount, nullable, nameAddress, nameLength);
+                return geoCursor.of(dataAddress, dataLength, rowCount, nullable);
 
             case TYPE_DOUBLE_ARRAY:
             case TYPE_LONG_ARRAY:
@@ -543,7 +540,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, arrCursor);
                 }
                 arrayColumnIndices[arrayColumnCount++] = colIndex;
-                return arrCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength);
+                return arrCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
 
             case TYPE_DECIMAL64:
             case TYPE_DECIMAL128:
@@ -556,7 +553,7 @@ public class QwpTableBlockCursor implements Mutable {
                     columnCursors.setQuick(colIndex, decCursor);
                 }
                 decimalColumnIndices[decimalColumnCount++] = colIndex;
-                return decCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable, nameAddress, nameLength);
+                return decCursor.of(dataAddress, dataLength, rowCount, typeCode, nullable);
 
             default:
                 throw QwpParseException.create(

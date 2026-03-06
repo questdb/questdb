@@ -25,8 +25,6 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8String;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
 
@@ -43,7 +41,6 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
 public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
 
     private final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private long currentGeoHash;
     private boolean currentIsNull;
     // Iteration state
@@ -81,7 +78,6 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        nameUtf8.clear();
         nullable = false;
         rowCount = 0;
         precision = 0;
@@ -101,11 +97,6 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
      */
     public long getGeoHash() {
         return currentGeoHash;
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
     }
 
     /**
@@ -137,16 +128,12 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
      * @param dataLength  available bytes
      * @param rowCount    number of rows
      * @param nullable    whether column is nullable
-     * @param nameAddress address of column name UTF-8 bytes
-     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if parsing fails
      */
-    public int of(long dataAddress, int dataLength, int rowCount, boolean nullable,
-                  long nameAddress, int nameLength) throws QwpParseException {
+    public int of(long dataAddress, int dataLength, int rowCount, boolean nullable) throws QwpParseException {
         this.nullable = nullable;
         this.rowCount = rowCount;
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength);
 
         int offset = 0;
         int nullCount = 0;

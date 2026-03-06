@@ -46,7 +46,6 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_STRING;
  */
 public final class QwpStringColumnCursor implements QwpColumnCursor {
 
-    private final DirectUtf8String nameUtf8 = new DirectUtf8String();
     private final DirectUtf8String valueUtf8 = new DirectUtf8String(); // Flyweight for current value
     private boolean currentIsNull;
     // Iteration state
@@ -90,7 +89,6 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
 
     @Override
     public void clear() {
-        nameUtf8.clear();
         valueUtf8.clear();
         typeCode = TYPE_STRING;
         nullable = false;
@@ -104,11 +102,6 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     @Override
     public int getCurrentRow() {
         return currentRow;
-    }
-
-    @Override
-    public DirectUtf8Sequence getNameUtf8() {
-        return nameUtf8;
     }
 
     /**
@@ -161,16 +154,12 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
      * @param rowCount    number of rows
      * @param typeCode    column type code (TYPE_STRING or TYPE_VARCHAR)
      * @param nullable    whether column is nullable
-     * @param nameAddress address of column name UTF-8 bytes
-     * @param nameLength  column name length in bytes
      * @return bytes consumed from dataAddress
      */
-    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable,
-                  long nameAddress, int nameLength) {
+    public int of(long dataAddress, int dataLength, int rowCount, byte typeCode, boolean nullable) {
         this.typeCode = typeCode;
         this.nullable = nullable;
         this.rowCount = rowCount;
-        this.nameUtf8.of(nameAddress, nameAddress + nameLength, Utf8s.isAscii(nameAddress, nameLength));
 
         int offset = 0;
         int nullCount = 0;
