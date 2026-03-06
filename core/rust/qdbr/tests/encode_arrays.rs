@@ -25,8 +25,8 @@ fn build_1d_double_arrays(nulls: &[bool]) -> (Vec<u8>, Vec<u8>, Vec<Option<Vec<f
     let mut aux = Vec::new();
     let mut expected: Vec<Option<Vec<f64>>> = Vec::with_capacity(count);
 
-    for i in 0..count {
-        if nulls[i] {
+    for (i, null) in nulls.iter().enumerate().take(COUNT) {
+        if *null {
             // Null array: offset = primary.len(), size = 0
             let offset = primary.len() as u64;
             let size = 0u32;
@@ -46,9 +46,7 @@ fn build_1d_double_arrays(nulls: &[bool]) -> (Vec<u8>, Vec<u8>, Vec<Option<Vec<f
             primary.extend_from_slice(&(elem_count as u32).to_le_bytes());
             // Pad to 8-byte alignment
             let padding = data_offset - shape_size;
-            for _ in 0..padding {
-                primary.push(0);
-            }
+            primary.extend(std::iter::repeat_n(0, padding));
 
             let mut values = Vec::with_capacity(elem_count);
             for j in 0..elem_count {

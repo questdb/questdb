@@ -22,7 +22,7 @@ fn test_encode_string() {
     for encoding in &STRING_ENCODINGS {
         for null_pattern in &ALL_NULL_PATTERNS {
             let nulls = generate_nulls(COUNT, *null_pattern);
-            let values: Vec<String> = (0..COUNT).map(|i| expected_str_value(i)).collect();
+            let values: Vec<String> = (0..COUNT).map(expected_str_value).collect();
             let value_refs: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
 
             let (primary, offsets) = build_qdb_string_data(&value_refs, &nulls);

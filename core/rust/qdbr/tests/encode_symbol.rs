@@ -23,8 +23,8 @@ fn test_encode_symbol() {
         let mut keys: Vec<i32> = Vec::with_capacity(COUNT);
         let mut expected: Vec<Option<&str>> = Vec::with_capacity(COUNT);
         let mut val_idx = 0;
-        for i in 0..COUNT {
-            if nulls[i] {
+        for null in nulls.iter().take(COUNT) {
+            if *null {
                 keys.push(i32::MIN); // Symbol null sentinel
                 expected.push(None);
             } else {
