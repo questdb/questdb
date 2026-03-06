@@ -155,10 +155,6 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
         return partitionCeilings.getQuick(index);
     }
 
-    public LongList getPartitionCeilings() {
-        return partitionCeilings;
-    }
-
     public int getPartitionCount() {
         return partitionCount;
     }
