@@ -62,8 +62,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int sharedQueryWorkerCount;
     private int cachedRowGroupIndex;
     private long cachedRowGroupStartRow;
-    private long filterBufEnd;
-    private boolean isFilterListPrepared;
+    private long filterBufEnd = -1;
     // Track the lowest partition index that has not been released yet
     private int lowestOpenPartitionIndex = 0;
     private int pageFrameMaxRows;
@@ -235,6 +234,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         lowestOpenPartitionIndex = 0;
         cachedRowGroupIndex = 0;
         cachedRowGroupStartRow = 0;
+        filterBufEnd = -1;
         clearAddresses();
     }
 
@@ -338,7 +338,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             final long rowGroupEndRow = rowGroupStartRow + rowGroupSize;
 
             if (partitionLo < rowGroupEndRow) {
-                if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
+                if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
                         i, reenterParquetDecoder, filterList, filterBufEnd)) {
                     partitionLo = rowGroupEndRow;
                     if (partitionLo >= partitionHi) {
@@ -391,9 +391,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             cachedRowGroupIndex = 0;
             cachedRowGroupStartRow = 0;
             assert reenterParquetDecoder != null;
-            isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues);
-            if (isFilterListPrepared) {
+            filterBufEnd = -1;
+            if (filterList != null && ParquetRowGroupFilter.prepareFilterList(
+                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues)) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }
             return computeParquetFrame(lo, hi);
