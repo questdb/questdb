@@ -86,6 +86,7 @@ steps:
       mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw
       export RUSTFLAGS="-C instrument-coverage -D warnings"
       export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/parquet2-%p-%m.profraw"
+      export PARQUET2_IGNORE_PYARROW_TESTS=1
       cd core/rust/qdbr/parquet2
       cargo test --all-targets --no-fail-fast
     displayName: "parquet2: cargo test (coverage)"

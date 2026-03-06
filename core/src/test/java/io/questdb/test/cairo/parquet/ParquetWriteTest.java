@@ -44,6 +44,143 @@ import org.junit.Test;
 public class ParquetWriteTest extends AbstractCairoTest {
 
     @Test
+    public void testFooterCacheUsedInUpdateMode() throws Exception {
+        // Small row group size to produce multiple row groups.
+        // Disable rewrite: ratio=1.0 (impossible to exceed), max_bytes=Long.MAX_VALUE.
+        // This forces every O3 merge to use the UPDATE path, exercising footer_cache.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows with row group size 4 → 2 row groups.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            int rowGroupCountBefore;
+            try (TableReader reader = getReader("x")) {
+                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                    if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                        continue;
+                    }
+                    reader.openPartition(i);
+                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
+                    rowGroupCountBefore = decoder.metadata().getRowGroupCount();
+                    Assert.assertEquals("initial row group count", 2, rowGroupCountBefore);
+                }
+            }
+
+            // First O3: UPDATE mode. FooterCache parses the original footer,
+            // scans row group offsets, and appends a replacement row group.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (9, '2020-01-01T00:30:00.000Z'),
+                            (10, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            int rowGroupCountAfterFirst = 0;
+            long unusedAfterFirst = 0;
+            try (TableReader reader = getReader("x")) {
+                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                    if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                        continue;
+                    }
+                    reader.openPartition(i);
+                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
+                    rowGroupCountAfterFirst = decoder.metadata().getRowGroupCount();
+                    unusedAfterFirst = decoder.metadata().getUnusedBytes();
+                    Assert.assertTrue(
+                            "row group count should increase after first O3 update, was 2, got " + rowGroupCountAfterFirst,
+                            rowGroupCountAfterFirst > 2
+                    );
+                    Assert.assertTrue(
+                            "unused_bytes should be > 0 after first update, got " + unusedAfterFirst,
+                            unusedAfterFirst > 0
+                    );
+                }
+            }
+
+            // Second O3: UPDATE mode again. FooterCache re-parses the updated footer
+            // (which already contains dead space from the first update) and appends
+            // another replacement row group.
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (11, '2020-01-01T04:30:00.000Z'),
+                            (12, '2020-01-01T05:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            int rowGroupCountAfterSecond;
+            long unusedAfterSecond;
+            try (TableReader reader = getReader("x")) {
+                for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                    if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                        continue;
+                    }
+                    reader.openPartition(i);
+                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
+                    rowGroupCountAfterSecond = decoder.metadata().getRowGroupCount();
+                    unusedAfterSecond = decoder.metadata().getUnusedBytes();
+                    Assert.assertTrue(
+                            "row group count should increase after second O3 update, was " + rowGroupCountAfterFirst + ", got " + rowGroupCountAfterSecond,
+                            rowGroupCountAfterSecond > rowGroupCountAfterFirst
+                    );
+                    Assert.assertTrue(
+                            "unused_bytes should grow after second update, got " + unusedAfterSecond,
+                            unusedAfterSecond > unusedAfterFirst
+                    );
+                }
+            }
+
+            assertSql(
+                    """
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            9\t2020-01-01T00:30:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            10\t2020-01-01T01:30:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            11\t2020-01-01T04:30:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            12\t2020-01-01T05:30:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            100\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
     public void testO3AfterAddColumnSuspendsTable() throws Exception {
         assertMemoryLeak(() -> {
             execute(
