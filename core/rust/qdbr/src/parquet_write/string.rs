@@ -143,8 +143,7 @@ pub fn string_to_dict_pages(
     let mut is_not_null: Vec<bool> = Vec::with_capacity(offsets.len());
 
     for offset in offsets {
-        let offset =
-            usize::try_from(*offset).expect("invalid offset value in string aux column");
+        let offset = usize::try_from(*offset).expect("invalid offset value in string aux column");
         match get_utf16(&data[offset..]) {
             Some(utf16) => {
                 let next_id = dict_entries.len() as u32;

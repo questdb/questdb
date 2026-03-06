@@ -3,10 +3,9 @@ use std::collections::HashSet;
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, dict_pages_iter, encode_dict_rle_pages, encode_primitive_def_levels,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels,
 };
 use parquet2::bloom_filter::hash_byte;
-use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;

@@ -66,21 +66,11 @@ macro_rules! impl_verify_simple {
                 for (i, exp) in expected.iter().enumerate() {
                     match exp {
                         Some(v) => {
-                            assert!(
-                                !arr.is_null(i),
-                                "{ctx}: expected non-null at {i}"
-                            );
-                            assert_eq!(
-                                arr.value(i),
-                                *v,
-                                "{ctx}: mismatch at {i}"
-                            );
+                            assert!(!arr.is_null(i), "{ctx}: expected non-null at {i}");
+                            assert_eq!(arr.value(i), *v, "{ctx}: mismatch at {i}");
                         }
                         None => {
-                            assert!(
-                                arr.is_null(i),
-                                "{ctx}: expected null at {i}"
-                            );
+                            assert!(arr.is_null(i), "{ctx}: expected null at {i}");
                         }
                     }
                 }
@@ -108,10 +98,7 @@ macro_rules! impl_verify_float {
                 for (i, exp) in expected.iter().enumerate() {
                     match exp {
                         Some(v) => {
-                            assert!(
-                                !arr.is_null(i),
-                                "{ctx}: expected non-null at {i}"
-                            );
+                            assert!(!arr.is_null(i), "{ctx}: expected non-null at {i}");
                             assert_eq!(
                                 arr.value(i).to_bits(),
                                 v.to_bits(),
@@ -119,10 +106,7 @@ macro_rules! impl_verify_float {
                             );
                         }
                         None => {
-                            assert!(
-                                arr.is_null(i),
-                                "{ctx}: expected null at {i}"
-                            );
+                            assert!(arr.is_null(i), "{ctx}: expected null at {i}");
                         }
                     }
                 }
