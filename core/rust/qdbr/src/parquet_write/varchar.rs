@@ -505,6 +505,7 @@ mod tests {
             row_group_size: None,
             data_page_size: None,
             raw_array_encoding: false,
+            min_compression_ratio: 0.0,
         }
     }
 
