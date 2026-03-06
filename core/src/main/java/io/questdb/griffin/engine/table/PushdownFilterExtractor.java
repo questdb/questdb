@@ -104,7 +104,7 @@ public class PushdownFilterExtractor implements Mutable {
                 boolean allConstant = true;
                 for (int j = 0, m = values.size(); j < m; j++) {
                     ExpressionNode node = values.getQuick(j);
-                    if (containsQuery(node)) {
+                    if (containsQuery(stack, node)) {
                         allConstant = false;
                         break;
                     }
@@ -134,19 +134,25 @@ public class PushdownFilterExtractor implements Mutable {
         return result;
     }
 
-    private static boolean containsQuery(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.QUERY) {
-            return true;
-        }
-        if (containsQuery(node.lhs) || containsQuery(node.rhs)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (containsQuery(node.args.getQuick(i))) {
+    private static boolean containsQuery(ArrayDeque<ExpressionNode> stack, ExpressionNode node) {
+        stack.clear();
+        stack.push(node);
+        while (!stack.isEmpty()) {
+            ExpressionNode current = stack.poll();
+            if (current.type == ExpressionNode.QUERY) {
                 return true;
+            }
+            if (current.lhs != null) {
+                stack.push(current.lhs);
+            }
+            if (current.rhs != null) {
+                stack.push(current.rhs);
+            }
+            for (int i = 0, n = current.args.size(); i < n; i++) {
+                ExpressionNode arg = current.args.getQuick(i);
+                if (arg != null) {
+                    stack.push(arg);
+                }
             }
         }
         return false;
