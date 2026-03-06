@@ -702,6 +702,8 @@ fn try_encode_f64_rle<W: Write>(
 
     for chunk in probe_slice.chunks_exact(8) {
         let values = Simd::<f64, 8>::from_slice(chunk);
+        // SAFETY: Simd<f64, 8> and Simd<i64, 8> have identical size and alignment.
+        // Reinterprets float bits as integers for IEEE 754 NaN detection.
         let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
         let abs_bits = bits & sign_mask_vec;
         let is_not_nan = abs_bits.simd_le(infinity_vec);
@@ -779,6 +781,8 @@ fn scan_f64_verify_all_not_null<W: Write>(
     // Verify rest_slice (empty for small slices)
     for chunk in chunks {
         let values = Simd::<f64, 8>::from_slice(chunk);
+        // SAFETY: Simd<f64, 8> and Simd<i64, 8> have identical size and alignment.
+        // Reinterprets float bits as integers for IEEE 754 NaN detection.
         let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
         let abs_bits = bits & sign_mask_vec;
         let is_not_nan = abs_bits.simd_le(infinity_vec);
@@ -833,6 +837,8 @@ fn scan_f64_verify_all_null<W: Write>(
 
     for chunk in chunks {
         let values = Simd::<f64, 8>::from_slice(chunk);
+        // SAFETY: Simd<f64, 8> and Simd<i64, 8> have identical size and alignment.
+        // Reinterprets float bits as integers for IEEE 754 NaN detection.
         let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
         let abs_bits = bits & sign_mask_vec;
         let is_not_nan = abs_bits.simd_le(infinity_vec);
@@ -895,6 +901,8 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
     for chunk in chunks {
         let values = Simd::<f64, 8>::from_slice(chunk);
         // Bitwise NaN check: NOT NaN if abs_bits <= infinity
+        // SAFETY: Simd<f64, 8> and Simd<i64, 8> have identical size and alignment.
+        // Reinterprets float bits as integers for IEEE 754 NaN detection.
         let bits: Simd<i64, 8> = unsafe { std::mem::transmute(values) };
         let abs_bits = bits & sign_mask_vec;
         let is_not_nan = abs_bits.simd_le(infinity_vec);
@@ -988,6 +996,8 @@ fn try_encode_f32_rle<W: Write>(
 
     for chunk in probe_slice.chunks_exact(16) {
         let values = Simd::<f32, 16>::from_slice(chunk);
+        // SAFETY: Simd<f32, 16> and Simd<i32, 16> have identical size and alignment.
+        // Reinterprets float bits as integers for IEEE 754 NaN detection.
         let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
         let abs_bits = bits & sign_mask_vec;
         let is_not_nan = abs_bits.simd_le(infinity_vec);
@@ -1065,6 +1075,8 @@ fn scan_f32_verify_all_not_null<W: Write>(
     // Verify rest_slice (empty for small slices)
     for chunk in chunks {
         let values = Simd::<f32, 16>::from_slice(chunk);
+        // SAFETY: Simd<f32, 16> and Simd<i32, 16> have identical size and alignment.
+        // Reinterprets float bits as integers for IEEE 754 NaN detection.
         let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
         let abs_bits = bits & sign_mask_vec;
         let is_not_nan = abs_bits.simd_le(infinity_vec);
@@ -1119,6 +1131,8 @@ fn scan_f32_verify_all_null<W: Write>(
 
     for chunk in chunks {
         let values = Simd::<f32, 16>::from_slice(chunk);
+        // SAFETY: Simd<f32, 16> and Simd<i32, 16> have identical size and alignment.
+        // Reinterprets float bits as integers for IEEE 754 NaN detection.
         let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
         let abs_bits = bits & sign_mask_vec;
         let is_not_nan = abs_bits.simd_le(infinity_vec);
@@ -1181,6 +1195,8 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
     for chunk in chunks {
         let values = Simd::<f32, 16>::from_slice(chunk);
         // Bitwise NaN check: NOT NaN if abs_bits <= infinity
+        // SAFETY: Simd<f32, 16> and Simd<i32, 16> have identical size and alignment.
+        // Reinterprets float bits as integers for IEEE 754 NaN detection.
         let bits: Simd<i32, 16> = unsafe { std::mem::transmute(values) };
         let abs_bits = bits & sign_mask_vec;
         let is_not_nan = abs_bits.simd_le(infinity_vec);

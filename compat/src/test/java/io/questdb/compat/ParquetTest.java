@@ -429,7 +429,8 @@ public class ParquetTest extends AbstractTest {
                         false,
                         10,
                         DATA_PAGE_SIZE,
-                        parquetVersion
+                        parquetVersion,
+                        0.0
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
@@ -527,7 +528,8 @@ public class ParquetTest extends AbstractTest {
                         false,
                         10,
                         DATA_PAGE_SIZE,
-                        parquetVersion
+                        parquetVersion,
+                        0.0
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
@@ -735,7 +737,8 @@ public class ParquetTest extends AbstractTest {
                         rawArrayEncoding,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,
-                        ParquetVersion.PARQUET_VERSION_V1
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();

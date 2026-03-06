@@ -378,6 +378,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
     private final int partitionEncoderParquetDataPageSize;
+    private final double partitionEncoderParquetMinCompressionRatio;
     private final boolean partitionEncoderParquetRawArrayEncoding;
     private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
@@ -1986,6 +1987,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
         this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
+        this.partitionEncoderParquetMinCompressionRatio = getDouble(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO, "1.2");
 
         // compatibility switch, to be removed in future
         this.sqlSampleByValidateFillType = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_VALIDATE_FILL_TYPE, true);
@@ -3844,6 +3846,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParquetExportVersion() {
             return parquetExportVersion;
+        }
+
+        @Override
+        public double getPartitionEncoderParquetMinCompressionRatio() {
+            return partitionEncoderParquetMinCompressionRatio;
         }
 
         @Override

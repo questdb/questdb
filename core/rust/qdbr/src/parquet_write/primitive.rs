@@ -1,9 +1,10 @@
 use std::fmt::Debug;
+use std::hash::Hash;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_def_levels, ExactSizedIter, MaxMin,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
 use parquet2::encoding::delta_bitpacked::encode;
@@ -15,6 +16,9 @@ use parquet2::statistics::{
     serialize_statistics, FixedLenStatistics, ParquetStatistics, PrimitiveStatistics,
 };
 use parquet2::types::NativeType;
+use parquet2::write::DynIter;
+use qdb_core::col_type::nulls;
+use rapidhash::RapidHashMap;
 
 pub fn decimal_slice_to_page_plain<T>(
     slice: &[T],
@@ -391,6 +395,8 @@ pub trait SimdEncodable: NativeType {
                 buffer.reserve(size_of::<Self>() * non_null_count);
                 if null_count == 0 {
                     // Fast path: no nulls, memcpy entire slice
+                    // SAFETY: Reinterprets a contiguous `&[T]` as raw bytes. Valid because slices are
+                    // contiguous and `u8` has no alignment requirement.
                     let bytes = unsafe {
                         std::slice::from_raw_parts(slice.as_ptr() as *const u8, size_of_val(slice))
                     };
@@ -430,11 +436,11 @@ impl SimdEncodable for i64 {
 
     #[inline(always)]
     fn is_null(&self) -> bool {
-        *self == i64::MIN
+        *self == nulls::LONG
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
-        let iterator = slice.iter().filter(|&&x| x != i64::MIN).copied();
+        let iterator = slice.iter().filter(|&&x| x != nulls::LONG).copied();
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode(iterator, buffer);
         true
@@ -453,11 +459,14 @@ impl SimdEncodable for i32 {
 
     #[inline(always)]
     fn is_null(&self) -> bool {
-        *self == i32::MIN
+        *self == nulls::INT
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
-        let iterator = slice.iter().filter(|&&x| x != i32::MIN).map(|&x| x as i64);
+        let iterator = slice
+            .iter()
+            .filter(|&&x| x != nulls::INT)
+            .map(|&x| x as i64);
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode(iterator, buffer);
         true
@@ -557,4 +566,334 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
         false,
     )
     .map(Page::Data)
+}
+
+// =============================================================================
+// Dictionary encoding functions
+// =============================================================================
+
+/// Dictionary encoding for SIMD-encodable nullable types (i32, i64, f32, f64).
+/// Uses the byte representation as HashMap key to avoid float Eq/Hash issues.
+pub fn slice_to_dict_pages_simd<T: SimdEncodable>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    T::Bytes: Eq + Hash,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+    let value_size = size_of::<T>();
+
+    // Build dictionary: use byte representation as key
+    let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<T> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
+    let mut null_count = 0usize;
+    let mut statistics = MaxMin::new();
+
+    for &value in slice {
+        if value.is_null() {
+            null_count += 1;
+        } else {
+            statistics.update(value);
+            let bytes = value.to_bytes();
+            let next_id = dict_entries.len() as u32;
+            let key = *dict_map.entry(bytes).or_insert_with(|| {
+                dict_entries.push(value);
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    // Build dict buffer: raw native bytes per unique value
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+    }
+
+    // Encode data page: def levels + bit_width + RLE-encoded keys
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            !slice[i - column_top].is_null()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let non_null_len = slice.len() - null_count;
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(total_null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
+        data_buffer,
+        definition_levels_byte_length,
+        num_rows,
+        total_null_count,
+        stats,
+        primitive_type,
+        options,
+        false,
+    )
+}
+
+/// Dictionary encoding for nullable int types that need type conversion (Geo*, IPv4).
+pub fn int_slice_to_dict_pages_nullable<T, P>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    P: NativeType,
+    P::Bytes: Eq + Hash,
+    T: Nullable + num_traits::AsPrimitive<P> + Copy + Debug,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+    let value_size = size_of::<P>();
+
+    let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<P> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
+    let mut null_count = 0usize;
+    let mut statistics = MaxMin::new();
+
+    for &value in slice {
+        if value.is_null() {
+            null_count += 1;
+        } else {
+            let p: P = value.as_();
+            statistics.update(p);
+            let bytes = p.to_bytes();
+            let next_id = dict_entries.len() as u32;
+            let key = *dict_map.entry(bytes).or_insert_with(|| {
+                dict_entries.push(p);
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+    }
+
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            !slice[i - column_top].is_null()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let non_null_len = slice.len() - null_count;
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(total_null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
+        data_buffer,
+        definition_levels_byte_length,
+        num_rows,
+        total_null_count,
+        stats,
+        primitive_type,
+        options,
+        false,
+    )
+}
+
+/// Dictionary encoding for not-null int types (Byte, Short, Char) — Required repetition,
+/// no def levels. Column top rows use T::default() as the dict value.
+pub fn int_slice_to_dict_pages_notnull<T, P>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    P: NativeType,
+    P::Bytes: Eq + Hash,
+    T: Default + num_traits::AsPrimitive<P> + Copy + Debug,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    let num_rows = column_top + slice.len();
+    let value_size = size_of::<P>();
+
+    let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<P> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(num_rows);
+    let mut statistics = MaxMin::new();
+
+    // Column top rows use the default value
+    if column_top > 0 {
+        let default_p: P = T::default().as_();
+        let bytes = default_p.to_bytes();
+        let next_id = dict_entries.len() as u32;
+        let key = *dict_map.entry(bytes).or_insert_with(|| {
+            dict_entries.push(default_p);
+            next_id
+        });
+        for _ in 0..column_top {
+            keys.push(key);
+        }
+    }
+
+    for &value in slice {
+        let p: P = value.as_();
+        statistics.update(p);
+        let bytes = p.to_bytes();
+        let next_id = dict_entries.len() as u32;
+        let key = *dict_map.entry(bytes).or_insert_with(|| {
+            dict_entries.push(p);
+            next_id
+        });
+        keys.push(key);
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+    }
+
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(column_top as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        num_rows,
+        Vec::new(),
+        0,
+        num_rows,
+        column_top,
+        stats,
+        primitive_type,
+        options,
+        true,
+    )
+}
+
+/// Dictionary encoding for Decimal types (FixedLenByteArray).
+pub fn decimal_slice_to_dict_pages<T>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    T: Nullable + NativeType + Debug,
+    T::Bytes: Eq + Hash,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+
+    let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<T> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
+    let mut null_count = 0usize;
+    let mut statistics = MaxMin::new();
+
+    for &value in slice {
+        if value.is_null() {
+            null_count += 1;
+        } else {
+            statistics.update(value);
+            let bytes = value.to_bytes();
+            let next_id = dict_entries.len() as u32;
+            let key = *dict_map.entry(bytes).or_insert_with(|| {
+                dict_entries.push(value);
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * size_of::<T>());
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+    }
+
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            !slice[i - column_top].is_null()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let non_null_len = slice.len() - null_count;
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(total_null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
+        data_buffer,
+        definition_levels_byte_length,
+        num_rows,
+        total_null_count,
+        stats,
+        primitive_type,
+        options,
+        false,
+    )
 }

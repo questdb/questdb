@@ -62,7 +62,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 try {
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, false, 0, 0, ParquetVersion.PARQUET_VERSION_V1);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, false, 0, 0, ParquetVersion.PARQUET_VERSION_V1, 0.0);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "unsupported compression codec id: 42");
@@ -87,11 +87,191 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 try {
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, ParquetCompression.COMPRESSION_UNCOMPRESSED, false, false, 0, 0, 42);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, ParquetCompression.COMPRESSION_UNCOMPRESSED, false, false, 0, 0, 42, 0.0);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "unsupported parquet version 42");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAllNullsWithNonDefaultEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    "a_varchar VARCHAR PARQUET ENCODING RLE_DICTIONARY," +
+                    " a_long LONG PARQUET ENCODING RLE_DICTIONARY," +
+                    " a_int INT PARQUET ENCODING RLE_DICTIONARY," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+
+            execute("INSERT INTO x SELECT" +
+                    " NULL," +
+                    " NULL," +
+                    " NULL," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(1000)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                assertSqlCursors(
+                        "SELECT * FROM x",
+                        "SELECT * FROM read_parquet('x.parquet')"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDeltaBinaryPackedEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    "a_long LONG PARQUET ENCODING DELTA_BINARY_PACKED," +
+                    " a_date DATE PARQUET ENCODING DELTA_BINARY_PACKED," +
+                    " a_ts TIMESTAMP PARQUET ENCODING DELTA_BINARY_PACKED," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+
+            execute("INSERT INTO x SELECT" +
+                    " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0) ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_timestamp('2015', '2016', 0) ELSE NULL END," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(1000)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                assertSqlCursors(
+                        "SELECT * FROM x",
+                        "SELECT * FROM read_parquet('x.parquet')"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDeltaLengthByteArrayEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    "a_string STRING PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY," +
+                    " a_varchar VARCHAR PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY," +
+                    " a_bin BINARY PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+
+            execute("INSERT INTO x SELECT" +
+                    " CASE WHEN x % 2 = 0 THEN rnd_str('hello', 'world', '!') ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_varchar('ганьба', 'слава', 'добрий') ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_bin(10, 20, 2) ELSE NULL END," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(1000)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                assertSqlCursors(
+                        "SELECT * FROM x",
+                        "SELECT * FROM read_parquet('x.parquet')"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testMixedEncodingsAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    "a_date DATE PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3," +
+                    " a_symbol SYMBOL," +
+                    " a_string STRING PARQUET ENCODING DELTA_LENGTH_BYTE_ARRAY COMPRESSION GZIP 5," +
+                    " a_long LONG PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION SNAPPY," +
+                    " a_varchar VARCHAR PARQUET ENCODING RLE_DICTIONARY COMPRESSION ZSTD," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("ALTER TABLE x ALTER COLUMN a_symbol SET PARQUET ENCODING RLE_DICTIONARY COMPRESSION LZ4_RAW");
+
+            execute("INSERT INTO x SELECT" +
+                    " CASE WHEN x % 2 = 0 THEN rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0) ELSE NULL END," +
+                    " rnd_symbol('a', 'b', 'c', NULL)," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_str('hello', 'world', '!') ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_varchar('ганьба', 'слава', 'добрий') ELSE NULL END," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(1000)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                assertSqlCursors(
+                        "SELECT a_date, a_symbol::VARCHAR AS a_symbol, a_string, a_long, a_varchar, ts FROM x",
+                        "SELECT * FROM read_parquet('x.parquet')"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRleDictionaryEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE x (" +
+                    "a_symbol SYMBOL," +
+                    " a_varchar VARCHAR PARQUET ENCODING RLE_DICTIONARY," +
+                    " a_double DOUBLE PARQUET ENCODING RLE_DICTIONARY," +
+                    " a_long LONG PARQUET ENCODING RLE_DICTIONARY," +
+                    " an_int INT PARQUET ENCODING RLE_DICTIONARY," +
+                    " ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("ALTER TABLE x ALTER COLUMN a_symbol SET PARQUET ENCODING RLE_DICTIONARY");
+
+            execute("INSERT INTO x SELECT" +
+                    " rnd_symbol('a', 'b', 'c', NULL)," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_varchar('ганьба', 'слава', 'добрий') ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_double() ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_long() ELSE NULL END," +
+                    " CASE WHEN x % 2 = 0 THEN rnd_int() ELSE NULL END," +
+                    " timestamp_sequence('2015-01-01', 1000000)" +
+                    " FROM long_sequence(1000)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                assertSqlCursors(
+                        "SELECT a_symbol::VARCHAR AS a_symbol, a_varchar, a_double, a_long, an_int, ts FROM x",
+                        "SELECT * FROM read_parquet('x.parquet')"
+                );
             }
         });
     }

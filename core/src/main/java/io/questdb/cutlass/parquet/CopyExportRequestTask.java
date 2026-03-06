@@ -509,7 +509,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     rawArrayEncoding,
                     rowGroupSize,
                     dataPageSize,
-                    parquetVersion
+                    parquetVersion,
+                    0.0
             );
         }
 

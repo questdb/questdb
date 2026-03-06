@@ -282,6 +282,26 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofDropParquetEncoding(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int dropFlags) {
+        this.command = DROP_PARQUET_ENCODING;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        this.extraInfo.add(dropFlags);
+        return this;
+    }
+
+    public AlterOperationBuilder ofSetParquetEncoding(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int parquetEncodingConfig) {
+        this.command = SET_PARQUET_ENCODING;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        this.extraInfo.add(parquetEncodingConfig);
+        return this;
+    }
+
     public AlterOperationBuilder ofSetO3MaxLag(int tableNamePosition, TableToken tableToken, int tableId, long o3MaxLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableNamePosition = tableNamePosition;

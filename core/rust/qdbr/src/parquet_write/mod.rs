@@ -1,4 +1,5 @@
 use num_traits::AsPrimitive;
+use qdb_core::col_type::nulls;
 
 pub mod array;
 mod binary;
@@ -20,31 +21,60 @@ pub mod varchar;
 #[doc(hidden)]
 pub mod bench {
     pub use super::array::array_to_raw_page;
-    pub use super::binary::binary_to_page;
+    pub use super::binary::{binary_to_dict_pages, binary_to_page};
     pub use super::boolean::slice_to_page as boolean_to_page;
     pub use super::file::WriteOptions;
-    pub use super::fixed_len_bytes::bytes_to_page;
+    pub use super::fixed_len_bytes::{bytes_to_dict_pages, bytes_to_page};
     pub use super::primitive::{
-        int_slice_to_page_notnull, int_slice_to_page_nullable, slice_to_page_simd,
+        decimal_slice_to_dict_pages, int_slice_to_dict_pages_notnull,
+        int_slice_to_dict_pages_nullable, int_slice_to_page_notnull, int_slice_to_page_nullable,
+        slice_to_dict_pages_simd, slice_to_page_simd,
     };
-    pub use super::string::string_to_page;
+    pub use super::string::{string_to_dict_pages, string_to_page};
     pub use super::symbol::symbol_to_pages;
-    pub use super::varchar::varchar_to_page;
+    pub use super::varchar::{varchar_to_dict_pages, varchar_to_page};
 }
 
+/// Trait for detecting QuestDB's in-band null sentinel values in fixed-size columns.
+///
+/// QuestDB does not use a separate validity bitmap for columnar data. Instead, each
+/// fixed-size type reserves a specific sentinel value to represent NULL. The canonical
+/// definitions live in [`qdb_core::col_type::nulls`].
+///
+/// ## Sentinel values by type
+///
+/// | QuestDB type    | Rust type | Sentinel                   |
+/// |-----------------|-----------|----------------------------|
+/// | Int             | `i32`     | `i32::MIN`                 |
+/// | Long / Timestamp| `i64`     | `i64::MIN`                 |
+/// | Float           | `f32`     | `NaN`                      |
+/// | Double          | `f64`     | `NaN`                      |
+/// | GeoHash(byte)   | `i8`      | `-1`                       |
+/// | GeoHash(short)  | `i16`     | `-1`                       |
+/// | GeoHash(int)    | `i32`     | `-1`                       |
+/// | GeoHash(long)   | `i64`     | `-1`                       |
+/// | IPv4            | `i32`     | `0`                        |
+/// | Decimal128      | `(i64, u64)` | `(i64::MIN, 0)`        |
+/// | Decimal256      | 4×i64     | `(i64::MIN, 0, 0, 0)`     |
+///
+/// **Non-nullable types** (Boolean, Byte, Short, Char) use `Repetition::Required`
+/// in the Parquet schema and do not implement this trait.
+///
+/// **Variable-size types** (String, Binary, Varchar) detect nulls via length-based
+/// checks rather than sentinel values, so they also do not implement this trait.
 pub trait Nullable {
     fn is_null(&self) -> bool;
 }
 
 impl Nullable for i32 {
     fn is_null(&self) -> bool {
-        *self == i32::MIN
+        *self == nulls::INT
     }
 }
 
 impl Nullable for i64 {
     fn is_null(&self) -> bool {
-        *self == i64::MIN
+        *self == nulls::LONG
     }
 }
 
@@ -65,7 +95,7 @@ pub struct GeoByte(i8);
 
 impl Nullable for GeoByte {
     fn is_null(&self) -> bool {
-        self.0 == -1
+        self.0 == nulls::GEOHASH_BYTE
     }
 }
 
@@ -80,7 +110,7 @@ pub struct GeoShort(i16);
 
 impl Nullable for GeoShort {
     fn is_null(&self) -> bool {
-        self.0 == -1
+        self.0 == nulls::GEOHASH_SHORT
     }
 }
 
@@ -95,7 +125,7 @@ pub struct GeoInt(i32);
 
 impl Nullable for GeoInt {
     fn is_null(&self) -> bool {
-        self.0 == -1
+        self.0 == nulls::GEOHASH_INT
     }
 }
 
@@ -110,7 +140,7 @@ pub struct GeoLong(i64);
 
 impl Nullable for GeoLong {
     fn is_null(&self) -> bool {
-        self.0 == -1
+        self.0 == nulls::GEOHASH_LONG
     }
 }
 
@@ -125,7 +155,7 @@ pub struct IPv4(i32);
 
 impl Nullable for IPv4 {
     fn is_null(&self) -> bool {
-        self.0 == 0
+        self.0 == nulls::IPV4
     }
 }
 
@@ -139,6 +169,7 @@ impl AsPrimitive<i32> for IPv4 {
 mod tests {
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_write::file::ParquetWriter;
+    use crate::parquet_write::schema;
     use crate::parquet_write::schema::{Column, Partition};
     use arrow::array::Array;
     use arrow::datatypes::ToByteSlice;
@@ -188,6 +219,7 @@ mod tests {
                     0,
                     false,
                     false,
+                    0,
                 )
                 .expect("column")
             })
@@ -299,6 +331,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -330,6 +363,8 @@ mod tests {
             let len = sym_chars.len();
             offsets.push(chars.len() as u64);
             chars.extend_from_slice(&(len as u32).to_le_bytes());
+            // SAFETY: Reinterprets a contiguous `&[u16]` as raw bytes for testing.
+            // Valid because slices are contiguous and `u8` has no alignment requirement.
             let encoded: &[u8] = unsafe {
                 std::slice::from_raw_parts(
                     sym_chars.as_ptr() as *const u8,
@@ -364,6 +399,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -381,6 +417,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -440,6 +477,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -557,6 +595,7 @@ mod tests {
             0,
             true,
             false,
+            0,
         )
         .expect("column");
 
@@ -615,6 +654,7 @@ mod tests {
             0,
             true,
             true,
+            0,
         )
         .expect("column");
 
@@ -687,6 +727,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -704,6 +745,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -721,6 +763,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap();
 
@@ -781,6 +824,516 @@ mod tests {
                 .expect("Failed to downcast");
             let collected: Vec<_> = symbol_array.iter().collect();
             assert_eq!(collected, expected);
+        }
+    }
+
+    #[test]
+    fn test_per_column_encoding_config() {
+        // Create two int columns: one with default encoding (Plain), one with DeltaBinaryPacked
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1_data: Vec<i32> = (0..100).collect();
+        let col2_data: Vec<i32> = (0..100).collect();
+
+        // Pack config: encoding=4 (DeltaBinaryPacked), compression=0, level=0, explicit flag set
+        let delta_binary_config = schema::ParquetEncodingConfig::new(4, 0, 0).raw();
+
+        let col1 = Column::from_raw_data(
+            0,
+            "col_plain",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            100,
+            col1_data.as_ptr() as *const u8,
+            col1_data.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0, // default encoding
+        )
+        .unwrap();
+
+        let col2 = Column::from_raw_data(
+            1,
+            "col_delta",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            100,
+            col2_data.as_ptr() as *const u8,
+            col2_data.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            delta_binary_config,
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1, col2],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        // Read back and verify encodings
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+
+        let row_group = &metadata.row_groups[0];
+
+        // col_plain should use Plain encoding (default for Int)
+        let col0_chunk = &row_group.columns()[0];
+        let col0_encoding = col0_chunk.column_encoding();
+        // parquet_format_safe::Encoding uses i32 constants: PLAIN=0, DELTA_BINARY_PACKED=5
+        assert!(
+            col0_encoding.iter().any(|e| e.0 == 0), // PLAIN = 0
+            "col_plain should use Plain encoding, got: {:?}",
+            col0_encoding
+        );
+
+        // col_delta should use DeltaBinaryPacked encoding
+        let col1_chunk = &row_group.columns()[1];
+        let col1_encoding = col1_chunk.column_encoding();
+        assert!(
+            col1_encoding.iter().any(|e| e.0 == 5), // DELTA_BINARY_PACKED = 5
+            "col_delta should use DeltaBinaryPacked encoding, got: {:?}",
+            col1_encoding
+        );
+
+        // Verify data is correct by reading with arrow
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr0 = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .expect("downcast");
+            let collected: Vec<_> = arr0.iter().collect();
+            let expected: Vec<_> = (0..100).map(Some).collect();
+            assert_eq!(collected, expected);
+        }
+    }
+
+    #[test]
+    fn test_per_column_compression_config() {
+        // Create two double columns: one uncompressed, one with Snappy compression
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1_data: Vec<f64> = (0..1000).map(|i| i as f64 * 0.1).collect();
+        let col2_data: Vec<f64> = (0..1000).map(|i| i as f64 * 0.1).collect();
+
+        // Pack config: encoding=0 (default), compression=2 (Snappy), level=0, explicit flag set
+        let snappy_config = schema::ParquetEncodingConfig::new(0, 2, 0).raw();
+
+        let col1 = Column::from_raw_data(
+            0,
+            "col_uncompressed",
+            ColumnTypeTag::Double.into_type().code(),
+            0,
+            1000,
+            col1_data.as_ptr() as *const u8,
+            col1_data.len() * size_of::<f64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0, // default (uncompressed, since global is uncompressed)
+        )
+        .unwrap();
+
+        let col2 = Column::from_raw_data(
+            1,
+            "col_snappy",
+            ColumnTypeTag::Double.into_type().code(),
+            0,
+            1000,
+            col2_data.as_ptr() as *const u8,
+            col2_data.len() * size_of::<f64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            snappy_config,
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1, col2],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        // Read metadata and verify compression
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+
+        let row_group = &metadata.row_groups[0];
+
+        // col_uncompressed should use no compression
+        let col0_compression = row_group.columns()[0].compression();
+        assert_eq!(
+            col0_compression,
+            parquet2::compression::Compression::Uncompressed,
+            "col_uncompressed should be uncompressed"
+        );
+
+        // col_snappy should use Snappy compression
+        let col1_compression = row_group.columns()[1].compression();
+        assert_eq!(
+            col1_compression,
+            parquet2::compression::Compression::Snappy,
+            "col_snappy should use Snappy compression"
+        );
+
+        // Verify data is correct
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr0 = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Float64Array>()
+                .expect("downcast");
+            assert_eq!(arr0.len(), 1000);
+            // Check first few values
+            for i in 0..10 {
+                assert!((arr0.value(i) - i as f64 * 0.1).abs() < 1e-10);
+            }
+        }
+    }
+
+    /// Helper: pack RleDictionary encoding config (encoding=2, explicit flag set)
+    fn rle_dict_config() -> i32 {
+        2 | (1 << 24)
+    }
+
+    #[test]
+    fn test_dict_encoding_int_column() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [1i32, 2, i32::MIN, 3, 1, 2, 3, i32::MIN, 1, 2];
+        let expected: Vec<Option<i32>> = col1
+            .iter()
+            .map(|&v| if v == i32::MIN { None } else { Some(v) })
+            .collect();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "col1",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        // Verify encoding is RLE_DICTIONARY
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+        let col_encoding = metadata.row_groups[0].columns()[0].column_encoding();
+        assert!(
+            col_encoding.iter().any(|e| e.0 == 8), // RLE_DICTIONARY = 8
+            "expected RLE_DICTIONARY encoding, got: {:?}",
+            col_encoding
+        );
+
+        // Verify data is correct
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .expect("downcast");
+            let collected: Vec<_> = arr.iter().collect();
+            assert_eq!(collected, expected);
+        }
+    }
+
+    #[test]
+    fn test_dict_encoding_long_column() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [100i64, 200, i64::MIN, 300, 100, 200];
+        let expected: Vec<Option<i64>> = col1
+            .iter()
+            .map(|&v| if v == i64::MIN { None } else { Some(v) })
+            .collect();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "col1",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int64Array>()
+                .expect("downcast");
+            let collected: Vec<_> = arr.iter().collect();
+            assert_eq!(collected, expected);
+        }
+    }
+
+    #[test]
+    fn test_dict_encoding_double_column() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [1.5f64, 2.5, f64::NAN, 3.5, 1.5, 2.5];
+        let expected_some = [Some(1.5), Some(2.5), None, Some(3.5), Some(1.5), Some(2.5)];
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "col1",
+            ColumnTypeTag::Double.into_type().code(),
+            0,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<f64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Float64Array>()
+                .expect("downcast");
+            for (i, expected) in expected_some.iter().enumerate() {
+                match expected {
+                    Some(v) => {
+                        assert!(!arr.is_null(i));
+                        assert!((arr.value(i) - v).abs() < 1e-10);
+                    }
+                    None => {
+                        assert!(arr.is_null(i));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_dict_encoding_byte_notnull_column() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i8> = vec![1, 2, 3, 1, 2, 3, 4, 5];
+        let expected: Vec<Option<i8>> = col1.iter().map(|&v| Some(v)).collect();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "col1",
+            ColumnTypeTag::Byte.into_type().code(),
+            0,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<i8>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int8Array>()
+                .expect("downcast");
+            let collected: Vec<_> = arr.iter().collect();
+            assert_eq!(collected, expected);
+        }
+    }
+
+    #[test]
+    fn test_dict_encoding_all_nulls() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = [i32::MIN, i32::MIN, i32::MIN, i32::MIN];
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "col1",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .expect("downcast");
+            let collected: Vec<_> = arr.iter().collect();
+            assert_eq!(collected, vec![None, None, None, None]);
         }
     }
 }

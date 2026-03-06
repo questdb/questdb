@@ -153,7 +153,8 @@ public class ColumnTypeTest {
                 ColumnType.REGCLASS,
                 ColumnType.REGPROCEDURE,
                 ColumnType.ARRAY_STRING,
-                ColumnType.PARAMETER
+                ColumnType.PARAMETER,
+                ColumnType.VARCHAR_SLICE
         );
 
         short allTypesLowerBoundInc = ColumnType.UNDEFINED + 1;
@@ -225,6 +226,16 @@ public class ColumnTypeTest {
             System.out.println("Found " + unexpectedlySupported + " cases:" + unexpectedlySupportedDetails);
             System.out.println("\nThese conversions work but may require cast wrappers or are intentionally not optimized.");
         }
+    }
+
+    @Test
+    public void testGetDriverVarcharSlice() {
+        // VARCHAR_SLICE is a transient in-memory type from read_parquet().
+        // getDriver() must return the same VarcharTypeDriver as for VARCHAR.
+        Assert.assertSame(
+                ColumnType.getDriver(ColumnType.VARCHAR),
+                ColumnType.getDriver(ColumnType.VARCHAR_SLICE)
+        );
     }
 
     @Test

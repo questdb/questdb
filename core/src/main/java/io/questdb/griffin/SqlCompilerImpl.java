@@ -94,6 +94,8 @@ import io.questdb.griffin.engine.ops.InsertAsSelectOperationImpl;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -304,7 +306,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         int timestampColumnType = metadata.getColumnType(cursorTimestampIndex);
         if (ColumnType.isSymbolOrString(timestampColumnType)) {
             rowCount = copyOrderedBatchedStrTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
-        } else if (metadata.getColumnType(cursorTimestampIndex) == ColumnType.VARCHAR) {
+        } else if (ColumnType.isVarchar(metadata.getColumnType(cursorTimestampIndex))) {
             rowCount = copyOrderedBatchedVarcharTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
         } else {
             rowCount = copyOrderedBatched0(context, writer, cursor, copier, timestampColumnType, cursorTimestampIndex, batchSize, o3MaxLag, reporter, reportFrequency);
@@ -1470,6 +1472,53 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
+    private void alterTableDropParquetEncoding(
+            SecurityContext securityContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata tableMetadata,
+            int columnIndex
+    ) throws SqlException {
+        // Syntax: ALTER TABLE t ALTER COLUMN c DROP PARQUET ENCODING COMPRESSION
+        // or:     ALTER TABLE t ALTER COLUMN c DROP PARQUET ENCODING
+        // or:     ALTER TABLE t ALTER COLUMN c DROP PARQUET COMPRESSION
+        CharSequence tok = expectToken(lexer, "'encoding' or 'compression'");
+        boolean dropEncoding = false;
+        boolean dropCompression = false;
+
+        if (isEncodingKeyword(tok)) {
+            dropEncoding = true;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (tok != null && isCompressionKeyword(tok)) {
+            dropCompression = true;
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (!dropEncoding && !dropCompression) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'encoding' or 'compression' expected");
+        }
+
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+        }
+
+        // Pass config=0 and drop flags to the operation;
+        // TableWriter resolves the partial drop using current metadata
+        int dropFlags = (dropEncoding ? 1 : 0) | (dropCompression ? 2 : 0);
+        alterOperationBuilder.ofDropParquetEncoding(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                columnName,
+                dropFlags
+        );
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
     private void alterTableRenameColumn(
             SecurityContext securityContext,
             int tableNamePosition,
@@ -1572,6 +1621,80 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else {
             throw SqlException.$(paramNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
+    }
+
+    private void alterTableSetParquetEncoding(
+            SecurityContext securityContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata tableMetadata,
+            int columnIndex
+    ) throws SqlException {
+        // Syntax: ALTER TABLE t ALTER COLUMN c SET PARQUET ENCODING enc COMPRESSION codec [level]
+        int encoding = ParquetEncoding.ENCODING_DEFAULT;
+        int compression = -1;
+        int level = 0;
+        boolean isEncodingSet = false;
+
+        CharSequence tok = expectToken(lexer, "'encoding' or 'compression'");
+
+        if (isEncodingKeyword(tok)) {
+            tok = expectToken(lexer, "encoding name");
+            int encodingPos = lexer.lastTokenPosition();
+            encoding = ParquetEncoding.getEncoding(tok);
+            if (encoding < 0) {
+                throw SqlException.$(encodingPos, "invalid parquet encoding, supported values: ").put(tok);
+            }
+            isEncodingSet = true;
+            int columnType = tableMetadata.getColumnType(columnIndex);
+            if (!ParquetEncoding.isValidForColumnType(encoding, columnType)) {
+                throw SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(columnType));
+            }
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (tok != null && isCompressionKeyword(tok)) {
+            tok = expectToken(lexer, "compression codec name");
+            int codecPos = lexer.lastTokenPosition();
+            compression = ParquetCompression.getCompressionCodec(tok);
+            if (compression < 0) {
+                throw SqlException.$(codecPos, "invalid parquet compression codec: ").put(tok);
+            }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null) {
+                try {
+                    int levelPos = lexer.lastTokenPosition();
+                    level = Numbers.parseInt(tok);
+                    ParquetCompression.validateCompressionLevel(compression, level, levelPos);
+                    tok = SqlUtil.fetchNext(lexer);
+                } catch (NumericException ignore) {
+                    // not a level number, continue
+                }
+            }
+        }
+
+        if (!isEncodingSet && compression < 0) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'encoding' or 'compression' expected");
+        }
+
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+        }
+
+        // In packed form, compression is shifted +1 (0=default, 1=uncompressed, 2=snappy, etc.)
+        // to distinguish "not set" from "explicitly uncompressed".
+        int packedCompression = compression >= 0 ? compression + 1 : 0;
+        int parquetEncodingConfig = TableUtils.packParquetConfig(encoding, packedCompression, level);
+        alterOperationBuilder.ofSetParquetEncoding(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                columnName,
+                parquetEncodingConfig
+        );
+        compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private void alterTableSetType(
@@ -2206,20 +2329,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 indexValueCapacity
                         );
                     } else if (isDropKeyword(tok)) {
-                        // alter table <table name> alter column drop index
-                        expectKeyword(lexer, "index");
-                        tok = SqlUtil.fetchNext(lexer);
-                        if (tok != null && !isSemicolon(tok)) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
+                        tok = expectToken(lexer, "'index' or 'parquet'");
+                        if (isIndexKeyword(tok)) {
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && !isSemicolon(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
+                            }
+                            alterTableColumnDropIndex(
+                                    securityContext,
+                                    tableNamePosition,
+                                    tableToken,
+                                    columnNamePosition,
+                                    columnName,
+                                    tableMetadata
+                            );
+                        } else if (isParquetKeyword(tok)) {
+                            alterTableDropParquetEncoding(
+                                    securityContext,
+                                    tableNamePosition,
+                                    tableToken,
+                                    columnNamePosition,
+                                    columnName,
+                                    tableMetadata,
+                                    columnIndex
+                            );
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'index' or 'parquet' expected");
                         }
-                        alterTableColumnDropIndex(
-                                securityContext,
-                                tableNamePosition,
-                                tableToken,
-                                columnNamePosition,
-                                columnName,
-                                tableMetadata
-                        );
                     } else if (isCacheKeyword(tok)) {
                         alterTableColumnCacheFlag(
                                 securityContext,
@@ -2260,8 +2396,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 tableMetadata,
                                 columnIndex
                         );
+                    } else if (isSetKeyword(tok)) {
+                        tok = expectToken(lexer, "'parquet'");
+                        if (isParquetKeyword(tok)) {
+                            alterTableSetParquetEncoding(
+                                    securityContext,
+                                    tableNamePosition,
+                                    tableToken,
+                                    columnNamePosition,
+                                    columnName,
+                                    tableMetadata,
+                                    columnIndex
+                            );
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+                        }
                     } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'symbol', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
+                        throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'set', 'symbol', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                     }
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");

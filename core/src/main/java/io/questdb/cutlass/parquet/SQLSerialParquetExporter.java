@@ -252,7 +252,8 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                                     task.isRawArrayEncoding(),
                                     task.getRowGroupSize(),
                                     task.getDataPageSize(),
-                                    task.getParquetVersion()
+                                    task.getParquetVersion(),
+                                    0.0
                             );
                             long parquetFileSize = ff.length(tempPath.$());
                             LOG.info().$("converted partition to parquet temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)

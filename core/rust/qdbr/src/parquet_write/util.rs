@@ -6,11 +6,13 @@ use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
-use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
+use parquet2::page::{
+    DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2, DictPage, Page,
+};
 use parquet2::schema::types::{PhysicalType, PrimitiveType};
 use parquet2::statistics::{serialize_statistics, BinaryStatistics, ParquetStatistics, Statistics};
 use parquet2::types::NativeType;
-use parquet2::write::Version;
+use parquet2::write::{DynIter, Version};
 
 #[derive(Debug)]
 pub struct MaxMin<T> {
@@ -109,17 +111,20 @@ fn is_binary_column_type(primitive_type: &PrimitiveType) -> bool {
     primitive_type.physical_type == PhysicalType::ByteArray && primitive_type.logical_type.is_none()
 }
 
-fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
+pub(crate) fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
     // We only keep 8 initial bytes for the min and max values.
     // Semantics of these Parquet fields are "lower and upper bound".
     // If max_value is longer than 8 bytes, we must choose an 8-byte value that
     // comes just after actual max_value in sort order. We achieve this by
     // converting to integer, incrementing, and converting back to bytes.
-    // TODO: if first 8 bytes are all 0xFFs, it can't be incremented and the
-    //       upper bound will be slightly off!
+    // If the first 8 bytes are all 0xFF, we can't increment the prefix, so we
+    // fall back to the untruncated value (up to 9 bytes from update()).
     let val_slice_be: [u8; SIZEOF_I64] = max_value[..SIZEOF_I64].try_into().unwrap();
-    let upper_bound = i64::from_be_bytes(val_slice_be).saturating_add(1);
-    upper_bound.to_be_bytes().to_vec()
+    let as_u64 = u64::from_be_bytes(val_slice_be);
+    match as_u64.checked_add(1) {
+        Some(inc) => inc.to_be_bytes().to_vec(),
+        None => max_value,
+    }
 }
 
 pub struct ArrayStats {
@@ -302,12 +307,88 @@ pub fn build_plain_page(
     ))
 }
 
+/// Build a DynIter yielding [DictPage, DataPage] from pre-built buffers.
+/// This avoids duplicating the DictPage + DataPage assembly in each dict encoder.
+pub fn dict_pages_iter(
+    dict_buffer: Vec<u8>,
+    unique_count: usize,
+    data_page: DataPage,
+) -> DynIter<'static, ParquetResult<Page>> {
+    let dict_page = DictPage::new(dict_buffer, unique_count, false);
+    DynIter::new(
+        [Page::Dict(dict_page), Page::Data(data_page)]
+            .into_iter()
+            .map(Ok),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn encode_dict_rle_pages(
+    dict_buffer: Vec<u8>,
+    dict_entry_count: usize,
+    keys: Vec<u32>,
+    non_null_count: usize,
+    mut data_buffer: Vec<u8>,
+    definition_levels_byte_length: usize,
+    num_rows: usize,
+    null_count: usize,
+    statistics: Option<ParquetStatistics>,
+    primitive_type: PrimitiveType,
+    options: WriteOptions,
+    required: bool,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let max_key = if dict_entry_count == 0 {
+        0u32
+    } else {
+        (dict_entry_count - 1) as u32
+    };
+    let bits_per_key = bit_width(max_key as u64);
+    data_buffer.push(bits_per_key);
+    encode_u32(
+        &mut data_buffer,
+        keys.into_iter(),
+        non_null_count,
+        bits_per_key as u32,
+    )?;
+
+    let data_page = build_plain_page(
+        data_buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        Encoding::RleDictionary,
+        required,
+    )?;
+
+    let unique_count = if dict_buffer.is_empty() {
+        0
+    } else {
+        dict_entry_count
+    };
+    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
+}
+
+/// # Safety
+/// - `slice` must be properly aligned for `T`.
+/// - The bytes in `slice` must represent valid values of `T`.
 pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
     let sizeof_t = mem::size_of::<T>();
     assert_eq!(slice.len() % sizeof_t, 0);
     if slice.is_empty() {
         &[]
     } else {
+        debug_assert!(
+            (slice.as_ptr() as usize).is_multiple_of(mem::align_of::<T>()),
+            "transmute_slice: pointer {:p} is not aligned for {} (align = {})",
+            slice.as_ptr(),
+            std::any::type_name::<T>(),
+            mem::align_of::<T>(),
+        );
+        // SAFETY: Caller guarantees alignment and valid content.
+        // Length divisibility is asserted above.
         slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
     }
 }
@@ -316,8 +397,12 @@ pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
 mod tests {
     use parquet2::encoding::bitpacked;
     use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
+    use parquet2::schema::types::PhysicalType;
+    use parquet2::schema::types::PrimitiveType;
 
-    use crate::parquet_write::util::encode_primitive_def_levels;
+    use crate::parquet_write::util::{
+        binary_upper_bound, encode_primitive_def_levels, BinaryMaxMinStats,
+    };
 
     #[test]
     fn decode_bitmap_v2() {
@@ -386,5 +471,50 @@ mod tests {
         } else {
             panic!()
         };
+    }
+
+    #[test]
+    fn test_binary_upper_bound_normal() {
+        let input = vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xAB];
+        let result = binary_upper_bound(input);
+        assert_eq!(result, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02]);
+    }
+
+    #[test]
+    fn test_binary_upper_bound_all_ff() {
+        let input = vec![0xFF; 9];
+        let result = binary_upper_bound(input);
+        // Can't increment [0xFF; 8], falls back to keeping the 9-byte value
+        assert_eq!(result, vec![0xFF; 9]);
+    }
+
+    #[test]
+    fn test_binary_upper_bound_near_max() {
+        let mut input = vec![0xFF; 9];
+        input[7] = 0xFE;
+        let result = binary_upper_bound(input);
+        assert_eq!(result, vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn test_binary_upper_bound_high_bit() {
+        // 0x80_00_00_00_00_00_00_00 — would be i64::MIN in signed, but should work correctly
+        // with unsigned arithmetic: result should be 0x80_00_00_00_00_00_00_01
+        let input = vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x42];
+        let result = binary_upper_bound(input);
+        assert_eq!(result, vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn test_binary_stats_all_ff_keeps_max() {
+        let primitive_type =
+            PrimitiveType::from_physical("test".to_string(), PhysicalType::ByteArray);
+        let mut stats = BinaryMaxMinStats::new(&primitive_type);
+        stats.update(&[0xFF; 9]);
+
+        let parquet_stats = stats.into_parquet_stats(0);
+        // Can't increment [0xFF; 8], falls back to 9-byte value
+        assert!(parquet_stats.max_value.is_some());
+        assert!(parquet_stats.min_value.is_some());
     }
 }

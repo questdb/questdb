@@ -28,11 +28,15 @@ use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
+use parquet2::write::DynIter;
+use rapidhash::RapidHashMap;
 
 use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_primitive_def_levels, ExactSizedIter};
+use crate::parquet_write::util::{
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter,
+};
 
 pub fn binary_to_page(
     offsets: &[i64],
@@ -167,4 +171,96 @@ fn encode_delta(
         buffer.extend_from_slice(value);
         stats.update(value);
     }
+}
+
+pub fn binary_to_dict_pages(
+    offsets: &[i64],
+    data: &[u8],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let num_rows = column_top + offsets.len();
+    let size_of_header = size_of::<i64>();
+    let mut null_count = 0;
+
+    // Collect byte slices
+    let byte_slices: Vec<Option<&[u8]>> = offsets
+        .iter()
+        .map(|offset| {
+            let offset =
+                usize::try_from(*offset).expect("invalid offset value in binary aux column");
+            let len = types::decode::<i64>(&data[offset..offset + size_of_header]);
+            if len < 0 {
+                null_count += 1;
+                None
+            } else {
+                let value_offset = offset + size_of_header;
+                Some(&data[value_offset..value_offset + len as usize])
+            }
+        })
+        .collect();
+
+    // Build dictionary
+    let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<&[u8]> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(offsets.len());
+    let mut total_keys_bytes = 0usize;
+
+    for s in byte_slices.iter().flatten() {
+        let next_id = dict_entries.len() as u32;
+        let key = *dict_map.entry(s).or_insert_with(|| {
+            total_keys_bytes += 4 + s.len();
+            dict_entries.push(s);
+            next_id
+        });
+        keys.push(key);
+    }
+
+    // Build dict buffer (length-prefixed bytes)
+    let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
+    let mut stats = if options.write_statistics {
+        Some(BinaryMaxMinStats::new(&primitive_type))
+    } else {
+        None
+    };
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+        dict_buffer.extend_from_slice(entry);
+        if let Some(ref mut s) = stats {
+            s.update(entry);
+        }
+    }
+
+    // Encode data page
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            byte_slices[i - column_top].is_some()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let non_null_len = offsets.len() - null_count;
+    let statistics = stats.map(|s| s.into_parquet_stats(total_null_count));
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
+        data_buffer,
+        definition_levels_byte_length,
+        num_rows,
+        total_null_count,
+        statistics,
+        primitive_type,
+        options,
+        false,
+    )
 }

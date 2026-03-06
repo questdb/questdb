@@ -87,6 +87,7 @@ fn test_column(column: &str, compression: CompressionOptions) -> Result<()> {
         ))),
         compression,
         vec![],
+        0.0,
     ));
     let columns = std::iter::once(Ok(pages));
 
@@ -210,6 +211,7 @@ fn basic() -> Result<()> {
         ))),
         CompressionOptions::Uncompressed,
         vec![],
+        0.0,
     ));
     let columns = std::iter::once(Ok(pages));
 
@@ -269,6 +271,7 @@ async fn test_column_async(column: &str, compression: CompressionOptions) -> Res
         ))),
         compression,
         vec![],
+        0.0,
     ));
     let columns = std::iter::once(Ok(pages));
 

@@ -28,6 +28,7 @@ serde = { version = "1.0.210", features = ["derive"] }
 alloc-checked = { version = "0.1.3" }
 nonmax = "0.5.5"
 seq-macro = "0.3.6"
+rapidhash = "4.4.1"
 
 [dev-dependencies]
 parquet = "56.2.0"
@@ -39,4 +40,12 @@ criterion = "0.4"
 
 [[bench]]
 name = "decode_page"
+harness = false
+
+[[bench]]
+name = "encode_page"
+harness = false
+
+[[bench]]
+name = "decode_rle"
 harness = false

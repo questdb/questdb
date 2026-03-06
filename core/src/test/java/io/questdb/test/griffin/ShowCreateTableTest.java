@@ -266,6 +266,66 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET COMPRESSION ZSTD 3) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \td DOUBLE PARQUET COMPRESSION zstd 3
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetCompressionUncompressed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, d DOUBLE PARQUET COMPRESSION UNCOMPRESSED) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \td DOUBLE PARQUET COMPRESSION uncompressed
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET ENCODING DELTA_BINARY_PACKED) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET ENCODING delta_binary_packed
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET ENCODING DELTA_BINARY_PACKED COMPRESSION ZSTD 3) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET ENCODING delta_binary_packed COMPRESSION zstd 3
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
     public void testSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 512 nocache)");
