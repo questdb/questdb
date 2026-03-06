@@ -115,7 +115,6 @@ public class FunctionFactoryCache {
         }
     }
 
-    @TestOnly
     public LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> getFactories() {
         return factories;
     }
