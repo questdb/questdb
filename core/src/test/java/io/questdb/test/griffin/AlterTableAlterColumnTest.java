@@ -231,9 +231,35 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     public void testQuotedColumnNameCacheNocache() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    execute("CREATE TABLE test_quoted (\"MY_COL\" SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    execute("CREATE TABLE test_quoted (\"MY_COL\" SYMBOL NOCACHE, ts TIMESTAMP) TIMESTAMP (ts)");
+
                     execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" CACHE");
+                    engine.releaseAllReaders();
+                    try (TableReader reader = getReader("test_quoted")) {
+                        int colIndex = reader.getMetadata().getColumnIndex("MY_COL");
+                        Assert.assertTrue(reader.getSymbolMapReader(colIndex).isCached());
+                    }
+
                     execute("ALTER TABLE test_quoted ALTER COLUMN \"MY_COL\" NOCACHE");
+                    engine.releaseAllReaders();
+                    try (TableReader reader = getReader("test_quoted")) {
+                        int colIndex = reader.getMetadata().getColumnIndex("MY_COL");
+                        Assert.assertFalse(reader.getSymbolMapReader(colIndex).isCached());
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testQuotedColumnNameNonExistent() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    execute("CREATE TABLE test_quoted (col SYMBOL, ts TIMESTAMP) TIMESTAMP (ts)");
+                    assertExceptionNoLeakCheck(
+                            "ALTER TABLE test_quoted ALTER COLUMN \"nonexistent\" ADD INDEX",
+                            37,
+                            "column 'nonexistent' does not exist"
+                    );
                 }
         );
     }
@@ -273,7 +299,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                select(sql);
+                select(sql).close();
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
