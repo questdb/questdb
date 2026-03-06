@@ -207,16 +207,14 @@ pub fn binary_to_dict_pages(
     let mut keys: Vec<u32> = Vec::with_capacity(offsets.len());
     let mut total_keys_bytes = 0usize;
 
-    for slice in &byte_slices {
-        if let Some(s) = slice {
-            let next_id = dict_entries.len() as u32;
-            let key = *dict_map.entry(s).or_insert_with(|| {
-                total_keys_bytes += 4 + s.len();
-                dict_entries.push(s);
-                next_id
-            });
-            keys.push(key);
-        }
+    for s in byte_slices.iter().flatten() {
+        let next_id = dict_entries.len() as u32;
+        let key = *dict_map.entry(s).or_insert_with(|| {
+            total_keys_bytes += 4 + s.len();
+            dict_entries.push(s);
+            next_id
+        });
+        keys.push(key);
     }
 
     // Build dict buffer (length-prefixed bytes)
