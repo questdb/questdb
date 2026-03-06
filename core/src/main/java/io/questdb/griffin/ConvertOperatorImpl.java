@@ -246,7 +246,7 @@ public class ConvertOperatorImpl implements Closeable {
 
                                 long srcFixFd = -1, srcVarFd = -1, srcNullBitmapFd = -1, dstFixFd = -1, dstVarFd = -1;
                                 try {
-                                    openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen, rowCount, columnTop);
+                                    openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen, rowCount, columnTop, newType);
                                     srcFixFd = this.fixedFd;
                                     srcVarFd = this.varFd;
                                     srcNullBitmapFd = this.nullBitmapFd;
@@ -446,7 +446,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
 
-    private void openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen, long rowCount, long columnTop) {
+    private void openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen, long rowCount, long columnTop, int targetType) {
         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         if (isVarSize(columnType)) {
             fixedFd = TableUtils.openRO(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
@@ -461,11 +461,12 @@ public class ConvertOperatorImpl implements Closeable {
             fixedFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
             varFd = -1;
             // Try to open the null bitmap (.n) file.
-            // If it doesn't exist, generate it from sentinel values in the .d file.
+            // If it doesn't exist, generate it from sentinel values in the .d file
+            // when the target type needs a bitmap (e.g. INT→SHORT conversion).
             nFile(path.trimTo(pathTrimToLen), name, columnNameTxn);
             nullBitmapFd = ff.openRO(path.$());
-            if (nullBitmapFd < 0 && rowCount > 0) {
-                // .n file doesn't exist — generate it from sentinels
+            if (nullBitmapFd < 0 && rowCount > 0 && ColumnType.needsNullBitmap(targetType)) {
+                // .n file doesn't exist but target type needs bitmap — generate from sentinels
                 long dataSize = rowCount * ColumnType.sizeOf(columnType);
                 long dataAddr = TableUtils.mapRO(ff, fixedFd, dataSize, MemoryTag.MMAP_DEFAULT);
                 try {

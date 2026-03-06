@@ -86,6 +86,127 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanNullBitmapInWalRowApi() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String tableNameNoWal = tableName + "_nowal";
+
+            // Match fuzz test schema exactly
+            execute(
+                    "CREATE TABLE " + tableName + " AS (" +
+                            "SELECT x AS c1, " +
+                            " rnd_symbol('AB', 'BC', 'CD') c2, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                            " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
+                            " CAST(x AS INT) c3," +
+                            " rnd_bin() c4," +
+                            " to_long128(3 * x, 6 * x) c5," +
+                            " rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') rnd_str," +
+                            " rnd_boolean() bool1 " +
+                            " FROM long_sequence(100)" +
+                            "), index(sym2) TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            // Force column tops (like fuzz test)
+            execute("ALTER TABLE " + tableName + " ADD COLUMN long_top LONG");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN str_top LONG");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN sym_top SYMBOL INDEX");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN ip4 IPv4");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN var_top VARCHAR");
+            drainWalQueue();
+
+            // Create matching non-WAL table
+            execute(
+                    "CREATE TABLE " + tableNameNoWal + " AS (" +
+                            "SELECT * FROM " + tableName +
+                            "), index(sym2) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL"
+            );
+
+            TableToken tt = engine.verifyTableName(tableName);
+
+            // Insert rows via Row API across MULTIPLE partitions (5 days)
+            // Using random-ish values with some nulls like fuzz test
+            Rnd rnd = new Rnd();
+            try (WalWriter writer = engine.getWalWriter(tt)) {
+                long dayMicros = 86_400_000_000L;
+                for (int txn = 0; txn < 100; txn++) {
+                    for (int j = 0; j < 500; j++) {
+                        int row = txn * 500 + j;
+                        long ts = 1_645_660_800_000_000L + 100_000_000L + (row % 5) * dayMicros + (row / 5) * 1_000_000L;
+                        TableWriter.Row r = writer.newRow(ts);
+                        r.putLong(0, 100 + row); // c1
+                        // Skip some columns randomly (notSet = 20%)
+                        if (rnd.nextDouble() > 0.2) {
+                            r.putSym(1, rnd.nextBoolean() ? "AB" : "CD"); // c2
+                        }
+                        // sym2 (col 3)
+                        if (rnd.nextDouble() > 0.2) {
+                            r.putSym(3, rnd.nextBoolean() ? "DE" : null);
+                        }
+                        // c3 (col 4)
+                        if (rnd.nextDouble() > 0.2) {
+                            r.putInt(4, rnd.nextInt());
+                        }
+                        // bool1 (col 8) - with 10% null
+                        if (rnd.nextDouble() > 0.2) {
+                            if (rnd.nextDouble() < 0.1) {
+                                // Don't set = null
+                            } else {
+                                r.putBool(8, rnd.nextBoolean());
+                            }
+                        }
+                        r.append();
+                    }
+                    writer.commit();
+                }
+            }
+
+            // Drain WAL with random TableWriter close/reopen (matching fuzz test)
+            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
+                CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
+                while (walApplyJob.run(0) || checkJob.run(0)) {
+                    engine.releaseInactive();
+                }
+            }
+
+            // Same operations to non-WAL table
+            rnd.reset(); // Reset to same seed
+            try (TableWriter writer = getWriter(tableNameNoWal)) {
+                long dayMicros = 86_400_000_000L;
+                for (int txn = 0; txn < 100; txn++) {
+                    for (int j = 0; j < 500; j++) {
+                        int row = txn * 500 + j;
+                        long ts = 1_645_660_800_000_000L + 100_000_000L + (row % 5) * dayMicros + (row / 5) * 1_000_000L;
+                        TableWriter.Row r = writer.newRow(ts);
+                        r.putLong(0, 100 + row);
+                        if (rnd.nextDouble() > 0.2) {
+                            r.putSym(1, rnd.nextBoolean() ? "AB" : "CD");
+                        }
+                        if (rnd.nextDouble() > 0.2) {
+                            r.putSym(3, rnd.nextBoolean() ? "DE" : null);
+                        }
+                        if (rnd.nextDouble() > 0.2) {
+                            r.putInt(4, rnd.nextInt());
+                        }
+                        if (rnd.nextDouble() > 0.2) {
+                            if (rnd.nextDouble() < 0.1) {
+                                // null
+                            } else {
+                                r.putBool(8, rnd.nextBoolean());
+                            }
+                        }
+                        r.append();
+                    }
+                    writer.commit();
+                }
+            }
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
     public void test2InsertsAtSameTime() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
