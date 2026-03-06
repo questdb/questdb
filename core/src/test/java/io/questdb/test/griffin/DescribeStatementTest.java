@@ -53,6 +53,16 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDescribeAdHocExpression() throws Exception {
+        assertMemoryLeak(() -> assertSql("""
+                ordinal_position\tcolumn_name\tdata_type
+                0\t1\tINT
+                1\thello\tSTRING
+                2\tfalse\tBOOLEAN
+                """, "DESCRIBE SELECT 1, 'hello', false"));
+    }
+
+    @Test
     public void testDescribeAfterExplain() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (id INT, name STRING)");
@@ -61,6 +71,18 @@ public class DescribeStatementTest extends AbstractCairoTest {
                     QUERY PLAN
                     describe()
                     """, "EXPLAIN DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeAfterExplainNoParentheses() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+
+            assertSql("""
+                    QUERY PLAN
+                    describe()
+                    """, "EXPLAIN DESCRIBE SELECT * FROM test_table");
         });
     }
 
@@ -102,6 +124,31 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDescribeAfterDropColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (a INT, b STRING, c DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test_table VALUES (1, 'x', 1.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE test_table DROP COLUMN b");
+            drainWalQueue();
+
+            // After dropping column b, DESCRIBE should show a, c, ts — no gaps
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\ta\tINT
+                    1\tc\tDOUBLE
+                    2\tts\tTIMESTAMP
+                    """, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeBareIdentifier() throws Exception {
+        assertMemoryLeak(() -> assertException("DESCRIBE my_table", 9, "'(' or query expected after 'describe'"));
+    }
+
+    @Test
     public void testDescribeCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (id INT, name STRING)");
@@ -124,6 +171,19 @@ public class DescribeStatementTest extends AbstractCairoTest {
                     0\tid\tINT
                     1\tname\tSTRING
                     """, "SELECT * FROM describe((SELECT * FROM test_table))");
+        });
+    }
+
+    @Test
+    public void testDescribeGeohashType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (loc GEOHASH(7c), pos GEOHASH(3b))");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tloc\tGEOHASH(7c)
+                    1\tpos\tGEOHASH(3b)
+                    """, "DESCRIBE (SELECT * FROM test_table)");
         });
     }
 
@@ -157,6 +217,20 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDescribeLatestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tsym\tSYMBOL
+                    1\tval\tDOUBLE
+                    2\tts\tTIMESTAMP
+                    """, "DESCRIBE (SELECT * FROM test_table LATEST ON ts PARTITION BY sym)");
+        });
+    }
+
+    @Test
     public void testDescribeNestedSubquery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (id INT, value DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -170,8 +244,46 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDescribeNestedDescribe() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+
+            // describe(describe(...)) produces the schema of the describe output itself
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tordinal_position\tINT
+                    1\tcolumn_name\tSTRING
+                    2\tdata_type\tSYMBOL
+                    """, "SELECT * FROM describe((SELECT * FROM describe((SELECT * FROM test_table))))");
+        });
+    }
+
+    @Test
     public void testDescribeNonExistentTable() throws Exception {
-        assertMemoryLeak(() -> assertException("DESCRIBE (SELECT * FROM non_existent_table)", 38, "table does not exist [table=non_existent_table]"));
+        assertMemoryLeak(() -> assertException("DESCRIBE (SELECT * FROM non_existent_table)", 24, "table does not exist [table=non_existent_table]"));
+    }
+
+    @Test
+    public void testDescribeNonQuery() throws Exception {
+        assertMemoryLeak(() -> assertException("DESCRIBE (42)", 10, "table does not exist [table=42]"));
+    }
+
+    @Test
+    public void testDescribeNoParentheses() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    """, "DESCRIBE SELECT * FROM test_table");
+        });
+    }
+
+    @Test
+    public void testDescribeNoQuery() throws Exception {
+        assertMemoryLeak(() -> assertException("DESCRIBE", 0, "query expected after 'describe'"));
     }
 
     @Test
@@ -203,6 +315,17 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDescribeResultFilteringUnknownType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+
+            assertSql("""
+                    column_name
+                    """, "SELECT column_name FROM describe((SELECT * FROM test_table)) WHERE data_type = 'NONEXISTENT'");
+        });
+    }
+
+    @Test
     public void testDescribeResultOrdering() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (b INT, a STRING, c DOUBLE)");
@@ -213,6 +336,20 @@ public class DescribeStatementTest extends AbstractCairoTest {
                     b\tINT
                     c\tDOUBLE
                     """, "SELECT column_name, data_type FROM describe((SELECT * FROM test_table)) ORDER BY column_name");
+        });
+    }
+
+    @Test
+    public void testDescribeSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tsym\tSYMBOL
+                    1\tavg\tDOUBLE
+                    2\tts\tTIMESTAMP
+                    """, "DESCRIBE (SELECT sym, avg(val), ts FROM test_table SAMPLE BY 1h)");
         });
     }
 
@@ -394,6 +531,14 @@ public class DescribeStatementTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDescribeSemicolonInStringNoParentheses() throws Exception {
+        assertMemoryLeak(() -> assertSql("""
+                ordinal_position\tcolumn_name\tdata_type
+                0\tx\tSTRING
+                """, "DESCRIBE SELECT 'a;b' AS x"));
+    }
+
+    @Test
     public void testDescribeSemicolonInString() throws Exception {
         assertMemoryLeak(() -> assertSql("""
                 ordinal_position\tcolumn_name\tdata_type
@@ -412,6 +557,14 @@ public class DescribeStatementTest extends AbstractCairoTest {
                     1\tname\tSTRING
                     2\tts\tTIMESTAMP
                     """, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeTrailingToken() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT)");
+            assertException("DESCRIBE (SELECT * FROM test_table) foo", 36, "unexpected token [foo]");
         });
     }
 
@@ -456,6 +609,44 @@ public class DescribeStatementTest extends AbstractCairoTest {
                     1\tval\tDOUBLE
                     2\tts\tTIMESTAMP
                     """, "DESCRIBE (SELECT * FROM test_table)");
+        });
+    }
+
+    @Test
+    public void testDescribeWithClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING, value DOUBLE)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    """, "DESCRIBE (WITH cte AS (SELECT id, name FROM test_table) SELECT * FROM cte)");
+        });
+    }
+
+    @Test
+    public void testDescribeWithClauseNoParentheses() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING, value DOUBLE)");
+
+            assertSql("""
+                    ordinal_position\tcolumn_name\tdata_type
+                    0\tid\tINT
+                    1\tname\tSTRING
+                    """, "DESCRIBE WITH cte AS (SELECT id, name FROM test_table) SELECT * FROM cte");
+        });
+    }
+
+    @Test
+    public void testDescribeWithInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test_table (id INT, name STRING)");
+            assertException(
+                    "DESCRIBE WITH cte AS (SELECT * FROM test_table) INSERT INTO test_table SELECT * FROM cte",
+                    0,
+                    "query expected after 'describe'"
+            );
         });
     }
 }

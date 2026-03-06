@@ -50,7 +50,7 @@ public class DescribeFunctionFactory implements FunctionFactory {
         if (factory == null) {
             throw SqlException.$(argPositions.getQuick(0), "cursor expected");
         }
-        RecordMetadata metadata = GenericRecordMetadata.copyOf(factory.getMetadata());
+        RecordMetadata metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
         arg.close();
         return new CursorFunction(new DescribeRecordCursorFactory(metadata));
     }

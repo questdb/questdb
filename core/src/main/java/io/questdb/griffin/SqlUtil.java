@@ -1498,7 +1498,7 @@ public class SqlUtil {
 
         @Override
         public int getSymbolCount() {
-            return ColumnType.NULL;
+            return ColumnType.NULL + 1;
         }
 
         @Override

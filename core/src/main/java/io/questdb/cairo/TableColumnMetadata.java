@@ -80,6 +80,7 @@ public class TableColumnMetadata implements Plannable {
                 symbolCacheFlag,
                 symbolCapacity
         );
+        assert ColumnType.isSymbol(columnType);
     }
 
     public TableColumnMetadata(

@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
+import io.questdb.griffin.model.DescribeModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
@@ -79,7 +80,6 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -119,7 +119,7 @@ public class SqlParser {
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
-    private final StringSink describeSqlSink = new StringSink();
+    private final ObjectPool<DescribeModel> describeModelPool;
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -181,6 +181,7 @@ public class SqlParser {
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
         this.compileViewModelPool = new ObjectPool<>(CompileViewModel.FACTORY, configuration.getCompileViewModelPoolCapacity());
         this.copyModelPool = new ObjectPool<>(ExportModel.FACTORY, configuration.getCopyPoolCapacity());
+        this.describeModelPool = new ObjectPool<>(DescribeModel.FACTORY, configuration.getExplainPoolCapacity());
         this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
         this.pivotQueryColumnPool = new ObjectPool<>(PivotForColumn.FACTORY, configuration.getPivotColumnPoolCapacity());
         this.traversalAlgo = traversalAlgo;
@@ -2185,6 +2186,37 @@ public class SqlParser {
         }
     }
 
+    private ExecutionModel parseDescribe(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final int describePos = lexer.lastTokenPosition();
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.position(describePos).put("query expected after 'describe'");
+        }
+
+        QueryModel innerModel;
+        if (Chars.equals(tok, '(')) {
+            // DESCRIBE (SELECT ...) or DESCRIBE(SELECT ...)
+            innerModel = parseAsSubQueryAndExpectClosingBrace(lexer, null, false, sqlParserCallback, null);
+        } else if (isSelectKeyword(tok)) {
+            innerModel = (QueryModel) parseSelect(lexer, sqlParserCallback, null);
+        } else if (isWithKeyword(tok)) {
+            ExecutionModel withModel = parseWith(lexer, sqlParserCallback, null);
+            if (!(withModel instanceof QueryModel qm)) {
+                throw SqlException.position(describePos).put("query expected after 'describe'");
+            }
+            innerModel = qm;
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'(' or query expected after 'describe'");
+        }
+
+        DescribeModel describeModel = describeModelPool.next();
+        describeModel.setModel(innerModel);
+        return describeModel;
+    }
+
     private QueryModel parseDml(
             GenericLexer lexer,
             int modelPosition,
@@ -2532,38 +2564,6 @@ public class SqlParser {
             updateQueryModel.setNestedModel(fromModel);
         }
         return updateQueryModel;
-    }
-
-    private ExecutionModel parseDescribe(
-            GenericLexer lexer,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
-        // Rewrite as: SELECT * FROM describe(...) and feed to parseSelect.
-        // Uses a dedicated sink — the lexer's FloatingSequence tokens reference
-        // its content, so it must outlive compilation (no thread-local sink).
-        final CharSequence content = lexer.getContent();
-        final int describePos = lexer.lastTokenPosition();
-        describeSqlSink.clear();
-        describeSqlSink.put("SELECT * FROM ");
-
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && Chars.equals(tok, '(')) {
-            // DESCRIBE(expr) — already a function call form
-            describeSqlSink.put(content, describePos, content.length());
-        } else {
-            // DESCRIBE expr — wrap in describe()
-            lexer.unparseLast();
-            describeSqlSink.put("describe(");
-            describeSqlSink.put(content, lexer.getPosition(), content.length());
-            describeSqlSink.put(')');
-        }
-
-        lexer.of(describeSqlSink);
-        tok = tok(lexer, "'select'");
-        if (!isSelectKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'select' expected");
-        }
-        return parseSelect(lexer, sqlParserCallback, null);
     }
 
     // doesn't allow copy, rename
@@ -4999,6 +4999,7 @@ public class SqlParser {
         expressionTreeBuilder.reset();
         copyModelPool.clear();
         topLevelWithModel.clear();
+        describeModelPool.clear();
         explainModelPool.clear();
         viewLexers.clear();
         digit = 1;

@@ -45,7 +45,7 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordMetadata childMetadata;
     private final DescribeRecordCursor cursor = new DescribeRecordCursor();
 
-    DescribeRecordCursorFactory(@NotNull RecordMetadata childMetadata) {
+    public DescribeRecordCursorFactory(@NotNull RecordMetadata childMetadata) {
         super(METADATA);
         this.childMetadata = childMetadata;
     }
@@ -92,7 +92,7 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (childMetadata.hasColumn(++pos)) {
+            if (++pos < childMetadata.getColumnCount()) {
                 record.of(pos, childMetadata.getColumnName(pos), childMetadata.getColumnType(pos));
                 return true;
             }
