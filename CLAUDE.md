@@ -14,9 +14,11 @@ time-series SQL extensions.
 
 Java class members are grouped by kind (static vs. instance) and visibility, and
 sorted alphabetically. When adding new methods or fields, insert them in the
-correct alphabetical position among existing members of the same kind. Don't
-insert comments as "section headings" because methods won't stay together after
-auto-sorting.
+correct alphabetical position among existing members of the same kind.
+
+Never insert `// ===` or `// ---` banner comments as section headings in any
+Java file — not in production code, not in test code. Methods are sorted
+alphabetically and will not stay grouped by category.
 
 Use modern Java features:
 
@@ -31,6 +33,11 @@ NULL value.
 
 When choosing a name for a boolean variable, field or method, always use the
 is... or has... prefix, as appropriate.
+
+**Log messages must use strictly ASCII characters.** QuestDB's log infrastructure
+does not reliably render non-ASCII (e.g., em dashes, curly quotes, Unicode
+symbols). Use only plain ASCII punctuation in all `LOG.info()`, `LOG.error()`,
+etc. calls.
 
 ### Tests
 
@@ -70,6 +77,9 @@ offending character, not the start of the expression.
 
 ## Git & PR Conventions
 
+- **`java-questdb-client/` is a separate git repo** (a git submodule). Always
+  `cd` into it and commit there independently. Never commit it from the parent
+  repo as a submodule pointer update without also committing inside it first.
 - PR titles must follow Conventional Commits format: `type(scope): description`
   (e.g., `fix(sql): fix ...`, `feat(core): add ...`). The description part is
   copied to release notes, so it must read well on its own — repeat the verb
@@ -171,6 +181,8 @@ cmake --build build/release --config Release
 - **utils/** - Build utilities
 - **examples/** - Usage examples
 - **win64svc/** - Windows service wrapper
+- **java-questdb-client** - Java client for data ingestion (legacy ILP and
+  Questdb's QWP)
 
 ### Core Package Layout (`core/src/main/java/io/questdb/`)
 
