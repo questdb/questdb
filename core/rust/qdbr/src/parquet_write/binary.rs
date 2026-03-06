@@ -124,7 +124,10 @@ fn encode_plain(
 
     for offset in offsets {
         let offset = usize::try_from(*offset).map_err(|_| {
-            fmt_err!(Layout, "invalid offset value in binary aux column: {offset}")
+            fmt_err!(
+                Layout,
+                "invalid offset value in binary aux column: {offset}"
+            )
         })?;
         let len = types::decode::<i64>(&values[offset..offset + size_of_header]);
         if len < 0 {

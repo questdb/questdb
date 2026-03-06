@@ -55,7 +55,10 @@ pub fn string_to_page(
         .iter()
         .map(|offset| {
             let offset = usize::try_from(*offset).map_err(|_| {
-                fmt_err!(Layout, "invalid offset value in string aux column: {offset}")
+                fmt_err!(
+                    Layout,
+                    "invalid offset value in string aux column: {offset}"
+                )
             })?;
             let maybe_utf16 = get_utf16(&data[offset..]);
             if maybe_utf16.is_none() {
