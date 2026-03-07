@@ -325,6 +325,8 @@ public interface CairoConfiguration {
     @NotNull
     String getInstallRoot();
 
+    int getJsonUnnestMaxValueSize();
+
     int getLatestByQueueCapacity();
 
     @NotNull

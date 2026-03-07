@@ -41,9 +41,11 @@ PACK(class json_result {
          simdjson::error_code error;
          simdjson::ondemand::json_type type;
          simdjson::ondemand::number_type number_type;
+         int32_t truncated;  // 0 = not truncated, 1 = truncated by truncated_utf8_copy
 
          template<class T>
          bool from(simdjson::simdjson_result<T> &res) {
+             truncated = 0;
              error = res.error();
              if (error != simdjson::error_code::SUCCESS) {
                  type = static_cast<simdjson::ondemand::json_type>(0);
@@ -61,6 +63,7 @@ PACK(class json_result {
 
          template<typename T>
          bool set_error(simdjson::simdjson_result<T> &res) {
+             truncated = 0;
              error = res.error();
              return error == simdjson::error_code::SUCCESS;
          }
@@ -70,7 +73,8 @@ PACK(class json_result {
 static_assert(sizeof(simdjson::error_code) == 4, "Unexpected size of simdjson::error_code");
 static_assert(sizeof(simdjson::ondemand::json_type) == 4, "Unexpected size of simdjson::ondemand::json_type");
 static_assert(sizeof(simdjson::ondemand::number_type) == 4, "Unexpected size of simdjson::ondemand::number_type");
-static_assert(sizeof(json_result) == 12, "Unexpected size of json_result");
+static_assert(sizeof(int32_t) == 4, "Unexpected size of int32_t");
+static_assert(sizeof(json_result) == 16, "Unexpected size of json_result");
 
 static_assert(sizeof(size_t) == 8);
 static_assert(sizeof(jlong) == 8);
@@ -145,7 +149,8 @@ inline bool copy_and_detect_multibyte_codepoint(std::byte *dest, const char *src
 // Copy `src` to `dest` up to `max_dest_len` bytes.
 // If `src` is longer than `max_dest_len`, copy up to the last UTF-8 character that fits.
 // This function guarantees that there are no broken UTF-8 characters in the output.
-static void
+// Returns `true` if the source was truncated (i.e., `src.length() > max_dest_len`).
+static bool
 truncated_utf8_copy(
         questdb_byte_sink_t &dest,
         size_t max_dest_len,
@@ -153,7 +158,7 @@ truncated_utf8_copy(
         bool src_is_ascii
 ) {
     if (max_dest_len == 0) [[unlikely]] {
-        return;
+        return src.length() > 0;
     }
     const auto copy_len = std::min(src.length(), max_dest_len);
     if (src_is_ascii || !dest.ascii) [[likely]] {
@@ -170,8 +175,11 @@ truncated_utf8_copy(
         if (end_ptr < last_utf8_start + char_size) {
             end_ptr = last_utf8_start;
         }
+        dest.ptr = end_ptr;
+        return true;
     }
     dest.ptr = end_ptr;
+    return false;
 }
 
 // To make the compiler happy when compiling `value_at_path`
@@ -314,7 +322,7 @@ void extract_raw_json(
         return;
     }
     auto raw = trim(raw_res.value_unsafe());
-    truncated_utf8_copy(*dest_sink, max_size_st, raw, json_is_ascii);
+    result.truncated = truncated_utf8_copy(*dest_sink, max_size_st, raw, json_is_ascii);
 }
 
 template<typename V>
@@ -354,7 +362,7 @@ jlong extract_value(
             }
         }
         case simdjson::ondemand::json_type::string:
-            truncated_utf8_copy(
+            result.truncated = truncated_utf8_copy(
                     *dest_sink,
                     static_cast<size_t>(max_size),
                     res.get_string().value_unsafe(),
@@ -449,7 +457,7 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerUtf8(
             [result, dest_sink, max_size, json_is_ascii](auto res) -> token_void {
                 switch (result->type) {
                     case simdjson::ondemand::json_type::string:
-                        truncated_utf8_copy(
+                        result->truncated = truncated_utf8_copy(
                                 *dest_sink,
                                 static_cast<size_t>(max_size),
                                 res.get_string().value_unsafe(),
@@ -662,6 +670,41 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerDouble(
                             return value;
                         });
             });
+}
+
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_json_SimdJsonParser_queryPointerArrayLength(
+        JNIEnv * /*env*/,
+        jclass /*cl*/,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
+        size_t json_len,
+        size_t tail_padding,
+        const char *pointer_chars,
+        size_t pointer_len,
+        json_result *result
+) {
+    const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
+    const std::string_view pointer{pointer_chars, pointer_len};
+    auto doc = parser->iterate(json_buf);
+    simdjson_value val;
+    if (pointer.empty()) {
+        val = doc.get_value();
+    } else {
+        val = doc.at_pointer(pointer);
+    }
+    if (!result->from(val)) { return 0; }
+    auto arr = val.get_array();
+    if (!result->set_error(arr)) { return 0; }
+    auto count = arr.count_elements();
+    if (!result->set_error(count)) { return 0; }
+    const auto count_value = count.value_unsafe();
+    if (count_value > static_cast<size_t>(std::numeric_limits<jint>::max())) {
+        result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+        return 0;
+    }
+    result->error = simdjson::error_code::SUCCESS;
+    return static_cast<jint>(count_value);
 }
 
 } // extern "C"

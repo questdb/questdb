@@ -41,7 +41,7 @@ public class ColumnVersionTest extends AbstractCairoTest {
                             " x" +
                             ", rnd_symbol('a', 'b', 'c', null) m" +
                             ", timestamp_sequence('1970-01-01T01', " + Micros.HOUR_MICROS + "L) ts" +
-                            " from long_sequence(96)," +
+                            " from long_sequence(96)" +
                             "), index(m) timestamp(ts) partition by DAY"
             );
             execute("alter table t_col_top_ooo_day add column день symbol");// .execute(null).await();
@@ -54,7 +54,7 @@ public class ColumnVersionTest extends AbstractCairoTest {
                             ", timestamp_sequence('1970-01-05T02:30', " + Micros.HOUR_MICROS + "L) ts" +
                             ", rnd_symbol('a', 'b', 'c', null)" +
                             ", rnd_str()" +
-                            " from long_sequence(10),"
+                            " from long_sequence(10)"
             );
             execute(
                     "insert into t_col_top_ooo_day " +
@@ -76,7 +76,7 @@ public class ColumnVersionTest extends AbstractCairoTest {
                             ", timestamp_sequence('1970-01-05T04:25', " + Micros.HOUR_MICROS + "L) ts" +
                             ", rnd_symbol('a', 'b', 'c', null)" +
                             ", rnd_str()" +
-                            " from long_sequence(10),"
+                            " from long_sequence(10)"
             );
             assertSql("x\tm\tts\tдень\tstr\n" +
                     "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +

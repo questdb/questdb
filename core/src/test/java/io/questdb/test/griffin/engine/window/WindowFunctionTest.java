@@ -489,7 +489,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts range between 1 microsecond preceding and current row), " +
                             "max(j) over (order by ts range between 1 microsecond preceding and current row), " +
                             "min(j) over (order by ts range between 1 microsecond preceding and current row) " +
-                            "from tab), " +
+                            "from tab) " +
                             " limit -5",
                     "ts",
                     false,
@@ -521,7 +521,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
                             "max(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding), " +
                             "min(j) over (order by ts range between 1 millisecond preceding and 1 microsecond preceding) " +
-                            "from tab), " +
+                            "from tab) " +
                             " limit -5",
                     "ts",
                     false,
@@ -553,7 +553,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
                             "max(j) over (order by ts range between 1 day preceding and 100 millisecond preceding), " +
                             "min(j) over (order by ts range between 1 day preceding and 100 millisecond preceding) " +
-                            "from tab), " +
+                            "from tab) " +
                             " limit -5",
                     "ts",
                     false,
@@ -589,7 +589,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(c) over (order by ts range between 1 millisecond preceding and current row), " +
                             "max(j) over (order by ts range between 1 millisecond preceding and current row), " +
                             "min(j) over (order by ts range between 1 millisecond preceding and current row) " +
-                            "from tab), " +
+                            "from tab) " +
                             " limit -5",
                     "ts",
                     false,

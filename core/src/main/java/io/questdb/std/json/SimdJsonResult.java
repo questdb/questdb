@@ -29,9 +29,10 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
 public class SimdJsonResult implements QuietCloseable {
-    private static final int JSON_RESULT_STRUCT_SIZE = 12;
+    private static final int JSON_RESULT_STRUCT_NUMBER_TYPE_OFFSET = 8;
+    private static final int JSON_RESULT_STRUCT_SIZE = 16;
+    private static final int JSON_RESULT_STRUCT_TRUNCATED_OFFSET = 12;
     private static final int JSON_RESULT_STRUCT_TYPE_OFFSET = 4;
-    private static final int JSON_RESULT_STRUCT_NUMBER_TYPE_OFFSET = JSON_RESULT_STRUCT_TYPE_OFFSET + 4;
     private long impl;
 
     public SimdJsonResult() {
@@ -70,6 +71,15 @@ public class SimdJsonResult implements QuietCloseable {
 
     public boolean isNull() {
         return getType() == SimdJsonType.NULL;
+    }
+
+    /**
+     * Returns true if the last UTF-8 extraction was truncated because
+     * the source value exceeded the maxSize limit. Set by the native
+     * truncated_utf8_copy() function and reset on each query call.
+     */
+    public boolean isTruncated() {
+        return Unsafe.getUnsafe().getInt(impl + JSON_RESULT_STRUCT_TRUNCATED_OFFSET) != 0;
     }
 
     public long ptr() {
