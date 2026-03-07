@@ -20,8 +20,8 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastCharToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT rnd_char() x FROM long_sequence(5)), cast(x AS string)");
-            assertSql("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            execute("CREATE TABLE t AS (SELECT rnd_char() x FROM long_sequence(5)), CAST(x AS string)");
+            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
         });
     }
 
@@ -31,8 +31,8 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastCharToVarcharInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT rnd_char() x FROM long_sequence(5)), cast(x AS varchar)");
-            assertSql("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            execute("CREATE TABLE t AS (SELECT rnd_char() x FROM long_sequence(5)), CAST(x AS varchar)");
+            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
         });
     }
 
@@ -44,8 +44,8 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastIntToLongInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT 1 x FROM long_sequence(5)), cast(x AS long)");
-            assertSql("x\n1\n1\n1\n1\n1\n", "SELECT x FROM t");
+            execute("CREATE TABLE t AS (SELECT 1 x FROM long_sequence(5)), CAST(x AS long)");
+            assertQueryNoLeakCheck("x\n1\n1\n1\n1\n1\n", "SELECT x FROM t");
         });
     }
 
@@ -57,9 +57,9 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastLongToVarcharInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5)), cast(x AS varchar)");
-            assertSql("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
-            assertSql("x\n1\n2\n3\n4\n5\n", "SELECT x FROM t");
+            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5)), CAST(x AS varchar)");
+            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertQueryNoLeakCheck("x\n1\n2\n3\n4\n5\n", "SELECT x FROM t");
         });
     }
 
@@ -69,9 +69,9 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastLongToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5)), cast(x AS string)");
-            assertSql("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
-            assertSql("x\n1\n2\n3\n4\n5\n", "SELECT x FROM t");
+            execute("CREATE TABLE t AS (SELECT x FROM long_sequence(5)), CAST(x AS string)");
+            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            assertQueryNoLeakCheck("x\n1\n2\n3\n4\n5\n", "SELECT x FROM t");
         });
     }
 
@@ -82,7 +82,7 @@ public class CastInCtasTest extends AbstractCairoTest {
     public void testCastLongToSymbolInCtasFails() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
-                    "CREATE TABLE t AS (SELECT x FROM long_sequence(5)), cast(x AS symbol)",
+                    "CREATE TABLE t AS (SELECT x FROM long_sequence(5)), CAST(x AS symbol)",
                     57,
                     "unsupported cast [column=x, from=LONG, to=SYMBOL]"
             );
@@ -97,8 +97,8 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastSymbolToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT rnd_symbol('a', 'b', 'c') x FROM long_sequence(5)), cast(x AS string)");
-            assertSql("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            execute("CREATE TABLE t AS (SELECT rnd_symbol('a', 'b', 'c') x FROM long_sequence(5)), CAST(x AS string)");
+            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
         });
     }
 
@@ -108,8 +108,8 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastSymbolToVarcharInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT rnd_symbol('a', 'b', 'c') x FROM long_sequence(5)), cast(x AS varchar)");
-            assertSql("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            execute("CREATE TABLE t AS (SELECT rnd_symbol('a', 'b', 'c') x FROM long_sequence(5)), CAST(x AS varchar)");
+            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
         });
     }
 
@@ -119,8 +119,8 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastStringToVarcharInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT 'a' x FROM long_sequence(5)), cast(x AS varchar)");
-            assertSql("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            execute("CREATE TABLE t AS (SELECT 'a' x FROM long_sequence(5)), CAST(x AS varchar)");
+            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
         });
     }
 
@@ -132,8 +132,8 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastUuidToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), cast(x AS string)");
-            assertSql("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            execute("CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), CAST(x AS string)");
+            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
         });
     }
 
@@ -143,8 +143,8 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastUuidToVarcharInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), cast(x AS varchar)");
-            assertSql("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            execute("CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), CAST(x AS varchar)");
+            assertQueryNoLeakCheck("typeOf\nVARCHAR\n", "SELECT typeOf(x) FROM t LIMIT 1");
         });
     }
 
@@ -155,7 +155,7 @@ public class CastInCtasTest extends AbstractCairoTest {
     public void testCastUuidToSymbolInCtasFails() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
-                    "CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), cast(x AS symbol)",
+                    "CREATE TABLE t AS (SELECT rnd_uuid4() x FROM long_sequence(5)), CAST(x AS symbol)",
                     69,
                     "unsupported cast [column=x, from=UUID, to=SYMBOL]"
             );
@@ -168,8 +168,8 @@ public class CastInCtasTest extends AbstractCairoTest {
     @Test
     public void testCastVarcharToStringInCtas() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t AS (SELECT cast('a' AS varchar) x FROM long_sequence(5)), cast(x AS string)");
-            assertSql("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
+            execute("CREATE TABLE t AS (SELECT CAST('a' AS varchar) x FROM long_sequence(5)), CAST(x AS string)");
+            assertQueryNoLeakCheck("typeOf\nSTRING\n", "SELECT typeOf(x) FROM t LIMIT 1");
         });
     }
 }
