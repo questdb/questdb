@@ -3046,23 +3046,13 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        try {
-            engine.execute("insert atomic into x select * from top", sqlExecutionContext);
-            Assert.fail();
-        } catch (CairoException ex) {
-            Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
-        }
-
-        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
-
+        // Negative timestamps are now supported - insert should succeed
         assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "create atomic table y as (select * from top where ts >= 0 union all select * from x)",
-                "insert atomic into x select * from top where ts >= 0"
+                "create atomic table y as (select * from top union all select * from x)",
+                "insert atomic into x select * from top"
         );
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(engine, compiler, sqlExecutionContext);

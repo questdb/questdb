@@ -6106,16 +6106,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             long srcOooMax;
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
-            if (o3TimestampMin < TIMESTAMP_EPOCH) {
-                o3InError = true;
-                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
-            }
-
             long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
-            if (o3TimestampMax < TIMESTAMP_EPOCH) {
-                o3InError = true;
-                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
-            }
 
             // Safe check of the sort. No known way to reproduce
             assert o3TimestampMin <= o3TimestampMax;
@@ -7786,7 +7777,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", ordered=").$(ordered)
                                 .$(", lagRowCount=").$(walLagRowCount)
                                 .$(", walRowLo=").$(rowLo)
-                                .$(", walRowHi=").$(rowHi).I$();
+                                .$(", walRowHi=").$(rowHi)
+                                .I$();
 
                         final long timestampMemorySize = totalUncommitted << 4;
                         o3TimestampMem.jumpTo(timestampMemorySize);
@@ -7810,7 +7802,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     txWriter.getLagMinTimestamp(),
                                     txWriter.getLagMaxTimestamp()
                             );
-                            assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                            if (rowCount != totalUncommitted) {
+                                throw CairoException.critical(0)
+                                        .put("radix sort overflow [result=").put(rowCount)
+                                        .put(", expected=").put(totalUncommitted).put(']');
+                            }
                         } finally {
                             mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                         }
@@ -7822,6 +7818,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (needsDedup) {
                         o3TimestampMemCpy.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
                         o3TimestampMem.jumpTo(totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES);
+                        // Re-get timestampAddr in case jumpTo caused buffer reallocation,
+                        // but only if radix sort was done (needsOrdering=true), which stored
+                        // data in o3TimestampMem. If needsOrdering=false, timestampAddr points
+                        // to walTimestampColumn and should not be changed.
+                        if (needsOrdering) {
+                            timestampAddr = o3TimestampMem.getAddress();
+                        }
                         long dedupTimestampAddr = o3TimestampMem.getAddress();
                         long deduplicatedRowCount = deduplicateSortedIndex(
                                 totalUncommitted,
@@ -8703,7 +8706,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 o3TimestampMin,
                                 o3TimestampMax
                         );
-                        assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                        if (rowCount != totalUncommitted) {
+                            throw CairoException.critical(0)
+                                    .put("radix sort overflow [result=").put(rowCount)
+                                    .put(", expected=").put(totalUncommitted).put(']');
+                        }
                         dispatchColumnTasks(timestampAddr, totalUncommitted, 0, rowLo, rowHi, cthMergeWalColumnWithLag);
                         swapO3ColumnsExcept(timestampIndex);
                         o3Columns = o3MemColumns1;
@@ -8889,8 +8896,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void readNativeMinMaxTimestamps(Path partitionPath, CharSequence columnName, long partitionSize) {
         final long fd = openRO(ff, dFile(partitionPath, columnName, COLUMN_NAME_TXN_NONE), LOG);
         try {
-            attachMinTimestamp = ff.readNonNegativeLong(fd, 0);
-            attachMaxTimestamp = ff.readNonNegativeLong(fd, (partitionSize - 1) * ColumnType.sizeOf(timestampType));
+            attachMinTimestamp = readLongOrFail(ff, fd, 0, tempMem16b, partitionPath.$());
+            attachMaxTimestamp = readLongOrFail(ff, fd, (partitionSize - 1) * ColumnType.sizeOf(timestampType), tempMem16b, partitionPath.$());
         } finally {
             ff.close(fd);
         }
@@ -9006,13 +9013,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(partitionLen);
         }
 
-        if (attachMinTimestamp < 0 || attachMaxTimestamp < 0) {
-            throw CairoException.critical(ff.errno())
-                    .put("cannot read min, max timestamp from the [path=").put(path)
-                    .put(", partitionSizeRows=").put(partitionSize)
-                    .put(", errno=").put(ff.errno())
-                    .put(']');
-        }
         if (txWriter.getPartitionTimestampByTimestamp(attachMinTimestamp) != partitionTimestamp
                 || txWriter.getPartitionTimestampByTimestamp(attachMaxTimestamp) != partitionTimestamp) {
             throw CairoException.critical(0)

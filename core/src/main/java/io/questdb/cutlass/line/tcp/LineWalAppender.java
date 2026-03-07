@@ -103,9 +103,7 @@ public class LineWalAppender {
 
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            if (timestamp < 0) {
-                throw LineProtocolException.designatedTimestampMustBePositive(tud.getTableNameUtf16(), timestamp);
-            }
+            // Negative timestamps (before 1970-01-01) are now allowed
             timestamp = from(tud.getTimestampDriver(), timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
             if (timestamp > CommonUtils.MAX_TIMESTAMP) {
                 throw LineProtocolException.designatedTimestampValueOverflow(tud.getTableNameUtf16(), timestamp);

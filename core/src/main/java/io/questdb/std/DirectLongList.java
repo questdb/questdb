@@ -197,6 +197,37 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         pos += p << 3;
     }
 
+    /**
+     * Sorts the list treating values as signed long integers.
+     * Uses XOR transformation to convert signed to unsigned sort order:
+     * XOR with sign bit, sort as unsigned, XOR back.
+     * <p>
+     * IMPORTANT: XORs every element in place. Only use this when the list contains
+     * single independent values. Do NOT use when the list stores interleaved pairs
+     * (e.g., value+rowId pairs), as XORing the second element would corrupt the row IDs.
+     */
+    public void sortAsSigned() {
+        long sz = size();
+        if (sz <= 1) {
+            return;
+        }
+        // XOR with sign bit to convert signed to unsigned sort order
+        long signBit = 0x8000000000000000L;
+        for (long i = 0; i < sz; i++) {
+            long offset = address + (i << 3);
+            long value = Unsafe.getUnsafe().getLong(offset);
+            Unsafe.getUnsafe().putLong(offset, value ^ signBit);
+        }
+        // Sort as unsigned
+        Vect.sortULongAscInPlace(address, sz);
+        // XOR back to restore signed values
+        for (long i = 0; i < sz; i++) {
+            long offset = address + (i << 3);
+            long value = Unsafe.getUnsafe().getLong(offset);
+            Unsafe.getUnsafe().putLong(offset, value ^ signBit);
+        }
+    }
+
     public void sortAsUnsigned() {
         Vect.sortULongAscInPlace(address, size());
     }

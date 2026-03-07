@@ -2683,7 +2683,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testNegativeDesignatedTimestampDoesNotRetry() throws Exception {
+    public void testNegativeDesignatedTimestampIsAllowed() throws Exception {
+        // Negative timestamps are now supported
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
@@ -2691,18 +2692,19 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
-                        .retryTimeoutMillis(Integer.MAX_VALUE) // high-enoung value so the test times out if retry is attempted
+                        .retryTimeoutMillis(Integer.MAX_VALUE)
                         .build()
                 ) {
                     sender.table("tab")
-                            .longColumn("l", 1) // filler
+                            .longColumn("l", 1)
                             .at(-1, ChronoUnit.MICROS);
-                    flushAndAssertError(
-                            sender,
-                            "Could not flush buffer",
-                            "error in line 1: table: tab, timestamp: -1; designated timestamp before 1970-01-01 is not allowed"
-                    );
+                    sender.flush();
+                    // Negative timestamp should be accepted - no error expected
                 }
+
+                serverMain.awaitTxn("tab", 1);
+                // ILP creates the timestamp column named "timestamp" by default
+                serverMain.assertSql("select l, timestamp from tab", "l\ttimestamp\n1\t1969-12-31T23:59:59.999999Z\n");
             }
         });
     }
@@ -3093,7 +3095,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .build()
                 ) {
-                    long max = NanosTimestampDriver.floor("2262-01-31 23:59:59.999999999");
+                    // Use a direct nanosecond value that exceeds the max valid ns timestamp
+                    // The max is 9214646399999999999, so use 9214646400000000000 to trigger overflow
+                    long max = 9214646400000000000L; // exceeds max valid ns timestamp
                     sender.table("tab")
                             .timestampColumn("ts2", max, ChronoUnit.NANOS)
                             .at(max, ChronoUnit.NANOS);

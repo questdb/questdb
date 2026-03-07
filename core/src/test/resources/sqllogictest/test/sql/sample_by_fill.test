@@ -100,14 +100,13 @@ create table demo_telemetry_wal_neg as (
 );
 
 
-statement error
+# Negative timestamps (before 1970) are now supported with SAMPLE BY ... FILL
+statement ok
 select created, approx_percentile(latency, 0.9, 3) latency
 from demo_telemetry_wal_neg timestamp(created)
 sample by 1s
 fill(0)
 limit 10;
-----
-db error: ERROR: cannot FILL for the timestamps before 1970
 
 
 query I
