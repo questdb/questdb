@@ -2,24 +2,29 @@
 
 ## Scope
 
-This document focuses on one issue only:
+This document tracks one issue only:
 
-`QwpUdpSender` still moves row data through too many representations before the
-datagram leaves the process.
+`QwpUdpSender` should avoid moving row data through multiple owners or
+temporary representations before the datagram leaves the process.
 
-This note reflects the current state after scatter-send, native array staging,
-symbol-hit allocation reduction, and direct-write row commit have landed.
+This note reflects the current state after:
+
+- direct-write row commit
+- scatter-send for UDP payloads
+- prefix flush with in-place row retention
+- fast retained-column cleanup
+- incremental pending-fill tracking
 
 ## Current State
 
-Five important improvements are now in place.
+Six important improvements are now in place.
 
 ### 1. Common-Path Row Commit No Longer Copies
 
-The sender no longer stages the common-path row in a separate native row buffer
-and then copies it into `QwpTableBuffer` on commit.
+The sender no longer stages the common-path row in a separate row buffer and
+then copies it into `QwpTableBuffer` on commit.
 
-The normal path now writes directly into `QwpTableBuffer` while the row is in
+The normal path writes directly into `QwpTableBuffer` while the row is in
 progress. Commit is just:
 
 - `nextRow(...)`
@@ -28,30 +33,39 @@ progress. Commit is just:
 
 That removes the former staged-row -> committed-column copy from the hot path.
 
-### 2. Rare Replay Replaced The Old Hot-Path Replay
+### 2. MTU / Schema-Boundary Replay Has Been Removed
 
-There is still a replay buffer, but it is no longer the steady-state owner of
-the in-progress row.
+Rows that cross a flush boundary no longer snapshot into a replay buffer and
+then replay back into `QwpTableBuffer`.
 
-It is now used only for rare cases:
+When committed rows must flush before the current row can continue, the sender
+now:
 
-- MTU overflow when committed rows must flush before the current row can fit
-- schema widening after committed rows already exist in the current datagram
+- captures per-column prefix limits
+- encodes and sends only the committed prefix
+- compacts the current row in place inside the same `QwpTableBuffer`
+- re-bases sender-side row marks to an empty-table origin
 
-That is a much smaller and more acceptable use of replay than before.
+This is now used for:
 
-### 3. No More Final Contiguous Datagram Copy For Raw Blocks
+- MTU overflow when `maxDatagramSize` is enabled
+- schema widening while committed rows already exist in the current datagram
 
-The UDP path now supports scatter-send.
+That removes the old cross-boundary snapshot-and-replay copy entirely.
 
-`QwpUdpSender` no longer has to materialize the entire datagram into one final
+### 3. No Final Contiguous Datagram Copy For Raw Blocks
+
+The UDP path still uses scatter-send.
+
+`QwpUdpSender` no longer materializes the entire datagram into one final
 contiguous `NativeBufferWriter` before sending. Instead it sends:
 
 - a small header buffer
 - payload segments gathered from the encoder
 
 For column data that is already in wire-compatible layout and is emitted via
-`putBlockOfBytes()`, the committed-data path is now much better.
+`putBlockOfBytes()`, the committed-data path is now close to zero-copy inside
+the process.
 
 Examples include:
 
@@ -60,22 +74,24 @@ Examples include:
 - string offset and string data blocks
 - other already-contiguous native blocks emitted directly by the writer
 
-### 4. No More Object-Heavy `rowJournal`
+### 4. No Replay Journal Or Native Replay Buffer Remains
 
-The sender no longer keeps replayable row state in `ObjList<ColumnEntry>`.
+The sender no longer keeps replayable row state in `ObjList<ColumnEntry>`, and
+it no longer keeps a separate `NativeRowStaging` replay buffer either.
 
-When replay is required, the row is now staged in native memory:
+The in-progress row stays owned by `QwpTableBuffer`. The sender now keeps only
+small per-column metadata needed for:
 
-- fixed-size native entry metadata
-- native UTF-8 var-data for string-like values
-- native array payloads for staged array values
+- duplicate-column detection
+- datagram-size estimation
+- committed-prefix encoding limits
 
-This is still a real improvement over the old Java-object journal, especially
-for UTF-8 strings and arrays.
+That is a much cleaner ownership model than the earlier "row owner plus replay
+owner" split.
 
-### 5. Failed Rows Now Roll Back To Committed State
+### 5. Failed Rows Still Roll Back To Committed State
 
-The sender now consistently rolls back to the last committed state when row
+The sender still consistently rolls back to the last committed state when row
 staging or row finalization fails.
 
 That includes:
@@ -84,82 +100,78 @@ That includes:
 - failed designated-timestamp staging inside `at(...)`
 - failed `commitCurrentRow()` / `atNow()`
 
-This is mainly a correctness improvement, not a copying optimization, but it is
-part of the current steady-state design and validation story.
+This is mainly a correctness improvement, not a copying optimization, but it
+is part of the current steady-state design.
+
+### 6. Omitted-Column Tracking No Longer Rescans The Whole Schema On Every Commit
+
+The sender now maintains pending-fill columns incrementally instead of
+rebuilding the "omitted columns" list by scanning the whole table on every row
+commit.
+
+This does not remove the actual `addNull()` / sentinel writes for omitted
+columns, but it does remove the per-commit schema discovery scan from the hot
+path.
 
 ## What Improved
 
-The old design had two major user-space copy problems:
+The old design had three major sender-side ownership/copy problems:
 
-1. rollback and replay of in-progress rows
-2. copying committed column data into one final contiguous UDP buffer
+1. separate staged-row ownership on the common path
+2. snapshot/replay when rows crossed a flush boundary
+3. final contiguous datagram materialization for raw blocks
 
-The current implementation removes both of those from the hot path.
+The current implementation removes all three.
 
-That means the sender is no longer in the worst possible shape. For committed
-data, the design is materially closer to a QuestDB-style native-buffer send
-path.
+That means the sender is no longer in the shape that motivated this note in the
+first place. For raw-copyable committed data, the path is now materially closer
+to a QuestDB-style native-buffer send path.
 
-Failed-row recovery is also materially better now: rows that fail during staging
-or finalization no longer rely on the caller to manually clean up partially
-staged sender state.
+Failed-row recovery is also materially better now: rows that fail during
+staging or finalization no longer rely on the caller to manually clean up
+partially staged sender state.
 
 ## What Still Copies
 
-The main copying problem is no longer common-path commit.
+The main copying problem is no longer replay.
 
-What remains is concentrated in rare replay paths and in encode-time
-transformations for types whose storage layout is not already wire-compatible.
+What remains is concentrated in wrapper-array ingestion, symbol representation,
+and encode-time transformations for types whose storage layout is not already
+wire-compatible.
 
-### Rare Overflow / Schema-Flush Replay Still Copies A Row
+### Wrapper Arrays Still Take One Extra Steady-State Copy
 
-When a row must survive a flush boundary, the sender still snapshots it into a
-replay buffer and then re-appends it into `QwpTableBuffer`.
+Plain Java array values write directly into `QwpTableBuffer`.
 
-That path is no longer on every row, but it still exists for:
+`LongArray` / `DoubleArray` wrappers still take an extra copy on the common
+path today: they are first read into a temporary Java capture buffer and then
+copied into committed array storage.
 
-- MTU overflow handling
-- schema widening after committed rows already exist
+So the clearest remaining steady-state row-copy issue is now:
 
-So the remaining structural copy is now exceptional rather than steady-state.
+- `LongArray` / `DoubleArray` wrapper -> temporary capture arrays ->
+  `QwpTableBuffer`
 
-### Strings Improved, Symbols Improved Partially
-
-Strings stage as native UTF-8 and commit into `QwpTableBuffer` via raw UTF-8
-append helpers instead of round-tripping through a temporary Java `String`.
+### Symbols Still Have Representation Costs
 
 Symbols are better than before, but not fully there yet.
 
-They still stage as native UTF-8, but commit no longer allocates a fresh
-`String` on symbol-dictionary hits. Instead the UTF-8 bytes are decoded into a
-reusable UTF-16 sink for local-dictionary lookup, and a `String` is allocated
-only on dictionary miss when a new symbol must be inserted.
+They no longer allocate a temporary `String` on dictionary hits during commit,
+and the UDP flush path no longer materializes a fresh `String[]` dictionary just
+to encode a packet.
 
-So:
+However:
 
-- string commit no longer needs a temporary Java `String`
-- symbol commit no longer needs a temporary Java `String` on hits
-- symbol misses still allocate once because the local dictionary is still
-  `String` based
+- lookup still decodes UTF-8 into a reusable UTF-16 sink
+- dictionary misses still allocate a `String`
+- symbol dictionary entries and row indexes are still encoded into scratch
+  writer chunks at flush time
 
-### Arrays Improved, And Now Follow The Direct-Write Model Too
-
-Array values no longer sit in Java sidecar objects while a row is staged.
-
-They now snapshot as native payload bytes when replay is required, but the
-common path writes them directly into `QwpTableBuffer`.
-
-The `LongArray` wrapper path is also supported again, so arrays are no longer a
-special-case gap in the staging model.
-
-The remaining array cost is the same rare replay cost as other row data:
-
-- `QwpTableBuffer` current row
-- replay snapshot buffer only when a flush boundary must be crossed
+So symbols are improved, but they are still not wire-native.
 
 ### Some Column Types Still Need Transform Encoding
 
-Even after scatter-send, not every column can be sent directly from stored
+Even with scatter-send, not every column can be sent directly from stored
 buffers.
 
 Types that still require encode-time transformation are the ones whose storage
@@ -174,8 +186,18 @@ layout does not already match the wire format, for example:
 
 Those still materialize encoded bytes into scratch buffers during flush.
 
-That is acceptable as an intermediate state. It is no longer the first issue to
-fix on the sender side.
+That is now the main remaining copy/encode layer on the sender side.
+
+### Omitted-Column Padding Still Writes Into Committed Storage
+
+For columns omitted in the current row, commit still appends nulls or sentinel
+values into column storage before the row becomes committed.
+
+The expensive schema scan is gone, but the committed-column model still pays for
+those writes.
+
+That is more of a storage-model cost than a replay problem, but it is still
+part of the steady-state row-finalization work.
 
 ## Updated Smell Test: Single `long`
 
@@ -184,8 +206,8 @@ The single-`long` path is still the right test.
 ### Old Path
 
 - caller -> `ColumnBuffer`
-- caller -> journal
-- journal -> `ColumnBuffer` again after replay
+- caller -> journal / replay state
+- journal / replay state -> `ColumnBuffer`
 - `ColumnBuffer` -> final contiguous datagram buffer
 - final datagram buffer -> kernel
 
@@ -194,70 +216,75 @@ The single-`long` path is still the right test.
 - caller -> `ColumnBuffer`
 - `ColumnBuffer` -> kernel
 
+For transformed columns, add:
+
+- `ColumnBuffer` -> scratch encoder buffer
+- scratch encoder buffer -> kernel
+
 ### Ideal Path
 
-- caller -> sender-owned native row or committed buffer
+- caller -> sender-owned committed storage
 - kernel
 
-So the sender has improved substantially, but the write path still is not down
-to one clear owner plus the unavoidable kernel copy.
+For fixed-width raw-copyable columns, the current path is already close to
+ideal. The remaining gap is mostly transformed types, wrapper arrays, and
+symbol representation.
 
 ## Root Cause
 
-The remaining problem is now narrower than before:
+The original root cause was:
 
-`QwpUdpSender` now uses `QwpTableBuffer` as the common-path row owner, but it
-still needs a second replay representation when a row must survive a send
-boundary before commit.
+`QwpUdpSender` had multiple row owners and had to replay row data across flush
+boundaries.
+
+That is now mostly gone.
 
 The current design has:
 
 - committed table state in `QwpTableBuffer`
-- in-progress row state directly in `QwpTableBuffer`
-- replay row state in native staging only for rare flush-boundary cases
-- scratch encode buffers only for header or transformed columns
+- in-progress row state in the same `QwpTableBuffer`
+- small sender-side per-column marks for estimation, duplicate detection, and
+  committed-prefix encoding limits
+- scratch encode buffers only for headers or transformed columns
 
-It also has explicit rollback paths that restore the sender to committed state
-when staging or finalization fails.
+So the remaining problem is now narrower:
 
-That is a much better split than before. The hot-path commit copy is gone.
-What remains is the rare cross-flush replay path.
+- some client-side inputs (`LongArray` / `DoubleArray`) still require an
+  intermediate copy before they reach committed storage
+- some committed storage layouts still do not match the wire format
+- symbols still use a `String`-based local dictionary instead of a wire-ready
+  representation
 
 ## Bottom Line
 
-The sender is no longer doing the worst back-and-forth copying that motivated
-this note in the first place.
+`QwpUdpSender` no longer has the cross-boundary snapshot/replay copy that
+originally dominated this document.
 
 The current design is now good enough to say:
 
-- committed raw-copyable column data is no longer the main problem
-- MTU handling no longer depends on replay
+- common-path commit no longer depends on replay
+- flush-boundary handling no longer depends on replay
+- raw-copyable committed data no longer needs a final contiguous datagram copy
 
-The main remaining issue is this:
+The main remaining issues are now:
 
-- rows that must cross a flush boundary still need snapshot-and-replay
-
-That is the next place to push.
+- wrapper-array copy on the common path
+- symbol representation / miss-allocation cost
+- scratch encoding for transformed column types
 
 ## Next Steps
 
-### 1. Reduce Or Eliminate Rare Replay Paths
+### 1. Remove The `LongArray` / `DoubleArray` Capture Copy
 
-The better long-term model is now:
+Let wrapper arrays append directly into committed array storage instead of going
+through `ArrayCapture` intermediary arrays.
 
-- append into `QwpTableBuffer` once
-- flush committed prefixes without snapshotting the current row
-- cancel by rewinding row-local cursors only
+### 2. Revisit Symbol Ownership
 
-That would remove the remaining overflow/schema-flush replay copy.
+Push symbols closer to a UTF-8-native or wire-ready local representation so:
 
-### 2. Keep Scatter-Send For Committed Raw Blocks
-
-The scatter-send path should stay. It is already the right transport shape for
-UDP.
-
-Future work should build on it, not fall back to a single final contiguous
-datagram buffer.
+- lookup does not require UTF-8 -> UTF-16 decode
+- misses do not require `String` allocation
 
 ### 3. Keep Shrinking Encode-Time Transform Work
 
@@ -267,56 +294,47 @@ The remaining unavoidable copy work is increasingly concentrated in:
 - symbols
 - decimals
 - geohashes
-- array encoding
+- arrays
+- optional Gorilla timestamp encoding
 
-Those should now be treated as the next optimization layer, after the rare
-replay path.
+Those should now be treated as the next optimization layer.
 
-### 3. Revisit Remaining Symbol And Transformed-Type Costs
+### 4. Revisit Omitted-Column Padding Only After The Above
 
-Symbols are better than before, but the local dictionary still requires:
-
-- UTF-8 -> UTF-16 decode for lookup
-- `String` allocation on symbol miss
-
-After the ownership model is improved further, revisit whether symbol handling
-should also move closer to a wire-ready or UTF-8-native representation.
-
-### 4. Revisit Other Transformed Types After The Ownership Fixes
-
-Once arrays and symbols are cleaned up, decide case by case whether some
-transformed column types should also move closer to wire-ready storage.
+If row-finalization cost still matters after the true copy issues are
+addressed, evaluate whether omitted-column padding should stay eager or move
+closer to an encode-time/default view model.
 
 That is a second-phase optimization, not the first one.
 
 ## Validation Status
 
-The current state described here is the one validated after:
+The current state described here is the one revalidated after:
 
-- rollback/replay removal
+- direct-write common-path row ownership
 - scatter-send for UDP payloads
-- native row staging for scalars, decimals, timestamps, and UTF-8 strings
-- native row staging for arrays
-- rollback on failed staging and failed row finalization
-- restored `LongArray` wrapper support
+- committed-prefix flush while preserving the current row in place
+- fast in-place retained-row compaction
+- fast empty-column cleanup for unstaged retained columns
+- removal of the replay buffer / `NativeRowStaging`
+- incremental pending-fill tracking instead of per-commit schema rescans
 - reduced symbol commit allocation on dictionary hits
 
-Relevant test coverage includes:
+Relevant coverage for this area includes:
 
 - `QwpUdpSenderTest`
-- `LineSenderBuilderUdpTest`
-- `QwpUdpInsertTest`
-- `QwpUdpAllTypesTest`
 - `QwpTableBufferTest`
+- broader `Qwp*Test` coverage in `core`
 
 Focused coverage now also includes:
 
-- irregular-array staging failure does not leak schema into the same table
-- `LongArray` wrapper staging snapshots mutation correctly
-- direct `addSymbolUtf8()` reuses existing dictionary entries without growing the dictionary
-- direct `addSymbolUtf8()` rollback/cancel rewinds symbol dictionary correctly
-- direct `addSymbolUtf8()` rejects malformed UTF-8
-- repeated UTF-8 symbols round-trip through `QwpUdpSender`
-- `atNow()` oversize failure rolls back without explicit `cancelRow()`
-- `at(..., MICROS)` oversize failure does not leak designated-timestamp state
-- `at(..., NANOS)` oversize failure does not leak designated-timestamp state
+- nullable string null retention across overflow boundaries
+- repeated overflow boundaries with distinct symbols
+- retained nullable-string state after prefix flush
+- retained symbol-dictionary compaction after prefix flush
+- fast emptying of unstaged nullable columns during retained-row compaction
+- wide-schema low-index writes after prior rows
+- explicit `flush()` followed by more rows on the same table preserving
+  pending-fill state
+- oversize row failures rolling back without leaking sender state
+- designated-timestamp rollback on oversize failure
