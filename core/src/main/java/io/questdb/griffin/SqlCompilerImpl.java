@@ -1247,13 +1247,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
                 }
 
-                int colType = tableMetadata.getColumnType(colIndex);
-                if (ColumnType.needsNullBitmap(colType)) {
-                    throw SqlException.position(lexer.lastTokenPosition())
-                            .put("bitmap-null column type cannot be used as deduplicate key [column=")
-                            .put(columnName).put(", type=").put(ColumnType.nameOf(colType)).put(']');
-                }
-
                 if (colIndex == tableMetadata.getTimestampIndex()) {
                     tsIncludedInDedupColumns = true;
                 }

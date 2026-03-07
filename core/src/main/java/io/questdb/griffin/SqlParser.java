@@ -1777,11 +1777,6 @@ public class SqlParser {
                                 .put("dedup key columns cannot include ARRAY [column=")
                                 .put(columnName).put(", type=")
                                 .put(ColumnType.nameOf(model.getColumnType())).put(']');
-                    } else if (ColumnType.needsNullBitmap(model.getColumnType())) {
-                        throw SqlException.position(lexer.lastTokenPosition())
-                                .put("bitmap-null column type cannot be used as deduplicate key [column=")
-                                .put(columnName).put(", type=")
-                                .put(ColumnType.nameOf(model.getColumnType())).put(']');
                     }
                     model.setIsDedupKey();
                     int colIndex = builder.getColumnIndex(columnName);

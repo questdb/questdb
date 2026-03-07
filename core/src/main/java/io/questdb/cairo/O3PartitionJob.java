@@ -51,6 +51,7 @@ import io.questdb.std.Os;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
@@ -1366,9 +1367,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     if (columnTop > mergeDataHi) {
                         // column is all nulls because of column top
-                        DedupColumnCommitAddresses.setColAddressValues(addr, DedupColumnCommitAddresses.NULL);
-
-                        if (columnSize > 0) {
+                        if (columnSize > 0 && ColumnType.needsNullBitmap(columnType)) {
+                            // Bitmap-null column: use non-zero sentinel to trigger bitmap path in C.
+                            // All rows have col_index < column_top so bitmap is never actually accessed.
+                            DedupColumnCommitAddresses.setColAddressValues(addr, DedupColumnCommitAddresses.NULL, addr, 0);
+                            final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                            long o3BitmapAddr = tableWriter.getO3NullBitmapAddr(i);
+                            DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress, o3BitmapAddr, 0);
+                            DedupColumnCommitAddresses.setReservedValuesSet1(addr, -1, -1, -1);
+                        } else if (columnSize > 0) {
+                            DedupColumnCommitAddresses.setColAddressValues(addr, DedupColumnCommitAddresses.NULL);
                             final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
                             DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
                             DedupColumnCommitAddresses.setReservedValuesSet1(
@@ -1418,16 +1426,46 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     mapMemTag
                             );
 
-                            DedupColumnCommitAddresses.setColAddressValues(addr, Math.abs(fixMappedAddress) - columnTop * columnSize);
+                            if (ColumnType.needsNullBitmap(columnType)) {
+                                // Bitmap-null column: also map .n bitmap file
+                                long bitmapRows = mergeDataHi + 1 - columnTop;
+                                long bitmapMapSize = (bitmapRows + 7) >> 3;
+                                TableUtils.setSinkForNativePartition(
+                                        tableRootPath.trimTo(tableRootPathLen).slash(),
+                                        tableWriter.getMetadata().getTimestampType(),
+                                        tableWriter.getPartitionBy(),
+                                        partitionTimestamp,
+                                        srcNameTxn
+                                );
+                                LPSZ nFilePath = nFile(tableRootPath, columnName, columnNameTxn);
+                                long bitmapFd = ff.exists(nFilePath) ? TableUtils.openRO(ff, nFilePath, LOG) : -1;
+                                long bitmapMappedAddress = bitmapFd > -1 ? TableUtils.mapAppendColumnBuffer(
+                                        ff, bitmapFd, 0, bitmapMapSize, false, mapMemTag
+                                ) : 0;
 
-                            final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
-                            DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
-                            DedupColumnCommitAddresses.setReservedValuesSet1(
-                                    addr,
-                                    fixMappedAddress,
-                                    fixMapSize,
-                                    fd
-                            );
+                                DedupColumnCommitAddresses.setColAddressValues(addr,
+                                        Math.abs(fixMappedAddress) - columnTop * columnSize,
+                                        bitmapMappedAddress > 0 ? Math.abs(bitmapMappedAddress) : 0,
+                                        bitmapMappedAddress > 0 ? bitmapMapSize : 0
+                                );
+
+                                final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                                long o3BitmapAddr = tableWriter.getO3NullBitmapAddr(i);
+                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress, o3BitmapAddr, 0);
+                                DedupColumnCommitAddresses.setReservedValuesSet1(addr, fixMappedAddress, fixMapSize, fd);
+                                DedupColumnCommitAddresses.setReservedValuesSet2(addr, bitmapMappedAddress, bitmapFd);
+                            } else {
+                                DedupColumnCommitAddresses.setColAddressValues(addr, Math.abs(fixMappedAddress) - columnTop * columnSize);
+
+                                final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
+                                DedupColumnCommitAddresses.setReservedValuesSet1(
+                                        addr,
+                                        fixMappedAddress,
+                                        fixMapSize,
+                                        fd
+                                );
+                            }
                         } else {
                             // Variable length column
                             long rows = mergeDataHi + 1 - columnTop;

@@ -32,10 +32,33 @@
 
 #define assertm(exp, msg) assert(((void)msg, exp))
 
+inline bool is_bitmap_null(const uint8_t *bitmap, int64_t row_index) {
+    return (bitmap[row_index >> 3] & (1 << (row_index & 7))) != 0;
+}
+
 template<typename T>
 class MergeColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
+        const auto col_bitmap = this->get_column_bitmap();
+        if (col_bitmap) {
+            // Bitmap-null column: check null bitmaps before comparing values
+            // Bitmap data starts at row column_top, so subtract column_top for file-relative index
+            const bool l_null = col_index < this->get_column_top()
+                                || is_bitmap_null(col_bitmap, col_index - this->get_column_top());
+            const auto o3_bitmap = this->get_o3_bitmap();
+            const bool r_null = o3_bitmap && is_bitmap_null(o3_bitmap, index_index);
+
+            if (l_null && r_null) return 0;
+            if (l_null) return -1;
+            if (r_null) return 1;
+
+            const T l_val = this->get_column_data<T>()[col_index];
+            const T r_val = this->get_o3_data<T>()[index_index];
+            return (l_val > r_val) - (l_val < r_val);
+        }
+
+        // Sentinel-null column (original behavior)
         const T l_val = col_index >= this->get_column_top()
                         ? this->get_column_data<T>()[col_index]
                         : this->get_null_value<T>();
@@ -52,6 +75,50 @@ template<typename T>
 class SortColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t l, int64_t r) const {
+        const auto col_bitmap = this->get_column_bitmap();
+        if (col_bitmap) {
+            // Bitmap-null column: check null bitmaps before comparing values
+            const auto o3_bitmap = this->get_o3_bitmap();
+
+            const uint8_t *l_bitmap;
+            int64_t l_idx;
+            if (l > -1) {
+                l_bitmap = col_bitmap;
+                l_idx = l;
+            } else {
+                l_bitmap = o3_bitmap;
+                l_idx = l & ~(1ull << 63);
+            }
+
+            const uint8_t *r_bitmap;
+            int64_t r_idx;
+            if (r > -1) {
+                r_bitmap = col_bitmap;
+                r_idx = r;
+            } else {
+                r_bitmap = o3_bitmap;
+                r_idx = r & ~(1ull << 63);
+            }
+
+            const bool l_null = l_bitmap && is_bitmap_null(l_bitmap, l_idx);
+            const bool r_null = r_bitmap && is_bitmap_null(r_bitmap, r_idx);
+
+            if (l_null && r_null) return 0;
+            if (l_null) return -1;
+            if (r_null) return 1;
+
+            const T l_val = l > -1
+                            ? this->get_column_data<T>()[l]
+                            : this->get_o3_data<T>()[l & ~(1ull << 63)];
+
+            const T r_val = r > -1
+                            ? this->get_column_data<T>()[r]
+                            : this->get_o3_data<T>()[r & ~(1ull << 63)];
+
+            return (l_val > r_val) - (l_val < r_val);
+        }
+
+        // Sentinel-null column (original behavior)
         const T l_val = l > -1
                         ? this->get_column_data<T>()[l]
                         : this->get_o3_data<T>()[l & ~(1ull << 63)];
@@ -75,6 +142,18 @@ compare_dedup_column_fixed(const dedup_column *dedup_col, index_tr_i<TIdx> l, in
 
     auto r_row_index = r.i >> segment_bits;
     auto r_src_index = r.i & segment_mask;
+
+    const auto col_bitmap = dedup_col->get_column_bitmap();
+    if (col_bitmap) {
+        // Bitmap-null column: bitmap is stored as a 2D array (like column data)
+        const auto bitmap_2d = reinterpret_cast<const uint8_t *const *>(col_bitmap);
+        const bool l_null = bitmap_2d[l_src_index] && is_bitmap_null(bitmap_2d[l_src_index], l_row_index);
+        const bool r_null = bitmap_2d[r_src_index] && is_bitmap_null(bitmap_2d[r_src_index], r_row_index);
+
+        if (l_null && r_null) return 0;
+        if (l_null) return -1;
+        if (r_null) return 1;
+    }
 
     const T l_val = dedup_col->get_column_data_2d<T>()[l_src_index][l_row_index];
     const T r_val = dedup_col->get_column_data_2d<T>()[r_src_index][r_row_index];

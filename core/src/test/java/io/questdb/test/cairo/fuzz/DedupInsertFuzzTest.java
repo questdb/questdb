@@ -592,8 +592,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int start = rnd.nextInt(metadata.getColumnCount());
             for (int c = 0; c < metadata.getColumnCount(); c++) {
                 int col = (c + start) % metadata.getColumnCount();
-                if (!upsertKeyIndexes.contains(col)
-                        && !ColumnType.needsNullBitmap(metadata.getColumnType(col))) {
+                if (!upsertKeyIndexes.contains(col)) {
                     upsertKeyIndexes.add(col);
                     break;
                 }
