@@ -128,6 +128,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
+    // Each IntList contains indices into groupBy for columns active in that grouping set.
+    // Empty IntList = empty set () = grand total. Null means no GROUPING SETS syntax.
+    private ObjList<IntList> groupingSets;
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<QueryModel> joinModels = new ObjList<>();
@@ -376,6 +379,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         groupBy.add(node);
     }
 
+    public void addGroupingSet(IntList columnIndices) {
+        if (groupingSets == null) {
+            groupingSets = new ObjList<>();
+        }
+        groupingSets.add(columnIndices);
+    }
+
     public void addHint(CharSequence key, CharSequence value) {
         hintsMap.put(key, value);
     }
@@ -471,6 +481,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         isSelectTranslation = false;
         groupBy.clear();
+        groupingSets = null;
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
@@ -779,6 +790,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return groupBy;
     }
 
+    public ObjList<IntList> getGroupingSets() {
+        return groupingSets;
+    }
+
     @NotNull
     public LowerCaseCharSequenceObjHashMap<CharSequence> getHints() {
         return hintsMap;
@@ -1036,6 +1051,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return timestampSourceColumn;
     }
 
+    public boolean hasGroupingSets() {
+        return groupingSets != null && groupingSets.size() > 0;
+    }
+
     public boolean hasTimestampOffset() {
         return timestampOffsetUnit != 0;
     }
@@ -1229,8 +1248,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void moveGroupByFrom(QueryModel model) {
         groupBy.addAll(model.groupBy);
+        groupingSets = model.groupingSets;
         // clear the source
         model.groupBy.clear();
+        model.groupingSets = null;
     }
 
     public void moveJoinAliasFrom(QueryModel that) {
