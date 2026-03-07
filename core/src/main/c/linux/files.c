@@ -27,6 +27,7 @@
 #include "../share/files.h"
 #include "../share/sysutil.h"
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <errno.h>
 #include <limits.h>
 #include <string.h>
@@ -463,4 +464,25 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
         return limit;
     }
     return 0;
+}
+
+/* MFD_CLOEXEC is a stable kernel ABI constant (1U). Define it if the system
+ * headers do not provide it (glibc < 2.27 / manylinux_2_17 environments). */
+#ifndef MFD_CLOEXEC
+#define MFD_CLOEXEC 1U
+#endif
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_memfdCreate
+        (JNIEnv *e, jclass cls, jlong lpszName) {
+#ifdef __NR_memfd_create
+    return (jint) syscall(__NR_memfd_create, (const char *) lpszName, (unsigned int) MFD_CLOEXEC);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_dup
+        (JNIEnv *e, jclass cls, jint fd) {
+    return (jint) dup((int) fd);
 }

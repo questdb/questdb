@@ -141,6 +141,8 @@ public final class Files {
         return -1;
     }
 
+    static native int dup(int osFd);
+
     public static boolean exists(long fd) {
         return exists(toOsFd(fd));
     }
@@ -335,6 +337,8 @@ public final class Files {
     }
 
     public static native void madvise0(long address, long len, int advise);
+
+    public static native int memfdCreate(long lpszName);
 
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.ptr(), mode);
