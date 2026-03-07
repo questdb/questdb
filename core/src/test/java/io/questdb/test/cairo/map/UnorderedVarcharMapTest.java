@@ -262,6 +262,85 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeferredKeyCopyCopyFrom() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
+            try (
+                    DirectUtf8Sink sinkA = new DirectUtf8Sink(10 * 1024 * 1024);
+                    UnorderedVarcharMap mapA = newDeferredKeyCopyMap(valueTypes);
+                    UnorderedVarcharMap mapB = newDeferredKeyCopyMap(valueTypes)
+            ) {
+                final int N = 1_000;
+                for (int i = 0; i < N; i++) {
+                    MapKey keyA = putStable("foo" + i, i + 1, mapA, sinkA, true);
+
+                    MapKey keyB = mapB.withKey();
+                    keyB.copyFrom(keyA);
+                    MapValue valueB = keyB.createValue();
+                    Assert.assertTrue(valueB.isNew());
+                    valueB.putInt(0, i + 1);
+                }
+
+                Assert.assertEquals(mapA.size(), mapB.size());
+
+                for (int i = 0; i < N; i++) {
+                    Assert.assertEquals(i + 1, get("foo" + i, mapA));
+                    Assert.assertEquals(i + 1, get("foo" + i, mapB));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredKeyCopyOnHeapFallback() throws Exception {
+        // Utf8String has ptr() == -1 (on-heap), so deferred mode must fall back to defensive copy
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            try (UnorderedVarcharMap map = newDeferredKeyCopyMap(valueType)) {
+                int keyCount = 1_000;
+                for (int i = 0; i < keyCount; i++) {
+                    putUnstable("foo" + i, i, map, true);
+                }
+                for (int i = 0; i < keyCount; i++) {
+                    Assert.assertEquals(i, get("foo" + i, map));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredKeyCopyUnstable() throws Exception {
+        // Unstable off-heap pointers skip the keySink copy in deferred mode
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
+            try (
+                    DirectUtf8Sink sink = new DirectUtf8Sink(10 * 1024 * 1024);
+                    UnorderedVarcharMap map = newDeferredKeyCopyMap(valueType)
+            ) {
+                int keyCount = 1_000;
+                TestDirectUtf8String key = new TestDirectUtf8String(false);
+                for (int i = 0; i < keyCount; i++) {
+                    long lo = sink.hi();
+                    sink.put("bar" + i);
+                    long hi = sink.hi();
+                    key.of(lo, hi, true);
+
+                    MapKey mapKey = map.withKey();
+                    mapKey.putVarchar(key);
+                    MapValue value = mapKey.createValue();
+                    Assert.assertTrue(value.isNew());
+                    value.putInt(0, i);
+                }
+
+                // keys survive after insertion because asNew() copies to arena
+                for (int i = 0; i < keyCount; i++) {
+                    Assert.assertEquals(i, get("bar" + i, map));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testClear() {
         SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
         try (
@@ -697,6 +776,10 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
 
     private static UnorderedVarcharMap newDefaultMap(ColumnTypes valueTypes) {
         return new UnorderedVarcharMap(valueTypes, 16, 0.6, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB);
+    }
+
+    private static UnorderedVarcharMap newDeferredKeyCopyMap(ColumnTypes valueTypes) {
+        return new UnorderedVarcharMap(valueTypes, 16, 0.6, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB, true);
     }
 
     private static MapKey putStable(String stringKey, int intValue, UnorderedVarcharMap map, DirectUtf8Sink sink, boolean isNew) {

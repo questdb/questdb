@@ -18,6 +18,8 @@ pub struct DecodeContext {
     pub file_size: u64,
     pub dict_decompress_buffer: Vec<u8>,
     pub decompress_buffer: Vec<u8>,
+    pub varchar_slice_buf_pool: Vec<Vec<u8>>,
+    pub varchar_slice_dict_buf: Vec<u8>,
 }
 
 impl DecodeContext {
@@ -27,6 +29,8 @@ impl DecodeContext {
             file_size,
             dict_decompress_buffer: Vec::new(),
             decompress_buffer: Vec::new(),
+            varchar_slice_buf_pool: Vec::new(),
+            varchar_slice_dict_buf: Vec::new(),
         }
     }
 }
@@ -63,6 +67,8 @@ pub struct ColumnChunkBuffers {
     pub aux_size: usize,
     pub aux_ptr: *mut u8,
     pub aux_vec: AcVec<u8>,
+
+    pub page_buffers: Vec<Vec<u8>>,
 }
 
 #[repr(C)]
@@ -104,6 +110,7 @@ mod tests {
                 column_type: ColumnTypeTag::Symbol.into_type(),
                 column_top: 0,
                 format: None, // It should error because this is missing.
+                ascii: None,
             },
         );
 

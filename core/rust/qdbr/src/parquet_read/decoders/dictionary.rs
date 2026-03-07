@@ -150,6 +150,12 @@ impl<U, T> PrimitiveDictDecoder<T> for BasePrimitiveDictDecoder<'_, U, T> {
     #[inline]
     #[cfg(target_endian = "little")]
     fn get_dict_value(&self, index: u32) -> T {
+        const {
+            assert!(
+                size_of::<T>() <= size_of::<U>(),
+                "destination type T must not be larger than physical type U"
+            )
+        };
         // SAFETY: Caller guarantees index is in bounds and dict_page is properly sized.
         // We also require little-endian platforms, so no byte swapping is necessary.
         unsafe {

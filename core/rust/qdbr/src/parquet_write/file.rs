@@ -917,6 +917,34 @@ fn column_chunk_to_primitive_pages(
         );
     }
 
+    if column.data_type.tag() == ColumnTypeTag::Varchar {
+        let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
+        let data = column.primary_data;
+        let orig_column_top = column.column_top;
+
+        let mut adjusted_column_top = 0;
+        let lower_bound = if chunk_offset < orig_column_top {
+            adjusted_column_top = orig_column_top - chunk_offset;
+            0
+        } else {
+            chunk_offset - orig_column_top
+        };
+        let upper_bound = if chunk_offset + chunk_length < orig_column_top {
+            adjusted_column_top = chunk_length;
+            0
+        } else {
+            chunk_offset + chunk_length - orig_column_top
+        };
+
+        return varchar::varchar_to_dict_pages(
+            &aux[lower_bound..upper_bound],
+            data,
+            adjusted_column_top,
+            options,
+            primitive_type,
+        );
+    }
+
     let number_of_rows = chunk_length;
     let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
     let rows_per_page = cmp::max(
@@ -1153,18 +1181,11 @@ fn chunk_to_primitive_page(
                 encoding,
             )
         }
-        ColumnTypeTag::Varchar => {
-            let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
-            let data = column.primary_data;
-            varchar::varchar_to_page(
-                &aux[lower_bound..upper_bound],
-                data,
-                adjusted_column_top,
-                options,
-                primitive_type,
-                encoding,
-            )
-        }
+        ColumnTypeTag::Varchar | ColumnTypeTag::VarcharSlice => Err(fmt_err!(
+            InvalidType,
+            "unexpected varchar type in primitive encoder for column {} (should be handled earlier)",
+            column.name,
+        )),
         ColumnTypeTag::Array => {
             let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             let data = column.primary_data;

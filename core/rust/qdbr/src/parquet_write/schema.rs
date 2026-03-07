@@ -145,16 +145,17 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
-        ColumnTypeTag::String | ColumnTypeTag::Symbol | ColumnTypeTag::Varchar => {
-            Ok(ParquetType::try_from_primitive(
-                name,
-                PhysicalType::ByteArray,
-                repetition,
-                Some(PrimitiveConvertedType::Utf8),
-                Some(PrimitiveLogicalType::String),
-                Some(column_id),
-            )?)
-        }
+        ColumnTypeTag::String
+        | ColumnTypeTag::Symbol
+        | ColumnTypeTag::Varchar
+        | ColumnTypeTag::VarcharSlice => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::ByteArray,
+            repetition,
+            Some(PrimitiveConvertedType::Utf8),
+            Some(PrimitiveLogicalType::String),
+            Some(column_id),
+        )?),
         ColumnTypeTag::Array => {
             if raw_array_encoding {
                 // encode in native QDB array format
@@ -427,6 +428,15 @@ pub fn to_parquet_schema(
             None
         };
 
+        let ascii = if column.data_type.tag() == ColumnTypeTag::Varchar
+            && !column.secondary_data.is_empty()
+        {
+            let aux: &[[u8; 16]] = unsafe { super::util::transmute_slice(column.secondary_data) };
+            Some(super::varchar::is_column_ascii(aux))
+        } else {
+            None
+        };
+
         let column_type = if column.designated_timestamp {
             column
                 .data_type
@@ -434,9 +444,12 @@ pub fn to_parquet_schema(
         } else {
             column.data_type
         };
-        qdb_meta
-            .schema
-            .push(QdbMetaCol { column_type, column_top: column.column_top, format });
+        qdb_meta.schema.push(QdbMetaCol {
+            column_type,
+            column_top: column.column_top,
+            format,
+            ascii,
+        });
     }
 
     let encoded_qdb_meta = qdb_meta.serialize()?;
@@ -461,7 +474,7 @@ fn encoding_map(data_type: ColumnType) -> Encoding {
         ColumnTypeTag::Symbol => Encoding::RleDictionary,
         ColumnTypeTag::Binary => Encoding::DeltaLengthByteArray,
         ColumnTypeTag::String => Encoding::DeltaLengthByteArray,
-        ColumnTypeTag::Varchar => Encoding::DeltaLengthByteArray,
+        ColumnTypeTag::Varchar => Encoding::RleDictionary,
         _ => Encoding::Plain,
     }
 }
