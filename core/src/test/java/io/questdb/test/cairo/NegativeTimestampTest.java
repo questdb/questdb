@@ -243,6 +243,265 @@ public class NegativeTimestampTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testAsofJoinWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                      ('1969-12-31T23:58:00.000000Z', 100.0),
+                      ('1969-12-31T23:59:00.000000Z', 101.0),
+                      ('1970-01-01T00:01:00.000000Z', 102.0)
+                    """);
+            execute("""
+                    CREATE TABLE quotes (ts TIMESTAMP, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                      ('1969-12-31T23:57:30.000000Z', 99.5),
+                      ('1969-12-31T23:59:30.000000Z', 100.5),
+                      ('1970-01-01T00:00:30.000000Z', 101.5)
+                    """);
+
+            // Each trade gets the most recent quote at or before its timestamp
+            assertSql("""
+                    ts\tprice\tbid
+                    1969-12-31T23:58:00.000000Z\t100.0\t99.5
+                    1969-12-31T23:59:00.000000Z\t101.0\t99.5
+                    1970-01-01T00:01:00.000000Z\t102.0\t101.5
+                    """, "SELECT t.ts, t.price, q.bid FROM trades t ASOF JOIN quotes q");
+
+            // LT JOIN: each trade gets the latest quote *strictly before* its timestamp.
+            // At 00:01:00 the latest quote strictly before it is 101.5 at 00:00:30.
+            assertSql("""
+                    ts\tprice\tbid
+                    1969-12-31T23:58:00.000000Z\t100.0\t99.5
+                    1969-12-31T23:59:00.000000Z\t101.0\t99.5
+                    1970-01-01T00:01:00.000000Z\t102.0\t101.5
+                    """, "SELECT t.ts, t.price, q.bid FROM trades t LT JOIN quotes q");
+        });
+    }
+
+    @Test
+    public void testDateFunctionsWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            // dateadd
+            assertSql("dateadd\n1970-01-01T00:00:00.000000Z\n",
+                    "SELECT dateadd('d', 1, '1969-12-31'::timestamp) AS dateadd");
+            assertSql("dateadd\n1969-12-31T00:00:00.000000Z\n",
+                    "SELECT dateadd('d', -1, '1970-01-01'::timestamp) AS dateadd");
+
+            // datediff
+            assertSql("datediff\n1\n",
+                    "SELECT datediff('d', '1969-12-31'::timestamp, '1970-01-01'::timestamp) AS datediff");
+            assertSql("datediff\n1\n",
+                    "SELECT datediff('d', '1970-01-01'::timestamp, '1969-12-31'::timestamp) AS datediff");
+
+            // year(), month(), day() with negative timestamps
+            assertSql("yr\tmo\tdy\n1969\t12\t31\n",
+                    "SELECT year(-86400000000::timestamp) yr, month(-86400000000::timestamp) mo, day(-86400000000::timestamp) dy");
+
+            // hour(), minute(), second()
+            assertSql("hr\tmi\tse\n23\t59\t59\n",
+                    "SELECT hour(-1000000::timestamp) hr, minute(-1000000::timestamp) mi, second(-1000000::timestamp) se");
+
+            // to_str() with negative timestamps
+            assertSql("s\n1969-12-31\n",
+                    "SELECT to_str(-86400000000::timestamp, 'yyyy-MM-dd') s");
+
+            // to_timezone() - convert a negative UTC timestamp to a timezone
+            assertSql("tz\n1969-12-31T22:00:00.000000Z\n",
+                    "SELECT to_timezone(-7200000000::timestamp, 'UTC-2') tz");
+        });
+    }
+
+    @Test
+    public void testFillLinearWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            // Insert values at -2h and 0h — gap at -1h will be linearly interpolated
+            execute("INSERT INTO t VALUES (-7_200_000_000, 1.0)");  // 1969-12-31T22:00
+            execute("INSERT INTO t VALUES (0, 3.0)");               // 1970-01-01T00:00
+
+            assertSql("""
+                    ts\tval
+                    1969-12-31T22:00:00.000000Z\t1.0
+                    1969-12-31T23:00:00.000000Z\t2.0
+                    1970-01-01T00:00:00.000000Z\t3.0
+                    """, "SELECT ts, avg(val) val FROM t SAMPLE BY 1h FILL(LINEAR)");
+        });
+    }
+
+    @Test
+    public void testFillNoneWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO t VALUES (-7_200_000_000, 1)");  // 1969-12-31T22:00
+            execute("INSERT INTO t VALUES (-3_600_000_000, 2)");  // 1969-12-31T23:00
+            execute("INSERT INTO t VALUES (0, 3)");               // 1970-01-01T00:00
+
+            assertSql("""
+                    ts\tsum
+                    1969-12-31T22:00:00.000000Z\t1
+                    1969-12-31T23:00:00.000000Z\t2
+                    1970-01-01T00:00:00.000000Z\t3
+                    """, "SELECT ts, sum(val) FROM t SAMPLE BY 1h FILL(NONE)");
+        });
+    }
+
+    @Test
+    public void testFillValueWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO t VALUES (-7_200_000_000, 1.0)");  // 1969-12-31T22:00
+            execute("INSERT INTO t VALUES (0, 3.0)");               // 1970-01-01T00:00
+
+            // Gap at -1h should be filled with the specified constant
+            assertSql("""
+                    ts\tval
+                    1969-12-31T22:00:00.000000Z\t1.0
+                    1969-12-31T23:00:00.000000Z\t0.0
+                    1970-01-01T00:00:00.000000Z\t3.0
+                    """, "SELECT ts, avg(val) val FROM t SAMPLE BY 1h FILL(0.0)");
+        });
+    }
+
+    @Test
+    public void testNanosTimestampNegativeDesignatedTimestamp() throws Exception {
+        // NanosTimestampDriver.validateBounds was changed to accept pre-1970 timestamps;
+        // verify that inserting and reading back negative TIMESTAMP_NS values works end-to-end.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP_NS, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                      ('1969-12-31T22:00:00Z'::TIMESTAMP_NS, 1),
+                      ('1969-12-31T23:00:00Z'::TIMESTAMP_NS, 2),
+                      ('1970-01-01T00:00:00Z'::TIMESTAMP_NS, 3),
+                      ('1970-01-01T01:00:00Z'::TIMESTAMP_NS, 4)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    ts\tval
+                    1969-12-31T22:00:00.000000000Z\t1
+                    1969-12-31T23:00:00.000000000Z\t2
+                    1970-01-01T00:00:00.000000000Z\t3
+                    1970-01-01T01:00:00.000000000Z\t4
+                    """, "SELECT ts, val FROM t ORDER BY ts");
+
+            // Verify WHERE filter works across epoch boundary
+            assertSql("""
+                    ts\tval
+                    1969-12-31T23:00:00.000000000Z\t2
+                    1970-01-01T00:00:00.000000000Z\t3
+                    """, "SELECT ts, val FROM t WHERE ts BETWEEN '1969-12-31T23:00:00Z'::TIMESTAMP_NS AND '1970-01-01T00:00:00Z'::TIMESTAMP_NS");
+        });
+    }
+
+    @Test
+    public void testOrderByWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                      (1_000_000, 3),
+                      (-2_000_000, 1),
+                      (-1_000_000, 2),
+                      (2_000_000, 4)
+                    """);
+            drainWalQueue();
+
+            // Natural scan order is ascending by designated timestamp
+            assertSql("""
+                    ts\tval
+                    1969-12-31T23:59:58.000000Z\t1
+                    1969-12-31T23:59:59.000000Z\t2
+                    1970-01-01T00:00:01.000000Z\t3
+                    1970-01-01T00:00:02.000000Z\t4
+                    """, "SELECT ts, val FROM t ORDER BY ts");
+
+            // Descending
+            assertSql("""
+                    ts\tval
+                    1970-01-01T00:00:02.000000Z\t4
+                    1970-01-01T00:00:01.000000Z\t3
+                    1969-12-31T23:59:59.000000Z\t2
+                    1969-12-31T23:59:58.000000Z\t1
+                    """, "SELECT ts, val FROM t ORDER BY ts DESC");
+        });
+    }
+
+    @Test
+    public void testTimezoneAwareSampleByWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            // Data spanning epoch in UTC; bucket alignment should use Europe/Berlin offsets
+            // In winter 1970, CET is UTC+1, so the hour boundary in Berlin is at UTC-1h
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            // Three rows: two on 1969-12-31 UTC, one on 1970-01-01 UTC
+            execute("""
+                    INSERT INTO t VALUES
+                      (-3_600_000_000, 1.0),
+                      (-1_800_000_000, 2.0),
+                      (3_600_000_000,  3.0)
+                    """);
+
+            // Must complete without error and produce hour buckets aligned to Berlin clock.
+            // Berlin is UTC+1 in winter, so UTC hour boundaries align to :00 UTC.
+            // FILL(NULL) inserts a null bucket for the gap at midnight UTC.
+            assertSql("""
+                    ts\tval
+                    1969-12-31T23:00:00.000000Z\t1.5
+                    1970-01-01T00:00:00.000000Z\tnull
+                    1970-01-01T01:00:00.000000Z\t3.0
+                    """, "SELECT ts, avg(val) val FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'");
+        });
+    }
+
+    @Test
+    public void testWhereBetweenWithNegativeTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                      (-3_600_000_000, 1),
+                      (-1_800_000_000, 2),
+                      (0, 3),
+                      (1_800_000_000, 4)
+                    """);
+            drainWalQueue();
+
+            // BETWEEN spanning epoch — should use partition pruning
+            assertSql("""
+                    ts\tval
+                    1969-12-31T23:30:00.000000Z\t2
+                    1970-01-01T00:00:00.000000Z\t3
+                    """, "SELECT ts, val FROM t WHERE ts BETWEEN '1969-12-31T23:30:00Z' AND '1970-01-01T00:00:00Z'");
+
+            // Only negative side
+            assertSql("""
+                    ts\tval
+                    1969-12-31T23:00:00.000000Z\t1
+                    1969-12-31T23:30:00.000000Z\t2
+                    """, "SELECT ts, val FROM t WHERE ts < 0::timestamp");
+        });
+    }
+
     private void execute(String sql) throws Exception {
         execute(sql, sqlExecutionContext);
     }

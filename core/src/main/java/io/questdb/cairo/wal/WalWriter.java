@@ -152,6 +152,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastMatViewRefreshTimestamp = WAL_DEFAULT_LAST_REFRESH_TIMESTAMP;
     private long lastReplaceRangeHiTs = 0;
     private long lastReplaceRangeLowTs = 0;
+    // Long.MIN_VALUE doubles as Numbers.LONG_NULL when no rows were written in the transaction.
+    // validateBounds() rejects Long.MIN_VALUE as a designated timestamp value, so any real
+    // max timestamp stored here is always > Long.MIN_VALUE.
     private long lastTxnMaxTimestamp = Long.MIN_VALUE;
     private byte lastTxnType = WalTxnType.DATA;
     private long segmentRowCount = -1;
@@ -931,7 +934,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     recentWriteTracker.recordWalWrite(
                             tableToken,
                             seqTxn,
-                            lastTxnMaxTimestamp == Long.MIN_VALUE ? Numbers.LONG_NULL : lastTxnMaxTimestamp,
+                            lastTxnMaxTimestamp,
                             txnRowCount
                     );
                 }

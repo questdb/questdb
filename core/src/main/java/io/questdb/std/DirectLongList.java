@@ -201,6 +201,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
      * Sorts the list treating values as signed long integers.
      * Uses XOR transformation to convert signed to unsigned sort order:
      * XOR with sign bit, sort as unsigned, XOR back.
+     * <p>
+     * IMPORTANT: XORs every element in place. Only use this when the list contains
+     * single independent values. Do NOT use when the list stores interleaved pairs
+     * (e.g., value+rowId pairs), as XORing the second element would corrupt the row IDs.
      */
     public void sortAsSigned() {
         long sz = size();

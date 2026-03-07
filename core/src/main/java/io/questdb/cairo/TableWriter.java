@@ -7802,7 +7802,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     txWriter.getLagMinTimestamp(),
                                     txWriter.getLagMaxTimestamp()
                             );
-                            assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                            if (rowCount != totalUncommitted) {
+                                throw CairoException.critical(0)
+                                        .put("radix sort overflow [result=").put(rowCount)
+                                        .put(", expected=").put(totalUncommitted).put(']');
+                            }
                         } finally {
                             mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                         }
@@ -8702,7 +8706,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 o3TimestampMin,
                                 o3TimestampMax
                         );
-                        assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                        if (rowCount != totalUncommitted) {
+                            throw CairoException.critical(0)
+                                    .put("radix sort overflow [result=").put(rowCount)
+                                    .put(", expected=").put(totalUncommitted).put(']');
+                        }
                         dispatchColumnTasks(timestampAddr, totalUncommitted, 0, rowLo, rowHi, cthMergeWalColumnWithLag);
                         swapO3ColumnsExcept(timestampIndex);
                         o3Columns = o3MemColumns1;
