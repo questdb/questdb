@@ -4262,15 +4262,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             tableToken = tableTokenBucket.get(i);
             if (!tableToken.isSystem()) {
-                if (tableToken.isView()) {
-                    securityContext.authorizeViewDrop(tableToken);
-                } else if (tableToken.isMatView()) {
-                    securityContext.authorizeMatViewDrop(tableToken);
-                } else {
-                    securityContext.authorizeTableDrop(tableToken);
-                }
                 final String tableName = tableToken.getTableName();
                 try {
+                    if (tableToken.isView()) {
+                        securityContext.authorizeViewDrop(tableToken);
+                    } else if (tableToken.isMatView()) {
+                        securityContext.authorizeMatViewDrop(tableToken);
+                    } else {
+                        securityContext.authorizeTableDrop(tableToken);
+                    }
                     engine.dropTableOrViewOrMatView(path, tableToken);
                     hasDroppedAny = true;
                     op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
