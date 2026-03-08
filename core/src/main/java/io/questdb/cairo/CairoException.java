@@ -333,6 +333,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public CairoException putSize(long bytes) {
+        message.putSize(bytes);
+        return this;
+    }
+
     public CairoException putAsPrintable(CharSequence nonPrintable) {
         message.putAsPrintable(nonPrintable);
         return this;
