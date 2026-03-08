@@ -269,7 +269,18 @@ steps:
       fi
       printf 'Merging profile files:\n%s\n' "${PROFRAW_FILES[@]}"
       llvm-profdata merge -sparse -o $(testset).profdata "${PROFRAW_FILES[@]}"
-    displayName: "Create partial Rust coverage report in LLVM format"
+
+      # Generate LCOV against this job's own libquestdbr.so to avoid
+      # counter hash mismatches when merging across independently compiled binaries.
+      RUST_TARGET_DIR=core/target/rust-maven-plugin/qdbr/debug
+      llvm-cov export \
+        --format=lcov \
+        --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+        --object "$RUST_TARGET_DIR/libquestdbr.so" \
+        --instr-profile=$(testset).profdata \
+        > $(testset).lcov
+      echo "Generated $(testset).lcov ($(wc -l < $(testset).lcov) lines)"
+    displayName: "Create Rust coverage report (LCOV)"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
@@ -277,7 +288,7 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: PublishBuildArtifacts@1
-    displayName: "Upload partial Rust coverage report"
+    displayName: "Upload Rust coverage LCOV"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
@@ -285,29 +296,5 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
     inputs:
-      pathToPublish: $(Build.SourcesDirectory)/$(testset).profdata
-      artifactName: rust-llvm-coverage
-  - bash: |
-      set -eux
-      RUST_TEST_TARGET_DIR=core/target/rust-maven-plugin/qdbr/debug
-      mkdir -p rust-coverage-binaries
-      cp "$RUST_TEST_TARGET_DIR/libquestdbr.so" rust-coverage-binaries/
-      ls -al rust-coverage-binaries
-    displayName: "Upload libquestdbr.so for coverage"
-    condition: |
-      and(
-        eq(variables['testset'], 'coverage-griffin-root'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-  - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust binaries needed to merge coverage files"
-    condition: |
-      and(
-        eq(variables['testset'], 'coverage-griffin-root'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-    inputs:
-      pathToPublish: $(Build.SourcesDirectory)/rust-coverage-binaries
+      pathToPublish: $(Build.SourcesDirectory)/$(testset).lcov
       artifactName: rust-llvm-coverage

@@ -210,13 +210,6 @@ stages:
           - download: current
             artifact: rust-llvm-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
-            displayName: "Ensure Rust is installed"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          - template: templates/install-llvm.yml
-            parameters:
-              shouldRun: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-
           - task: Cache@2
             continueOnError: true
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -249,60 +242,31 @@ stages:
 
           - bash: |
               set -eux
-              export PATH=$LLVM_TOOLS_PATH:$PATH
-              ls -al $(Pipeline.Workspace)/rust-llvm-coverage
-
-              # Merge partial profdata files from coverage test jobs.
-              # Lint-job profraw files are NOT included here: their coverage
-              # is captured as LCOV and appended after the llvm-cov export step.
-              MERGE_INPUTS=( $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata )
-              llvm-profdata merge -sparse -o questdbr.profdata "${MERGE_INPUTS[@]}"
-
               COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
-              # Use only libquestdbr.so as the object for Java test coverage.
-              # The test binary has different counter hashes (compiled as a
-              # different target) which causes mismatched-data warnings and
-              # silently drops coverage. Cargo test coverage is handled
-              # separately via LCOV from the lint job.
-              OBJECT_ARGS=(--object "$COVERAGE_DIR/libquestdbr.so")
-              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work)/[0-9]+/s' | head -n 1 || true)
-              if [ -z "$ORIG_PATH" ]; then
-                echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
-                exit 1
-              fi
-              PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
-              echo "Using $((${#OBJECT_ARGS[@]} / 2)) object files for llvm-cov"
+              ls -al "$COVERAGE_DIR"
 
-              # Export the merged coverage report to LCOV format
-              llvm-cov export \
-              --format=lcov \
-              --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-              "${OBJECT_ARGS[@]}" \
-              --instr-profile=questdbr.profdata \
+              # Concatenate all LCOV files: per-job coverage from Maven test runs
+              # and cargo test coverage from the lint job.
+              # Each coverage job generates LCOV against its own libquestdbr.so,
+              # avoiding counter hash mismatches across independently compiled binaries.
               > questdbr.lcov.dat
-
-              # Generate HTML report for local inspection
-              llvm-cov show \
-                --format=html \
-                --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-                $PATH_EQUIV_ARGS \
-                "${OBJECT_ARGS[@]}" \
-                --instr-profile=questdbr.profdata \
-                --output-dir $(Build.SourcesDirectory)/rust-coverage
-
-              # Append qdb-core and parquet2 LCOV (produced in the lint job)
               for LCOV_FILE in "$COVERAGE_DIR"/*.lcov; do
                 [ -f "$LCOV_FILE" ] || continue
                 cat "$LCOV_FILE" >> questdbr.lcov.dat
-                echo "Appended $(basename "$LCOV_FILE")"
+                echo "Appended $(basename "$LCOV_FILE") ($(wc -l < "$LCOV_FILE") lines)"
               done
 
-              # Merge LCOV coverage results from multiple objects into a single report
+              if [ ! -s questdbr.lcov.dat ]; then
+                echo "##vso[task.logissue type=error]No LCOV files found in artifact"
+                exit 1
+              fi
+
+              # Normalize CI-specific paths and merge duplicate entries
               python3 ./ci/merge_lcov_paths.py questdbr.lcov.dat questdbr-patched.lcov.dat
 
               # Convert LCOV coverage results to Cobertura XML format
               python3 ./ci/lcov_cobertura.py questdbr-patched.lcov.dat --output cobertura.xml --base-dir core/rust
-            displayName: "Merge partial Rust reports"
+            displayName: "Merge Rust coverage reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 
           - task: PublishBuildArtifacts@1

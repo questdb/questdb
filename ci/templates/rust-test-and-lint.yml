@@ -105,16 +105,16 @@ steps:
       }
 
       generate_lcov qdb-core core/rust/qdb-core/target/debug qdb-core
-      generate_lcov parquet2  core/rust/qdbr/parquet2/target/debug parquet2
+      generate_lcov qdbr     core/rust/qdbr/target/debug       qdbr
+      generate_lcov parquet2 core/rust/qdbr/parquet2/target/debug parquet2
 
-      # Remove intermediate profdata so they don't pollute the artifact
-      # (the *.profdata glob in the merge stage must only match coverage job files).
-      rm -f "$PROFRAW_DIR"/*.profdata
+      # Remove intermediate files so only *.lcov files are uploaded.
+      rm -f "$PROFRAW_DIR"/*.profdata "$PROFRAW_DIR"/*.profraw
     displayName: "qdb-core/parquet2: create coverage reports (LCOV)"
     condition: ${{ parameters.shouldRun }}
 
   - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust lint coverage profraw files"
+    displayName: "Upload Rust cargo test coverage (LCOV)"
     condition: ${{ parameters.shouldRun }}
     inputs:
       pathToPublish: $(Build.SourcesDirectory)/rust-lint-profraw
