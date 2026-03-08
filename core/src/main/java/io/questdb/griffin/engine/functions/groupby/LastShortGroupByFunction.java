@@ -41,6 +41,7 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
         if (count > 0) {
             final long addr = ptr + ((long) count - 1) * Short.BYTES;
             mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(addr));
+            mapValue.putBool(valueIndex + 2, false);
         }
     }
 
@@ -63,6 +64,7 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
         if (srcRowId > destRowId) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putShort(valueIndex + 1, srcValue.getShort(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
 }

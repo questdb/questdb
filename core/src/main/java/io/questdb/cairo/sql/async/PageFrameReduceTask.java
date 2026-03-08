@@ -34,9 +34,11 @@ import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -63,6 +65,13 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     // i.e. filteredRows can't be used.
     private boolean isCountOnly;
     private boolean isOutOfMemory;
+    // Zeroed buffer used as a dummy null bitmap for parquet frames.
+    // Parquet frames don't provide null bitmap addresses, but the JIT reads
+    // from bitmap addresses for bitmap-null columns (BOOLEAN, BYTE, SHORT).
+    // A zeroed buffer makes the JIT treat all rows as non-null, preventing
+    // a crash from reading address 0.
+    private long parquetNullBitmapAddr;
+    private long parquetNullBitmapSize;
     private byte taskType;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
@@ -94,12 +103,19 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
 
         auxAddresses.clear();
+        final DirectLongList nullBitmapAddresses = frameMemory.getNullBitmapAddresses();
+        final int columnOffset = frameMemory.getColumnOffset();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            auxAddresses.add(
-                    pageAddressCache.isVarSizeColumn(columnIndex)
-                            ? frameMemory.getAuxPageAddress(columnIndex)
-                            : 0
-            );
+            if (pageAddressCache.isVarSizeColumn(columnIndex)) {
+                auxAddresses.add(frameMemory.getAuxPageAddress(columnIndex));
+            } else if (nullBitmapAddresses != null) {
+                // Pass bitmap address for fixed-size columns so JIT can test
+                // null bits for bitmap-null types. Address is 0 for columns
+                // without a null bitmap (sentinel-null types like INT/LONG).
+                auxAddresses.add(nullBitmapAddresses.get(columnOffset + columnIndex));
+            } else {
+                auxAddresses.add(0);
+            }
         }
     }
 
@@ -111,6 +127,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
         frameMemoryPool.clear();
+        if (parquetNullBitmapAddr != 0) {
+            Unsafe.free(parquetNullBitmapAddr, parquetNullBitmapSize, MemoryTag.NATIVE_JIT);
+            parquetNullBitmapAddr = 0;
+            parquetNullBitmapSize = 0;
+        }
     }
 
     @Override
@@ -121,6 +142,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
         Misc.free(frameMemoryPool);
+        if (parquetNullBitmapAddr != 0) {
+            Unsafe.free(parquetNullBitmapAddr, parquetNullBitmapSize, MemoryTag.NATIVE_JIT);
+            parquetNullBitmapAddr = 0;
+            parquetNullBitmapSize = 0;
+        }
     }
 
     /**
@@ -242,7 +268,31 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     // Useful when using external frame memory pool.
     public void populateJitData(@NotNull PageFrameMemory frameMemory) {
         assert frameMemory.getFrameIndex() == frameIndex;
-        populateJitAddresses(frameMemory, frameSequence.getPageFrameAddressCache(), dataAddresses, auxAddresses);
+        final PageFrameAddressCache pageAddressCache = frameSequence.getPageFrameAddressCache();
+        populateJitAddresses(frameMemory, pageAddressCache, dataAddresses, auxAddresses);
+        // Parquet frames don't provide null bitmap addresses, so
+        // populateJitAddresses sets 0 for all fixed-size columns. The JIT
+        // reads from bitmap addresses for bitmap-null columns (BOOLEAN, BYTE,
+        // SHORT) and would crash reading from address 0. Replace with a valid
+        // zeroed buffer so the JIT treats all parquet rows as non-null.
+        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET
+                && frameMemory.getNullBitmapAddresses() == null) {
+            final long rowCount = getFrameRowCount();
+            final long bitmapSize = (rowCount + 7) >> 3;
+            if (bitmapSize > parquetNullBitmapSize) {
+                if (parquetNullBitmapAddr != 0) {
+                    Unsafe.free(parquetNullBitmapAddr, parquetNullBitmapSize, MemoryTag.NATIVE_JIT);
+                }
+                parquetNullBitmapAddr = Unsafe.calloc(bitmapSize, MemoryTag.NATIVE_JIT);
+                parquetNullBitmapSize = bitmapSize;
+            }
+            final int columnCount = pageAddressCache.getColumnCount();
+            for (int i = 0; i < columnCount; i++) {
+                if (!pageAddressCache.isVarSizeColumn(i) && auxAddresses.get(i) == 0) {
+                    auxAddresses.set(i, parquetNullBitmapAddr);
+                }
+            }
+        }
         if (!isCountOnly) {
             final long rowCount = getFrameRowCount();
             if (filteredRows.getCapacity() < rowCount) {
@@ -262,6 +312,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public void releaseFrameMemory() {
         frameMemoryPool.releaseParquetBuffers();
         frameMemory = null;
+        if (parquetNullBitmapAddr != 0) {
+            Unsafe.free(parquetNullBitmapAddr, parquetNullBitmapSize, MemoryTag.NATIVE_JIT);
+            parquetNullBitmapAddr = 0;
+            parquetNullBitmapSize = 0;
+        }
     }
 
     public void setErrorMsg(Throwable th) {

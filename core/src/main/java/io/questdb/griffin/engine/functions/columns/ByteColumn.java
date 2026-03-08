@@ -57,6 +57,11 @@ public class ByteColumn extends ByteFunction implements ColumnFunction {
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return rec.isNull(columnIndex);
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

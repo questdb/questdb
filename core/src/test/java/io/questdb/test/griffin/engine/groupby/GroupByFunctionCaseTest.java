@@ -232,7 +232,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     }
 
     private void prepareExpectedPlan(int t, int f, String keys, String function, String expectedFunction) {
-        boolean rosti = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"));
+        boolean rosti = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && f > 1);
 
         planSink.clear();
         if (rosti) {

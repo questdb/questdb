@@ -4659,11 +4659,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testInsertAsSelectColumnListAndTimestampO3() throws Exception {
         String expectedData = """
                 a\tn\to\tp
-                73575701\t1970-01-01T04:26:40.000000Z\t0\t
-                -727724771\t1970-01-01T04:43:20.000000Z\t0\t
-                1548800833\t1970-01-01T05:00:00.000000Z\t0\t
-                315515118\t1970-01-01T05:16:40.000000Z\t0\t
-                -1148479920\t1970-01-01T05:33:20.000000Z\t0\t
+                73575701\t1970-01-01T04:26:40.000000Z\t\t
+                -727724771\t1970-01-01T04:43:20.000000Z\t\t
+                1548800833\t1970-01-01T05:00:00.000000Z\t\t
+                315515118\t1970-01-01T05:16:40.000000Z\t\t
+                -1148479920\t1970-01-01T05:33:20.000000Z\t\t
                 """;
 
         assertMemoryLeak(() -> testInsertAsSelect(
@@ -4703,36 +4703,36 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testInsertAsSelectColumnSubset() throws Exception {
         String expectedData = """
                 a\tb\tc\td\te\tf\tg\tj\tk\tl\tm\tn\to\tp
-                null\tnull\tfalse\t\t0.8043224099968393\tnull\t0\t\t\tnull\tnull\t1970-01-01T00:00:00.000000Z\t0\t
-                null\tnull\tfalse\t\t0.08486964232560668\tnull\t0\t\t\tnull\tnull\t1970-01-01T00:16:40.000000Z\t0\t
-                null\tnull\tfalse\t\t0.0843832076262595\tnull\t0\t\t\tnull\tnull\t1970-01-01T00:33:20.000000Z\t0\t
-                null\tnull\tfalse\t\t0.6508594025855301\tnull\t0\t\t\tnull\tnull\t1970-01-01T00:50:00.000000Z\t0\t
-                null\tnull\tfalse\t\t0.7905675319675964\tnull\t0\t\t\tnull\tnull\t1970-01-01T01:06:40.000000Z\t0\t
-                null\tnull\tfalse\t\t0.22452340856088226\tnull\t0\t\t\tnull\tnull\t1970-01-01T01:23:20.000000Z\t0\t
-                null\tnull\tfalse\t\t0.3491070363730514\tnull\t0\t\t\tnull\tnull\t1970-01-01T01:40:00.000000Z\t0\t
-                null\tnull\tfalse\t\t0.7611029514995744\tnull\t0\t\t\tnull\tnull\t1970-01-01T01:56:40.000000Z\t0\t
-                null\tnull\tfalse\t\t0.4217768841969397\tnull\t0\t\t\tnull\tnull\t1970-01-01T02:13:20.000000Z\t0\t
-                null\tnull\tfalse\t\tnull\tnull\t0\t\t\tnull\tnull\t1970-01-01T02:30:00.000000Z\t0\t
-                null\tnull\tfalse\t\t0.7261136209823622\tnull\t0\t\t\tnull\tnull\t1970-01-01T02:46:40.000000Z\t0\t
-                null\tnull\tfalse\t\t0.4224356661645131\tnull\t0\t\t\tnull\tnull\t1970-01-01T03:03:20.000000Z\t0\t
-                null\tnull\tfalse\t\t0.7094360487171202\tnull\t0\t\t\tnull\tnull\t1970-01-01T03:20:00.000000Z\t0\t
-                null\tnull\tfalse\t\t0.38539947865244994\tnull\t0\t\t\tnull\tnull\t1970-01-01T03:36:40.000000Z\t0\t
-                null\tnull\tfalse\t\t0.0035983672154330515\tnull\t0\t\t\tnull\tnull\t1970-01-01T03:53:20.000000Z\t0\t
-                null\tnull\tfalse\t\t0.3288176907679504\tnull\t0\t\t\tnull\tnull\t1970-01-01T04:10:00.000000Z\t0\t
-                null\tnull\tfalse\t\tnull\tnull\t0\t\t\tnull\tnull\t1970-01-01T04:26:40.000000Z\t0\t
-                null\tnull\tfalse\t\t0.9771103146051203\tnull\t0\t\t\tnull\tnull\t1970-01-01T04:43:20.000000Z\t0\t
-                null\tnull\tfalse\t\t0.24808812376657652\tnull\t0\t\t\tnull\tnull\t1970-01-01T05:00:00.000000Z\t0\t
-                null\tnull\tfalse\t\t0.6381607531178513\tnull\t0\t\t\tnull\tnull\t1970-01-01T05:16:40.000000Z\t0\t
-                null\tnull\tfalse\t\t0.12503042190293423\tnull\t0\t\t\tnull\tnull\t1970-01-01T05:33:20.000000Z\t0\t
-                null\tnull\tfalse\t\t0.9038068796506872\tnull\t0\t\t\tnull\tnull\t1970-01-01T05:50:00.000000Z\t0\t
-                null\tnull\tfalse\t\t0.13450170570900255\tnull\t0\t\t\tnull\tnull\t1970-01-01T06:06:40.000000Z\t0\t
-                null\tnull\tfalse\t\t0.8912587536603974\tnull\t0\t\t\tnull\tnull\t1970-01-01T06:23:20.000000Z\t0\t
-                null\tnull\tfalse\t\t0.9755263540567968\tnull\t0\t\t\tnull\tnull\t1970-01-01T06:40:00.000000Z\t0\t
-                null\tnull\tfalse\t\t0.26922103479744897\tnull\t0\t\t\tnull\tnull\t1970-01-01T06:56:40.000000Z\t0\t
-                null\tnull\tfalse\t\t0.4138164748227684\tnull\t0\t\t\tnull\tnull\t1970-01-01T07:13:20.000000Z\t0\t
-                null\tnull\tfalse\t\t0.5522494170511608\tnull\t0\t\t\tnull\tnull\t1970-01-01T07:30:00.000000Z\t0\t
-                null\tnull\tfalse\t\t0.2459345277606021\tnull\t0\t\t\tnull\tnull\t1970-01-01T07:46:40.000000Z\t0\t
-                null\tnull\tfalse\t\tnull\tnull\t0\t\t\tnull\tnull\t1970-01-01T08:03:20.000000Z\t0\t
+                null\tnull\t\t\t0.8043224099968393\tnull\t\t\t\tnull\tnull\t1970-01-01T00:00:00.000000Z\t\t
+                null\tnull\t\t\t0.08486964232560668\tnull\t\t\t\tnull\tnull\t1970-01-01T00:16:40.000000Z\t\t
+                null\tnull\t\t\t0.0843832076262595\tnull\t\t\t\tnull\tnull\t1970-01-01T00:33:20.000000Z\t\t
+                null\tnull\t\t\t0.6508594025855301\tnull\t\t\t\tnull\tnull\t1970-01-01T00:50:00.000000Z\t\t
+                null\tnull\t\t\t0.7905675319675964\tnull\t\t\t\tnull\tnull\t1970-01-01T01:06:40.000000Z\t\t
+                null\tnull\t\t\t0.22452340856088226\tnull\t\t\t\tnull\tnull\t1970-01-01T01:23:20.000000Z\t\t
+                null\tnull\t\t\t0.3491070363730514\tnull\t\t\t\tnull\tnull\t1970-01-01T01:40:00.000000Z\t\t
+                null\tnull\t\t\t0.7611029514995744\tnull\t\t\t\tnull\tnull\t1970-01-01T01:56:40.000000Z\t\t
+                null\tnull\t\t\t0.4217768841969397\tnull\t\t\t\tnull\tnull\t1970-01-01T02:13:20.000000Z\t\t
+                null\tnull\t\t\tnull\tnull\t\t\t\tnull\tnull\t1970-01-01T02:30:00.000000Z\t\t
+                null\tnull\t\t\t0.7261136209823622\tnull\t\t\t\tnull\tnull\t1970-01-01T02:46:40.000000Z\t\t
+                null\tnull\t\t\t0.4224356661645131\tnull\t\t\t\tnull\tnull\t1970-01-01T03:03:20.000000Z\t\t
+                null\tnull\t\t\t0.7094360487171202\tnull\t\t\t\tnull\tnull\t1970-01-01T03:20:00.000000Z\t\t
+                null\tnull\t\t\t0.38539947865244994\tnull\t\t\t\tnull\tnull\t1970-01-01T03:36:40.000000Z\t\t
+                null\tnull\t\t\t0.0035983672154330515\tnull\t\t\t\tnull\tnull\t1970-01-01T03:53:20.000000Z\t\t
+                null\tnull\t\t\t0.3288176907679504\tnull\t\t\t\tnull\tnull\t1970-01-01T04:10:00.000000Z\t\t
+                null\tnull\t\t\tnull\tnull\t\t\t\tnull\tnull\t1970-01-01T04:26:40.000000Z\t\t
+                null\tnull\t\t\t0.9771103146051203\tnull\t\t\t\tnull\tnull\t1970-01-01T04:43:20.000000Z\t\t
+                null\tnull\t\t\t0.24808812376657652\tnull\t\t\t\tnull\tnull\t1970-01-01T05:00:00.000000Z\t\t
+                null\tnull\t\t\t0.6381607531178513\tnull\t\t\t\tnull\tnull\t1970-01-01T05:16:40.000000Z\t\t
+                null\tnull\t\t\t0.12503042190293423\tnull\t\t\t\tnull\tnull\t1970-01-01T05:33:20.000000Z\t\t
+                null\tnull\t\t\t0.9038068796506872\tnull\t\t\t\tnull\tnull\t1970-01-01T05:50:00.000000Z\t\t
+                null\tnull\t\t\t0.13450170570900255\tnull\t\t\t\tnull\tnull\t1970-01-01T06:06:40.000000Z\t\t
+                null\tnull\t\t\t0.8912587536603974\tnull\t\t\t\tnull\tnull\t1970-01-01T06:23:20.000000Z\t\t
+                null\tnull\t\t\t0.9755263540567968\tnull\t\t\t\tnull\tnull\t1970-01-01T06:40:00.000000Z\t\t
+                null\tnull\t\t\t0.26922103479744897\tnull\t\t\t\tnull\tnull\t1970-01-01T06:56:40.000000Z\t\t
+                null\tnull\t\t\t0.4138164748227684\tnull\t\t\t\tnull\tnull\t1970-01-01T07:13:20.000000Z\t\t
+                null\tnull\t\t\t0.5522494170511608\tnull\t\t\t\tnull\tnull\t1970-01-01T07:30:00.000000Z\t\t
+                null\tnull\t\t\t0.2459345277606021\tnull\t\t\t\tnull\tnull\t1970-01-01T07:46:40.000000Z\t\t
+                null\tnull\t\t\tnull\tnull\t\t\t\tnull\tnull\t1970-01-01T08:03:20.000000Z\t\t
                 """;
 
         assertMemoryLeak(() -> testInsertAsSelect(
@@ -4751,36 +4751,36 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testInsertAsSelectColumnSubset2() throws Exception {
         String expectedData = """
                 a\tb\tc\td\te\tf\tg\tj\tk\tl\tm\tn\to\tp
-                null\tnull\tfalse\t\t0.8043224099968393\tnull\t-13027\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.2845577791213847\tnull\t21015\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.9344604857394011\tnull\t-5356\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.7905675319675964\tnull\t-19832\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.8899286912289663\tnull\t23922\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\tnull\tnull\t31987\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.4621835429127854\tnull\t-4472\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.8072372233384567\tnull\t4924\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.6276954028373309\tnull\t-11679\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.7094360487171202\tnull\t-12348\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.1985581797355932\tnull\t-8877\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.5249321062686694\tnull\t13182\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\tnull\tnull\t2056\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.21583224269349388\tnull\t12941\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.8146807944500559\tnull\t-5176\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.12503042190293423\tnull\t-7976\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.9687423276940171\tnull\t15926\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.6700476391801052\tnull\t2276\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.9755263540567968\tnull\t5639\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.810161274171258\tnull\t-391\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.3762501709498378\tnull\t-30933\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.2459345277606021\tnull\t20366\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.975019885372507\tnull\t-3567\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.4900510449885239\tnull\t3428\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\tnull\tnull\t29978\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.04142812470232493\tnull\t-19136\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.7997733229967019\tnull\t-21442\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.6590341607692226\tnull\t-2018\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.17370570324289436\tnull\t9478\t\t\tnull\tnull\t\t0\t
-                null\tnull\tfalse\t\t0.04645849844580874\tnull\t6093\t\t\tnull\tnull\t\t0\t
+                null\tnull\t\t\t0.8043224099968393\tnull\t-13027\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.2845577791213847\tnull\t21015\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.9344604857394011\tnull\t-5356\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.7905675319675964\tnull\t-19832\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.8899286912289663\tnull\t23922\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\tnull\tnull\t31987\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.4621835429127854\tnull\t-4472\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.8072372233384567\tnull\t4924\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.6276954028373309\tnull\t-11679\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.7094360487171202\tnull\t-12348\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.1985581797355932\tnull\t-8877\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.5249321062686694\tnull\t13182\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\tnull\tnull\t2056\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.21583224269349388\tnull\t12941\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.8146807944500559\tnull\t-5176\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.12503042190293423\tnull\t-7976\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.9687423276940171\tnull\t15926\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.6700476391801052\tnull\t2276\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.9755263540567968\tnull\t5639\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.810161274171258\tnull\t-391\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.3762501709498378\tnull\t-30933\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.2459345277606021\tnull\t20366\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.975019885372507\tnull\t-3567\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.4900510449885239\tnull\t3428\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\tnull\tnull\t29978\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.04142812470232493\tnull\t-19136\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.7997733229967019\tnull\t-21442\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.6590341607692226\tnull\t-2018\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.17370570324289436\tnull\t9478\t\t\tnull\tnull\t\t\t
+                null\tnull\t\t\t0.04645849844580874\tnull\t6093\t\t\tnull\tnull\t\t\t
                 """;
 
         assertMemoryLeak(() -> testInsertAsSelect(

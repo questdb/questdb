@@ -56,6 +56,11 @@ public class BooleanColumn extends BooleanFunction implements ColumnFunction {
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return rec.isNull(columnIndex);
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

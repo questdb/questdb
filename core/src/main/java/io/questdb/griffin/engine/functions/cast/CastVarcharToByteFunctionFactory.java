@@ -53,14 +53,30 @@ public class CastVarcharToByteFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToByteFunction {
+        private Utf8Sequence cachedVarchar;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public byte getByte(Record rec) {
-            final Utf8Sequence value = arg.getVarcharA(rec);
+            Utf8Sequence value;
+            if (srcCached) {
+                value = cachedVarchar;
+                srcCached = false;
+            } else {
+                value = arg.getVarcharA(rec);
+            }
             return (byte) Numbers.parseIntQuiet(value != null ? value.asAsciiCharSequence() : null);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedVarchar = arg.getVarcharA(rec);
+            srcCached = true;
+            return cachedVarchar == null;
         }
     }
 }

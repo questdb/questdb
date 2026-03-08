@@ -174,6 +174,11 @@ public class CaseCommon {
 
     static {
         // self for all
+        castFactories.put(Numbers.encodeLowHighInts(BYTE, SHORT), new CastByteToShortFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(BYTE, INT), new CastByteToIntFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(BYTE, LONG), new CastByteToLongFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(BYTE, FLOAT), new CastByteToFloatFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(BYTE, DOUBLE), new CastByteToDoubleFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BYTE, LONG256), new CastByteToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BYTE, STRING), new CastByteToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BYTE, VARCHAR), new CastByteToVarcharFunctionFactory());
@@ -187,6 +192,10 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), new CastCharToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, DATE), new CastCharToDateFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, TIMESTAMP_MICRO), new CastCharToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(SHORT, INT), new CastShortToIntFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(SHORT, LONG), new CastShortToLongFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(SHORT, FLOAT), new CastShortToFloatFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(SHORT, DOUBLE), new CastShortToDoubleFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, LONG256), new CastShortToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, STRING), new CastShortToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, VARCHAR), new CastShortToVarcharFunctionFactory());
@@ -324,6 +333,10 @@ public class CaseCommon {
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(LONG256, LONG256), LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(BINARY, BINARY), BINARY);
+
+        typeEscalationMap.put(Numbers.encodeLowHighInts(UINT16, UINT16), UINT16);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(UINT32, UINT32), UINT32);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(UINT64, UINT64), UINT64);
     }
 
     static {

@@ -204,6 +204,18 @@ public class PGOids {
 
     public static int getTypeOid(int type) {
         if (!ColumnType.isArray(type)) {
+            if (type == ColumnType.UINT16) {
+                // INT2 cannot represent 65535 in signed client APIs.
+                return PG_INT4;
+            }
+            if (type == ColumnType.UINT32) {
+                // INT4 cannot represent 4294967295 in signed client APIs.
+                return PG_INT8;
+            }
+            if (type == ColumnType.UINT64) {
+                // No native PostgreSQL unsigned 64-bit type; expose as textual value.
+                return PG_VARCHAR;
+            }
             return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
         }
         int elType = ColumnType.decodeArrayElementType(type);

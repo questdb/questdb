@@ -881,6 +881,84 @@ LONG_LONG_ACC_DISPATCHER(sumLongAcc)
 LONG_LONG_DISPATCHER(minLong)
 LONG_LONG_DISPATCHER(maxLong)
 
+// Bitmap-null-aware SHORT aggregation JNI exports.
+// These call vanilla (scalar) implementations directly. SIMD versions can be
+// added later by creating dispatcher macros with the bitmap signature.
+extern "C" {
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sumShortBitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
+    return sumShortBitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_Vect_minShortBitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
+    return minShortBitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_Vect_maxShortBitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
+    return maxShortBitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_countShortBitmapNull(JNIEnv *env, jclass cl, jlong pBitmap, jlong bitOffset, jlong count) {
+    return countShortBitmapNull_Vanilla((uint8_t *) pBitmap, bitOffset, count);
+}
+
+// UINT16 bitmap-null aggregation JNI exports.
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sumUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
+    return sumUInt16BitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_Vect_minUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
+    return minUInt16BitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_Vect_maxUInt16BitmapNull(JNIEnv *env, jclass cl, jlong pShort, jlong pBitmap, jlong bitOffset, jlong count) {
+    return maxUInt16BitmapNull_Vanilla((int16_t *) pShort, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+// UINT32 bitmap-null aggregation JNI exports.
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sumUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pInt, jlong pBitmap, jlong bitOffset, jlong count) {
+    return sumUInt32BitmapNull_Vanilla((int32_t *) pInt, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_minUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pInt, jlong pBitmap, jlong bitOffset, jlong count) {
+    return minUInt32BitmapNull_Vanilla((int32_t *) pInt, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_maxUInt32BitmapNull(JNIEnv *env, jclass cl, jlong pInt, jlong pBitmap, jlong bitOffset, jlong count) {
+    return maxUInt32BitmapNull_Vanilla((int32_t *) pInt, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+// UINT64 bitmap-null aggregation JNI exports.
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_sumUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pLong, jlong pBitmap, jlong bitOffset, jlong count) {
+    return sumUInt64BitmapNull_Vanilla((int64_t *) pLong, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_minUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pLong, jlong pBitmap, jlong bitOffset, jlong count) {
+    return minUInt64BitmapNull_Vanilla((int64_t *) pLong, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_maxUInt64BitmapNull(JNIEnv *env, jclass cl, jlong pLong, jlong pBitmap, jlong bitOffset, jlong count) {
+    return maxUInt64BitmapNull_Vanilla((int64_t *) pLong, (uint8_t *) pBitmap, bitOffset, count);
+}
+
+}
+
 extern "C" {
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {

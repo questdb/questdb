@@ -64,7 +64,13 @@ public class SignShortFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNull(Record rec) {
+            return arg.isNull(rec);
+        }
+
+        @Override
         public short getShort(Record rec) {
+            if (arg.isNull(rec)) return 0;
             short s = arg.getShort(rec);
             return (short) Integer.signum(s);
         }

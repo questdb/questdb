@@ -45,14 +45,30 @@ public class CastLongToShortFunctionFactory implements FunctionFactory {
     }
 
     public static class CastLongToShortFunction extends AbstractCastToShortFunction {
+        private long cachedSrc;
+        private boolean srcCached;
+
         public CastLongToShortFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public short getShort(Record rec) {
-            final long value = arg.getLong(rec);
+            long value;
+            if (srcCached) {
+                value = cachedSrc;
+                srcCached = false;
+            } else {
+                value = arg.getLong(rec);
+            }
             return value != Numbers.LONG_NULL ? (short) value : 0;
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedSrc = arg.getLong(rec);
+            srcCached = true;
+            return cachedSrc == Numbers.LONG_NULL;
         }
     }
 }

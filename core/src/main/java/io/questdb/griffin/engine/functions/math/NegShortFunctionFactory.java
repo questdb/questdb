@@ -60,7 +60,13 @@ public class NegShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
+            if (arg.isNull(rec)) return 0;
             return (short) -arg.getShort(rec);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            return arg.isNull(rec);
         }
 
         @Override

@@ -34,6 +34,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -106,11 +107,13 @@ public abstract class ShortFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
+        if (isNull(rec)) return Double.NaN;
         return getShort(rec);
     }
 
     @Override
     public float getFloat(Record rec) {
+        if (isNull(rec)) return Float.NaN;
         return getShort(rec);
     }
 
@@ -141,6 +144,7 @@ public abstract class ShortFunction implements Function {
 
     @Override
     public int getInt(Record rec) {
+        if (isNull(rec)) return Numbers.INT_NULL;
         return getShort(rec);
     }
 
@@ -151,6 +155,7 @@ public abstract class ShortFunction implements Function {
 
     @Override
     public long getLong(Record rec) {
+        if (isNull(rec)) return Numbers.LONG_NULL;
         return getShort(rec);
     }
 

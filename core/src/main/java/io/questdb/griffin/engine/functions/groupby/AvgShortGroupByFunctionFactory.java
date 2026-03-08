@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,6 +53,10 @@ public class AvgShortGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new AvgShortGroupByFunction(args.getQuick(0));
+        final Function arg = args.getQuick(0);
+        if (ColumnType.isUInt16(arg.getType())) {
+            return new AvgUInt16GroupByFunction(arg);
+        }
+        return new AvgShortGroupByFunction(arg);
     }
 }

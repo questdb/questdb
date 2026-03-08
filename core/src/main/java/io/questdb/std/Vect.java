@@ -471,6 +471,32 @@ public final class Vect {
 
     public static native long sumShort(long pLong, long count);
 
+    public static native long countShortBitmapNull(long pBitmap, long bitOffset, long count);
+
+    public static native int maxShortBitmapNull(long pShort, long pBitmap, long bitOffset, long count);
+
+    public static native int minShortBitmapNull(long pShort, long pBitmap, long bitOffset, long count);
+
+    public static native long sumShortBitmapNull(long pShort, long pBitmap, long bitOffset, long count);
+
+    public static native int maxUInt16BitmapNull(long pShort, long pBitmap, long bitOffset, long count);
+
+    public static native long maxUInt32BitmapNull(long pInt, long pBitmap, long bitOffset, long count);
+
+    public static native long maxUInt64BitmapNull(long pLong, long pBitmap, long bitOffset, long count);
+
+    public static native int minUInt16BitmapNull(long pShort, long pBitmap, long bitOffset, long count);
+
+    public static native long minUInt32BitmapNull(long pInt, long pBitmap, long bitOffset, long count);
+
+    public static native long minUInt64BitmapNull(long pLong, long pBitmap, long bitOffset, long count);
+
+    public static native long sumUInt16BitmapNull(long pShort, long pBitmap, long bitOffset, long count);
+
+    public static native long sumUInt32BitmapNull(long pInt, long pBitmap, long bitOffset, long count);
+
+    public static native long sumUInt64BitmapNull(long pLong, long pBitmap, long bitOffset, long count);
+
     private static native int memcmp(long src, long dst, long len);
 
     private static native void memcpy0(long src, long dst, long len);

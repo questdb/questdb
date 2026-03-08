@@ -60,8 +60,14 @@ public class SignByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
+            if (arg.isNull(rec)) return 0;
             byte b = arg.getByte(rec);
             return (byte) Integer.signum(b);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            return arg.isNull(rec);
         }
 
         @Override

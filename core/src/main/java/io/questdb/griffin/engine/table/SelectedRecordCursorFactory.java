@@ -378,6 +378,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getNullBitmapAddress(int columnIndex) {
+            return baseFrame.getNullBitmapAddress(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public long getNullBitmapSize(int columnIndex) {
+            return baseFrame.getNullBitmapSize(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
         public long getPageAddress(int columnIndex) {
             return baseFrame.getPageAddress(columnCrossIndex.getQuick(columnIndex));
         }

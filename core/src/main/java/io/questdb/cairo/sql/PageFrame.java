@@ -87,6 +87,31 @@ public interface PageFrame {
     long getPageAddress(int columnIndex);
 
     /**
+     * Return the address of the null bitmap (.n) for the given column, or 0 if
+     * no bitmap is available (e.g. old partition without bitmap support).
+     * <p>
+     * Can be called only for frames in native format.
+     *
+     * @param columnIndex index of column
+     * @return address of null bitmap or 0 if not available
+     */
+    default long getNullBitmapAddress(int columnIndex) {
+        return 0;
+    }
+
+    /**
+     * Return the size of the null bitmap in bytes, or 0 if not available.
+     * <p>
+     * Can be called only for frames in native format.
+     *
+     * @param columnIndex index of column
+     * @return size of null bitmap in bytes or 0
+     */
+    default long getNullBitmapSize(int columnIndex) {
+        return 0;
+    }
+
+    /**
      * Return the size of the page frame data vector in bytes.
      * <p>
      * Can be called only for frames in native format.

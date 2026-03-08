@@ -923,7 +923,7 @@ public class WalWriterTest extends AbstractCairoTest {
             assertSql(
                     """
                             a\tb\tts\ti2
-                            0\t\t2022-02-24T00:00:00.000000Z\t2
+                            \t\t2022-02-24T00:00:00.000000Z\t2
                             """, tableToken.getTableName()
             );
         });
@@ -942,7 +942,7 @@ public class WalWriterTest extends AbstractCairoTest {
             assertSql(
                     """
                             a\tb\tts\ti2
-                            0\t\t2022-02-24T00:00:00.000000Z\t2
+                            \t\t2022-02-24T00:00:00.000000Z\t2
                             """, tableToken.getTableName()
             );
         });
@@ -966,7 +966,7 @@ public class WalWriterTest extends AbstractCairoTest {
             assertSql(
                     """
                             a\tb\tts\tsym2\ti2
-                            0\t\t2022-02-24T00:00:00.000000Z\t\t2
+                            \t\t2022-02-24T00:00:00.000000Z\t\t2
                             """, tableToken.getTableName()
             );
         });
@@ -1984,7 +1984,7 @@ public class WalWriterTest extends AbstractCairoTest {
             assertSql(
                     """
                             a\tb\tts
-                            0\t\t2023-08-04T23:00:00.000000Z
+                            \t\t2023-08-04T23:00:00.000000Z
                             """,
                     tableToken.getTableName()
             );
@@ -2006,9 +2006,9 @@ public class WalWriterTest extends AbstractCairoTest {
             assertSql(
                     """
                             a\tb\tts
-                            0\t\t2023-08-04T21:00:00.000000Z
-                            0\t\t2023-08-04T22:00:00.000000Z
-                            0\t\t2023-08-04T23:00:00.000000Z
+                            \t\t2023-08-04T21:00:00.000000Z
+                            \t\t2023-08-04T22:00:00.000000Z
+                            \t\t2023-08-04T23:00:00.000000Z
                             """,
                     tableToken.getTableName()
             );
@@ -2018,10 +2018,10 @@ public class WalWriterTest extends AbstractCairoTest {
             assertSql(
                     """
                             a\tb\tts
-                            0\t\t2023-08-04T20:00:00.000000Z
-                            0\t\t2023-08-04T21:00:00.000000Z
-                            0\t\t2023-08-04T22:00:00.000000Z
-                            0\t\t2023-08-04T23:00:00.000000Z
+                            \t\t2023-08-04T20:00:00.000000Z
+                            \t\t2023-08-04T21:00:00.000000Z
+                            \t\t2023-08-04T22:00:00.000000Z
+                            \t\t2023-08-04T23:00:00.000000Z
                             """,
                     tableToken.getTableName()
             );

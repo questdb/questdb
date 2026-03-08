@@ -353,6 +353,31 @@
                         </executions>
                     </plugin>
 
+                    <!-- Patch Web Console bundle to expose unsigned integer types in table creator -->
+                    <plugin>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>patch-web-console-uint-types</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <replace
+                                                dir="${project.build.directory}/site/package/dist/assets"
+                                                includes="index-*.js"
+                                                failOnNoReplacements="yes"
+                                                token="{label:&quot;SHORT&quot;,value:&quot;SHORT&quot;},{label:&quot;STRING&quot;,value:&quot;STRING&quot;}"
+                                                value="{label:&quot;SHORT&quot;,value:&quot;SHORT&quot;},{label:&quot;UINT16&quot;,value:&quot;UINT16&quot;},{label:&quot;UINT32&quot;,value:&quot;UINT32&quot;},{label:&quot;UINT64&quot;,value:&quot;UINT64&quot;},{label:&quot;STRING&quot;,value:&quot;STRING&quot;}"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
                     <!-- Repackage Web Console as public.zip -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>

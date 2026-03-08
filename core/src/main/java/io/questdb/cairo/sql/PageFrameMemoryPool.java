@@ -120,6 +120,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getRowIdOffset(frameIndex),
                     addressCache.getPageAddresses(),
                     addressCache.getAuxPageAddresses(),
+                    addressCache.getNullBitmapAddresses(),
+                    addressCache.getNullBitmapSizes(),
                     addressCache.getPageSizes(),
                     addressCache.getAuxPageSizes(),
                     columnOffset
@@ -141,6 +143,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getRowIdOffset(frameIndex),
                     parquetBuffers.pageAddresses,
                     parquetBuffers.auxPageAddresses,
+                    null, // no null bitmaps for parquet frames
+                    null,
                     parquetBuffers.pageSizes,
                     parquetBuffers.auxPageSizes,
                     0 // parquet buffers use 0 offset since they're frame-specific
@@ -167,6 +171,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (format == PartitionFormat.NATIVE) {
             frameMemory.pageAddresses = addressCache.getPageAddresses();
             frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
+            frameMemory.nullBitmapAddresses = addressCache.getNullBitmapAddresses();
+            frameMemory.nullBitmapSizes = addressCache.getNullBitmapSizes();
             frameMemory.pageSizes = addressCache.getPageSizes();
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
             frameMemory.columnOffset = columnOffset;
@@ -184,6 +190,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
+            frameMemory.nullBitmapAddresses = null; // no null bitmaps for parquet frames
+            frameMemory.nullBitmapSizes = null;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
             frameMemory.columnOffset = 0; // parquet buffers use 0 offset
@@ -204,6 +212,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (format == PartitionFormat.NATIVE) {
             frameMemory.pageAddresses = addressCache.getPageAddresses();
             frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
+            frameMemory.nullBitmapAddresses = addressCache.getNullBitmapAddresses();
+            frameMemory.nullBitmapSizes = addressCache.getNullBitmapSizes();
             frameMemory.pageSizes = addressCache.getPageSizes();
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
             frameMemory.columnOffset = columnOffset;
@@ -221,6 +231,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.currentRowGroupBuffer = parquetBuffers;
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
+            frameMemory.nullBitmapAddresses = null; // no null bitmaps for parquet frames
+            frameMemory.nullBitmapSizes = null;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
             frameMemory.columnOffset = 0; // parquet buffers use 0 offset
@@ -369,6 +381,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private ParquetBuffers currentRowGroupBuffer;
         private byte frameFormat = -1;
         private int frameIndex = -1;
+        private DirectLongList nullBitmapAddresses;
+        private DirectLongList nullBitmapSizes;
         private DirectLongList pageAddresses;
         private DirectLongList pageSizes;
 
@@ -379,6 +393,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             columnOffset = 0;
             pageAddresses = null;
             auxPageAddresses = null;
+            nullBitmapAddresses = null;
+            nullBitmapSizes = null;
             pageSizes = null;
             auxPageSizes = null;
             currentRowGroupBuffer = null;
@@ -417,6 +433,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public int getFrameIndex() {
             return frameIndex;
+        }
+
+        @Override
+        public DirectLongList getNullBitmapAddresses() {
+            return nullBitmapAddresses;
+        }
+
+        @Override
+        public DirectLongList getNullBitmapSizes() {
+            return nullBitmapSizes;
         }
 
         @Override

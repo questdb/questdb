@@ -88,6 +88,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCountShl;
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
+    private ObjList<MemoryCMR> nullBitmapColumns;
     private int openPartitionCount;
     private LongList openPartitionInfo;
     private ObjList<PartitionDecoder> parquetPartitionDecoders;
@@ -397,6 +398,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getMinTimestamp() {
         return txFile.getMinTimestamp();
+    }
+
+    public MemoryCR getNullBitmapColumn(int base, int columnIndex) {
+        MemoryCMR mem = nullBitmapColumns.getQuick(base / 2 + columnIndex);
+        return mem;
     }
 
     public long getO3MaxLag() {
@@ -866,6 +872,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         Misc.free(columns.get(index));
         Misc.free(columns.get(index + 1));
+        Misc.free(nullBitmapColumns.getAndSetQuick(base / 2 + columnIndex, null));
         closeIndexReader(base, columnIndex);
     }
 
@@ -924,6 +931,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             ObjList<MemoryCMR> toColumns,
             LongList toColumnTops,
             ObjList<BitmapIndexReader> toIndexReaders,
+            ObjList<MemoryCMR> toNullBitmapColumns,
             int toBase,
             int toColumnIndex
     ) {
@@ -935,6 +943,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         toColumnTops.setQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));
         toIndexReaders.setQuick(toIndex, bitmapIndexes.getAndSetQuick(fromIndex, null));
         toIndexReaders.setQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
+        toNullBitmapColumns.setQuick(toBase / 2 + toColumnIndex, nullBitmapColumns.getAndSetQuick(fromBase / 2 + fromColumnIndex, null));
     }
 
     private TableReaderMetadata copyMeta(TableReaderMetadata srcMeta) {
@@ -999,11 +1008,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         final ObjList<MemoryCMR> toColumns = new ObjList<>(capacity + 2);
         final LongList toColumnTops = new LongList(capacity / 2);
         final ObjList<BitmapIndexReader> toIndexReaders = new ObjList<>(capacity);
+        final ObjList<MemoryCMR> toNullBitmapColumns = new ObjList<>(capacity / 2);
         toColumns.setPos(capacity + 2);
         toColumns.setQuick(0, NullMemoryCMR.INSTANCE);
         toColumns.setQuick(1, NullMemoryCMR.INSTANCE);
         toColumnTops.setPos(capacity / 2);
         toIndexReaders.setPos(capacity + 2);
+        toNullBitmapColumns.setPos(capacity / 2);
         int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
@@ -1020,11 +1031,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         if (transitionIndex.replaceWithNew(i)) {
                             // new instance
-                            reloadColumnAt(partitionIndex, path, toColumns, toColumnTops, toIndexReaders, toBase, i, partitionRowCount);
+                            reloadColumnAt(partitionIndex, path, toColumns, toColumnTops, toIndexReaders, toNullBitmapColumns, toBase, i, partitionRowCount);
                         } else {
                             final int fromColumnIndex = transitionIndex.getCopyFromIndex(i);
                             assert fromColumnIndex < this.columnCount;
-                            copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toBase, i);
+                            copyColumns(fromBase, fromColumnIndex, toColumns, toColumnTops, toIndexReaders, toNullBitmapColumns, toBase, i);
                         }
                     }
                 }
@@ -1032,6 +1043,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 closePartitionColumns(fromBase);
                 openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
                 Misc.freeObjListIfCloseable(toColumns);
+                Misc.freeObjListIfCloseable(toNullBitmapColumns);
                 throw th;
             } finally {
                 path.trimTo(rootLen);
@@ -1041,6 +1053,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.columnTops = toColumnTops;
         this.columnCountShl = columnCountShl;
         this.bitmapIndexes = toIndexReaders;
+        this.nullBitmapColumns = toNullBitmapColumns;
     }
 
     private void formatErrorPartitionDirName(int partitionIndex, Utf16Sink sink) {
@@ -1079,6 +1092,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeColumns() {
         Misc.freeObjList(columns);
+        Misc.freeObjListIfCloseable(nullBitmapColumns);
     }
 
     private void freeParquetPartitions() {
@@ -1124,6 +1138,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo = initOpenPartitionInfo();
         columnTops = new LongList(capacity / 2);
         columnTops.setPos(capacity / 2);
+        nullBitmapColumns = new ObjList<>(capacity / 2);
+        nullBitmapColumns.setPos(capacity / 2);
     }
 
     private @NotNull LongList initOpenPartitionInfo() {
@@ -1158,6 +1174,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int topSlotSize = columnSlotSize / 2;
         columnTops.insert(topBase, topSlotSize);
         columnTops.seed(topBase, topSlotSize, 0);
+        nullBitmapColumns.insert(topBase, topSlotSize, null);
 
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         openPartitionInfo.insert(offset, PARTITIONS_SLOT_SIZE);
@@ -1325,6 +1342,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         columns,
                         columnTops,
                         bitmapIndexes,
+                        nullBitmapColumns,
                         columnBase,
                         i,
                         partitionRowCount
@@ -1581,6 +1599,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             ObjList<MemoryCMR> columns,
             LongList columnTops,
             ObjList<BitmapIndexReader> indexReaders,
+            ObjList<MemoryCMR> nullBitmapColumns,
             int columnBase,
             int columnIndex,
             long partitionRowCount
@@ -1650,10 +1669,33 @@ public class TableReader implements Closeable, SymbolTableSource {
                         );
                         Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                     }
+
+                    // Open null bitmap (.n) file if it exists and has correct size
+                    final int bitmapIndex = columnBase / 2 + columnIndex;
+                    TableUtils.nFile(path.trimTo(plen), name, columnTxn);
+                    long expectedBitmapSize = (partitionRowCount + 7) >> 3;
+                    if (!ff.exists(path.$()) || ff.length(path.$()) < expectedBitmapSize) {
+                        if (ColumnType.needsNullBitmap(columnType) && !ColumnType.isVarSize(columnType)) {
+                            // Lazy migration: generate .n from sentinels in .d
+                            MemoryCMR dataMemMapped = columns.getQuick(primaryIndex);
+                            long dataAddr = dataMemMapped != null && !(dataMemMapped instanceof NullMemoryCMR)
+                                    ? dataMemMapped.addressOf(0) : 0;
+                            NullBitmapMigrator.ensureNullBitmap(
+                                    ff, path.$(), columnType, dataAddr, partitionRowCount, columnTop
+                            );
+                        }
+                    }
+                    if (ff.exists(path.$()) && ff.length(path.$()) >= expectedBitmapSize) {
+                        MemoryCMR bitmapMem = nullBitmapColumns.getQuick(bitmapIndex);
+                        openOrCreateColumnMemory(path, nullBitmapColumns, bitmapIndex, bitmapMem, expectedBitmapSize, lastPartition);
+                    } else {
+                        Misc.free(nullBitmapColumns.getAndSetQuick(bitmapIndex, null));
+                    }
                 } else {
                     assert partitionFormat == PartitionFormat.PARQUET;
                     Misc.free(columns.getAndSetQuick(primaryIndex, null));
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
+                    Misc.free(nullBitmapColumns.getAndSetQuick(columnBase / 2 + columnIndex, null));
                 }
 
                 columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
@@ -1670,6 +1712,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             } else {
                 Misc.free(columns.getAndSetQuick(primaryIndex, NullMemoryCMR.INSTANCE));
                 Misc.free(columns.getAndSetQuick(secondaryIndex, NullMemoryCMR.INSTANCE));
+                Misc.free(nullBitmapColumns.getAndSetQuick(columnBase / 2 + columnIndex, null));
                 // the appropriate index for NUllColumn will be created lazily when requested
                 // these indexes have state and may not always be required
                 Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
@@ -1705,8 +1748,17 @@ public class TableReader implements Closeable, SymbolTableSource {
                     ))) {
                 return false;
             }
-            closeIndexReader(columnBase, i);
 
+            // Try to grow null bitmap column if it exists
+            MemoryCMR bitmapMem = nullBitmapColumns.getQuick(columnBase / 2 + i);
+            if (bitmapMem != null) {
+                long bitmapSize = (rowCount + 7) >> 3;
+                if (!((MemoryCMRDetachedImpl) bitmapMem).tryChangeSize(bitmapSize)) {
+                    return false;
+                }
+            }
+
+            closeIndexReader(columnBase, i);
         }
         return true;
     }
@@ -1869,13 +1921,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                                             columns,
                                             columnTops,
                                             bitmapIndexes,
+                                            nullBitmapColumns,
                                             base,
                                             i,
                                             partitionRowCount
                                     );
                                 }
                             } else if (copyFrom > -1) {
-                                copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);
+                                copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, nullBitmapColumns, base, i);
                             } else if (copyFrom != Integer.MIN_VALUE) {
                                 // new instance
                                 reloadColumnAt(
@@ -1884,6 +1937,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                         columns,
                                         columnTops,
                                         bitmapIndexes,
+                                        nullBitmapColumns,
                                         base,
                                         i,
                                         partitionRowCount

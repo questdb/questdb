@@ -275,6 +275,11 @@ public class VirtualRecord implements ColumnTypes, Record, QuietCloseable {
         return getFunction(col).getVarcharSize(base);
     }
 
+    @Override
+    public boolean isNull(int col) {
+        return getFunction(col).isNull(base);
+    }
+
     public void of(Record record) {
         this.base = record;
     }

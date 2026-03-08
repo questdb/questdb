@@ -309,6 +309,16 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     int getVarcharSize(Record rec);
 
     /**
+     * Checks whether the function evaluates to NULL for the given record.
+     *
+     * @param rec the record to read from
+     * @return true if the function result is NULL, false otherwise
+     */
+    default boolean isNull(Record rec) {
+        return false;
+    }
+
+    /**
      * Returns true if function is constant, i.e. its value does not require
      * any input from the record.
      *

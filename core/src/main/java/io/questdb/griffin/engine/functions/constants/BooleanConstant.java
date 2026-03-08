@@ -32,6 +32,7 @@ import io.questdb.std.str.Utf8Sequence;
 public class BooleanConstant extends BooleanFunction implements ConstantFunction {
 
     public static final BooleanConstant FALSE = new BooleanConstant(false);
+    public static final BooleanConstant NULL = new NullBooleanConstant();
     public static final BooleanConstant TRUE = new BooleanConstant(true);
     private final boolean value;
 
@@ -106,5 +107,26 @@ public class BooleanConstant extends BooleanFunction implements ConstantFunction
     @Override
     protected Utf8Sequence getVarchar0(Record rec) {
         return value ? UTF_8_TRUE : UTF_8_FALSE;
+    }
+
+    private static final class NullBooleanConstant extends BooleanConstant {
+        private NullBooleanConstant() {
+            super(false);
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            return true;
+        }
+
+        @Override
+        public boolean isNullConstant() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("null");
+        }
     }
 }

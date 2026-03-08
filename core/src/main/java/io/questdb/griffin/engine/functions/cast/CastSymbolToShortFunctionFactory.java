@@ -46,21 +46,37 @@ public class CastSymbolToShortFunctionFactory implements FunctionFactory {
     }
 
     public static class Func extends AbstractCastToShortFunction {
+        private CharSequence cachedStr;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public short getShort(Record rec) {
-            CharSequence sequence = arg.getSymbol(rec);
+            CharSequence value;
+            if (srcCached) {
+                value = cachedStr;
+                srcCached = false;
+            } else {
+                value = arg.getSymbol(rec);
+            }
             try {
-                if (sequence == null) {
+                if (value == null) {
                     return 0;
                 }
-                return (short) Numbers.parseInt(sequence);
+                return (short) Numbers.parseInt(value);
             } catch (NumericException e) {
                 return 0;
             }
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedStr = arg.getSymbol(rec);
+            srcCached = true;
+            return cachedStr == null;
         }
     }
 }

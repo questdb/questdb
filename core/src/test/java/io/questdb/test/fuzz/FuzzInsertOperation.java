@@ -228,15 +228,24 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
                 break;
 
             case ColumnType.SHORT:
-                row.putShort(columnIndex, isNull ? 0 : rnd.nextShort());
+                short shortVal = rnd.nextShort();
+                if (!isNull) {
+                    row.putShort(columnIndex, shortVal);
+                }
                 break;
 
             case ColumnType.BYTE:
-                row.putByte(columnIndex, isNull ? 0 : rnd.nextByte());
+                byte byteVal = rnd.nextByte();
+                if (!isNull) {
+                    row.putByte(columnIndex, byteVal);
+                }
                 break;
 
             case ColumnType.BOOLEAN:
-                row.putBool(columnIndex, rnd.nextBoolean());
+                boolean boolVal = rnd.nextBoolean();
+                if (!isNull) {
+                    row.putBool(columnIndex, boolVal);
+                }
                 break;
 
             case ColumnType.LONG128:
@@ -249,9 +258,9 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
 
             case ColumnType.LONG256:
                 if (!isNull) {
-                    row.putLong256(columnIndex, Long256Impl.NULL_LONG256);
-                } else {
                     row.putLong256(columnIndex, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                } else {
+                    row.putLong256(columnIndex, Long256Impl.NULL_LONG256);
                 }
                 break;
 

@@ -50,6 +50,7 @@ public class CastBooleanToCharFunctionFactory implements FunctionFactory {
 
         @Override
         public char getChar(Record rec) {
+            if (arg.isNull(rec)) return 0;
             return arg.getChar(rec);
         }
     }

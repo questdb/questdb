@@ -37,11 +37,6 @@ public abstract class AbstractCastToByteFunction extends ByteFunction implements
      */
     protected final Function arg;
 
-    /**
-     * Constructs a new cast to byte function.
-     *
-     * @param arg the function argument to cast
-     */
     public AbstractCastToByteFunction(Function arg) {
         this.arg = arg;
     }
@@ -49,6 +44,11 @@ public abstract class AbstractCastToByteFunction extends ByteFunction implements
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return isConstant() && arg.isNullConstant();
     }
 
     @Override

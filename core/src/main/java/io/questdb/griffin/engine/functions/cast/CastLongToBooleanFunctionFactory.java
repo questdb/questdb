@@ -45,14 +45,30 @@ public class CastLongToBooleanFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToBooleanFunction {
+        private long cachedSrc;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long val = arg.getLong(rec);
+            long val;
+            if (srcCached) {
+                val = cachedSrc;
+                srcCached = false;
+            } else {
+                val = arg.getLong(rec);
+            }
             return val != Numbers.LONG_NULL && val != 0;
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedSrc = arg.getLong(rec);
+            srcCached = true;
+            return cachedSrc == Numbers.LONG_NULL;
         }
     }
 }

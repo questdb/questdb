@@ -368,6 +368,14 @@ public class JoinRecord implements Record {
         return slave.getVarcharSize(col - split);
     }
 
+    @Override
+    public boolean isNull(int col) {
+        if (col < split) {
+            return master.isNull(col);
+        }
+        return slave.isNull(col - split);
+    }
+
     public void of(Record master, Record slave) {
         this.master = master;
         this.slave = slave;

@@ -61,7 +61,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceNoPartitionRewriteByte() throws Exception {
-        testSameAndShuffledInserts("byte", "0", "123", "127", "22", "first");
+        testSameAndShuffledInserts("byte", "", "123", "127", "22", "first");
     }
 
     @Test
@@ -137,7 +137,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
 
     @Test
     public void testReplaceNoPartitionRewriteShort() throws Exception {
-        testSameAndShuffledInserts("short", "0", "123", "2342", "22", "first");
+        testSameAndShuffledInserts("short", "", "123", "2342", "22", "first");
     }
 
     @Test

@@ -2156,14 +2156,14 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         97
-                        0
+                        
                         100
                         99
-                        0
+                        
                         97
                         97
                         98
-                        0
+                        
                         96
                         """,
                 true,
@@ -2379,14 +2379,14 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         31
-                        0
+                        
                         54
                         23
-                        0
+                        
                         29
                         33
                         24
-                        0
+                        
                         51
                         """,
                 true,
@@ -4131,7 +4131,7 @@ public class CastTest extends AbstractCairoTest {
                         true
                         true
                         true
-                        false
+                        
                         true
                         true
                         true
@@ -4184,7 +4184,7 @@ public class CastTest extends AbstractCairoTest {
                         a
                         41
                         28
-                        0
+                        
                         100
                         5
                         72
@@ -4435,7 +4435,7 @@ public class CastTest extends AbstractCairoTest {
                         37
                         48
                         30
-                        0
+                        
                         55
                         51
                         53
@@ -4978,7 +4978,7 @@ public class CastTest extends AbstractCairoTest {
                         true
                         true
                         true
-                        false
+                        
                         true
                         true
                         true
@@ -5031,7 +5031,7 @@ public class CastTest extends AbstractCairoTest {
                         a
                         97
                         96
-                        0
+                        
                         99
                         97
                         98
@@ -5282,7 +5282,7 @@ public class CastTest extends AbstractCairoTest {
                         31
                         26
                         38
-                        0
+                        
                         47
                         41
                         53
@@ -6439,11 +6439,11 @@ public class CastTest extends AbstractCairoTest {
                         23
                         100
                         56
-                        0
+                        
                         56
-                        0
+                        
                         100
-                        0
+                        
                         100
                         23
                         """,
@@ -6693,15 +6693,15 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         23
-                        0
-                        0
+                        
+                        
                         56
                         56
                         0
                         100
                         56
                         56
-                        0
+                        
                         """,
                 true,
                 true,
@@ -7143,11 +7143,11 @@ public class CastTest extends AbstractCairoTest {
                         23
                         100
                         56
-                        0
+                        
                         56
-                        0
+                        
                         100
-                        0
+                        
                         100
                         23
                         """,
@@ -7374,15 +7374,15 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         23
-                        0
-                        0
+                        
+                        
                         56
                         56
                         0
                         100
                         56
                         56
-                        0
+                        
                         """,
                 true,
                 true,
@@ -7658,14 +7658,14 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         true
-                        false
+                        
                         true
                         true
-                        false
+                        
                         true
                         true
                         true
-                        false
+                        
                         true
                         """,
                 true,
@@ -7756,14 +7756,14 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         97
-                        0
+                        
                         100
                         99
-                        0
+                        
                         97
                         97
                         98
-                        0
+                        
                         96
                         """,
                 true,
@@ -7979,14 +7979,14 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         31
-                        0
+                        
                         54
                         23
-                        0
+                        
                         29
                         33
                         24
-                        0
+                        
                         51
                         """,
                 true,
@@ -8243,14 +8243,14 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         true
-                        false
+                        
                         true
                         true
-                        false
+                        
                         true
                         true
                         true
-                        false
+                        
                         true
                         """,
                 true,
@@ -8314,14 +8314,14 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         97
-                        0
+                        
                         100
                         99
-                        0
+                        
                         97
                         97
                         98
-                        0
+                        
                         96
                         """,
                 true,
@@ -8537,14 +8537,14 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         31
-                        0
+                        
                         54
                         23
-                        0
+                        
                         29
                         33
                         24
-                        0
+                        
                         51
                         """,
                 true,
@@ -8910,11 +8910,11 @@ public class CastTest extends AbstractCairoTest {
                         23
                         100
                         56
-                        0
+                        
                         56
-                        0
+                        
                         100
-                        0
+                        
                         100
                         23
                         """,
@@ -9191,15 +9191,15 @@ public class CastTest extends AbstractCairoTest {
                 """
                         a
                         23
-                        0
-                        0
+                        
+                        
                         56
                         56
                         0
                         100
                         56
                         56
-                        0
+                        
                         """,
                 true,
                 true,
@@ -9354,6 +9354,223 @@ public class CastTest extends AbstractCairoTest {
                 null,
                 true,
                 true
+        );
+    }
+
+    // ========================
+    // UINT cast tests
+    // ========================
+
+    @Test
+    public void testUInt16ToInt() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0\n",
+                "SELECT CAST(0::UINT16 AS INT)",
+                null, true, true, true
+        );
+        // 100 fits in signed short range
+        assertQueryNoLeakCheck(
+                "cast\n100\n",
+                "SELECT CAST(100::UINT16 AS INT)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt16ToLong() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0\n",
+                "SELECT CAST(0::UINT16 AS LONG)",
+                null, true, true, true
+        );
+        assertQueryNoLeakCheck(
+                "cast\n100\n",
+                "SELECT CAST(100::UINT16 AS LONG)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt32ToLong() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0\n",
+                "SELECT CAST(0::UINT32 AS LONG)",
+                null, true, true, true
+        );
+        assertQueryNoLeakCheck(
+                "cast\n1000\n",
+                "SELECT CAST(1000::UINT32 AS LONG)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt16ToDouble() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0.0\n",
+                "SELECT CAST(0::UINT16 AS DOUBLE)",
+                null, true, true, true
+        );
+        assertQueryNoLeakCheck(
+                "cast\n100.0\n",
+                "SELECT CAST(100::UINT16 AS DOUBLE)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt32ToDouble() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0.0\n",
+                "SELECT CAST(0::UINT32 AS DOUBLE)",
+                null, true, true, true
+        );
+        assertQueryNoLeakCheck(
+                "cast\n1000.0\n",
+                "SELECT CAST(1000::UINT32 AS DOUBLE)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt64ToDouble() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0.0\n",
+                "SELECT CAST(0::UINT64 AS DOUBLE)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt16ToString() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0\n",
+                "SELECT CAST(0::UINT16 AS STRING)",
+                null, true, true, true
+        );
+        assertQueryNoLeakCheck(
+                "cast\n100\n",
+                "SELECT CAST(100::UINT16 AS STRING)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt32ToString() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0\n",
+                "SELECT CAST(0::UINT32 AS STRING)",
+                null, true, true, true
+        );
+        assertQueryNoLeakCheck(
+                "cast\n1000\n",
+                "SELECT CAST(1000::UINT32 AS STRING)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt64ToString() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0\n",
+                "SELECT CAST(0::UINT64 AS STRING)",
+                null, true, true, true
+        );
+        assertQueryNoLeakCheck(
+                "cast\n1000\n",
+                "SELECT CAST(1000::UINT64 AS STRING)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt16ToUInt32() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0\n",
+                "SELECT CAST(0::UINT16 AS UINT32)",
+                null, true, true, true
+        );
+        assertQueryNoLeakCheck(
+                "cast\n100\n",
+                "SELECT CAST(100::UINT16 AS UINT32)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt32ToUInt64() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0\n",
+                "SELECT CAST(0::UINT32 AS UINT64)",
+                null, true, true, true
+        );
+        assertQueryNoLeakCheck(
+                "cast\n1000\n",
+                "SELECT CAST(1000::UINT32 AS UINT64)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt64ToUInt32() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n0\n",
+                "SELECT CAST(0::UINT64 AS UINT32)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt16NullCast() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n\n",
+                "SELECT CAST(NULL AS UINT16)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt32NullCast() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n\n",
+                "SELECT CAST(NULL AS UINT32)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testUInt64NullCast() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n\n",
+                "SELECT CAST(NULL AS UINT64)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testStringToUInt16() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n100\n",
+                "SELECT CAST('100' AS UINT16)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testStringToUInt32() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n100\n",
+                "SELECT CAST('100' AS UINT32)",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testStringToUInt64() throws Exception {
+        assertQueryNoLeakCheck(
+                "cast\n100\n",
+                "SELECT CAST('100' AS UINT64)",
+                null, true, true, true
         );
     }
 }

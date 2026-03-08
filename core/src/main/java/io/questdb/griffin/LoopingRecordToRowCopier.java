@@ -37,6 +37,7 @@ import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Decimal128;
+import io.questdb.std.Numbers;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
@@ -93,9 +94,22 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
             final int toColumnWriterIndex = toMetadata.getWriterIndex(toColumnIndex);
 
-            // Handle NULL type - treat as target type so getter returns null value
+            // Handle NULL type
             if (fromColumnTypeTag == ColumnType.NULL) {
+                if (toColumnTypeTag == ColumnType.BOOLEAN || toColumnTypeTag == ColumnType.BYTE || toColumnTypeTag == ColumnType.SHORT
+                        || toColumnType == ColumnType.UINT16 || toColumnType == ColumnType.UINT32 || toColumnType == ColumnType.UINT64) {
+                    continue; // Let null setter handle bitmap-based null types
+                }
                 fromColumnTypeTag = toColumnTypeTag;
+            }
+
+            // For bitmap-null target types with bitmap-null SOURCE types, check isNull.
+            // For sentinel-based source types (INT, LONG, FLOAT, etc.), null checking
+            // happens inside copyFromXxx to avoid double-evaluating functions.
+            if ((toColumnTypeTag == ColumnType.BOOLEAN || toColumnTypeTag == ColumnType.BYTE || toColumnTypeTag == ColumnType.SHORT)
+                    && (fromColumnTypeTag == ColumnType.BOOLEAN || fromColumnTypeTag == ColumnType.BYTE || fromColumnTypeTag == ColumnType.SHORT)
+                    && record.isNull(i)) {
+                continue; // Let null setter in rowAppend() set the bitmap null bit
             }
 
             // Get TimestampDriver when needed for conversions
@@ -221,10 +235,16 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     }
 
     private void copyFromBoolean(Record record, TableWriter.Row row, int fromIndex, int toIndex) {
+        if (record.isNull(fromIndex)) {
+            return; // Leave column unset; null setter in rowAppend() will handle it
+        }
         row.putBool(toIndex, record.getBool(fromIndex));
     }
 
     private void copyFromByte(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, Decimal256 decimal256) {
+        if (record.isNull(fromIndex)) {
+            return; // Leave column unset; null setter in rowAppend() will handle it
+        }
         byte value = record.getByte(fromIndex);
         switch (toTypeTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE -> row.putByte(toIndex, value);
@@ -302,6 +322,9 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
 
     private void copyFromDouble(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag) {
         double value = record.getDouble(fromIndex);
+        if (Double.isNaN(value) && (toTypeTag == ColumnType.BYTE || toTypeTag == ColumnType.SHORT || toTypeTag == ColumnType.BOOLEAN)) {
+            return;
+        }
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastDoubleAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastDoubleAsShort(value));
@@ -317,6 +340,9 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
 
     private void copyFromFloat(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag) {
         float value = record.getFloat(fromIndex);
+        if (Float.isNaN(value) && (toTypeTag == ColumnType.BYTE || toTypeTag == ColumnType.SHORT || toTypeTag == ColumnType.BOOLEAN)) {
+            return; // null float → bitmap-null target: let null setter handle it
+        }
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastFloatAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastFloatAsShort(value));
@@ -397,6 +423,9 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
 
     private void copyFromInt(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, Decimal256 decimal256) {
         int value = record.getInt(fromIndex);
+        if (value == Numbers.INT_NULL && (toTypeTag == ColumnType.BYTE || toTypeTag == ColumnType.SHORT || toTypeTag == ColumnType.BOOLEAN)) {
+            return;
+        }
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastIntAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastIntAsShort(value));
@@ -416,6 +445,9 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
 
     private void copyFromLong(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, Decimal256 decimal256) {
         long value = record.getLong(fromIndex);
+        if (value == Numbers.LONG_NULL && (toTypeTag == ColumnType.BYTE || toTypeTag == ColumnType.SHORT || toTypeTag == ColumnType.BOOLEAN)) {
+            return;
+        }
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastLongAsByte(value));
             case ColumnType.SHORT -> row.putShort(toIndex, SqlUtil.implicitCastLongAsShort(value));
@@ -438,6 +470,9 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     }
 
     private void copyFromShort(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, Decimal256 decimal256) {
+        if (record.isNull(fromIndex)) {
+            return; // Leave column unset; null setter in rowAppend() will handle it
+        }
         short value = record.getShort(fromIndex);
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastShortAsByte(value));

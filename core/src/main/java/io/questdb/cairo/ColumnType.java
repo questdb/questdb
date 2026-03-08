@@ -135,6 +135,9 @@ public final class ColumnType {
     public static final short PARAMETER = ARRAY_STRING + 1;    // = 38;
     public static final short INTERVAL = PARAMETER + 1;        // = 39;
     public static final short NULL = INTERVAL + 1;          // = 40; ALWAYS the last
+    public static final int UINT16 = SHORT | (1 << 20);
+    public static final int UINT32 = INT | (1 << 21);
+    public static final int UINT64 = LONG | (1 << 22);
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
@@ -521,9 +524,8 @@ public final class ColumnType {
     }
 
     public static boolean isFixedSize(int columnType) {
-        // specified explicitly
-        return switch (columnType) {
-            case INT, LONG, BOOLEAN, BYTE, TIMESTAMP_MICRO, TIMESTAMP_NANO, DATE, DOUBLE, CHAR, SHORT, FLOAT, LONG128,
+        return switch (tagOf(columnType)) {
+            case INT, LONG, BOOLEAN, BYTE, TIMESTAMP, DATE, DOUBLE, CHAR, SHORT, FLOAT, LONG128,
                  LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, UUID, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
                  DECIMAL128, DECIMAL256 -> true;
             default -> false;
@@ -546,12 +548,41 @@ public final class ColumnType {
         return columnType == ColumnType.INT;
     }
 
+    public static boolean isUnsigned(int columnType) {
+        return columnType == UINT16 || columnType == UINT32 || columnType == UINT64;
+    }
+
+    public static boolean isUInt16(int columnType) {
+        return columnType == UINT16;
+    }
+
+    public static boolean isUInt32(int columnType) {
+        return columnType == UINT32;
+    }
+
+    public static boolean isUInt64(int columnType) {
+        return columnType == UINT64;
+    }
+
     public static boolean isInterval(int columnType) {
         return tagOf(columnType) == INTERVAL;
     }
 
     public static boolean isNull(int columnType) {
         return columnType == NULL;
+    }
+
+    /**
+     * Returns true if this column type uses a separate null bitmap (.n file)
+     * rather than a sentinel value to represent nulls.
+     */
+    public static boolean needsNullBitmap(int columnType) {
+        int tag = tagOf(columnType);
+        // BOOLEAN/BYTE/SHORT tags already cover UINT16 (tagOf(UINT16)==SHORT).
+        // UINT32 and UINT64 need explicit checks because their tags (INT/LONG)
+        // are intentionally excluded from bitmap nulls (they use sentinel nulls).
+        return tag == BOOLEAN || tag == BYTE || tag == SHORT
+                || isUInt32(columnType) || isUInt64(columnType);
     }
 
     public static boolean isParseableType(int colType) {
@@ -814,28 +845,29 @@ public final class ColumnType {
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {
+        final short fromTag = tagOf(fromType);
+        final short toTag = tagOf(toType);
         final boolean isTargetDecimal = isDecimal(toType);
-        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
-                || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG) || toType == DATE || isTimestamp(toType)))
-                || (fromType == LONG && toType >= BYTE && toType <= INT)
-                || (fromType == DATE && toType >= BYTE && toType <= INT)
-                || (isTimestamp(fromType) && ((toType >= BYTE && toType <= INT) || toType == DATE))
-                || (fromType == INT && toType >= BYTE && toType <= SHORT)
-                || (fromType == SHORT && toType == BYTE)
-                || (fromType == CHAR && toType == BYTE)
-                || (fromType >= BYTE && fromType <= LONG && isTargetDecimal)
+        return (fromTag == DOUBLE && (toTag == FLOAT || (toTag >= BYTE && toTag <= LONG)))
+                || (fromTag == FLOAT && ((toTag >= BYTE && toTag <= LONG) || toTag == DATE || toTag == TIMESTAMP))
+                || (fromTag == LONG && toTag >= BYTE && toTag <= INT)
+                || (fromTag == DATE && toTag >= BYTE && toTag <= INT)
+                || (fromTag == TIMESTAMP && ((toTag >= BYTE && toTag <= INT) || toTag == DATE))
+                || (fromTag == INT && toTag >= BYTE && toTag <= SHORT)
+                || (fromTag == SHORT && toTag == BYTE)
+                || (fromTag == CHAR && toTag == BYTE)
+                || (fromTag >= BYTE && fromTag <= LONG && isTargetDecimal)
                 || isStringyType(fromType) && (
-                toType == BYTE ||
-                        toType == SHORT ||
-                        toType == INT ||
-                        toType == LONG ||
-                        toType == DATE ||
-                        toType == TIMESTAMP_MICRO ||
-                        toType == TIMESTAMP_NANO ||
-                        toType == FLOAT ||
-                        toType == DOUBLE ||
-                        toType == CHAR ||
-                        toType == UUID ||
+                toTag == BYTE ||
+                        toTag == SHORT ||
+                        toTag == INT ||
+                        toTag == LONG ||
+                        toTag == DATE ||
+                        toTag == TIMESTAMP ||
+                        toTag == FLOAT ||
+                        toTag == DOUBLE ||
+                        toTag == CHAR ||
+                        toTag == UUID ||
                         ColumnType.isArray(toType) ||
                         isTargetDecimal);
     }
@@ -977,6 +1009,9 @@ public final class ColumnType {
         typeNameMap.put(REGPROCEDURE, "regprocedure");
         typeNameMap.put(ARRAY_STRING, "text[]");
         typeNameMap.put(IPv4, "IPv4");
+        typeNameMap.put(UINT16, "UINT16");
+        typeNameMap.put(UINT32, "UINT32");
+        typeNameMap.put(UINT64, "UINT64");
         typeNameMap.put(INTERVAL, "INTERVAL");
         typeNameMap.put(INTERVAL_RAW, "INTERVAL");
         typeNameMap.put(INTERVAL_TIMESTAMP_MICRO, "INTERVAL");
@@ -1028,6 +1063,9 @@ public final class ColumnType {
         nameTypeMap.put("regprocedure", REGPROCEDURE);
         nameTypeMap.put("text[]", ARRAY_STRING);
         nameTypeMap.put("IPv4", IPv4);
+        nameTypeMap.put("uint16", UINT16);
+        nameTypeMap.put("uint32", UINT32);
+        nameTypeMap.put("uint64", UINT64);
         nameTypeMap.put("interval", INTERVAL);
         nameTypeMap.put("interval", INTERVAL_TIMESTAMP_MICRO);
         nameTypeMap.put("timestamp_ns", TIMESTAMP_NANO);

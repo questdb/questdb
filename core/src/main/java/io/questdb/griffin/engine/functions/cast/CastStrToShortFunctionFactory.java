@@ -46,6 +46,9 @@ public class CastStrToShortFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToShortFunction {
+        private CharSequence cachedStr;
+        private boolean srcCached;
+
         public Func(Function arg) {
             super(arg);
         }
@@ -53,7 +56,13 @@ public class CastStrToShortFunctionFactory implements FunctionFactory {
         @Override
         public short getShort(Record rec) {
             // Related code ColumnTypeConverter::convertStrToShort
-            CharSequence value = arg.getStrA(rec);
+            CharSequence value;
+            if (srcCached) {
+                value = cachedStr;
+                srcCached = false;
+            } else {
+                value = arg.getStrA(rec);
+            }
             try {
                 if (value == null) {
                     return 0;
@@ -62,6 +71,13 @@ public class CastStrToShortFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 return 0;
             }
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedStr = arg.getStrA(rec);
+            srcCached = true;
+            return cachedStr == null;
         }
     }
 }

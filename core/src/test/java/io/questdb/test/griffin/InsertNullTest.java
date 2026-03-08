@@ -39,9 +39,9 @@ public class InsertNullTest extends AbstractCairoTest {
 
     private static final String[][] TYPES = {
             // type name, null value
-            {"boolean", "false"},
-            {"byte", "0"},
-            {"short", "0"},
+            {"boolean", ""},
+            {"byte", ""},
+            {"short", ""},
             {"char", ""},
             {"int", "null"},
             {"long", "null"},
@@ -212,9 +212,7 @@ public class InsertNullTest extends AbstractCairoTest {
     }
 
     private static boolean isNotNullable(String type) {
-        return Chars.equalsLowerCaseAscii(type, "short") ||
-                Chars.equalsLowerCaseAscii(type, "byte") ||
-                Chars.equalsLowerCaseAscii(type, "boolean");
+        return false;
     }
 
     private void _testInsertNullFromSelectOnDesignatedColumnMustFail(String timestampType) throws Exception {

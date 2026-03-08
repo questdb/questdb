@@ -58,6 +58,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.NullMemory;
+import io.questdb.std.Unsafe;
 import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
@@ -88,6 +89,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.Uuid;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
@@ -124,6 +126,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final MetadataService metaWriterSvc = new MetadataWriterService();
     private final WalWriterMetadata metadata;
     private final Metrics metrics;
+    private final ObjList<MemoryMA> nullBitmapColumns;
     private final ObjList<Runnable> nullSetters;
     private final RecentWriteTracker recentWriteTracker;
     private final RowImpl row = new RowImpl();
@@ -139,6 +142,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final Uuid uuid = new Uuid();
     private final boolean walTelemetryEnabled;
     private long avgRecordSize;
+    private int bitmapBitCount;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
@@ -194,6 +198,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             columnCount = metadata.getColumnCount();
             timestampIndex = metadata.getTimestampIndex();
             columns = new ObjList<>(columnCount * 2);
+            nullBitmapColumns = new ObjList<>(columnCount);
             nullSetters = new ObjList<>(columnCount);
             initialSymbolCounts = new AtomicIntList(columnCount);
             localSymbolIds = new IntList(columnCount);
@@ -563,6 +568,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             BoolList symbolMapNullFlagsChanged,
             BoolList symbolMapNullFlags
     ) {
+        // Handle UINT types before tag-based switch, since tagOf() strips the unsigned flag
+        if (ColumnType.isUInt16(type)) {
+            nullers.add(() -> dataMem.putShort((short) 0));
+            return;
+        }
+        if (ColumnType.isUInt32(type)) {
+            nullers.add(() -> dataMem.putInt(0));
+            return;
+        }
+        if (ColumnType.isUInt64(type)) {
+            nullers.add(() -> dataMem.putLong(0L));
+            return;
+        }
+
         int columnTag = ColumnType.tagOf(type);
         if (ColumnType.isVarSize(columnTag)) {
             final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
@@ -785,6 +804,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return lastSeqTxn = txn;
     }
 
+    private void appendBitmapNotNull(int columnIndex) {
+        MemoryMA bitmapMem = getNullBitmapColumn(columnIndex);
+        if (bitmapMem != null && bitmapMem.isOpen()) {
+            if (bitmapBitCount == 0 || bitmapMem.getAppendOffset() == 0) {
+                bitmapMem.putByte((byte) 0);
+            }
+        }
+    }
+
     private boolean breachedRolloverSizeThreshold() {
         final long threshold = configuration.getWalSegmentRolloverSize();
         if (threshold == 0) {
@@ -840,6 +868,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 ff.fsyncAndClose(secondaryFd);
             } else {
                 ff.close(secondaryFd);
+            }
+
+            final long bitmapFd = newColumnFiles.getDestBitmapFd(columnIndex);
+            if (bitmapFd > -1) {
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.fsyncAndClose(bitmapFd);
+                } else {
+                    ff.close(bitmapFd);
+                }
             }
         }
     }
@@ -958,11 +995,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             columns.extendAndSet(dataColumnOffset, dataMem);
             columns.extendAndSet(dataColumnOffset + 1, auxMem);
             configureNullSetters(nullSetters, columnType, dataMem, auxMem, columnIndex, symbolMapNullFlagsChanged, symbolMapNullFlags);
+            if (ColumnType.needsNullBitmap(columnType)) {
+                nullBitmapColumns.extendAndSet(columnIndex, Vm.getPMARInstance(configuration));
+            } else {
+                nullBitmapColumns.extendAndSet(columnIndex, NullMemory.INSTANCE);
+            }
             rowValueIsNotNull.add(-1);
         } else {
             columns.extendAndSet(dataColumnOffset, NullMemory.INSTANCE);
             columns.extendAndSet(dataColumnOffset + 1, NullMemory.INSTANCE);
             nullSetters.add(NOOP);
+            nullBitmapColumns.extendAndSet(columnIndex, NullMemory.INSTANCE);
             rowValueIsNotNull.add(COLUMN_DELETED_NULL_FLAG);
         }
     }
@@ -1207,6 +1250,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
         }
+        if (nullBitmapColumns != null) {
+            for (int i = 0, n = nullBitmapColumns.size(); i < n; i++) {
+                final MemoryMA m = nullBitmapColumns.getQuick(i);
+                if (m != null) {
+                    m.close(truncate, Vm.TRUNCATE_TO_POINTER);
+                }
+            }
+        }
     }
 
     private void freeSymbolMapReaders() {
@@ -1249,6 +1300,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return columns.getQuick(getDataColumnOffset(column));
     }
 
+    private MemoryMA getNullBitmapColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        MemoryMA mem = nullBitmapColumns.getQuick(column);
+        return mem != NullMemory.INSTANCE ? mem : null;
+    }
+
     private long getSequencerTxn() {
         long seqTxn;
         do {
@@ -1286,6 +1343,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         final int si = getAuxColumnOffset(columnIndex);
         freeNullSetter(nullSetters, columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);
+        final MemoryMA bitmapMem = nullBitmapColumns.getAndSetQuick(columnIndex, NullMemory.INSTANCE);
+        if (bitmapMem != null) {
+            bitmapMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
+        }
         rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
     }
 
@@ -1326,6 +1387,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         MemoryTag.MMAP_TABLE_WAL_WRITER,
                         configuration.getWriterFileOpenOpts(),
                         columnsMadviseMode
+                );
+            }
+
+            final MemoryMA bitmapMem = getNullBitmapColumn(columnIndex);
+            if (bitmapMem != null) {
+                totalSegmentsSize += bitmapMem.getAppendOffset();
+                bitmapMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
+                bitmapMem.of(
+                        ff,
+                        nFile(path.trimTo(pathTrimToLen), columnName),
+                        getDataAppendPageSize(),
+                        -1,
+                        MemoryTag.MMAP_TABLE_WAL_WRITER,
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
                 );
             }
         } finally {
@@ -1371,6 +1447,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
 
             segmentRowCount = 0;
+            bitmapBitCount = 0;
             metadata.switchTo(path, segmentPathLen, isTruncateFilesOnClose());
             totalSegmentsSize += events.size();
             events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
@@ -1445,10 +1522,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             tempPath.trimTo(trimTo);
         }
 
+        final int trimTo = path.size();
         dFile(path, columnName);
         dFile(tempPath, newName);
         if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
             throw CairoException.critical(ff.errno()).put("could not rename WAL column file [from=").put(path).put(", to=").put(tempPath).put(']');
+        }
+
+        path.trimTo(trimTo);
+        tempPath.trimTo(trimTo);
+        nFile(path, columnName);
+        nFile(tempPath, newName);
+        if (ff.exists(path.$())) {
+            if (ff.rename(path.$(), tempPath.$()) != Files.FILES_RENAME_OK) {
+                throw CairoException.critical(ff.errno()).put("could not rename WAL column bitmap file [from=").put(path).put(", to=").put(tempPath).put(']');
+            }
         }
     }
 
@@ -1593,6 +1681,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                     configuration.getWriterFileOpenOpts(),
                                     primaryColumn,
                                     secondaryColumn,
+                                    getNullBitmapColumn(columnIndex),
                                     path,
                                     newSegmentId,
                                     columnName,
@@ -1618,6 +1707,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 rollLastWalEventRecord(newSegmentId, uncommittedRows);
                 segmentId = newSegmentId;
                 segmentRowCount = uncommittedRows;
+                bitmapBitCount = (int) (uncommittedRows & 7);
                 currentTxnStartRowNum = 0;
             } finally {
                 int oldMinSegmentLocked = minSegmentLocked;
@@ -1634,8 +1724,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         for (int i = 0; i < columnCount; i++) {
             if (rowValueIsNotNull.getQuick(i) < segmentRowCount) {
                 activeNullSetters.getQuick(i).run();
+                setNullBitmapBit(i);
+            } else {
+                appendBitmapNotNull(i);
             }
         }
+        bitmapBitCount = (bitmapBitCount + 1) & 7;
 
         if (rowTimestamp > txnMaxTimestamp) {
             txnMaxTimestamp = rowTimestamp;
@@ -1657,6 +1751,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 rowValueIsNotNull.setQuick(i, segmentRowCount - 1);
             }
         }
+        setBitmapAppendPosition(segmentRowCount);
     }
 
     private void setAppendPosition0(int columnIndex, long segmentRowCount) {
@@ -1676,6 +1771,22 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    private void setBitmapAppendPosition(long rowCount) {
+        bitmapBitCount = (int) (rowCount & 7);
+        long bitmapByteCount = (rowCount + 7) >> 3;
+        for (int i = 0; i < columnCount; i++) {
+            MemoryMA bitmapMem = getNullBitmapColumn(i);
+            if (bitmapMem != null && bitmapMem.isOpen() && metadata.getColumnType(i) > 0) {
+                bitmapMem.jumpTo(bitmapByteCount);
+                if (bitmapBitCount > 0 && bitmapByteCount > 0) {
+                    long addr = bitmapMem.addressOf(bitmapByteCount - 1);
+                    byte existing = Unsafe.getUnsafe().getByte(addr);
+                    Unsafe.getUnsafe().putByte(addr, (byte) (existing & ((1 << bitmapBitCount) - 1)));
+                }
+            }
+        }
+    }
+
     private void setColumnNull(int columnType, int columnIndex, long rowCount, int commitMode) {
         if (ColumnType.isVarSize(columnType)) {
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
@@ -1683,6 +1794,34 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             setVarColumnAuxFileNull(columnTypeDriver, columnIndex, rowCount, commitMode);
         } else {
             setFixColumnNulls(columnType, columnIndex, rowCount);
+        }
+        setColumnNullBitmap(columnIndex, rowCount, commitMode);
+    }
+
+    private void setColumnNullBitmap(int columnIndex, long rowCount, int commitMode) {
+        MemoryMA bitmapMem = getNullBitmapColumn(columnIndex);
+        if (bitmapMem == null || !bitmapMem.isOpen() || rowCount <= 0) {
+            return;
+        }
+        long bitmapByteCount = (rowCount + 7) >> 3;
+        bitmapMem.jumpTo(bitmapByteCount);
+        long bitmapAddr = TableUtils.mapRW(ff, bitmapMem.getFd(), bitmapByteCount, MEM_TAG);
+        try {
+            // Set all bits to 1 (all rows are null for this newly added column)
+            Vect.memset(bitmapAddr, bitmapByteCount, 0xFF);
+            // Clear trailing bits beyond rowCount in the last byte to avoid
+            // corrupting reads that scan past the row count boundary.
+            int trailingBits = (int) (rowCount & 7);
+            if (trailingBits != 0) {
+                long lastAddr = bitmapAddr + bitmapByteCount - 1;
+                byte lastByte = Unsafe.getUnsafe().getByte(lastAddr);
+                Unsafe.getUnsafe().putByte(lastAddr, (byte) (lastByte & ((1 << trailingBits) - 1)));
+            }
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(bitmapAddr, bitmapByteCount, commitMode == CommitMode.ASYNC);
+            }
+        } finally {
+            ff.munmap(bitmapAddr, bitmapByteCount, MEM_TAG);
         }
     }
 
@@ -1698,6 +1837,22 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 ff.munmap(address, columnFileSize, MEM_TAG);
             }
             ff.fsync(fixedSizeColumn.getFd());
+        }
+    }
+
+    private void setNullBitmapBit(int columnIndex) {
+        MemoryMA bitmapMem = getNullBitmapColumn(columnIndex);
+        if (bitmapMem == null || !bitmapMem.isOpen()) {
+            return;
+        }
+        long appendOffset = bitmapMem.getAppendOffset();
+        if (bitmapBitCount == 0 || appendOffset == 0) {
+            bitmapMem.putByte((byte) (1 << bitmapBitCount));
+        } else {
+            long lastByteOffset = appendOffset - 1;
+            long addr = bitmapMem.addressOf(lastByteOffset);
+            byte existing = Unsafe.getUnsafe().getByte(addr);
+            Unsafe.getUnsafe().putByte(addr, (byte) (existing | (1 << bitmapBitCount)));
         }
     }
 
@@ -1772,6 +1927,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             auxColumn.close(isTruncateFilesOnClose());
         }
 
+        MemoryMA bitmapColumn = getNullBitmapColumn(srcColumnIndex);
+        if (bitmapColumn != null) {
+            bitmapColumn.close(isTruncateFilesOnClose());
+        }
+
         long newSize = rollSink.getDestPrimarySize(srcColumnIndex);
         long newPrimaryFd = rollSink.getDestPrimaryFd(srcColumnIndex);
         MemoryMA destPrimeCol = getDataColumn(destColumnIndex);
@@ -1783,6 +1943,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             MemoryMA destAuxColumn = getAuxColumn(destColumnIndex);
             destAuxColumn.switchTo(ff, newSecondaryFd, getDataAppendPageSize(), secondarySize, isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
         }
+
+        long newBitmapFd = rollSink.getDestBitmapFd(srcColumnIndex);
+        if (newBitmapFd > -1) {
+            long bitmapSize = rollSink.getDestBitmapSize(srcColumnIndex);
+            MemoryMA destBitmapColumn = getNullBitmapColumn(destColumnIndex);
+            if (destBitmapColumn != null) {
+                destBitmapColumn.switchTo(ff, newBitmapFd, getDataAppendPageSize(), bitmapSize, isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
+            } else {
+                ff.close(newBitmapFd);
+            }
+        }
     }
 
     private void syncIfRequired() {
@@ -1793,6 +1964,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 MemoryMA column = columns.getQuick(i);
                 if (column != null) {
                     column.sync(async);
+                }
+            }
+            for (int i = 0, n = nullBitmapColumns.size(); i < n; i++) {
+                MemoryMA bitmapMem = nullBitmapColumns.getQuick(i);
+                if (bitmapMem != null && bitmapMem != NullMemory.INSTANCE && bitmapMem.isOpen()) {
+                    bitmapMem.sync(async);
                 }
             }
             events.sync();

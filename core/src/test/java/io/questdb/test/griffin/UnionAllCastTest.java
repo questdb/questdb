@@ -163,16 +163,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
         testUnionAllWithNull(
                 """
                         a\tc
-                        false\tfalse
-                        true\tfalse
-                        true\tfalse
-                        true\tfalse
-                        true\tfalse
-                        false\tfalse
-                        false\tfalse
-                        false\tfalse
-                        false\ttrue
-                        false\tfalse
+                        false\t
+                        true\t
+                        true\t
+                        true\t
+                        true\t
+                        \tfalse
+                        \tfalse
+                        \tfalse
+                        \ttrue
+                        \tfalse
                         """,
                 "rnd_boolean()",
                 false
@@ -181,9 +181,9 @@ public class UnionAllCastTest extends AbstractCairoTest {
         testUnionWithNull(
                 """
                         a\tc
-                        false\tfalse
-                        true\tfalse
-                        false\ttrue
+                        false\t
+                        true\t
+                        \ttrue
                         """
         );
     }
@@ -295,16 +295,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
         testUnionAllWithNull(
                 """
                         a\tc
-                        79\t0
-                        122\t0
-                        83\t0
-                        90\t0
-                        76\t0
-                        0\t76
-                        0\t102
-                        0\t27
-                        0\t87
-                        0\t79
+                        79\t
+                        122\t
+                        83\t
+                        90\t
+                        76\t
+                        \t76
+                        \t102
+                        \t27
+                        \t87
+                        \t79
                         """,
                 "rnd_byte()"
         );
@@ -2499,16 +2499,16 @@ public class UnionAllCastTest extends AbstractCairoTest {
         testUnionAllWithNull(
                 """
                         a\tc
-                        -22955\t0
-                        -1398\t0
-                        21015\t0
-                        30202\t0
-                        -19496\t0
-                        0\t-27056
-                        0\t24814
-                        0\t-11455
-                        0\t-13027
-                        0\t-21227
+                        -22955\t
+                        -1398\t
+                        21015\t
+                        30202\t
+                        -19496\t
+                        \t-27056
+                        \t24814
+                        \t-11455
+                        \t-13027
+                        \t-21227
                         """,
                 "rnd_short()"
         );

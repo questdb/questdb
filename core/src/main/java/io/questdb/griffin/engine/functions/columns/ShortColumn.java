@@ -51,6 +51,11 @@ public class ShortColumn extends ShortFunction implements ColumnFunction {
     }
 
     @Override
+    public boolean isNull(Record rec) {
+        return rec.isNull(columnIndex);
+    }
+
+    @Override
     public short getShort(Record rec) {
         return rec.getShort(columnIndex);
     }

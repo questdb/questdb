@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.NullBitmapMigrator;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
@@ -44,7 +45,9 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
@@ -57,6 +60,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.ColumnType.isVarSize;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.cairo.TableUtils.nFile;
 
 public class ConvertOperatorImpl implements Closeable {
     private static final Log LOG = LogFactory.getLog(ConvertOperatorImpl.class);
@@ -84,6 +88,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final Clock timer;
     private CharSequence columnName;
     private long fixedFd;
+    private long nullBitmapFd;
     private int partitionUpdated;
     private SymbolMapReaderImpl symbolMapReader;
     private SymbolMapper symbolMapper;
@@ -239,15 +244,26 @@ public class ConvertOperatorImpl implements Closeable {
                                 );
                                 int pathTrimToLen = path.size();
 
-                                long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
+                                long srcFixFd = -1, srcVarFd = -1, srcNullBitmapFd = -1, dstFixFd = -1, dstVarFd = -1;
                                 try {
-                                    openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
+                                    openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen, rowCount, columnTop, newType);
                                     srcFixFd = this.fixedFd;
                                     srcVarFd = this.varFd;
+                                    srcNullBitmapFd = this.nullBitmapFd;
 
                                     openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
+
+                                    // Copy source .n bitmap to destination .n when destination type
+                                    // needs a bitmap (BOOLEAN, BYTE, SHORT, UINT16/32/64).
+                                    // The source .n was generated from sentinel values in openColumnsRO.
+                                    if (srcNullBitmapFd > -1 && ColumnType.needsNullBitmap(newType)) {
+                                        copyNullBitmapToDestination(
+                                                columnName, partitionTimestamp, columnIndex,
+                                                srcNullBitmapFd, pathTrimToLen
+                                        );
+                                    }
 
                                     LOG.info().$("converting column [at=").$safe(path.trimTo(pathTrimToLen))
                                             .$(", column=").$safe(columnName)
@@ -258,11 +274,15 @@ public class ConvertOperatorImpl implements Closeable {
                                     totalRows += rowCount;
                                 } catch (Throwable th) {
                                     closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+                                    ff.close(srcNullBitmapFd);
                                     throw th;
                                 }
 
+                                // For fixed-size source types, srcVarFd is -1 (unused).
+                                // Pack the null bitmap fd into srcVarFd to pass it through the task queue.
+                                long srcVarOrBitmapFd = srcVarFd != -1 ? srcVarFd : srcNullBitmapFd;
                                 if (dispatchConvertColumnPartitionTask(
-                                        existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, rowCount, partitionTimestamp)
+                                        existingType, newType, srcFixFd, srcVarOrBitmapFd, dstFixFd, dstVarFd, rowCount, partitionTimestamp)
                                 ) {
                                     queueCount++;
                                 }
@@ -314,12 +334,23 @@ public class ConvertOperatorImpl implements Closeable {
             int existingType,
             int newType,
             long srcFixFd,
-            long srcVarFd,
+            long srcVarOrBitmapFd,
             long dstFixFd,
             long dstVarFd,
             long partitionTimestamp,
             long rowCount
     ) {
+        // For fixed-size source types, srcVarOrBitmapFd carries the null bitmap fd (or -1).
+        // For var-size source types, it carries the actual var fd.
+        long srcVarFd;
+        long srcNullBitmapFd;
+        if (ColumnType.isVarSize(existingType) || ColumnType.isSymbol(existingType)) {
+            srcVarFd = srcVarOrBitmapFd;
+            srcNullBitmapFd = -1;
+        } else {
+            srcVarFd = -1;
+            srcNullBitmapFd = srcVarOrBitmapFd;
+        }
         try {
             if (asyncProcessingErrorCount.get() == 0) {
 
@@ -337,7 +368,8 @@ public class ConvertOperatorImpl implements Closeable {
                         symbolMapper,
                         ff,
                         appendPageSize,
-                        noopConversionOffsetSink
+                        noopConversionOffsetSink,
+                        srcNullBitmapFd
                 );
 
                 if (!ok) {
@@ -368,7 +400,7 @@ public class ConvertOperatorImpl implements Closeable {
             }
             log.$(", ex=").$(th).I$();
         } finally {
-            closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+            closeFds(srcFixFd, srcVarOrBitmapFd, dstFixFd, dstVarFd);
         }
     }
 
@@ -414,7 +446,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
 
-    private void openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
+    private void openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen, long rowCount, long columnTop, int targetType) {
         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         if (isVarSize(columnType)) {
             fixedFd = TableUtils.openRO(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
@@ -424,9 +456,57 @@ public class ConvertOperatorImpl implements Closeable {
                 ff.close(fixedFd);
                 throw e;
             }
+            nullBitmapFd = -1;
         } else {
             fixedFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
             varFd = -1;
+            // Try to open the null bitmap (.n) file.
+            // If it doesn't exist, generate it from sentinel values in the .d file
+            // when the target type needs a bitmap (e.g. INT→SHORT conversion).
+            nFile(path.trimTo(pathTrimToLen), name, columnNameTxn);
+            nullBitmapFd = ff.openRO(path.$());
+            if (nullBitmapFd < 0 && rowCount > 0 && ColumnType.needsNullBitmap(targetType)) {
+                // .n file doesn't exist but target type needs bitmap — generate from sentinels
+                long dataSize = rowCount * ColumnType.sizeOf(columnType);
+                long dataAddr = TableUtils.mapRO(ff, fixedFd, dataSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    NullBitmapMigrator.ensureNullBitmap(
+                            ff, path.$(), columnType, dataAddr, rowCount + columnTop, columnTop
+                    );
+                } finally {
+                    ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_DEFAULT);
+                }
+                // Re-try opening the .n file
+                nullBitmapFd = ff.openRO(nFile(path.trimTo(pathTrimToLen), name, columnNameTxn));
+            }
+        }
+    }
+
+    private void copyNullBitmapToDestination(
+            CharSequence name, long partitionTimestamp, int columnIndex,
+            long srcNullBitmapFd, int pathTrimToLen
+    ) {
+        long bitmapSize = ff.length(srcNullBitmapFd);
+        if (bitmapSize <= 0) {
+            return;
+        }
+        long dstColumnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+        nFile(path.trimTo(pathTrimToLen), name, dstColumnNameTxn);
+        long dstBitmapFd = TableUtils.openRW(ff, path.$(), LOG, fileOpenOpts);
+        try {
+            long srcAddr = TableUtils.mapRO(ff, srcNullBitmapFd, bitmapSize, MemoryTag.MMAP_DEFAULT);
+            try {
+                long dstAddr = TableUtils.mapRW(ff, dstBitmapFd, bitmapSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().copyMemory(srcAddr, dstAddr, bitmapSize);
+                } finally {
+                    ff.munmap(dstAddr, bitmapSize, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                ff.munmap(srcAddr, bitmapSize, MemoryTag.MMAP_DEFAULT);
+            }
+        } finally {
+            ff.close(dstBitmapFd);
         }
     }
 

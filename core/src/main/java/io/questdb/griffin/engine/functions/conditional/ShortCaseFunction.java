@@ -47,4 +47,9 @@ class ShortCaseFunction extends ShortFunction implements CaseFunction {
     public short getShort(Record rec) {
         return picker.pick(rec).getShort(rec);
     }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return picker.pick(rec).isNull(rec);
+    }
 }

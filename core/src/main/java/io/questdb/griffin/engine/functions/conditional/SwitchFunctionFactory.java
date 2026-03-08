@@ -292,25 +292,46 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final LongObjHashMap<Function> map = new LongObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function nullFunc = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final long key = Double.doubleToLongBits(getDouble(fun, null));
-            final int index = map.keyIndex(key);
-            if (index < 0) {
-                throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+            if (fun.isNullConstant()) {
+                nullFunc = args.getQuick(i + 1);
+            } else {
+                final long key = Double.doubleToLongBits(getDouble(fun, null));
+                final int index = map.keyIndex(key);
+                if (index < 0) {
+                    throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                }
+                map.putAt(index, key, args.getQuick(i + 1));
             }
-            map.putAt(index, key, args.getQuick(i + 1));
             argsToPoke.add(args.getQuick(i + 1));
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
-        final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(Double.doubleToLongBits(getDouble(keyFunction, record)));
-            if (index < 0) {
-                return map.valueAtQuick(index);
-            }
-            return elseB;
-        };
+        final CaseFunctionPicker picker;
+        if (nullFunc == null) {
+            picker = record -> {
+                final int index = map.keyIndex(Double.doubleToLongBits(getDouble(keyFunction, record)));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+        } else {
+            final Function nullFuncRef = nullFunc;
+            picker = record -> {
+                if (keyFunction.isNull(record)) {
+                    return nullFuncRef;
+                }
+                final int index = map.keyIndex(Double.doubleToLongBits(getDouble(keyFunction, record)));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+            argsToPoke.add(nullFunc);
+        }
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
@@ -332,25 +353,46 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final IntObjHashMap<Function> map = new IntObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function nullFunc = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final int key = Float.floatToIntBits(getFloat(fun, null));
-            final int index = map.keyIndex(key);
-            if (index < 0) {
-                throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+            if (fun.isNullConstant()) {
+                nullFunc = args.getQuick(i + 1);
+            } else {
+                final int key = Float.floatToIntBits(getFloat(fun, null));
+                final int index = map.keyIndex(key);
+                if (index < 0) {
+                    throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                }
+                map.putAt(index, key, args.getQuick(i + 1));
             }
-            map.putAt(index, key, args.getQuick(i + 1));
             argsToPoke.add(args.getQuick(i + 1));
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
-        final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(Float.floatToIntBits(getFloat(keyFunction, record)));
-            if (index < 0) {
-                return map.valueAtQuick(index);
-            }
-            return elseB;
-        };
+        final CaseFunctionPicker picker;
+        if (nullFunc == null) {
+            picker = record -> {
+                final int index = map.keyIndex(Float.floatToIntBits(getFloat(keyFunction, record)));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+        } else {
+            final Function nullFuncRef = nullFunc;
+            picker = record -> {
+                if (keyFunction.isNull(record)) {
+                    return nullFuncRef;
+                }
+                final int index = map.keyIndex(Float.floatToIntBits(getFloat(keyFunction, record)));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+            argsToPoke.add(nullFunc);
+        }
 
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
@@ -370,16 +412,16 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final CaseFunctionPicker picker;
         final ObjList<Function> argsToPoke;
         if (n == 3) {
-            // only one conditional branch
-            boolean value = args.getQuick(1).getBool(null);
+            final Function whenKey = args.getQuick(1);
             final Function branch = args.getQuick(2);
-
             final Function elseB = getElseFunction(returnType, elseBranch);
 
-            if (value) {
-                picker = record -> keyFunction.getBool(record) ? branch : elseB;
+            if (whenKey.isNullConstant()) {
+                picker = record -> keyFunction.isNull(record) ? branch : elseB;
+            } else if (whenKey.getBool(null)) {
+                picker = record -> !keyFunction.isNull(record) && keyFunction.getBool(record) ? branch : elseB;
             } else {
-                picker = record -> keyFunction.getBool(record) ? elseB : branch;
+                picker = record -> !keyFunction.isNull(record) && !keyFunction.getBool(record) ? branch : elseB;
             }
 
             argsToPoke = new ObjList<>();
@@ -388,25 +430,48 @@ public class SwitchFunctionFactory implements FunctionFactory {
             argsToPoke.add(branch);
 
         } else if (n == 5) {
-            final boolean a = args.getQuick(1).getBool(null);
+            final Function whenKeyA = args.getQuick(1);
             final Function branchA = args.getQuick(2);
-            final boolean b = args.getQuick(3).getBool(null);
+            final Function whenKeyB = args.getQuick(3);
             final Function branchB = args.getQuick(4);
+            final Function elseB = getElseFunction(returnType, elseBranch);
 
-            if (a && b || !a && !b) {
+            final boolean aIsNull = whenKeyA.isNullConstant();
+            final boolean bIsNull = whenKeyB.isNullConstant();
+            final boolean a = !aIsNull && whenKeyA.getBool(null);
+            final boolean b = !bIsNull && whenKeyB.getBool(null);
+
+            if (!aIsNull && !bIsNull && (a && b || !a && !b)) {
                 throw SqlException.$(argPositions.getQuick(3), "duplicate branch");
             }
 
-            if (a) {
-                picker = record -> keyFunction.getBool(record) ? branchA : branchB;
+            if (aIsNull) {
+                // WHEN NULL THEN branchA WHEN true/false THEN branchB
+                if (b) {
+                    picker = record -> keyFunction.isNull(record) ? branchA : keyFunction.getBool(record) ? branchB : elseB;
+                } else {
+                    picker = record -> keyFunction.isNull(record) ? branchA : !keyFunction.getBool(record) ? branchB : elseB;
+                }
+            } else if (bIsNull) {
+                // WHEN true/false THEN branchA WHEN NULL THEN branchB
+                if (a) {
+                    picker = record -> keyFunction.isNull(record) ? branchB : keyFunction.getBool(record) ? branchA : elseB;
+                } else {
+                    picker = record -> keyFunction.isNull(record) ? branchB : !keyFunction.getBool(record) ? branchA : elseB;
+                }
+            } else if (a) {
+                picker = record -> keyFunction.isNull(record) ? elseB : keyFunction.getBool(record) ? branchA : branchB;
             } else {
-                picker = record -> keyFunction.getBool(record) ? branchB : branchA;
+                picker = record -> keyFunction.isNull(record) ? elseB : keyFunction.getBool(record) ? branchB : branchA;
             }
 
             argsToPoke = new ObjList<>();
             argsToPoke.add(keyFunction);
             argsToPoke.add(branchA);
             argsToPoke.add(branchB);
+            if (elseB != elseBranch) {
+                argsToPoke.add(elseB);
+            }
         } else {
             throw SqlException.$(argPositions.getQuick(5), "too many branches");
         }
@@ -426,25 +491,46 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final IntObjHashMap<Function> map = new IntObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function nullFunc = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final int key = intMethod.getKey(fun, null);
-            final int index = map.keyIndex(key);
-            if (index < 0) {
-                throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+            if (fun.isNullConstant()) {
+                nullFunc = args.getQuick(i + 1);
+            } else {
+                final int key = intMethod.getKey(fun, null);
+                final int index = map.keyIndex(key);
+                if (index < 0) {
+                    throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                }
+                map.putAt(index, key, args.getQuick(i + 1));
             }
-            map.putAt(index, key, args.getQuick(i + 1));
             argsToPoke.add(args.getQuick(i + 1));
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
-        final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(intMethod.getKey(keyFunction, record));
-            if (index < 0) {
-                return map.valueAtQuick(index);
-            }
-            return elseB;
-        };
+        final CaseFunctionPicker picker;
+        if (nullFunc == null) {
+            picker = record -> {
+                final int index = map.keyIndex(intMethod.getKey(keyFunction, record));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+        } else {
+            final Function nullFuncRef = nullFunc;
+            picker = record -> {
+                if (keyFunction.isNull(record)) {
+                    return nullFuncRef;
+                }
+                final int index = map.keyIndex(intMethod.getKey(keyFunction, record));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+            argsToPoke.add(nullFunc);
+        }
 
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
@@ -464,25 +550,46 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final LongObjHashMap<Function> map = new LongObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
+        Function nullFunc = null;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final long key = longMethod.getKey(fun, null);
-            final int index = map.keyIndex(key);
-            if (index < 0) {
-                throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+            if (fun.isNullConstant()) {
+                nullFunc = args.getQuick(i + 1);
+            } else {
+                final long key = longMethod.getKey(fun, null);
+                final int index = map.keyIndex(key);
+                if (index < 0) {
+                    throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                }
+                map.putAt(index, key, args.getQuick(i + 1));
             }
-            map.putAt(index, key, args.getQuick(i + 1));
             argsToPoke.add(args.getQuick(i + 1));
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
-        final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(longMethod.getKey(keyFunction, record));
-            if (index < 0) {
-                return map.valueAtQuick(index);
-            }
-            return elseB;
-        };
+        final CaseFunctionPicker picker;
+        if (nullFunc == null) {
+            picker = record -> {
+                final int index = map.keyIndex(longMethod.getKey(keyFunction, record));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+        } else {
+            final Function nullFuncRef = nullFunc;
+            picker = record -> {
+                if (keyFunction.isNull(record)) {
+                    return nullFuncRef;
+                }
+                final int index = map.keyIndex(longMethod.getKey(keyFunction, record));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+            argsToPoke.add(nullFunc);
+        }
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 
@@ -577,27 +684,48 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final LongObjHashMap<Function> map = new LongObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        Function nullFunc = null;
         long key;
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            int funType = fun.getType();
-            key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
-            final int index = map.keyIndex(key);
-            if (index < 0) {
-                throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+            if (fun.isNullConstant()) {
+                nullFunc = args.getQuick(i + 1);
+            } else {
+                int funType = fun.getType();
+                key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
+                final int index = map.keyIndex(key);
+                if (index < 0) {
+                    throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                }
+                map.putAt(index, key, args.getQuick(i + 1));
             }
-            map.putAt(index, key, args.getQuick(i + 1));
             argsToPoke.add(args.getQuick(i + 1));
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
-        final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(keyFunction.getTimestamp(record));
-            if (index < 0) {
-                return map.valueAtQuick(index);
-            }
-            return elseB;
-        };
+        final CaseFunctionPicker picker;
+        if (nullFunc == null) {
+            picker = record -> {
+                final int index = map.keyIndex(keyFunction.getTimestamp(record));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+        } else {
+            final Function nullFuncRef = nullFunc;
+            picker = record -> {
+                if (keyFunction.isNull(record)) {
+                    return nullFuncRef;
+                }
+                final int index = map.keyIndex(keyFunction.getTimestamp(record));
+                if (index < 0) {
+                    return map.valueAtQuick(index);
+                }
+                return elseB;
+            };
+            argsToPoke.add(nullFunc);
+        }
         argsToPoke.add(elseB);
         argsToPoke.add(keyFunction);
 

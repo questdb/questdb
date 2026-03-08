@@ -45,14 +45,30 @@ public class CastLongToByteFunctionFactory implements FunctionFactory {
     }
 
     public static class CastLongToByteFunction extends AbstractCastToByteFunction {
+        private long cachedSrc;
+        private boolean srcCached;
+
         public CastLongToByteFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public byte getByte(Record rec) {
-            final long value = arg.getLong(rec);
+            long value;
+            if (srcCached) {
+                value = cachedSrc;
+                srcCached = false;
+            } else {
+                value = arg.getLong(rec);
+            }
             return value != Numbers.LONG_NULL ? (byte) value : 0;
+        }
+
+        @Override
+        public boolean isNull(Record rec) {
+            cachedSrc = arg.getLong(rec);
+            srcCached = true;
+            return cachedSrc == Numbers.LONG_NULL;
         }
     }
 }

@@ -30,16 +30,23 @@ import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.std.Mutable;
 
 class ShortBindVariable extends ShortFunction implements Mutable {
+    boolean isNullValue;
     short value;
 
     @Override
     public void clear() {
         this.value = 0;
+        this.isNullValue = false;
     }
 
     @Override
     public short getShort(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isNull(Record rec) {
+        return isNullValue;
     }
 
     @Override

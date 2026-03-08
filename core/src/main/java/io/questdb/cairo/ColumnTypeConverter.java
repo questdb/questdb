@@ -94,6 +94,26 @@ public class ColumnTypeConverter {
             long appendPageSize,
             ColumnConversionOffsetSink columnSizesSink
     ) {
+        return convertColumn(skipRows, rowCount, srcColumnType, srcFixFd, srcVarFd, symbolTable,
+                dstColumnType, dstFixFd, dstVarFd, symbolMapWriter, ff, appendPageSize, columnSizesSink, -1);
+    }
+
+    public static boolean convertColumn(
+            long skipRows,
+            long rowCount,
+            int srcColumnType,
+            long srcFixFd,
+            long srcVarFd,
+            @Nullable SymbolTable symbolTable,
+            int dstColumnType,
+            long dstFixFd,
+            long dstVarFd,
+            @Nullable SymbolMapWriterLite symbolMapWriter,
+            FilesFacade ff,
+            long appendPageSize,
+            ColumnConversionOffsetSink columnSizesSink,
+            long srcNullBitmapFd
+    ) {
         assert skipRows > -1 && rowCount > -1;
         if (ColumnType.isSymbol(srcColumnType)) {
             assert symbolTable != null;
@@ -102,7 +122,7 @@ public class ColumnTypeConverter {
         } else if (ColumnType.isFixedSize(ColumnType.tagOf(srcColumnType)) && ColumnType.isDecimal(dstColumnType)) {
             return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
-            return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
+            return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink, srcNullBitmapFd);
         } else if (ColumnType.isVarSize(srcColumnType)) {
             return switch (srcColumnType) {
                 case ColumnType.STRING ->
@@ -114,14 +134,14 @@ public class ColumnTypeConverter {
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
             return switch (dstColumnType) {
                 case ColumnType.STRING ->
-                        convertFixedToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                        convertFixedToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink, srcNullBitmapFd);
                 case ColumnType.VARCHAR ->
-                        convertFixedToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                        convertFixedToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink, srcNullBitmapFd);
                 default -> throw unsupportedConversion(srcColumnType, dstColumnType);
             };
         } else if (ColumnType.isFixedSize(srcColumnType) && dstColumnType == ColumnType.SYMBOL) {
             assert symbolMapWriter != null;
-            return convertFixedToSymbol(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, symbolMapWriter, ff, appendPageSize, columnSizesSink);
+            return convertFixedToSymbol(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, symbolMapWriter, ff, appendPageSize, columnSizesSink, srcNullBitmapFd);
         } else {
             throw unsupportedConversion(srcColumnType, dstColumnType);
         }
@@ -153,12 +173,15 @@ public class ColumnTypeConverter {
             int srcColumnType,
             int dstColumnType,
             FilesFacade ff,
-            ColumnConversionOffsetSink columnSizesSink
+            ColumnConversionOffsetSink columnSizesSink,
+            long srcNullBitmapFd
     ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
         long srcMapAddress = 0;
         long dstMapAddress = 0;
+        long nullBitmapAddr = 0;
+        long nullBitmapBytes = 0;
 
         long skipBytes = skipRows * srcColumnTypeSize;
         long mapBytes = rowCount * srcColumnTypeSize;
@@ -174,20 +197,35 @@ public class ColumnTypeConverter {
             dstMapAddress = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, dstMapBytes, true, memoryTag);
             columnSizesSink.setDestSizes(dstMapBytes, -1);
 
+            if (srcNullBitmapFd > -1) {
+                nullBitmapBytes = (rowCount + 7) / 8;
+                nullBitmapAddr = TableUtils.mapAppendColumnBuffer(ff, srcNullBitmapFd, 0, nullBitmapBytes, false, memoryTag);
+            }
+
             long succeeded = ConvertersNative.fixedToFixed(srcMapAddress, srcColumnType, dstMapAddress, dstColumnType, rowCount);
-            return switch ((int) succeeded) {
-                case ConvertersNative.ConversionError.NONE -> true;
-                case ConvertersNative.ConversionError.UNSUPPORTED_CAST ->
-                        throw unsupportedConversion(srcColumnType, dstColumnType);
-                default ->
-                        throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
-            };
+            switch ((int) succeeded) {
+                case ConvertersNative.ConversionError.NONE:
+                    break;
+                case ConvertersNative.ConversionError.UNSUPPORTED_CAST:
+                    throw unsupportedConversion(srcColumnType, dstColumnType);
+                default:
+                    throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
+            }
+
+            // Post-process: apply null bitmap to set proper null sentinel values in destination
+            if (nullBitmapAddr != 0) {
+                stampNullsInFixedColumn(dstMapAddress, dstColumnType, dstColumnTypeSize, rowCount, nullBitmapAddr);
+            }
+            return true;
         } finally {
             if (srcMapAddress != 0) {
                 TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
             }
             if (dstMapAddress != 0) {
                 TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddress, 0, dstMapBytes, memoryTag);
+            }
+            if (nullBitmapAddr != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, nullBitmapAddr, 0, nullBitmapBytes, memoryTag);
             }
         }
     }
@@ -201,7 +239,8 @@ public class ColumnTypeConverter {
             long dstVarFd,
             FilesFacade ff,
             long appendPageSize,
-            ColumnConversionOffsetSink columnSizesSink
+            ColumnConversionOffsetSink columnSizesSink,
+            long srcNullBitmapFd
     ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         assert srcColumnTypeSize > 0;
@@ -213,7 +252,13 @@ public class ColumnTypeConverter {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
 
         srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        long nullBitmapAddr = 0;
+        long nullBitmapBytes = 0;
         try {
+            if (srcNullBitmapFd > -1) {
+                nullBitmapBytes = (rowCount + 7) / 8;
+                nullBitmapAddr = TableUtils.mapAppendColumnBuffer(ff, srcNullBitmapFd, 0, nullBitmapBytes, false, memoryTag);
+            }
             dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
             dstVarMem.jumpTo(0);
             dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
@@ -223,10 +268,13 @@ public class ColumnTypeConverter {
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.STRING);
-            convertFixedToString0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converter);
+            convertFixedToString0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converter, nullBitmapAddr);
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
+            if (nullBitmapAddr != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, nullBitmapAddr, 0, nullBitmapBytes, memoryTag);
+            }
             dstFixMem.detachFdClose();
             dstVarMem.detachFdClose();
         }
@@ -242,17 +290,41 @@ public class ColumnTypeConverter {
             int srcColumnType,
             Fixed2VarConverter converterInt2String
     ) {
+        convertFixedToString0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converterInt2String, 0);
+    }
+
+    private static void convertFixedToString0(
+            long rowCount,
+            long srcMapAddress,
+            MemoryCMARW dstFixMem,
+            MemoryCMARW dstVarMem,
+            StringSink sink,
+            int srcColumnType,
+            Fixed2VarConverter converterInt2String,
+            long nullBitmapAddr
+    ) {
         int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
+        long row = 0;
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink)) {
+            if (nullBitmapAddr != 0 && isNullInBitmap(nullBitmapAddr, row)) {
+                StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
+            } else if (converterInt2String.convert(addr, sink)) {
                 StringTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 sink.clear();
             } else {
                 StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
             }
+            row++;
         }
+    }
+
+    private static boolean isNullInBitmap(long bitmapAddr, long row) {
+        long byteOffset = row >> 3;
+        int bitIndex = (int) (row & 7);
+        byte bitmapByte = Unsafe.getUnsafe().getByte(bitmapAddr + byteOffset);
+        return (bitmapByte & (1 << bitIndex)) != 0;
     }
 
     private static boolean convertFixedToSymbol(
@@ -264,7 +336,8 @@ public class ColumnTypeConverter {
             SymbolMapWriterLite symbolMapWriter,
             FilesFacade ff,
             long appendPageSize,
-            ColumnConversionOffsetSink columnSizesSink
+            ColumnConversionOffsetSink columnSizesSink,
+            long srcNullBitmapFd
     ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         assert srcColumnTypeSize > 0;
@@ -275,17 +348,26 @@ public class ColumnTypeConverter {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
 
         srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        long nullBitmapAddr = 0;
+        long nullBitmapBytes = 0;
         try {
+            if (srcNullBitmapFd > -1) {
+                nullBitmapBytes = (rowCount + 7) / 8;
+                nullBitmapAddr = TableUtils.mapAppendColumnBuffer(ff, srcNullBitmapFd, 0, nullBitmapBytes, false, memoryTag);
+            }
             dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
             dstFixMem.jumpTo(0);
             StringSink sink = sinkUtf16TL.get();
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.SYMBOL);
-            convertFixedToSymbol0(rowCount, srcMapAddress, dstFixMem, symbolMapWriter, sink, srcColumnType, converter);
+            convertFixedToSymbol0(rowCount, srcMapAddress, dstFixMem, symbolMapWriter, sink, srcColumnType, converter, nullBitmapAddr);
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
+            if (nullBitmapAddr != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, nullBitmapAddr, 0, nullBitmapBytes, memoryTag);
+            }
             dstFixMem.detachFdClose();
         }
         return true;
@@ -300,11 +382,28 @@ public class ColumnTypeConverter {
             int srcColumnType,
             Fixed2VarConverter converterInt2String
     ) {
+        convertFixedToSymbol0(rowCount, srcMapAddress, dstFixMem, symbolMapWriter, sink, srcColumnType, converterInt2String, 0);
+    }
+
+    private static void convertFixedToSymbol0(
+            long rowCount,
+            long srcMapAddress,
+            MemoryCMARW dstFixMem,
+            SymbolMapWriterLite symbolMapWriter,
+            StringSink sink,
+            int srcColumnType,
+            Fixed2VarConverter converterInt2String,
+            long nullBitmapAddr
+    ) {
         int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
+        long row = 0;
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink)) {
+            if (nullBitmapAddr != 0 && isNullInBitmap(nullBitmapAddr, row)) {
+                int value = symbolMapWriter.resolveSymbol(null);
+                dstFixMem.putInt(value);
+            } else if (converterInt2String.convert(addr, sink)) {
                 int value = symbolMapWriter.resolveSymbol(sink);
                 dstFixMem.putInt(value);
                 sink.clear();
@@ -312,6 +411,7 @@ public class ColumnTypeConverter {
                 int value = symbolMapWriter.resolveSymbol(null);
                 dstFixMem.putInt(value);
             }
+            row++;
         }
     }
 
@@ -324,7 +424,8 @@ public class ColumnTypeConverter {
             long dstVarFd,
             FilesFacade ff,
             long appendPageSize,
-            ColumnConversionOffsetSink columnSizesSink
+            ColumnConversionOffsetSink columnSizesSink,
+            long srcNullBitmapFd
     ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         assert srcColumnTypeSize > 0;
@@ -336,7 +437,13 @@ public class ColumnTypeConverter {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
 
         srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        long nullBitmapAddr = 0;
+        long nullBitmapBytes = 0;
         try {
+            if (srcNullBitmapFd > -1) {
+                nullBitmapBytes = (rowCount + 7) / 8;
+                nullBitmapAddr = TableUtils.mapAppendColumnBuffer(ff, srcNullBitmapFd, 0, nullBitmapBytes, false, memoryTag);
+            }
             dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
             dstVarMem.jumpTo(0);
             dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
@@ -345,10 +452,13 @@ public class ColumnTypeConverter {
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.VARCHAR);
-            convertFixedToVarchar0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converter);
+            convertFixedToVarchar0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converter, nullBitmapAddr);
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
+            if (nullBitmapAddr != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, nullBitmapAddr, 0, nullBitmapBytes, memoryTag);
+            }
             dstFixMem.detachFdClose();
             dstVarMem.detachFdClose();
         }
@@ -364,16 +474,33 @@ public class ColumnTypeConverter {
             int srcColumnType,
             Fixed2VarConverter converterInt2String
     ) {
+        convertFixedToVarchar0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converterInt2String, 0);
+    }
+
+    private static void convertFixedToVarchar0(
+            long rowCount,
+            long srcMapAddress,
+            MemoryCMARW dstFixMem,
+            MemoryCMARW dstVarMem,
+            Utf8StringSink sink,
+            int srcColumnType,
+            Fixed2VarConverter converterInt2String,
+            long nullBitmapAddr
+    ) {
         int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
+        long row = 0;
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink)) {
+            if (nullBitmapAddr != 0 && isNullInBitmap(nullBitmapAddr, row)) {
+                VarcharTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
+            } else if (converterInt2String.convert(addr, sink)) {
                 VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 sink.clear();
             } else {
                 VarcharTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
             }
+            row++;
         }
     }
 
@@ -897,6 +1024,51 @@ public class ColumnTypeConverter {
             case ColumnType.BOOLEAN -> converterFromBoolean2String;
             default -> throw unsupportedConversion(srcColumnType, dstColumnType);
         };
+    }
+
+    private static void stampNullsInFixedColumn(long dstMapAddress, int dstColumnType, long dstColumnTypeSize, long rowCount, long nullBitmapAddr) {
+        final boolean isUInt16 = ColumnType.isUInt16(dstColumnType);
+        final boolean isUInt32 = ColumnType.isUInt32(dstColumnType);
+        final boolean isUInt64 = ColumnType.isUInt64(dstColumnType);
+        int dstTag = ColumnType.tagOf(dstColumnType);
+        for (long row = 0; row < rowCount; row++) {
+            if (isNullInBitmap(nullBitmapAddr, row)) {
+                long dstAddr = dstMapAddress + row * dstColumnTypeSize;
+                switch (dstTag) {
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.BYTE:
+                        Unsafe.getUnsafe().putByte(dstAddr, (byte) 0);
+                        break;
+                    case ColumnType.SHORT:
+                        Unsafe.getUnsafe().putShort(dstAddr, (short) 0);
+                        break;
+                    case ColumnType.CHAR:
+                        Unsafe.getUnsafe().putChar(dstAddr, (char) 0);
+                        break;
+                    case ColumnType.INT:
+                    case ColumnType.IPv4:
+                        Unsafe.getUnsafe().putInt(dstAddr, isUInt32 ? 0 : Numbers.INT_NULL);
+                        break;
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+                        Unsafe.getUnsafe().putLong(dstAddr, isUInt64 ? 0L : Numbers.LONG_NULL);
+                        break;
+                    case ColumnType.FLOAT:
+                        Unsafe.getUnsafe().putFloat(dstAddr, Float.NaN);
+                        break;
+                    case ColumnType.DOUBLE:
+                        Unsafe.getUnsafe().putDouble(dstAddr, Double.NaN);
+                        break;
+                    case ColumnType.UUID:
+                        Unsafe.getUnsafe().putLong(dstAddr, Numbers.LONG_NULL);
+                        Unsafe.getUnsafe().putLong(dstAddr + 8, Numbers.LONG_NULL);
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
     }
 
     private static void str2Boolean(CharSequence str, MemoryA mem) {

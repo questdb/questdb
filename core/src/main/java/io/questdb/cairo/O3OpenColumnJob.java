@@ -1618,6 +1618,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 break;
             case OPEN_LAST_PARTITION_FOR_MERGE:
                 mergeLastPartition(
+                        pathToOldPartition,
+                        plen,
                         pathToNewPartition,
                         pplen,
                         columnName,
@@ -2101,6 +2103,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 );
                 throw e;
             }
+            // Write .n null bitmap for bitmap-null types during O3 append.
+            writeNullBitmapForAppend(
+                    pathToNewPartition, pNewLen, columnName, columnNameTxn,
+                    columnType, srcOooLo, srcOooHi, srcDataMax, tableWriter, ff
+            );
+
             appendFixColumn(
                     pathToNewPartition,
                     pNewLen,
@@ -2190,6 +2198,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstVFd = openRW(ff, BitmapIndexUtils.valueFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
+            // Write .n null bitmap file for the new partition
+            writeNullBitmapForNewPartition(
+                    pathToNewPartition, pNewLen, columnName, columnNameTxn,
+                    srcOooLo, srcOooHi, tableWriter, ff
+            );
         } catch (Throwable e) {
             LOG.error().$("append new partition error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
@@ -2262,6 +2275,306 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 indexWriter,
                 partitionUpdateSinkAddr
         );
+    }
+
+    private static void writeNullBitmapForNewPartition(
+            Path pathToNewPartition,
+            int pNewLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            long srcOooLo,
+            long srcOooHi,
+            TableWriter tableWriter,
+            FilesFacade ff
+    ) {
+        int colIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
+        if (colIndex < 0) {
+            return;
+        }
+        long bitmapAddr = tableWriter.getO3NullBitmapAddr(colIndex);
+        if (bitmapAddr == 0) {
+            return;
+        }
+        long rowCount = srcOooHi - srcOooLo + 1;
+        long bitmapByteSize = (rowCount + 7) >> 3;
+        long nFd = -1;
+        long nAddr = 0;
+        try {
+            nFd = openRW(ff, nFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            nAddr = mapRW(ff, nFd, bitmapByteSize, MemoryTag.MMAP_O3);
+
+            int srcBitOff = (int) (srcOooLo & 7);
+            long srcByteStart = srcOooLo >> 3;
+
+            if (srcBitOff == 0) {
+                // Byte-aligned: simple copy
+                Vect.memcpy(nAddr, bitmapAddr + srcByteStart, bitmapByteSize);
+            } else {
+                // Non-aligned: shift bits
+                Vect.memset(nAddr, bitmapByteSize, 0);
+                for (long i = 0; i < rowCount; i++) {
+                    long srcBit = srcOooLo + i;
+                    byte srcByte = Unsafe.getUnsafe().getByte(bitmapAddr + (srcBit >> 3));
+                    boolean isNull = ((srcByte >> (int) (srcBit & 7)) & 1) != 0;
+                    if (isNull) {
+                        long dstByte = i >> 3;
+                        int dstBitIdx = (int) (i & 7);
+                        long addr = nAddr + dstByte;
+                        Unsafe.getUnsafe().putByte(addr, (byte) (Unsafe.getUnsafe().getByte(addr) | (1 << dstBitIdx)));
+                    }
+                }
+            }
+
+            // Mask trailing bits in the last byte
+            int trailingBits = (int) (rowCount & 7);
+            if (trailingBits > 0 && bitmapByteSize > 0) {
+                byte lastByte = Unsafe.getUnsafe().getByte(nAddr + bitmapByteSize - 1);
+                Unsafe.getUnsafe().putByte(nAddr + bitmapByteSize - 1, (byte) (lastByte & ((1 << trailingBits) - 1)));
+            }
+        } catch (Throwable e) {
+            LOG.error().$("failed to write null bitmap for new partition [table=").$(tableWriter.getTableToken())
+                    .$(", column=").$(columnName)
+                    .$(", e=").$(e)
+                    .I$();
+        } finally {
+            if (nAddr != 0) {
+                ff.munmap(nAddr, bitmapByteSize, MemoryTag.MMAP_O3);
+            }
+            if (nFd > -1) {
+                ff.fsync(nFd);
+                ff.close(nFd);
+            }
+        }
+    }
+
+    /**
+     * Writes null bitmap (.n file) for O3 rows appended to an existing partition.
+     * The existing partition bitmap covers srcDataMax rows. This method extends it
+     * to include the O3 rows at positions srcDataMax to srcDataMax+oooRowCount-1,
+     * reading null status from the O3 null bitmap.
+     */
+    private static void writeNullBitmapForAppend(
+            Path pathToNewPartition,
+            int pNewLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            int columnType,
+            long srcOooLo,
+            long srcOooHi,
+            long srcDataMax,
+            TableWriter tableWriter,
+            FilesFacade ff
+    ) {
+        if (!ColumnType.needsNullBitmap(columnType)) {
+            return;
+        }
+
+        int colIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
+        if (colIndex < 0) {
+            return;
+        }
+
+        long o3BitmapAddr = tableWriter.getO3NullBitmapAddr(colIndex);
+        long oooRowCount = srcOooHi - srcOooLo + 1;
+        long totalRows = srcDataMax + oooRowCount;
+        long totalBitmapByteSize = (totalRows + 7) >> 3;
+
+        long nFd = -1;
+        long nAddr = 0;
+        try {
+            nFd = openRW(ff, nFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            nAddr = mapRW(ff, nFd, totalBitmapByteSize, MemoryTag.MMAP_O3);
+
+            // Write O3 rows' null bits at positions srcDataMax onwards.
+            // Existing bits (0 to srcDataMax-1) are preserved from the file.
+            if (o3BitmapAddr != 0) {
+                for (long i = 0; i < oooRowCount; i++) {
+                    if (isNullBitmapBitSet(o3BitmapAddr, srcOooLo + i)) {
+                        setNullBitmapBit(nAddr, srcDataMax + i);
+                    }
+                }
+            }
+
+            // Mask trailing bits in the last byte
+            int trailingBits = (int) (totalRows & 7);
+            if (trailingBits > 0 && totalBitmapByteSize > 0) {
+                byte lastByte = Unsafe.getUnsafe().getByte(nAddr + totalBitmapByteSize - 1);
+                Unsafe.getUnsafe().putByte(nAddr + totalBitmapByteSize - 1, (byte) (lastByte & ((1 << trailingBits) - 1)));
+            }
+        } catch (Throwable e) {
+            LOG.error().$("failed to write null bitmap for append [table=").$(tableWriter.getTableToken())
+                    .$(", column=").$(columnName)
+                    .$(", e=").$(e)
+                    .I$();
+        } finally {
+            if (nAddr != 0) {
+                ff.munmap(nAddr, totalBitmapByteSize, MemoryTag.MMAP_O3);
+            }
+            if (nFd > -1) {
+                ff.fsync(nFd);
+                ff.close(nFd);
+            }
+        }
+    }
+
+    /**
+     * Writes a null bitmap (.n file) for the merged partition when column-top rows
+     * have been materialized. Column-top rows (rows that existed before the column
+     * was added) must be marked as null in the bitmap. O3 data rows are checked
+     * against the O3 null bitmap.
+     * <p>
+     * The output row order follows the merge structure:
+     * 1. Prefix block (O3_BLOCK_DATA or O3_BLOCK_O3)
+     * 2. Merge block (interleaved via merge index)
+     * 3. Suffix block (O3_BLOCK_DATA or O3_BLOCK_O3)
+     */
+    private static void writeNullBitmapForMerge(
+            FilesFacade ff,
+            Path pathToNewPartition,
+            int pNewLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            TableWriter tableWriter,
+            long rowCount,
+            long originalSrcDataTop,
+            long srcDataNullAddr,
+            int prefixType,
+            long prefixLo,
+            long prefixHi,
+            int mergeType,
+            long timestampMergeIndexAddr,
+            long mergeRowCount,
+            long mergeDataLo,
+            int suffixType,
+            long suffixLo,
+            long suffixHi,
+            long srcOooLo
+    ) {
+        if (rowCount <= 0) {
+            return;
+        }
+
+        int colIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
+        long o3BitmapAddr = colIndex >= 0 ? tableWriter.getO3NullBitmapAddr(colIndex) : 0;
+
+        long bitmapByteSize = (rowCount + 7) >> 3;
+        long nFd = -1;
+        long nAddr = 0;
+        try {
+            nFd = openRW(ff, nFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            nAddr = mapRW(ff, nFd, bitmapByteSize, MemoryTag.MMAP_O3);
+            Vect.memset(nAddr, bitmapByteSize, 0);
+
+
+            long outputRow = 0;
+
+            // Prefix block
+            if (prefixType == O3_BLOCK_DATA) {
+                for (long i = prefixLo; i <= prefixHi; i++, outputRow++) {
+                    if (i < originalSrcDataTop || (srcDataNullAddr != 0 && isNullBitmapBitSet(srcDataNullAddr, i))) {
+                        setNullBitmapBit(nAddr, outputRow);
+                    }
+                }
+            } else if (prefixType == O3_BLOCK_O3) {
+                if (o3BitmapAddr != 0) {
+                    for (long i = prefixLo; i <= prefixHi; i++, outputRow++) {
+                        if (isNullBitmapBitSet(o3BitmapAddr, i)) {
+                            setNullBitmapBit(nAddr, outputRow);
+                        }
+                    }
+                } else {
+                    outputRow += prefixHi - prefixLo + 1;
+                }
+            }
+
+            // Merge block
+            if (mergeType == O3_BLOCK_MERGE) {
+                for (long i = 0; i < mergeRowCount; i++, outputRow++) {
+                    long indexEntry = Unsafe.getUnsafe().getLong(timestampMergeIndexAddr + i * TIMESTAMP_MERGE_ENTRY_BYTES + Long.BYTES);
+                    long pick = indexEntry >>> 63; // 0 = O3, 1 = old data
+                    long row = indexEntry & 0x7FFFFFFFFFFFFFFFL;
+
+                    if (pick == 1) {
+                        // Old data: null if within column-top range or marked in source bitmap
+                        if (row < originalSrcDataTop || (srcDataNullAddr != 0 && isNullBitmapBitSet(srcDataNullAddr, row))) {
+                            setNullBitmapBit(nAddr, outputRow);
+                        }
+                    } else if (o3BitmapAddr != 0) {
+                        // O3 data: check O3 null bitmap
+                        if (isNullBitmapBitSet(o3BitmapAddr, row)) {
+                            setNullBitmapBit(nAddr, outputRow);
+                        }
+                    }
+                }
+            } else if (mergeType == O3_BLOCK_O3) {
+                // All O3 data in merge block: check O3 bitmap or skip
+                if (o3BitmapAddr != 0) {
+                    for (long i = 0; i < mergeRowCount; i++, outputRow++) {
+                        if (isNullBitmapBitSet(o3BitmapAddr, srcOooLo + i)) {
+                            setNullBitmapBit(nAddr, outputRow);
+                        }
+                    }
+                } else {
+                    outputRow += mergeRowCount;
+                }
+            } else if (mergeType == O3_BLOCK_DATA) {
+                // All partition data in merge block: check against column-top and source bitmap
+                for (long i = 0; i < mergeRowCount; i++, outputRow++) {
+                    long srcRow = mergeDataLo + i;
+                    if (srcRow < originalSrcDataTop || (srcDataNullAddr != 0 && isNullBitmapBitSet(srcDataNullAddr, srcRow))) {
+                        setNullBitmapBit(nAddr, outputRow);
+                    }
+                }
+            }
+
+            // Suffix block
+            if (suffixType == O3_BLOCK_DATA) {
+                for (long i = suffixLo; i <= suffixHi; i++, outputRow++) {
+                    if (i < originalSrcDataTop || (srcDataNullAddr != 0 && isNullBitmapBitSet(srcDataNullAddr, i))) {
+                        setNullBitmapBit(nAddr, outputRow);
+                    }
+                }
+            } else if (suffixType == O3_BLOCK_O3) {
+                if (o3BitmapAddr != 0) {
+                    for (long i = suffixLo; i <= suffixHi; i++, outputRow++) {
+                        if (isNullBitmapBitSet(o3BitmapAddr, i)) {
+                            setNullBitmapBit(nAddr, outputRow);
+                        }
+                    }
+                }
+            }
+
+            // Mask trailing bits in the last byte
+            int trailingBits = (int) (rowCount & 7);
+            if (trailingBits > 0 && bitmapByteSize > 0) {
+                byte lastByte = Unsafe.getUnsafe().getByte(nAddr + bitmapByteSize - 1);
+                Unsafe.getUnsafe().putByte(nAddr + bitmapByteSize - 1, (byte) (lastByte & ((1 << trailingBits) - 1)));
+            }
+
+        } catch (Throwable e) {
+            LOG.error().$("failed to write null bitmap for merge [table=").$(tableWriter.getTableToken())
+                    .$(", column=").$(columnName)
+                    .$(", e=").$(e)
+                    .I$();
+        } finally {
+            if (nAddr != 0) {
+                ff.munmap(nAddr, bitmapByteSize, MemoryTag.MMAP_O3);
+            }
+            if (nFd > -1) {
+                ff.fsync(nFd);
+                ff.close(nFd);
+            }
+        }
+    }
+
+    private static boolean isNullBitmapBitSet(long bitmapAddr, long row) {
+        byte b = Unsafe.getUnsafe().getByte(bitmapAddr + (row >> 3));
+        return (b & (1 << (int) (row & 7))) != 0;
+    }
+
+    private static void setNullBitmapBit(long bitmapAddr, long row) {
+        long addr = bitmapAddr + (row >> 3);
+        Unsafe.getUnsafe().putByte(addr, (byte) (Unsafe.getUnsafe().getByte(addr) | (1 << (int) (row & 7))));
     }
 
     private static void appendTimestampColumn(
@@ -2388,6 +2701,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     private static void mergeFixColumn(
             Path pathToNewPartition,
             int pNewLen,
+            Path pathToOldPartition,
+            int pOldLen,
             CharSequence columnName,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -2461,6 +2776,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 srcDataTop = Math.min(srcDataTop, dataMax);
             }
 
+            // Save srcDataTop after commit-replace-mode adjustment but before
+            // materialization zeroes it. Used for bitmap null tracking.
+            final long originalSrcDataTop = srcDataTop;
+
             if (srcDataTop > 0) {
                 // Size of data in the file we want to merge if it didn't have column top.
                 final long srcDataActualBytesNew = Math.max(0, srcDataMax - srcDataTop) << shl;
@@ -2523,6 +2842,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
             }
 
+            // Save original (absolute) prefix/suffix values before srcDataTop
+            // adjustments below. writeNullBitmapForMerge needs absolute row
+            // indices because the .n file uses absolute partition row positions.
+            final long bitmapPrefixHi = prefixHi;
+            final long bitmapSuffixLo = suffixLo;
+            final long bitmapSuffixHi = suffixHi;
+
             // When prefix is "data" we need to reduce it by "srcDataTop".
             if (prefixType == O3_BLOCK_DATA) {
                 dstFixAppendOffset1 = (prefixHi - prefixLo + 1 - srcDataTop) << shl;
@@ -2550,6 +2876,71 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (indexBlockCapacity > -1) {
                 dstKFd = openRW(ff, BitmapIndexUtils.keyFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstVFd = openRW(ff, BitmapIndexUtils.valueFileName(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            }
+
+            // Write null bitmap (.n file) for bitmap-null types during O3 merge.
+            // The merge must preserve null bits from both the source partition
+            // (.n file on disk) and the O3 in-memory bitmap.
+            // The bitmap must cover all partition rows (absolute positions) because
+            // the reader uses absolute row indices to access bitmap bits.
+            if (ColumnType.needsNullBitmap(columnType)) {
+                final long bitmapRowCount = o3SplitPartitionSize > 0 ? o3SplitPartitionSize : srcDataNewPartitionSize;
+                long srcDataNullAddr = 0;
+                long srcDataNullSize = 0;
+                long srcDataNullFd = -1;
+                try {
+                    // Open the source partition's .n file to read existing null bits.
+                    // Use calloc + read instead of mmap because the bitmap file may be
+                    // smaller than (srcDataMax+7)/8 when the column has a non-zero column
+                    // top. On Linux, mmap zero-pads beyond EOF; on Windows,
+                    // CreateFileMapping fails when the requested size exceeds the file
+                    // length. calloc ensures zero-padding on all platforms, so bits
+                    // beyond the file read as not-null.
+                    if (pathToOldPartition != null && srcDataMax > srcDataTop) {
+                        srcDataNullFd = ff.openRO(nFile(pathToOldPartition.trimTo(pOldLen), columnName, columnNameTxn));
+                        if (srcDataNullFd > -1) {
+                            srcDataNullSize = (srcDataMax + 7) >> 3;
+                            long fileLen = ff.length(srcDataNullFd);
+                            if (fileLen > 0) {
+                                srcDataNullAddr = Unsafe.calloc(srcDataNullSize, MemoryTag.NATIVE_O3);
+                                ff.read(srcDataNullFd, srcDataNullAddr, Math.min(fileLen, srcDataNullSize), 0);
+                            }
+                        }
+                    }
+                    // Pass bitmapRowCount (full partition size) and original
+                    // (absolute) prefix/suffix values. The adjustments above convert
+                    // these to data-relative offsets for the data copy, but the bitmap
+                    // needs absolute positions to match the reader's indexing.
+                    writeNullBitmapForMerge(
+                            ff,
+                            pathToNewPartition,
+                            pNewLen,
+                            columnName,
+                            columnNameTxn,
+                            tableWriter,
+                            bitmapRowCount,
+                            originalSrcDataTop,
+                            srcDataNullAddr,
+                            prefixType,
+                            prefixLo,
+                            bitmapPrefixHi,
+                            mergeType,
+                            timestampMergeIndexAddr,
+                            mergeRowCount,
+                            mergeDataLo,
+                            suffixType,
+                            bitmapSuffixLo,
+                            bitmapSuffixHi,
+                            srcOooLo
+                    );
+                } finally {
+                    if (srcDataNullAddr != 0) {
+                        Unsafe.free(srcDataNullAddr, srcDataNullSize, MemoryTag.NATIVE_O3);
+                    }
+                    if (srcDataNullFd > -1) {
+                        ff.close(srcDataNullFd);
+                    }
+                }
             }
 
             if (prefixType != O3_BLOCK_NONE) {
@@ -2644,6 +3035,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     private static void mergeLastPartition(
+            Path pathToOldPartition,
+            int pOldLen,
             Path pathToNewPartition,
             int pplen,
             CharSequence columnName,
@@ -2739,6 +3132,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             mergeFixColumn(
                     pathToNewPartition,
                     pplen,
+                    pathToOldPartition,
+                    pOldLen,
                     columnName,
                     columnCounter,
                     partCounter,
@@ -2952,6 +3347,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             mergeFixColumn(
                     pathToNewPartition,
                     pplen,
+                    pathToOldPartition,
+                    plen,
                     columnName,
                     columnCounter,
                     partCounter,

@@ -595,7 +595,7 @@ public class RecordComparatorCompiler {
                 case ColumnType.INT:
                     fieldType = "I";
                     poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)I"), "getInt");
-                    comparatorClass = Integer.class;
+                    comparatorClass = columnType == ColumnType.UINT32 ? Numbers.class : Integer.class;
                     break;
                 case ColumnType.IPv4:
                     fieldType = "J";
@@ -605,7 +605,7 @@ public class RecordComparatorCompiler {
                 case ColumnType.LONG:
                     fieldType = "J";
                     poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)J"), "getLong");
-                    comparatorClass = Long.class;
+                    comparatorClass = columnType == ColumnType.UINT64 ? Numbers.class : Long.class;
                     break;
                 case ColumnType.DATE:
                     fieldType = "J";
@@ -620,7 +620,7 @@ public class RecordComparatorCompiler {
                 case ColumnType.SHORT:
                     fieldType = "S";
                     poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)S"), "getShort");
-                    comparatorClass = Short.class;
+                    comparatorClass = columnType == ColumnType.UINT16 ? Numbers.class : Short.class;
                     break;
                 case ColumnType.CHAR:
                     fieldType = "C";
