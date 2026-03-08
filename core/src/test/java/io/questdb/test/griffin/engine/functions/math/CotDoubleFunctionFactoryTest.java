@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ public class CotDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testZero() throws SqlException {
-        call(0.0).andAssert(Double.POSITIVE_INFINITY, DELTA);
+        call(0.0).andAssert(Double.NaN, DELTA);
         call(-0.0000000000000001).andAssert(-1.0E16, DELTA);
         call(0.0000000000000001).andAssert(1.0E16, DELTA);
     }

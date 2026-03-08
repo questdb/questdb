@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -51,9 +51,10 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             Path path,
             CharSequence name,
             long columnNameTxn,
-            long unIndexedNullCount
+            long partitionTxn,
+            long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, unIndexedNullCount);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
     }
 
     @Override
@@ -77,12 +78,12 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             assert cursor.owner() == this;
         }
 
-        if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
             // we need to return some nulls and the whole set of actual index values
             if (cursor == null) {
                 cursor = new Cursor();
             }
-            cursor.of(key, minValue, maxValue, keyCount, minValue, unindexedNullCount);
+            cursor.of(key, minValue, maxValue, keyCount, minValue, columnTop);
             return cursor;
         }
 

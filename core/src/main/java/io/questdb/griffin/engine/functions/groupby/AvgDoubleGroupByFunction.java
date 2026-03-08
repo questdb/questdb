@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -41,6 +42,18 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     public AvgDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final long countPtr = mapValue.getAddress(valueIndex + 1);
+            final double sum = Vect.sumDoubleAcc(ptr, count, countPtr);
+            if (!Numbers.isNull(sum)) {
+                mapValue.putDouble(valueIndex, sum);
+                // the count is already updated by the sumDoubleAcc call, so we don't need to write it here
+            }
+        }
     }
 
     @Override
@@ -113,24 +126,36 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        double srcSum = srcValue.getDouble(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 1);
-        double destSum = destValue.getDouble(valueIndex);
-        long destCount = destValue.getLong(valueIndex + 1);
-        destValue.putDouble(valueIndex, destSum + srcSum);
-        destValue.putLong(valueIndex + 1, destCount + srcCount);
+        final double srcSum = srcValue.getDouble(valueIndex);
+        final long srcCount = srcValue.getLong(valueIndex + 1);
+        if (srcCount > 0) {
+            final double destSum = destValue.getDouble(valueIndex);
+            final long destCount = destValue.getLong(valueIndex + 1);
+            if (destCount > 0) {
+                destValue.putDouble(valueIndex, destSum + srcSum);
+                destValue.putLong(valueIndex + 1, destCount + srcCount);
+            } else {
+                destValue.putDouble(valueIndex, srcSum);
+                destValue.putLong(valueIndex + 1, srcCount);
+            }
+        }
     }
 
     @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
-        mapValue.putLong(valueIndex + 1, 1L);
+        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putLong(valueIndex + 1, 0);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

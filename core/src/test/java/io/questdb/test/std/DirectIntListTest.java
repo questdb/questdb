@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DirectIntListTest {
-
     private static final Log LOG = LogFactory.getLog(DirectIntListTest.class);
 
     @Test
@@ -168,6 +167,32 @@ public class DirectIntListTest {
     }
 
     @Test
+    public void testSetCapacityOnClosedList() {
+        try (DirectIntList list = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT, true)) {
+            // List is closed (keepClosed=true), setCapacity should allocate memory
+            list.setCapacity(10);
+            list.clear();
+            for (int i = 0; i < 10; i++) {
+                list.add(i * 2);
+            }
+            for (int i = 0; i < 10; i++) {
+                Assert.assertEquals(i * 2, list.get(i));
+            }
+
+            // Close and call setCapacity again - should re-allocate
+            list.close();
+            list.setCapacity(5);
+            list.clear();
+            for (int i = 0; i < 5; i++) {
+                list.add(i * 3);
+            }
+            for (int i = 0; i < 5; i++) {
+                Assert.assertEquals(i * 3, list.get(i));
+            }
+        }
+    }
+
+    @Test
     public void testShrink() {
         try (DirectIntList list = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)) {
             final int N = 100;
@@ -202,6 +227,28 @@ public class DirectIntListTest {
             String str2 = list.toString();
 
             Assert.assertEquals(str1.substring(0, str1.length() - 1) + ", .. ]", str2);
+        }
+    }
+
+    @Test
+    public void testZeroCapacity() {
+        try (DirectIntList list = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT)) {
+            list.add(42);
+            Assert.assertEquals(42, list.get(0));
+            Assert.assertEquals(2, list.getCapacity());  // allocating the first elem gave us cap for two.
+            Assert.assertEquals(1, list.size());
+            list.add(43);
+            Assert.assertEquals(43, list.get(1));
+            Assert.assertEquals(2, list.getCapacity());  // still fits.
+            Assert.assertEquals(2, list.size());
+            list.resetCapacity();
+            Assert.assertEquals(0, list.getCapacity());
+            list.add(1);
+            list.add(2);
+            list.add(3);
+            list.add(4);
+            Assert.assertEquals(4, list.getCapacity());
+            Assert.assertEquals(4, list.size());
         }
     }
 }

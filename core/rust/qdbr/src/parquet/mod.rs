@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,9 @@
 pub(crate) mod error;
 pub(crate) mod io;
 pub(crate) mod qdb_metadata;
+
+pub use qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
+pub(crate) mod util;
 
 // Don't expose this in the general API, as it heightens the risk
 // of constructing an invalid `ColumnType`, e.g. one without the appropriate

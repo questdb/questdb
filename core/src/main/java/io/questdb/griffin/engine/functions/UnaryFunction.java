@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,14 +42,17 @@ public interface UnaryFunction extends Function {
         getArg().cursorClosed();
     }
 
-    @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof UnaryFunction) {
-            getArg().offerStateTo(((UnaryFunction) that).getArg());
-        }
-    }
-
+    /**
+     * Returns the single argument of this unary function.
+     *
+     * @return the function argument
+     */
     Function getArg();
+
+    @Override
+    default int getComplexity() {
+        return getArg().getComplexity();
+    }
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
@@ -62,8 +65,24 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof UnaryFunction that) {
+            return getArg().isEquivalentTo(that.getArg());
+        }
+        return false;
+    }
+
+    @Override
     default boolean isNonDeterministic() {
         return getArg().isNonDeterministic();
+    }
+
+    @Override
+    default boolean isRandom() {
+        return getArg().isRandom();
     }
 
     @Override
@@ -77,8 +96,25 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof UnaryFunction other) {
+            getArg().offerStateTo(other.getArg());
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getArg().shouldMemoize();
+    }
+
+    @Override
     default boolean supportsParallelism() {
         return getArg().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getArg().supportsRandomAccess();
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,12 +29,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -48,6 +51,8 @@ import io.questdb.std.bytes.Bytes;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 /**
  * UnorderedVarcharMap is an off-heap hash table with single varchar key used
@@ -92,7 +97,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     static final long PTR_MASK = ~PTR_UNSTABLE_MASK;
     static final int SIZE_IS_NULL = 1 << 30;
     private static final int KEY_SINK_INITIAL_CAPACITY = 16;
-    private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
     private final GroupByAllocator allocator;
     private final UnorderedVarcharMapCursor cursor;
@@ -171,7 +175,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
-            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY);
+            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag);
 
             value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
             value2 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
@@ -209,7 +213,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         size = 0;
         nResizes = 0;
         Vect.memset(memStart, memLimit - memStart, 0);
-        Misc.free(allocator); // free all memory, but allocator remains usable for further allocations
+        Misc.clear(allocator);
     }
 
     @Override
@@ -320,13 +324,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
             restoreInitialCapacity();
         }
+        allocator.reopen();
     }
 
+    @Override
     public void reopen() {
         if (memStart == 0) {
             // handles both mem and offsets
             restoreInitialCapacity();
         }
+        allocator.reopen();
     }
 
     @Override
@@ -639,6 +646,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         @Override
+        public void putArray(ArrayView view) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putBin(BinarySequence value) {
             throw new UnsupportedOperationException();
         }
@@ -660,6 +672,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public void putDate(long value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal128(Decimal128 decimal128) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 decimal256) {
             throw new UnsupportedOperationException();
         }
 

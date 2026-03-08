@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,11 +27,21 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 
-public abstract class AbstractCastToStrFunction extends StrFunction implements UnaryFunction {
+/**
+ * Abstract base class for functions that cast values to string.
+ */
+public abstract class AbstractCastToStrFunction extends StrFunction implements CastFunction {
+    /**
+     * The function argument to cast.
+     */
     protected final Function arg;
 
+    /**
+     * Constructs a new cast to string function.
+     *
+     * @param arg the function argument to cast
+     */
     protected AbstractCastToStrFunction(Function arg) {
         this.arg = arg;
     }

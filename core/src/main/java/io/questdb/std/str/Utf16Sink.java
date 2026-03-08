@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,30 @@ import static io.questdb.std.Numbers.hexDigits;
  * </ul>
  */
 public interface Utf16Sink extends CharSink<Utf16Sink> {
+    default Utf16Sink escapeJsonStr(@NotNull CharSequence cs) {
+        return escapeJsonStr(cs, 0, cs.length());
+    }
+
+    default Utf16Sink escapeJsonStr(@NotNull CharSequence cs, int lo, int hi) {
+        int i = lo;
+        while (i < hi) {
+            char c = cs.charAt(i++);
+            if (c < 32) {
+                escapeJsonStrChar(c);
+            } else {
+                switch (c) {
+                    case '\"':
+                    case '\\':
+                        putAscii('\\');
+                        // intentional fall through
+                    default:
+                        put(c);
+                        break;
+                }
+            }
+        }
+        return this;
+    }
 
     @Override
     default int getEncoding() {

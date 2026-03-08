@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -36,6 +37,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -92,24 +94,33 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     // Must be initialized from the original SQL context's circuit breaker before use.
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
 
+    /**
+     * Constructs a page frame sequence instance. The returned instance takes ownership of the input atom.
+     */
     public PageFrameSequence(
+            CairoEngine engine,
             CairoConfiguration configuration,
             MessageBus messageBus,
             T atom,
             PageFrameReducer reducer,
             PageFrameReduceTaskFactory localTaskFactory,
-            int sharedWorkerCount,
+            int sharedQueryWorkerCount,
             byte taskType
     ) {
-        this.frameAddressCache = new PageFrameAddressCache(configuration);
-        this.messageBus = messageBus;
-        this.atom = atom;
-        this.reducer = reducer;
-        this.clock = configuration.getMillisecondClock();
-        this.localTaskFactory = localTaskFactory;
-        this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedWorkerCount);
-        this.taskType = taskType;
-        this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
+        try {
+            this.atom = atom;
+            this.frameAddressCache = new PageFrameAddressCache();
+            this.messageBus = messageBus;
+            this.reducer = reducer;
+            this.clock = configuration.getMillisecondClock();
+            this.localTaskFactory = localTaskFactory;
+            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.taskType = taskType;
+            this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     /**
@@ -136,7 +147,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 if (!done) {
                     // Looks like not all the frames were dispatched, so no one reached the very last frame and
                     // reset the sequence via calling PageFrameReduceTask#collected(). Let's do it ourselves.
-                    reset();
+                    markAsDone();
                 }
                 break;
             }
@@ -187,30 +198,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         cancelReason.set(reason);
     }
 
-    public void clear() {
-        // prepare different frame sequence using the same object instance
-        frameCount = 0;
-        dispatchStartFrameIndex = 0;
-        collectedFrameIndex = -1;
-        readyToDispatch = false;
-        frameRowCounts.clear();
-        frameAddressCache.clear();
-        atom.clear();
-        frameCursor = Misc.freeIfCloseable(frameCursor);
-        // collect sequence may not be set here when
-        // factory is closed without using cursor
-        if (collectSubSeq != null) {
-            messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
-            LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
-        }
-        if (localTask != null) {
-            localTask.reset();
-        }
-    }
-
     @Override
     public void close() {
-        clear();
+        reset();
         localRecord = Misc.free(localRecord);
         workStealCircuitBreaker = Misc.free(workStealCircuitBreaker);
         localTask = Misc.free(localTask);
@@ -300,16 +290,22 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return taskType;
     }
 
-    public WorkStealingStrategy getWorkStealingStrategy() {
-        return workStealingStrategy;
-    }
-
     public boolean isActive() {
         return valid.get();
     }
 
     public boolean isUninterruptible() {
         return uninterruptible;
+    }
+
+    public void markAsDone() {
+        // prepare to resend the same sequence as it might be required by toTop()
+        assert !done;
+        done = true;
+    }
+
+    public long next() {
+        return next(Integer.MAX_VALUE, false);
     }
 
     /**
@@ -320,10 +316,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      * instead, should use getTask and collect methods. <code>Long.MAX_VALUE</code> is the
      * reserved cursor value for the local reduce task case.
      *
+     * @param dispatchLimit a cap for the number of in-flight tasks
+     * @param countOnly     count-only task flag; used only for filter-only tasks
      * @return the next cursor value, or -1 value if the cursor failed and the caller
      * should retry, or -2 if there are no frames to dispatch
      */
-    public long next() {
+    public long next(int dispatchLimit, boolean countOnly) {
         if (frameCount == 0) {
             return -2;
         }
@@ -342,7 +340,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     collectSubSeq.done(cursor);
                 }
             } else if (cursor == -1) {
-                if (dispatch()) {
+                if (dispatch(dispatchLimit, countOnly)) {
                     // We have dispatched something, so let's try to collect it.
                     continue;
                 }
@@ -350,7 +348,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     // We haven't dispatched anything, and we have collected everything
                     // that was dispatched previously in this loop iteration. Use the
                     // local task to avoid being blocked in case of full reduce queue.
-                    workLocally();
+                    workLocally(countOnly);
                     return LOCAL_TASK_CURSOR;
                 }
                 return -1;
@@ -382,7 +380,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes(), frameCursor.isExternal());
 
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
@@ -398,20 +396,21 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(frameCursor, executionContext);
+        } catch (TableReferenceOutOfDateException e) {
+            frameCursor = Misc.freeIfCloseable(frameCursor);
+            throw e;
         } catch (Throwable th) {
             // Log the OG exception as the below frame cursor close call may throw.
             LOG.error().$("could not initialize page frame sequence [error=").$(th).I$();
-            frameCursor = Misc.freeIfCloseable(frameCursor);
+            frameCursor = Misc.free(frameCursor);
             throw th;
         }
         return this;
     }
 
     /**
-     * Must be called before subsequence calls to {@link #next()} to count page frames and
+     * Must be called before subsequence calls to {@link #next(int, boolean)} to count page frames and
      * initialize page frame cache and filter functions.
-     *
-     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     public void prepareForDispatch() {
         if (!readyToDispatch) {
@@ -421,9 +420,27 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public void reset() {
-        // prepare to resend the same sequence as it might be required by toTop()
-        assert !done;
-        done = true;
+        // reset() must be called only if there are no tasks in progress for this page frame sequence
+        assert frameCount == 0 || reduceFinishedCounter.get() == dispatchStartFrameIndex;
+
+        // prepare different frame sequence using the same object instance
+        frameCount = 0;
+        dispatchStartFrameIndex = 0;
+        collectedFrameIndex = -1;
+        readyToDispatch = false;
+        frameRowCounts.clear();
+        atom.clear();
+        Misc.free(frameAddressCache);
+        frameCursor = Misc.free(frameCursor);
+        // collect sequence may not be set here when
+        // factory is closed without using cursor
+        if (collectSubSeq != null) {
+            messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
+            LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
+        }
+        if (localTask != null) {
+            localTask.clear();
+        }
     }
 
     /**
@@ -477,14 +494,16 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     /**
-     * This method is re-enterable. It has to be in case queue capacity is smaller than number of frames to
-     * be dispatched. When it is the case, frame count published so far is stored in the `frameSequence`.
-     * This method has no responsibility to deal with "collect" stage hence it deals with everything to
-     * unblock the collect stage.
+     * This method is re-enterable. It has to be in case queue capacity or the dispatch limit is smaller
+     * than number of frames to be dispatched. When it is the case, frame count published so far is
+     * stored in the `dispatchStartFrameIndex` field. This method has no responsibility to deal with
+     * "collect" stage hence it deals with everything to unblock the collect stage.
      *
+     * @param dispatchLimit a cap for the number of in-flight tasks
+     * @param countOnly     count-only task flag; used only for filter-only tasks
      * @return true if at least one task was dispatched or reduced; false otherwise
      */
-    private boolean dispatch() {
+    private boolean dispatch(int dispatchLimit, boolean countOnly) {
         boolean idle = true;
         boolean dispatched = false;
 
@@ -503,9 +522,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // tasks from the queue.
 
             while (true) {
-                cursor = reducePubSeq.next();
+                final int totalDispatched = dispatchStartFrameIndex - collectedFrameCount;
+                // Treat situation when we hit the dispatch limit as if it was a full queue (-1).
+                cursor = totalDispatched < dispatchLimit ? reducePubSeq.next() : -1;
                 if (cursor > -1) {
-                    reduceQueue.get(cursor).of(this, i);
+                    reduceQueue.get(cursor).of(this, i, countOnly);
                     LOG.debug()
                             .$("dispatched [shard=").$(shard)
                             .$(", id=").$(getId())
@@ -578,14 +599,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return true;
     }
 
-    private void workLocally() {
+    private void workLocally(boolean countOnly) {
         assert dispatchStartFrameIndex < frameCount;
 
         if (localTask == null) {
             localTask = localTaskFactory.getInstance();
-            localTask.setType(taskType);
+            localTask.setTaskType(taskType);
         }
-        localTask.of(this, dispatchStartFrameIndex++);
+        localTask.of(this, dispatchStartFrameIndex++, countOnly);
 
         try {
             LOG.debug()
@@ -609,8 +630,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     .$(", frameCount=").$(frameCount)
                     .I$();
             int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
-            if (th instanceof CairoException) {
-                CairoException e = (CairoException) th;
+            if (th instanceof CairoException e) {
                 interruptReason = e.getInterruptionReason();
             }
             cancel(interruptReason);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.tasks.O3CopyTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -371,7 +375,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             );
         } catch (Throwable th) {
             LOG.error().$("o3 copy failed [table=").$(tableWriter.getTableToken())
-                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", partition=").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                     .$(", columnType=").$(columnType)
                     .$(", exception=").$(th)
                     .I$();
@@ -379,7 +383,17 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-    public static void copyFixedSizeCol(FilesFacade ff, long src, long srcLo, long srcHi, long dstFixAddr, long dstFixFileOffset, long dstFd, int shl, boolean mixedIOFlag) {
+    public static void copyFixedSizeCol(
+            FilesFacade ff,
+            long src,
+            long srcLo,
+            long srcHi,
+            long dstFixAddr,
+            long dstFixFileOffset,
+            long dstFd,
+            int shl,
+            boolean mixedIOFlag
+    ) {
         final long len = (srcHi - srcLo + 1) << shl;
         O3Utils.copyFixedSizeCol(ff, src, srcLo, dstFixAddr, dstFixFileOffset, dstFd, mixedIOFlag, len, shl);
     }
@@ -415,11 +429,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
                 case ColumnType.GEOBYTE:
+                case ColumnType.DECIMAL8:
                     Vect.mergeShuffle8Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.SHORT:
                 case ColumnType.CHAR:
                 case ColumnType.GEOSHORT:
+                case ColumnType.DECIMAL16:
                     Vect.mergeShuffle16Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.INT:
@@ -427,6 +443,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 case ColumnType.FLOAT:
                 case ColumnType.SYMBOL:
                 case ColumnType.GEOINT:
+                case ColumnType.DECIMAL32:
                     Vect.mergeShuffle32Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.DOUBLE:
@@ -434,13 +451,16 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 case ColumnType.DATE:
                 case ColumnType.GEOLONG:
                 case ColumnType.TIMESTAMP:
+                case ColumnType.DECIMAL64:
                     Vect.mergeShuffle64Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.UUID:
                 case ColumnType.LONG128:
+                case ColumnType.DECIMAL128:
                     Vect.mergeShuffle128Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 case ColumnType.LONG256:
+                case ColumnType.DECIMAL256:
                     Vect.mergeShuffle256Bit(srcDataFixAddr, srcOooFixAddr, dstFixAddr, timestampMergeIndexAddr, timestampMergeIndexCount);
                     break;
                 default:
@@ -727,7 +747,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } catch (Throwable e) {
             LOG.error()
-                    .$("sync error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    .$("sync error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount(false);
@@ -802,7 +822,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } catch (Throwable e) {
             LOG.error()
-                    .$("index error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    .$("index error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount(false);
@@ -895,7 +915,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         final int columnsRemaining = columnCounter.decrementAndGet();
         LOG.debug()
-                .$("idle [table=").utf8(tableWriter.getTableToken().getTableName())
+                .$("idle [table=").$(tableWriter.getTableToken())
                 .$(", columnsRemaining=").$(columnsRemaining)
                 .I$();
         if (columnsRemaining == 0) {
@@ -1004,9 +1024,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // parquet partition file size
 
+        TimestampDriver driver = ColumnType.getTimestampDriver(tableWriter.getTimestampType());
         LOG.debug()
-                .$("sending partition update [partitionTimestamp=").$ts(partitionTimestamp)
-                .$(", partitionTimestamp=").$ts(timestampMin)
+                .$("sending partition update [partitionTimestamp=").$ts(driver, partitionTimestamp)
+                .$(", partitionTimestamp=").$ts(driver, timestampMin)
                 .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
                 .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
                 .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)

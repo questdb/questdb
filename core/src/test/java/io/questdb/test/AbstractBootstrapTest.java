@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,11 +27,13 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -55,17 +57,18 @@ import static io.questdb.PropertyKey.*;
 
 public abstract class AbstractBootstrapTest extends AbstractTest {
     protected static final String CHARSET = "UTF8";
-    protected static final int HTTP_MIN_PORT = 9011;
-    protected static final int HTTP_PORT = 9010;
     protected static final int ILP_BUFFER_SIZE = 4 * 1024;
-    protected static final int ILP_PORT = 9009;
     protected static final Properties PG_CONNECTION_PROPERTIES = new Properties();
-    protected static final int PG_PORT = 8822;
-    protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     protected static int ILP_WORKER_COUNT = 1;
     protected static Path auxPath;
     protected static Path dbPath;
     protected static int dbPathLen;
+    protected static int randomPortOffset = (int) (Os.currentTimeMicros() % 100);
+    protected static final int HTTP_MIN_PORT = 9011 + randomPortOffset;
+    protected static final int HTTP_PORT = 9010 + randomPortOffset;
+    protected static final int ILP_PORT = 9009 + randomPortOffset;
+    protected static final int PG_PORT = 8822 + randomPortOffset;
+    protected static final String PG_CONNECTION_URI = getPgConnectionUri(PG_PORT);
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -84,13 +87,17 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     public static TestServerMain startWithEnvVariables(String... envs) {
+        return startWithEnvVariables(root, envs);
+    }
+
+    public static TestServerMain startWithEnvVariables(CharSequence root, String... envs) {
         assert envs.length % 2 == 0;
 
         Map<String, String> envMap = new HashMap<>();
         for (int i = 0; i < envs.length; i += 2) {
             envMap.put(envs[i], envs[i + 1]);
         }
-        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(envMap));
+        TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(root, envMap));
         try {
             serverMain.start();
             return serverMain;
@@ -107,20 +114,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         AbstractTest.tearDownStatic();
     }
 
-    @NotNull
-    protected static Bootstrap newBootstrapWithEnvVariables(Map<String, String> envs) {
-        Map<String, String> env = new HashMap<>(System.getenv());
-
-        env.putAll(envs);
-        return new Bootstrap(
-                new PropBootstrapConfiguration() {
-                    @Override
-                    public Map<String, String> getEnv() {
-                        return env;
-                    }
-                },
-                getServerMainArgs()
-        );
+    protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            code.run();
+            CLOSEABLE.forEach(Misc::free);
+        });
     }
 
     protected static void assertQueryFails(
@@ -165,6 +163,22 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             String root,
             String... extra
     ) throws Exception {
+        createDummyConfigurationWithTelemetryEnable(httpPort, httpMinPort, pgPort, ilpPort, root, false, extra);
+    }
+
+    protected static void createDummyConfigurationInRoot(String root, String... extra) throws Exception {
+        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, root, extra);
+    }
+
+    protected static void createDummyConfigurationWithTelemetryEnable(
+            int httpPort,
+            int httpMinPort,
+            int pgPort,
+            int ilpPort,
+            String root,
+            boolean telemetryEnable,
+            String... extra
+    ) throws Exception {
         final String confPath = root + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
@@ -182,8 +196,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(PG_UPDATE_CACHE_ENABLED + "=false");
             writer.println(CAIRO_WAL_ENABLED_DEFAULT + "=false");
             writer.println(METRICS_ENABLED + "=false");
-            writer.println(TELEMETRY_ENABLED + "=false");
-            writer.println(TELEMETRY_DISABLE_COMPLETELY + "=true");
+            writer.println(TELEMETRY_ENABLED + "=" + telemetryEnable);
+            writer.println(TELEMETRY_DISABLE_COMPLETELY + "=" + !telemetryEnable);
 
             // configure endpoints
             writer.println(HTTP_BIND_TO + "=0.0.0.0:" + httpPort);
@@ -194,13 +208,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println(LINE_UDP_RECEIVE_BUFFER_SIZE + "=" + ILP_BUFFER_SIZE);
             writer.println(HTTP_FROZEN_CLOCK + "=true");
 
-            // configure worker pools
+            // Do not configure worker pools, use default values, e.g. 3 shared pools
             writer.println(SHARED_WORKER_COUNT + "=2");
-            writer.println(HTTP_WORKER_COUNT + "=1");
-            writer.println(HTTP_MIN_WORKER_COUNT + "=1");
-            writer.println(PG_WORKER_COUNT + "=1");
-            writer.println(LINE_TCP_WRITER_WORKER_COUNT + "=1");
-            writer.println(LINE_TCP_IO_WORKER_COUNT + "=" + ILP_WORKER_COUNT);
 
             // extra
             if (extra != null) {
@@ -228,10 +237,6 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.println("w.stdout.class=io.questdb.log.LogConsoleWriter");
             writer.println("w.stdout.level=INFO");
         }
-    }
-
-    protected static void createDummyConfigurationInRoot(String root, String... extra) throws Exception {
-        createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, root, extra);
     }
 
     protected static long createDummyWebConsole() throws Exception {
@@ -277,6 +282,22 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
     protected static String getPgConnectionUri(int pgPort) {
         return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
+    }
+
+    @NotNull
+    protected static Bootstrap newBootstrapWithEnvVariables(CharSequence root, Map<String, String> envs) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        env.putAll(envs);
+        env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
+        return new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+                },
+                getServerMainArgs(root)
+        );
     }
 
     void assertFail(String message, String... args) {

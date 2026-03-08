@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ where
         ));
     }
 
-    if data.len() % size_of::<T>() != 0 {
+    if !data.len().is_multiple_of(size_of::<T>()) {
         return Err(fmt_err!(
             InvalidLayout,
             "size {} is not divisible by target type {} size of {} bytes",
@@ -88,12 +88,12 @@ mod tests {
 
         let e1 = cast_slice::<()>(&b1).unwrap_err();
         assert!(matches!(e1.reason(), CoreErrorReason::InvalidLayout));
-        let e1msg = format!("{}", e1);
+        let e1msg = format!("{e1}");
         assert_eq!(e1msg, "target type () has zero size");
 
         let e2 = cast_slice::<u64>(&b1).unwrap_err();
         assert!(matches!(e2.reason(), CoreErrorReason::InvalidLayout));
-        let e2msg = format!("{}", e2);
+        let e2msg = format!("{e2}");
         assert_eq!(
             e2msg,
             "size 12 is not divisible by target type u64 size of 8 bytes"
@@ -101,7 +101,7 @@ mod tests {
 
         let e3 = cast_slice::<u32>(&b1[1..9]).unwrap_err();
         assert!(matches!(e3.reason(), CoreErrorReason::InvalidLayout));
-        let e3msg = format!("{}", e3);
+        let e3msg = format!("{e3}");
         assert!(e3msg.contains("is not aligned to target type u32 alignment of 4 bytes"));
     }
 }

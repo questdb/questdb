@@ -6,7 +6,7 @@
 #    \__\_\\__,_|\___||___/\__|____/|____/
 #
 #  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2024 QuestDB
+#  Copyright (c) 2019-2026 QuestDB
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -270,8 +270,9 @@ io.questdb.griffin.engine.functions.date.YearFunctionFactory
 io.questdb.griffin.engine.functions.date.MonthOfYearFunctionFactory
 io.questdb.griffin.engine.functions.date.DaysPerMonthFunctionFactory
 io.questdb.griffin.engine.functions.date.ExtractFromTimestampFunctionFactory
-io.questdb.griffin.engine.functions.date.MicrosOfSecondFunctionFactory
+io.questdb.griffin.engine.functions.date.MicrosOfMillsFunctionFactory
 io.questdb.griffin.engine.functions.date.MillisOfSecondFunctionFactory
+io.questdb.griffin.engine.functions.date.NanosOfMicrosFunctionFactory
 io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory
@@ -542,11 +543,14 @@ io.questdb.griffin.engine.functions.cast.VarcharCastHelperFunctionFactory
 
 # 'in'
 io.questdb.griffin.engine.functions.bool.InSymbolCursorFunctionFactory
+io.questdb.griffin.engine.functions.bool.InStrVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InStrFunctionFactory
+io.questdb.griffin.engine.functions.bool.InVarcharVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InVarcharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InCharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory
 io.questdb.griffin.engine.functions.bool.InLongFunctionFactory
+io.questdb.griffin.engine.functions.bool.InSymbolVarcharArrayFunctionFactory
 io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory
 io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory
 io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory
@@ -841,20 +845,10 @@ io.questdb.griffin.engine.functions.str.RTrimVarcharFunctionFactory
 
 # window functions
 io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory
-io.questdb.griffin.engine.functions.window.RankFunctionFactory
-io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory
-io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory
-io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory
-io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory
 
 # Bitwise operators
 io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory
@@ -884,6 +878,16 @@ io.questdb.griffin.engine.functions.math.IPv4MinusIPv4StrFunctionFactory
 # IPv4 functions
 io.questdb.griffin.engine.functions.math.IPv4StrNetmaskFunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory
+
+# array_elem_max/min/avg/sum
+io.questdb.griffin.engine.functions.groupby.DoubleArrayElemMaxGroupByFunctionFactory
+io.questdb.griffin.engine.functions.array.DoubleArrayElemMaxFunctionFactory
+io.questdb.griffin.engine.functions.groupby.DoubleArrayElemMinGroupByFunctionFactory
+io.questdb.griffin.engine.functions.array.DoubleArrayElemMinFunctionFactory
+io.questdb.griffin.engine.functions.groupby.DoubleArrayElemAvgGroupByFunctionFactory
+io.questdb.griffin.engine.functions.array.DoubleArrayElemAvgFunctionFactory
+io.questdb.griffin.engine.functions.groupby.DoubleArrayElemSumGroupByFunctionFactory
+io.questdb.griffin.engine.functions.array.DoubleArrayElemSumFunctionFactory
 
 #        db    888888888888  888888888888  88888888888  888b      88  888888888888  88    ,ad8888ba,    888b      88
 #       d88b        88            88       88           8888b     88       88       88   d8"'    `"8b   8888b     88

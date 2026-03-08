@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -59,15 +59,20 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
             // it turns out it is possible to have null "infos"
             if (threadInfo != null) {
                 final LogRecord record = LOG.advisory();
-                final Thread.State state = threadInfo.getThreadState();
-                record.$('\n');
-                record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
-                final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
-                for (final StackTraceElement stackTraceElement : stackTraceElements) {
-                    record.$("\n\t\tat ").$(stackTraceElement);
+                try {
+                    final Thread.State state = threadInfo.getThreadState();
+                    record.$('\n');
+                    record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
+                    final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+                    for (final StackTraceElement stackTraceElement : stackTraceElements) {
+                        record.$("\n\t\tat ").$(stackTraceElement);
+                    }
+                    record.$("\n\n");
+                } catch (Throwable th) {
+                    record.$("error dumping threads: ").$(th);
+                } finally {
+                    record.$();
                 }
-                record.$("\n\n");
-                record.$();
             }
         }
     }

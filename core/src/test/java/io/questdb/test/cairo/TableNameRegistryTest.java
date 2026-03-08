@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,6 +54,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -133,7 +134,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
                                             && !Chars.contains(e.getFlyweightMessage(), "could not lock")
-                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not remove table")) {
                                         throw e;
                                     }
                                 }
@@ -172,8 +174,16 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             AtomicReference<Throwable> ref = new AtomicReference<>();
             CyclicBarrier barrier = new CyclicBarrier(2 * threadCount + 2);
 
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            long[][] seeds = new long[threadCount][2];
+            for (int i = 0; i < threadCount; i++) {
+                seeds[i][0] = rnd.nextLong();
+                seeds[i][1] = rnd.nextLong();
+            }
+
             ObjList<Thread> threads = new ObjList<>(threadCount + 2);
             for (int i = 0; i < threadCount; i++) {
+                int m = i;
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
@@ -184,9 +194,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 } catch (TableReferenceOutOfDateException e) {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
-                                    if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                                            && !Chars.contains(e.getFlyweightMessage(), "could not lock")
-                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                    if (
+                                            !Chars.contains(e.getFlyweightMessage(), "table does not exist")
+                                                    && !Chars.contains(e.getFlyweightMessage(), "could not lock")
+                                                    && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")
+                                                    && !Chars.contains(e.getFlyweightMessage(), "could not remove table")
+                                    ) {
                                         throw e;
                                     }
                                 }
@@ -203,10 +216,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(LOG);
+                        Rnd r = new Rnd(seeds[m][0], seeds[m][1]);
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
-                                boolean isWal = rnd.nextBoolean();
+                                boolean isWal = r.nextBoolean();
                                 try {
                                     execute(
                                             "create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
@@ -227,7 +240,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                     // Should never fail on drop table.
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
                                             && !Chars.contains(e.getFlyweightMessage(), "could not lock")
-                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not remove table")) {
                                         throw e;
                                     }
                                 }
@@ -272,7 +286,11 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             threads.getLast().start();
 
             threads.add(new Thread(() -> {
-                try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getMicrosecondClock())) {
+                try (WalPurgeJob job = new WalPurgeJob(
+                        engine,
+                        engine.getConfiguration().getFilesFacade(),
+                        engine.getConfiguration().getMicrosecondClock())
+                ) {
                     barrier.await();
                     engine.setWalPurgeJobRunLock(job.getRunLock());
                     //noinspection StatementWithEmptyBody
@@ -303,7 +321,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             drainWalQueue();
 
             engine.releaseInactive();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             drainWalQueue();
 
@@ -373,7 +391,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         if (rnd.nextDouble() > 0.2) {
                             // Add table
                             String tableName = "tab" + iteration;
-                            TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, false, true);
+                            String tableDir = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + iteration;
+                            TableToken tableToken = rw.lockTableName(tableName, tableDir, iteration, false, false, true);
                             TestUtils.createTable(tm, configuration, ColumnType.VERSION, iteration, tableToken);
                             rw.registerName(tableToken);
                             addedTables.add(iteration);
@@ -387,7 +406,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
                             // Retry remove table folder, until success, if table folder not clearly removed, reload may pick it up
                             // Remove _txn file first
-                            rmPath.trimTo(rootLen).concat(tableName);
+                            rmPath.trimTo(rootLen).concat(tableToken.getDirName());
                             int len = rmPath.size();
                             rmPath.concat(TableUtils.TXN_FILE_NAME);
                             ff.remove(rmPath.$());
@@ -665,7 +684,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             engine.reconcileTableNameRegistryState();
 
             drainWalQueue();
-            runWalPurgeJob();
+            drainPurgeJob();
 
             createTableWal("tab1");
 
@@ -701,7 +720,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 if (failReloadNameRegistry.get() && Utf8s.endsWithAscii(name, "tables.d.0")) {
                     return -1;
                 }
@@ -746,8 +765,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             // Write a line into the table
             execute("insert into tab1(a, b, timestamp) values(0, 1, '2022-02-24')");
 
-            assertSql("a\tb\ttimestamp\n" +
-                    "0\t1\t2022-02-24T00:00:00.000000Z\n", "tab1");
+            assertSql(
+                    """
+                            a\tb\ttimestamp
+                            0\t1\t2022-02-24T00:00:00.000000Z
+                            """,
+                    "tab1"
+            );
 
             Assert.assertFalse(engine.verifyTableName("tab1").isWal());
         });
@@ -894,7 +918,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             )) {
                 store.lock();
                 store.reload(new ConcurrentHashMap<>(1), new ConcurrentHashMap<>(1), null);
-                store.writeEntry(new TableToken("tab1", "tab1~1", 1, true, false, false), OPERATION_ADD);
+                store.writeEntry(new TableToken("tab1", "tab1~1", null, 1, true, false, false), OPERATION_ADD);
             }
 
             simulateEngineRestart();
@@ -1103,7 +1127,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         final int loopCounter = 8;
         final Rnd rnd = new Rnd(seed1, seed2);
 
-        try (WalPurgeJob purgeJob = new WalPurgeJob(engine, FilesFacadeImpl.INSTANCE, () -> 0)) {
+        try (WalPurgeJob purgeJob = new WalPurgeJob(engine, FilesFacadeImpl.INSTANCE, (MicrosecondClock) () -> 0)) {
 
             for (int j = 0; j < loopCounter; j++) {
 

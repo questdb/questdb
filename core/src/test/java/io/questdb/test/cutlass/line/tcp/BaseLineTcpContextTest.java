@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@ import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cutlass.auth.AuthUtils;
@@ -47,9 +49,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcher;
-import io.questdb.network.IORequestProcessor;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
@@ -57,11 +59,13 @@ import io.questdb.std.Pool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.WeakClosableObjectPool;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -77,7 +81,7 @@ import java.util.concurrent.locks.LockSupport;
 abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
-    protected final AtomicInteger recvBufferSize = new AtomicInteger();
+    protected final AtomicInteger maxRecvBufferSize = new AtomicInteger();
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
     protected LineTcpConnectionContext context;
@@ -86,13 +90,14 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected short floatDefaultColumnType;
     protected short integerDefaultColumnType;
     protected LineTcpReceiverConfiguration lineTcpConfiguration;
-    protected long microSecondTicks;
     protected int nWriterThreads;
     protected NoNetworkIOJob noNetworkIOJob;
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
+    protected long timestampTicks;
+    protected TestTimestampType timestampType = TestTimestampType.MICRO;
     protected boolean useLegacyString;
     protected WorkerPool workerPool;
 
@@ -101,10 +106,10 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         nWriterThreads = 2;
-        microSecondTicks = -1;
+        timestampTicks = -1;
         recvBuffer = null;
         disconnected = true;
-        recvBufferSize.set(512);
+        maxRecvBufferSize.set(512 * 1024);
         disconnectOnError = false;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
@@ -166,6 +171,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         return createReceiverConfiguration(false, nf);
     }
 
+    @SuppressWarnings("resource")
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
         final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
             @Override
@@ -179,7 +185,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return super.getLineAuthenticatorFactory();
             }
         };
-        return new DefaultLineTcpReceiverConfiguration() {
+        return new DefaultLineTcpReceiverConfiguration(configuration) {
             @Override
             public boolean getAutoCreateNewColumns() {
                 return autoCreateNewColumns;
@@ -201,6 +207,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
+            public int getDefaultCreateTimestampColumnType() {
+                return timestampType.getTimestampType();
+            }
+
+            @Override
             public boolean getDisconnectOnError() {
                 return disconnectOnError;
             }
@@ -216,16 +227,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
+            public long getMaxRecvBufferSize() {
+                return maxRecvBufferSize.get();
+            }
+
+            @Override
             public MicrosecondClock getMicrosecondClock() {
-                return new MicrosecondClockImpl() {
-                    @Override
-                    public long getTicks() {
-                        if (microSecondTicks >= 0) {
-                            return microSecondTicks;
-                        }
-                        return super.getTicks();
-                    }
-                };
+                return new MicrosecondClockImplInner();
             }
 
             @Override
@@ -235,7 +243,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
             @Override
             public int getRecvBufferSize() {
-                return recvBufferSize.get();
+                return Math.min(super.getRecvBufferSize(), (int) getMaxRecvBufferSize());
             }
 
             @Override
@@ -302,9 +310,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
     }
 
-    protected void setupContext(UnstableRunnable onCommitNewEvent) {
+    protected void setupContext(UnstableRunnable onCommitNewEvent) throws TlsSessionInitFailedException {
         disconnected = false;
         recvBuffer = null;
+        ((MicrosTimestampDriver) MicrosTimestampDriver.INSTANCE).setTicker(new MicrosecondClockImplInner());
+        ((NanosTimestampDriver) NanosTimestampDriver.INSTANCE).setTicker(new NanosecondClockImplInner());
+
         scheduler = new LineTcpMeasurementScheduler(
                 lineTcpConfiguration,
                 engine,
@@ -334,45 +345,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         };
         noNetworkIOJob.setScheduler(scheduler);
         context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
-        context.of(FD, new IODispatcher<>() {
-            @Override
-            public void close() {
-            }
-
-            @Override
-            public void disconnect(LineTcpConnectionContext context, int reason) {
-                disconnected = true;
-            }
-
-            @Override
-            public int getConnectionCount() {
-                return disconnected ? 0 : 1;
-            }
-
-            @Override
-            public int getPort() {
-                return 9009;
-            }
-
-            @Override
-            public boolean isListening() {
-                return true;
-            }
-
-            @Override
-            public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
-                return false;
-            }
-
-            @Override
-            public void registerChannel(LineTcpConnectionContext context, int operation) {
-            }
-
-            @Override
-            public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                return false;
-            }
-        });
+        context.of(FD);
+        context.init();
         Assert.assertFalse(context.invalid());
         Assert.assertEquals(FD, context.getFd());
         workerPool.start(LOG);
@@ -472,6 +446,26 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
         byte[] getBytes(String recvBuffer) {
             return recvBuffer.getBytes(StandardCharsets.UTF_8);
+        }
+    }
+
+    private class MicrosecondClockImplInner extends MicrosecondClockImpl {
+        @Override
+        public long getTicks() {
+            if (timestampTicks >= 0) {
+                return timestampTicks;
+            }
+            return super.getTicks();
+        }
+    }
+
+    private class NanosecondClockImplInner extends NanosecondClockImpl {
+        @Override
+        public long getTicks() {
+            if (timestampTicks >= 0) {
+                return timestampTicks;
+            }
+            return super.getTicks();
         }
     }
 }

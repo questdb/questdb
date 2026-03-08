@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,9 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.ConnectionAware;
+import io.questdb.cutlass.line.tcp.AdaptiveRecvBuffer;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.LineProtocolException;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
@@ -42,17 +44,22 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.WeakClosableObjectPool;
+import io.questdb.std.Zip;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.MESSAGE_TOO_LARGE;
+
 public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final LineWalAppender appender;
@@ -61,37 +68,38 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private final boolean logMessageOnError;
     private final int maxResponseErrorMessageLength;
     private final LineTcpParser parser;
-    private final int recvBufSize;
+    private final AdaptiveRecvBuffer recvBuffer;
+    private final DirectUtf8Sink utf8Sink = new DirectUtf8Sink(16);
     private final WeakClosableObjectPool<SymbolCache> symbolCachePool;
     int errorLine = -1;
-    private long buffer;
     private Status currentStatus = Status.OK;
     private long errorId;
     private long fd = -1;
+    private long inflateStream;
+    private boolean isGzipEncoded;
     private int line = 0;
-    private long recvBufEnd;
-    private long recvBufPos;
-    private long recvBufStartOfMeasurement;
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
 
-    public LineHttpProcessorState(int recvBufSize, int maxResponseContentLength, CairoEngine engine, LineHttpProcessorConfiguration configuration) {
-        assert recvBufSize > 0;
-        this.recvBufSize = recvBufSize;
-
+    public LineHttpProcessorState(
+            int initRecvBufSize,
+            int maxResponseContentLength,
+            CairoEngine engine,
+            LineHttpProcessorConfiguration configuration
+    ) {
+        assert initRecvBufSize > 0;
         // Response is measured in bytes some error messages can have non-ascii characters
         // approximate 1.5 bytes per character
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
-        this.recvBufPos = this.buffer = Unsafe.malloc(recvBufSize, MemoryTag.NATIVE_HTTP_CONN);
-        this.recvBufEnd = this.recvBufPos + recvBufSize;
         this.parser = new LineTcpParser();
-        this.parser.of(buffer);
+        recvBuffer = new AdaptiveRecvBuffer(parser, MemoryTag.NATIVE_HTTP_CONN)
+                .of(initRecvBufSize, configuration.getMaxRecvBufferSize());
         this.appender = new LineWalAppender(
                 configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
-                configuration.getTimestampAdapter(),
-                engine.getConfiguration().getMaxFileNameLength(),
-                configuration.getMicrosecondClock()
+                configuration.getTimestampUnit(),
+                utf8Sink,
+                engine.getConfiguration().getMaxFileNameLength()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
         this.ilpTudCache = new LineHttpTudCache(
@@ -108,24 +116,32 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         this.logMessageOnError = configuration.logMessageOnError();
     }
 
+    public void cleanupGzip() {
+        if (inflateStream != 0) {
+            Zip.inflateEnd(inflateStream);
+            inflateStream = 0;
+        }
+    }
+
     public void clear() {
         ilpTudCache.clear();
-        parser.of(buffer);
-        recvBufPos = buffer;
+        recvBuffer.clear();
         error.clear();
         currentStatus = Status.OK;
         errorLine = 0;
         line = 0;
-        recvBufStartOfMeasurement = 0;
         sendStatus = SendStatus.NONE;
+        cleanupGzip();
     }
 
     @Override
     public void close() {
-        Unsafe.free(buffer, recvBufSize, MemoryTag.NATIVE_HTTP_CONN);
-        recvBufStartOfMeasurement = recvBufEnd = recvBufPos = buffer = 0;
+        Misc.free(recvBuffer);
         Misc.free(ilpTudCache);
         Misc.free(symbolCachePool);
+        Misc.free(parser);
+        Misc.free(utf8Sink);
+        cleanupGzip();
     }
 
     public void commit() {
@@ -161,6 +177,62 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return sendStatus;
     }
 
+    public void inflateAndParse(long lo, long hi) {
+        if (stopParse()) {
+            return;
+        }
+
+        Zip.setInput(inflateStream, lo, (int) (hi - lo));
+
+        long pp = recvBuffer.getBufPos();
+        while (Zip.availIn(inflateStream) > 0 && !stopParse()) {
+            long p = recvBuffer.getBufPos();
+            int len = (int) (recvBuffer.getBufEnd() - p);
+            int ret = Zip.inflate(inflateStream, p, len, false);
+            int newBytes = len - Zip.availOut(inflateStream);
+            if (newBytes > 0) {
+                recvBuffer.setBufPos(p + newBytes);
+            }
+
+            if (ret < 0) {
+                if (ret != Zip.Z_BUF_ERROR) {
+                    reject(ENCODING_NOT_SUPPORTED, "gzip decompression error", fd);
+                    cleanupGzip();
+                    return;
+                }
+
+                // inflate can return Z_BUF_ERROR after writing bytes once the recv buffer runs out of space
+                if (newBytes > 0) {
+                    currentStatus = processLocalBuffer();
+                    pp = recvBuffer.getBufPos();
+                    continue;
+                }
+
+                reject(MESSAGE_TOO_LARGE, "server buffer is too small", fd);
+                cleanupGzip();
+                return;
+            }
+
+            if (newBytes > 0) {
+                currentStatus = processLocalBuffer();
+                pp = recvBuffer.getBufPos();
+            }
+
+            if (ret == Zip.Z_STREAM_END) {
+                cleanupGzip();
+                break;
+            }
+        }
+
+        if (recvBuffer.getBufPos() > pp) {
+            currentStatus = processLocalBuffer();
+        }
+    }
+
+    public boolean isGzipEncoded() {
+        return isGzipEncoded;
+    }
+
     public boolean isOk() {
         return currentStatus == Status.OK;
     }
@@ -182,8 +254,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             // Last line did not have \n as a last character
             // this is allowed by the protocol, no error in Influx
             // NEEDS_REED status means that there is still a buffer space to read to.
-            assert recvBufPos < recvBufEnd;
-            Unsafe.getUnsafe().putByte(recvBufPos++, (byte) '\n');
+            long recvBufPos = recvBuffer.getBufPos();
+            assert recvBufPos < recvBuffer.getBufEnd();
+            Unsafe.getUnsafe().putByte(recvBufPos, (byte) '\n');
+            recvBuffer.setBufPos(recvBufPos + 1);
             currentStatus = processLocalBuffer();
             if (currentStatus == Status.NEEDS_READ) {
                 // added \n and parse result is still NEEDS_READ, means there was nothing in this line, e.g.
@@ -191,6 +265,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 currentStatus = Status.OK;
             }
         }
+        recvBuffer.tryToShrinkRecvBuffer(false);
     }
 
     public void parse(long lo, long hi) {
@@ -200,7 +275,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
         long pos = lo;
         while (pos < hi) {
-            pos = copyToLocalBuffer(pos, hi);
+            pos = recvBuffer.copyToLocalBuffer(pos, hi);
             currentStatus = processLocalBuffer();
             if (stopParse()) {
                 return;
@@ -213,6 +288,15 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         error.put(errorText);
         this.fd = fd;
         logError();
+    }
+
+    public void setGzipEncoded(boolean gzipEncoded) {
+        isGzipEncoded = gzipEncoded;
+    }
+
+    public void setInflateStream(long streamAddr) {
+        assert this.inflateStream == 0;
+        this.inflateStream = streamAddr;
     }
 
     public void setSendStatus(SendStatus sendStatus) {
@@ -256,28 +340,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    private boolean compactBuffer(long recvBufStartOfMeasurement) {
-        if (recvBufStartOfMeasurement > buffer) {
-            long shl = recvBufStartOfMeasurement - buffer;
-            Vect.memmove(buffer, buffer + shl, recvBufPos - recvBufStartOfMeasurement);
-            parser.shl(shl);
-            recvBufPos -= shl;
-            this.recvBufStartOfMeasurement -= shl;
-            return true;
-        }
-        return recvBufPos < recvBufEnd;
-    }
-
-    private long copyToLocalBuffer(long lo, long hi) {
-        long copyLen = Math.min(hi - lo, recvBufEnd - recvBufPos);
-        assert copyLen > 0;
-        Vect.memcpy(recvBufPos, lo, copyLen);
-        recvBufPos = recvBufPos + copyLen;
-        return lo + copyLen;
-    }
-
     private long getErrorLogLineHi(LineTcpParser parser) {
-        return Math.min(parser.getBufferAddress() + 1, recvBufPos);
+        return Math.min(parser.getBufferAddress() + 1, recvBuffer.getBufPos());
     }
 
     private Status handleCommitError(Throwable ex) {
@@ -287,8 +351,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         final Status status;
         final LogRecord errorRec;
         error.put("commit error for table: ").put(parser.getMeasurementName());
-        if (ex instanceof CairoException) {
-            CairoException exception = (CairoException) ex;
+        if (ex instanceof CairoException exception) {
             error.put(", errno: ").put(exception.getErrno()).put(", error: ").put(exception.getFlyweightMessage());
             if (exception.isAuthorizationError()) {
                 errorRec = LOG.error();
@@ -297,6 +360,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 errorRec = LOG.critical();
                 status = Status.INTERNAL_ERROR;
             }
+        } else if (ex instanceof TableReferenceOutOfDateException) {
+            errorId = ERROR_COUNT.incrementAndGet();
+            errorLine = -1;
+            error.put("table renamed during request, retry the operation");
+            LOG.info().$('[').$(fd).$("] table renamed during request, rejecting with retryable error [errorId=")
+                    .$(ERROR_ID).$('-').$(errorId).I$();
+            return Status.TABLE_SCHEMA_CHANGED;
         } else {
             error.put(", error: ").put(ex.getClass().getCanonicalName());
             errorRec = LOG.critical();
@@ -305,7 +375,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
         errorRec.$('[').$(fd).$("] could not commit [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", ex=").$(ex.getMessage())
+                .$(", ex=").$safe(ex.getMessage())
                 .I$();
         return status;
     }
@@ -366,11 +436,11 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorId = ERROR_COUNT.incrementAndGet();
         final LogRecord errorRec = ex.isCritical() ? LOG.critical() : LOG.error();
         errorRec
-                .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                .$('[').$(fd).$("] could not process line data 4 [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", errno=").$(ex.getErrno());
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, getErrorLogLineHi(parser)).$('`');
+            errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
         errorRec.$(", ex=").$(ex.getFlyweightMessage()).I$();
 
@@ -384,12 +454,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private Status handleUnknownParseError(Throwable ex) {
         errorId = ERROR_COUNT.incrementAndGet();
         final LogRecord errorRec = LOG.critical()
-                .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                .$('[').$(fd).$("] could not process line data 3 [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId);
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, getErrorLogLineHi(parser)).$('`');
+            errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
-        errorRec.$(", ex=").$(ex.getMessage()).I$();
+        errorRec.$(", ex=").$safe(ex.getMessage()).I$();
 
         error.put("write error: ").put(parser.getMeasurementName())
                 .put(", error: ").put(ex.getClass().getCanonicalName());
@@ -405,36 +475,36 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorId = ERROR_COUNT.incrementAndGet();
         final LogRecord errorRec = isError ? LOG.error() : LOG.info();
         errorRec.$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", table=").$(parser.getMeasurementName())
+                .$(", table=").$safe(parser.getMeasurementName())
                 .$(", line=").$(errorLine)
-                .$(", error=").$(error.subSequence(errorPos, error.length()))
+                .$(", error=").$safe(error.subSequence(errorPos, error.length()))
                 .$(", fd=").$(fd);
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBufStartOfMeasurement == 0 ? buffer : recvBufStartOfMeasurement, parser.getBufferAddress()).$('`');
+            errorRec.$(", mangledLine=`").$safe(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress()).$('`');
         }
         errorRec.I$();
     }
 
     private void logError() {
         errorId = ERROR_COUNT.incrementAndGet();
-        LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
-                .$(", error=").$(error)
+        LOG.error().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
+                .$(", error=").$safe(error)
                 .$(", fd=").$(fd)
                 .I$();
     }
 
     private Status processLocalBuffer() {
         Status status = Status.OK;
-        while (recvBufPos > buffer) {
+        while (recvBuffer.getBufPos() > recvBuffer.getBufStart()) {
             try {
-                LineTcpParser.ParseResult rc = parser.parseMeasurement(recvBufPos);
+                LineTcpParser.ParseResult rc = parser.parseMeasurement(recvBuffer.getBufPos());
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if ((status = appendMeasurement()) != Status.OK) {
                             return status;
                         }
                         line++;
-                        startNewMeasurement();
+                        recvBuffer.startNewMeasurement();
                         break;
                     }
 
@@ -443,10 +513,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                     }
 
                     case BUFFER_UNDERFLOW: {
-                        if (!compactBuffer(recvBufStartOfMeasurement)) {
+                        if (!recvBuffer.tryCompactOrGrowBuffer()) {
                             errorLine = ++line;
                             int errorPos = error.length();
-                            error.put("unable to read data: ILP line does not fit QuestDB ILP buffer size");
+                            error.putAscii("transaction is too large, either flush more frequently or increase buffer size \"line.http.max.recv.buffer.size\" [maxBufferSize=")
+                                    .putSize(recvBuffer.getMaxBufSize())
+                                    .putAscii(']');
                             logError(parser, errorPos, true);
                             return Status.MESSAGE_TOO_LARGE;
                         }
@@ -462,17 +534,6 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             }
         }
         return status;
-    }
-
-    private void startNewMeasurement() {
-        parser.startNextMeasurement();
-        recvBufStartOfMeasurement = parser.getBufferAddress();
-        // we ran out of buffer, move to start and start parsing new data from socket
-        if (recvBufStartOfMeasurement == recvBufPos) {
-            recvBufPos = buffer;
-            recvBufStartOfMeasurement = buffer;
-            parser.of(buffer);
-        }
     }
 
     private boolean stopParse() {
@@ -491,7 +552,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         INTERNAL_ERROR("internal error", 500),
         MESSAGE_TOO_LARGE("request too large", 413),
         COLUMN_ADD_ERROR("invalid", 400),
-        COMMITTED(null, 204);
+        COMMITTED(null, 204),
+        NOT_ACCEPTING_WRITES("not accepting writes", 421),
+        TABLE_SCHEMA_CHANGED("retry operation", 503);
 
         private final String codeStr;
         private final int responseCode;

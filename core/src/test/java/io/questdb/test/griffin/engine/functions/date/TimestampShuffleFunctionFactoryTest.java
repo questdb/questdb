@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,11 +52,24 @@ public class TimestampShuffleFunctionFactoryTest extends AbstractFunctionFactory
     @Test
     public void testEndBeforeStart() throws SqlException {
         call(1000000L, 0L).andInit(sqlExecutionContext).andAssertTimestamp(643856L);
+        call(1000000L, 0L).andInit(sqlExecutionContext).andAssertTimestamp(643856L);
     }
 
     @Test
     public void testStartBeforeEnd() throws SqlException {
         call(0L, 1000000L).andInit(sqlExecutionContext).andAssertTimestamp(643856L);
+    }
+
+    @Test
+    public void testVanilla() throws Exception {
+        assertSql(
+                "timestamp_shuffle\n" +
+                        "1970-01-01T00:00:00.643856Z\n",
+                "select timestamp_shuffle(0, 1000000) from long_sequence(1)");
+        assertSql(
+                "timestamp_shuffle\n" +
+                        "1970-01-01T00:00:00.000967856Z\n",
+                "select timestamp_shuffle(1::timestamp, 1000000::timestamp_ns) from long_sequence(1)");
     }
 
     @Override

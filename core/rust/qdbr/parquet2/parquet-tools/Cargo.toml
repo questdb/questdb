@@ -15,5 +15,5 @@ name = "parquet_tools"
 path = "src/main.rs"
 
 [dependencies]
-parquet2 = { version = "0.14", path = "../" }
+parquet2 = { version = "0.17", path = "../" }
 clap = {version = "2.33", features = ["yaml"]}

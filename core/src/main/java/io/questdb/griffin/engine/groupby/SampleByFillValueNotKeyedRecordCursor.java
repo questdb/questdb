@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,12 +30,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.ObjList;
 
-public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
+public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillRecordCursor {
     private final SimpleMapValuePeeker peeker;
-    private final SimpleMapValue simpleMapValue;
+    private final SimpleMapValue value;
     private boolean endFill = false;
     private boolean firstRun = true;
     private boolean gapFill = false;
@@ -49,8 +48,9 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             ObjList<Function> placeholderFunctions,
             SimpleMapValuePeeker peeker,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
-            SimpleMapValue simpleMapValue,
+            SimpleMapValue value,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -64,6 +64,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,
@@ -77,9 +78,9 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
                 sampleToFunc,
                 sampleToFuncPos
         );
-        this.simpleMapValue = simpleMapValue;
-        record.of(simpleMapValue);
         this.peeker = peeker;
+        this.value = value;
+        record.of(value);
     }
 
     @Override
@@ -121,11 +122,11 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             return peeker.reset();
         }
 
-        final boolean hasNext = notKeyedLoop(simpleMapValue);
+        final boolean hasNext = notKeyedLoop(value);
 
-        if (baseRecord == null && sampleToFunc != TimestampConstant.NULL && !endFill) {
+        if (baseRecord == null && sampleToFunc != timestampDriver.getTimestampConstantNull() && !endFill) {
             endFill = true;
-            upperBound = sampleToFunc.getTimestamp(null);
+            upperBound = timestampDriver.from(sampleToFunc.getTimestamp(null), sampleToFuncType);
             // we must not re-initialize baseRecord after base cursor has been exhausted
             nextSamplePeriod(upperBound);
         }
@@ -137,6 +138,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         super.of(baseCursor, executionContext);
         endFill = false;
         upperBound = Long.MAX_VALUE;
+        firstRun = true;
+        peeker.clear();
     }
 
     @Override
@@ -144,6 +147,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         super.toTop();
         endFill = false;
         upperBound = Long.MAX_VALUE;
+        firstRun = true;
+        peeker.clear();
     }
 
     private boolean setActiveA(long expectedLocalEpoch) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -77,7 +77,7 @@ public class IndexBuilder extends RebuildColumnBase {
                 // lets not leave half-baked file sitting around
                 LOG.error()
                         .$("could not create index [name=").$(path)
-                        .$(", msg=").$(e.getFlyweightMessage())
+                        .$(", msg=").$safe(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 if (!ff.removeQuiet(lpsz)) {
@@ -128,11 +128,12 @@ public class IndexBuilder extends RebuildColumnBase {
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            int timestampType,
             int partitionBy,
             int indexValueBlockCapacity
     ) {
         final int trimTo = path.size();
-        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         try {
             final int plen = path.size();
 

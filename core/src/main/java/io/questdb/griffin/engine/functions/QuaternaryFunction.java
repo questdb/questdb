@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,21 +41,19 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof QuaternaryFunction) {
-            getFunc0().offerStateTo(((QuaternaryFunction) that).getFunc0());
-            getFunc1().offerStateTo(((QuaternaryFunction) that).getFunc1());
-            getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
-            getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
-        }
-    }
-
-    @Override
     default void cursorClosed() {
         getFunc0().cursorClosed();
         getFunc1().cursorClosed();
         getFunc2().cursorClosed();
         getFunc3().cursorClosed();
+    }
+
+    @Override
+    default int getComplexity() {
+        return Function.addComplexity(
+                Function.addComplexity(getFunc0().getComplexity(), getFunc1().getComplexity()),
+                Function.addComplexity(getFunc2().getComplexity(), getFunc3().getComplexity())
+        );
     }
 
     Function getFunc0();
@@ -91,6 +89,11 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default boolean isRandom() {
+        return getFunc0().isRandom() || getFunc1().isRandom() || getFunc2().isRandom() || getFunc3().isRandom();
+    }
+
+    @Override
     default boolean isRuntimeConstant() {
         final boolean arc = getFunc0().isRuntimeConstant();
         final boolean brc = getFunc1().isRuntimeConstant();
@@ -114,11 +117,37 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof QuaternaryFunction other) {
+            getFunc0().offerStateTo(other.getFunc0());
+            getFunc1().offerStateTo(other.getFunc1());
+            getFunc2().offerStateTo(other.getFunc2());
+            getFunc3().offerStateTo(other.getFunc3());
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getFunc0().shouldMemoize()
+                || getFunc1().shouldMemoize()
+                || getFunc2().shouldMemoize()
+                || getFunc3().shouldMemoize();
+    }
+
+    @Override
     default boolean supportsParallelism() {
         return getFunc0().supportsParallelism()
                 && getFunc1().supportsParallelism()
                 && getFunc2().supportsParallelism()
                 && getFunc3().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getFunc0().supportsRandomAccess()
+                && getFunc1().supportsRandomAccess()
+                && getFunc2().supportsRandomAccess()
+                && getFunc3().supportsRandomAccess();
     }
 
     @Override

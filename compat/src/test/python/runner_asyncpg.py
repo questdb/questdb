@@ -5,7 +5,7 @@
 #     \__\_\\__,_|\___||___/\__|____/|____/
 #
 #   Copyright (c) 2014-2019 Appsicle
-#   Copyright (c) 2019-2024 QuestDB
+#   Copyright (c) 2019-2026 QuestDB
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import asyncpg
 import re
 import sys
 from asyncpg import Connection
+
 from common import *
 
 
@@ -107,6 +108,38 @@ async def run_test(test, global_variables):
         password='quest',
         database='qdb'
     )
+
+    # hard-code array types. this is a workaround for asyncpg using
+    # introspection to determine array types. the introspection query uses recursive CTEs which are not supported
+    # by QuestDB :-(
+    # See: https://github.com/MagicStack/asyncpg/discussions/1015
+    float8_array = {
+        'oid': 1022,
+        'elemtype': 701,
+        'kind': 'b',
+        'name': '_float8',
+        'elemtype_name': 'float8',
+        'ns': 'pg_catalog',
+        'elemdelim': ',',
+        'depth': 0,
+        'range_subtype': None,
+        'attrtypoids': None,
+        'basetype': None
+    }
+    varchar_array = {
+        'oid': 1015,
+        'elemtype': 1043,
+        'kind': 'b',
+        'name': '_varchar',
+        'elemtype_name': 'varchar',
+        'ns': 'pg_catalog',
+        'elemdelim': ',',
+        'depth': 0,
+        'range_subtype': None,
+        'attrtypoids': None,
+        'basetype': None
+    }
+    connection._protocol.get_settings().register_data_types([float8_array, varchar_array])
 
     test_failed = False
     try:

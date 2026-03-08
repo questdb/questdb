@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -206,25 +206,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testClosePoolWhenReaderIsOut() throws Exception {
-        assertWithPool(pool -> {
-            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
-            AbstractCairoTest.create(model);
-
-            try (TableReader reader = pool.get(engine.verifyTableName("x"))) {
-                Assert.assertNotNull(reader);
-                try {
-                    pool.close();
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), reader.getTableToken().getDirName() + "' is left behind");
-                }
-                Assert.assertTrue(reader.isOpen());
-            }
-        });
-    }
-
-    @Test
     public void testCloseReaderWhenPoolClosed() throws Exception {
         assertWithPool(pool -> {
             TableReader reader = pool.get(uTableToken);
@@ -233,7 +214,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 pool.close();
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), reader.getTableToken().getDirName() + "' is left behind");
+                TestUtils.assertContains(ex.getFlyweightMessage(),
+                        "table is left behind on pool shutdown [table=" + reader.getTableToken().getDirName() + "]");
             }
             Assert.assertTrue(reader.isOpen());
             reader.close();
@@ -321,7 +303,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 columnRenamed = true;
                             } else {
                                 for (int j = 0; j < writerBatchSize; j++) {
-                                    TableWriter.Row r = writer.newRow(Timestamps.SECOND_MICROS * i);
+                                    TableWriter.Row r = writer.newRow(Micros.SECOND_MICROS * i);
                                     r.putSym(0, writerRnd.nextString(writerRnd.nextInt(32)));
                                     r.append();
                                 }
@@ -333,8 +315,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     errors.incrementAndGet();
                     e.printStackTrace(System.out);
                 } finally {
-                    halt.countDown();
                     Path.clearThreadLocals();
+                    halt.countDown();
                 }
             }).start();
 
@@ -369,8 +351,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         errors.incrementAndGet();
                         e.printStackTrace(System.out);
                     } finally {
-                        halt.countDown();
                         Path.clearThreadLocals();
+                        halt.countDown();
                     }
                 }).start();
             }
@@ -566,7 +548,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
             ) {
                 try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                    TableWriter.Row r = writer.newRow(Timestamps.DAY_MICROS + 1);
+                    TableWriter.Row r = writer.newRow(Micros.DAY_MICROS + 1);
                     r.putSym(0, "bar");
                     r.append();
                     writer.commit();
@@ -654,7 +636,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 final String expected = sink.toString();
 
                 try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                    TableWriter.Row r = writer.newRow(Timestamps.DAY_MICROS + 1);
+                    TableWriter.Row r = writer.newRow(Micros.DAY_MICROS + 1);
                     r.putSym(0, "bar");
                     r.append();
                     writer.commit();
@@ -707,7 +689,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                TableWriter.Row r = writer.newRow(Timestamps.DAY_MICROS + 1);
+                TableWriter.Row r = writer.newRow(Micros.DAY_MICROS + 1);
                 r.putSym(0, "bar");
                 r.append();
                 writer.commit();
@@ -718,7 +700,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
             ) {
                 try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
-                    TableWriter.Row r = writer.newRow(2 * Timestamps.DAY_MICROS + 1);
+                    TableWriter.Row r = writer.newRow(2 * Micros.DAY_MICROS + 1);
                     r.putSym(0, "baz");
                     r.append();
                     writer.commit();
@@ -855,8 +837,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         barrier.await();
                         pool.close();
                     } catch (CairoException e) {
-                        // "is left behind" exception is a valid outcome, ignore it
-                        if (!Chars.contains(e.getFlyweightMessage(), xyzTableToken.getDirName() + "' is left behind")) {
+                        // "table is left behind" exception is a valid outcome, ignore it
+                        if (!Chars.contains(e.getFlyweightMessage(), "table is left behind on pool shutdown")) {
                             exceptionCount.incrementAndGet();
                             e.printStackTrace();
                         }
@@ -1104,7 +1086,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             CyclicBarrier barrier = new CyclicBarrier(2);
             CountDownLatch stopLatch = new CountDownLatch(2);
 
-            TableToken xTableToken = new TableToken("x", "x", 123, false, false, false);
+            TableToken xTableToken = new TableToken("x", "x", null, 123, false, false, false);
 
             final Runnable runnable = () -> {
                 try {
@@ -1298,7 +1280,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testUnlockByAnotherThread() throws Exception {
         assertWithPool(pool -> {
-            TableToken tableToken = new TableToken("Ургант", "Ургант", 123, false, false, false);
+            TableToken tableToken = new TableToken("Ургант", "Ургант", null, 123, false, false, false);
             Assert.assertTrue(pool.lock(tableToken));
             AtomicInteger errors = new AtomicInteger();
 
@@ -1341,7 +1323,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 }
             });
 
-            TableToken tableToken = new TableToken("xyz", "xyz", 123, false, false, false);
+            TableToken tableToken = new TableToken("xyz", "xyz", null, 123, false, false, false);
             pool.unlock(tableToken);
             Assert.assertEquals(1, counter.get());
         });

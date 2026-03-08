@@ -1,8 +1,4 @@
 steps:
-  - checkout: self
-    fetchDepth: 1
-    lfs: false
-    submodules: false
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: eq(variables['os'], 'Linux')

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,13 +39,14 @@ import org.junit.Test;
 
 import java.util.Arrays;
 
-public class DirectLongListTest {
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
+public class DirectLongListTest {
     private static final Log LOG = LogFactory.getLog(DirectLongListTest.class);
 
     @Test
     public void test128BitSort() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST)) {
                 final int N = 100;
                 for (int i = 0; i < N; i++) {
@@ -70,7 +71,7 @@ public class DirectLongListTest {
         int size = 1024 * 1024;
         int range = Integer.MAX_VALUE - 1;
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (DirectLongList list = new DirectLongList(size, MemoryTag.NATIVE_LONG_LIST)) {
                 long[] longList = new long[size];
                 for (int i = 0; i < size; i++) {
@@ -224,6 +225,23 @@ public class DirectLongListTest {
     }
 
     @Test
+    public void testSearch2() {
+        final int N = 100;
+        try (DirectLongList list = new DirectLongList(N, MemoryTag.NATIVE_LONG_LIST)) {
+            for (int i = 0; i < N; i++) {
+                list.add(2 * i);
+            }
+
+            for (int i = 0; i < N; i++) {
+                Assert.assertEquals(i, list.binarySearch(2 * i, Vect.BIN_SEARCH_SCAN_UP));
+                Assert.assertEquals(i, list.binarySearch(2 * i, Vect.BIN_SEARCH_SCAN_DOWN));
+                Assert.assertEquals(-i - 2, list.binarySearch(2 * i + 1, Vect.BIN_SEARCH_SCAN_UP));
+                Assert.assertEquals(-i - 2, list.binarySearch(2 * i + 1, Vect.BIN_SEARCH_SCAN_DOWN));
+            }
+        }
+    }
+
+    @Test
     public void testSearchWithDups() {
         try (DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST)) {
             final int N = 100;
@@ -263,6 +281,34 @@ public class DirectLongListTest {
                 Assert.assertEquals(N - i, list.get(i));
             }
         }
+    }
+
+    @Test
+    public void testSetCapacityOnClosedList() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectLongList list = new DirectLongList(0, MemoryTag.NATIVE_LONG_LIST, true)) {
+                // List is closed (keepClosed=true), setCapacity should allocate memory
+                list.setCapacity(10);
+                list.clear();
+                for (int i = 0; i < 10; i++) {
+                    list.set(i, i * 2);
+                }
+                for (int i = 0; i < 10; i++) {
+                    Assert.assertEquals(i * 2, list.get(i));
+                }
+
+                // Close and call setCapacity again - should re-allocate
+                list.close();
+                list.setCapacity(5);
+                list.clear();
+                for (int i = 0; i < 5; i++) {
+                    list.set(i, i * 3);
+                }
+                for (int i = 0; i < 5; i++) {
+                    Assert.assertEquals(i * 3, list.get(i));
+                }
+            }
+        });
     }
 
     @Test

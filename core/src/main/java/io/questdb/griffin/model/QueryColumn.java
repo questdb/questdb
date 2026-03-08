@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,19 +24,20 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Objects;
-
 public class QueryColumn implements Mutable, Sinkable {
     public static final ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
+    public static final int SYNTHESIZED_ALIAS_POSITION = -1;
     private CharSequence alias;
+    private int aliasPosition;
     private ExpressionNode ast;
-    private int columnType;
+    private int columnType = -1;
     private boolean includeIntoWildcard = true;
 
     public QueryColumn() {
@@ -45,21 +46,18 @@ public class QueryColumn implements Mutable, Sinkable {
     @Override
     public void clear() {
         alias = null;
+        aliasPosition = 0;
         ast = null;
         includeIntoWildcard = true;
         columnType = -1;
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        QueryColumn that = (QueryColumn) o;
-        return includeIntoWildcard == that.includeIntoWildcard && Objects.equals(alias, that.alias) && Objects.equals(ast, that.ast);
-    }
-
     public CharSequence getAlias() {
         return alias;
+    }
+
+    public int getAliasPosition() {
+        return aliasPosition;
     }
 
     public ExpressionNode getAst() {
@@ -74,16 +72,11 @@ public class QueryColumn implements Mutable, Sinkable {
         return alias != null ? alias : ast.token;
     }
 
-    @Override
-    public int hashCode() {
-        return Objects.hash(alias, ast, includeIntoWildcard);
-    }
-
     public boolean isIncludeIntoWildcard() {
         return includeIntoWildcard;
     }
 
-    public boolean isWindowColumn() {
+    public boolean isWindowExpression() {
         return false;
     }
 
@@ -103,8 +96,16 @@ public class QueryColumn implements Mutable, Sinkable {
         return this;
     }
 
-    public void setAlias(CharSequence alias) {
+    public void setAlias(CharSequence alias, int aliasPosition) {
+        if (this.alias == alias || Chars.equalsNc(alias, this.alias)) {
+            return;
+        }
         this.alias = alias;
+        this.aliasPosition = aliasPosition;
+    }
+
+    public void setIncludeIntoWildcard(boolean includeIntoWildcard) {
+        this.includeIntoWildcard = includeIntoWildcard;
     }
 
     @Override

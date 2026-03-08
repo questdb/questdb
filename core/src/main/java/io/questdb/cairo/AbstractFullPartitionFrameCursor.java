@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,11 +31,25 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.TestOnly;
 
+/**
+ * Abstract base class for full partition frame cursors.
+ */
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
+    /**
+     * The partition frame.
+     */
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
-    protected PartitionDecoder parquetDecoder;
+    /**
+     * The partition high boundary.
+     */
     protected int partitionHi;
+    /**
+     * The current partition index.
+     */
     protected int partitionIndex;
+    /**
+     * The table reader.
+     */
     protected TableReader reader;
 
     @Override
@@ -45,7 +59,6 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         if (reader != null && reader.isActive()) {
             reader = Misc.free(reader);
         }
-        Misc.free(parquetDecoder);
     }
 
     @Override
@@ -63,6 +76,12 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         return reader.newSymbolTable(columnIndex);
     }
 
+    /**
+     * Initializes the cursor with the given table reader.
+     *
+     * @param reader the table reader
+     * @return this cursor
+     */
     public PartitionFrameCursor of(TableReader reader) {
         partitionHi = reader.getPartitionCount();
         toTop();
@@ -84,11 +103,29 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         return reader.size();
     }
 
+    /**
+     * A partition frame representing a full table partition.
+     */
     protected static class FullTablePartitionFrame implements PartitionFrame {
+        /**
+         * The partition format.
+         */
         protected byte format;
+        /**
+         * The Parquet decoder if applicable.
+         */
         protected PartitionDecoder parquetDecoder;
+        /**
+         * The partition index.
+         */
         protected int partitionIndex;
+        /**
+         * The high row boundary.
+         */
         protected long rowHi;
+        /**
+         * The low row boundary.
+         */
         protected long rowLo;
 
         @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,96 +24,23 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.window.WindowContext;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
-    protected long rowsLo;
-    protected long rowsHi;
-    protected WindowContext windowContext;
-
     @Override
     public boolean isWindow() {
         return true;
-    }
-
-    protected boolean supportNullsDesc() {
-        return false;
-    }
-
-    protected void checkWindowParameter(int position, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        windowContext = sqlExecutionContext.getWindowContext();
-        if (windowContext.isEmpty()) {
-            throw SqlException.emptyWindowContext(position);
-        }
-
-        if (windowContext.getNullsDescPos() > 0 && !this.supportNullsDesc()) {
-            throw SqlException.$(windowContext.getNullsDescPos(), "RESPECT/IGNORE NULLS is not supported for current window function");
-        }
-
-        rowsLo = windowContext.getRowsLo();
-        rowsHi = windowContext.getRowsHi();
-
-        if (!windowContext.isDefaultFrame()) {
-            if (rowsLo > 0) {
-                throw SqlException.$(windowContext.getRowsLoKindPos(), "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
-            }
-            if (rowsHi > 0) {
-                if (rowsHi != Long.MAX_VALUE) {
-                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports _number_ PRECEDING and CURRENT ROW only");
-                } else if (rowsLo != Long.MIN_VALUE) {
-                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
-                }
-            }
-        }
-
-        int exclusionKind = windowContext.getExclusionKind();
-        int exclusionKindPos = windowContext.getExclusionKindPos();
-        if (exclusionKind != WindowColumn.EXCLUDE_NO_OTHERS
-                && exclusionKind != WindowColumn.EXCLUDE_CURRENT_ROW) {
-            throw SqlException.$(exclusionKindPos, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
-        }
-
-        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW) {
-            // assumes frame doesn't use 'following'
-            if (rowsHi == Long.MAX_VALUE) {
-                throw SqlException.$(exclusionKindPos, "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary");
-            }
-
-            if (rowsHi == 0) {
-                rowsHi = -1;
-            }
-            if (rowsHi < rowsLo) {
-                throw SqlException.$(exclusionKindPos, "end of window is higher than start of window due to exclusion mode");
-            }
-        }
-
-        if (windowContext.getFramingMode() == WindowColumn.FRAMING_GROUPS) {
-            throw SqlException.$(position, "function not implemented for given window parameters");
-        }
-    }
-
-    static class RingBufferDesc {
-        long capacity;
-        long startOffset;
-        long size;
-        long firstIdx;
-        LongList freeList;
-
-        void reset(long capacity, long startOffset, long size, long firstIdx, LongList freeList) {
-            this.capacity = capacity;
-            this.startOffset = startOffset;
-            this.size = size;
-            this.firstIdx = firstIdx;
-            this.freeList = freeList;
-        }
     }
 
     static void expandRingBuffer(MemoryARW memory, RingBufferDesc desc, int recordSize) {
@@ -151,5 +78,197 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
 
         desc.startOffset = newAddress - memory.getPageAddress(0);
+    }
+
+    protected boolean supportNullsDesc() {
+        return false;
+    }
+
+    static abstract class BaseNullFunction extends BaseWindowFunction {
+        private final boolean isRange;
+        private final String name;
+        private final VirtualRecord partitionByRecord;
+        private final long rowHi;
+        private final long rowLo;
+
+        BaseNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord) {
+            super(arg);
+            this.name = name;
+            this.rowLo = rowLo;
+            this.rowHi = rowHi;
+            this.isRange = isRange;
+            this.partitionByRecord = partitionByRecord;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            if (partitionByRecord != null) {
+                Misc.freeObjList(partitionByRecord.getFunctions());
+            }
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            if (arg != null) {
+                sink.val('(').val(arg).val(')');
+            } else {
+                sink.val("(*)");
+            }
+
+            sink.val(" over (");
+            if (partitionByRecord != null) {
+                sink.val("partition by ");
+                sink.val(partitionByRecord.getFunctions());
+            }
+            if (isRange) {
+                sink.val(" range between ");
+            } else {
+                sink.val(" rows between ");
+            }
+
+            if (rowLo != Long.MIN_VALUE) {
+                sink.val(Math.abs(rowLo));
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (rowHi == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(Math.abs(rowHi)).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+        }
+    }
+
+    static class DoubleNullFunction extends BaseNullFunction implements WindowDoubleFunction {
+
+        DoubleNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return Double.NaN;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), Double.NaN);
+        }
+    }
+
+    static class LongNullFunction extends BaseNullFunction implements WindowLongFunction {
+        private final long zeroValue;
+
+        /**
+         * Constructs a LongNullFunction that produces a constant long value for every row in the window.
+         * <p>
+         * The constructor initializes the null-function frame (name, bounds, range flag and partition spec)
+         * and sets the constant value written/read by this function.
+         *
+         * @param zeroValue the constant long value returned by getLong and written into window memory during pass1
+         */
+        LongNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.zeroValue = zeroValue;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return zeroValue;
+        }
+
+        /**
+         * Writes the configured zero timestamp value into the window buffer for the given record offset.
+         *
+         * @param record       the source record (unused; kept for interface compatibility)
+         * @param recordOffset byte offset of the record within window memory
+         */
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
+        }
+    }
+
+    protected static class RingBufferDesc {
+        long capacity;
+        long firstIdx;
+        LongList freeList;
+        long size;
+        long startOffset;
+
+        void reset(long capacity, long startOffset, long size, long firstIdx, LongList freeList) {
+            this.capacity = capacity;
+            this.startOffset = startOffset;
+            this.size = size;
+            this.firstIdx = firstIdx;
+            this.freeList = freeList;
+        }
+    }
+
+    static class TimestampNullFunction extends BaseNullFunction implements WindowTimestampFunction {
+        private final long zeroValue;
+
+        /**
+         * Create a TimestampNullFunction that supplies a constant timestamp for null window entries.
+         *
+         * @param arg               the wrapped argument function
+         * @param name              function name used in plans and diagnostics
+         * @param rowLo             lower window bound (rows or range units)
+         * @param rowHi             upper window bound (rows or range units)
+         * @param isRange           true if the window frame is RANGE, false if ROWS
+         * @param partitionByRecord optional partitioning record (may be null)
+         * @param zeroValue         timestamp value returned/written for null results
+         */
+        TimestampNullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, long zeroValue) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.zeroValue = zeroValue;
+        }
+
+        /**
+         * Returns the configured constant timestamp used to represent null/window-default values.
+         *
+         * <p>The provided record is ignored; the method always returns the stored `zeroValue`.</p>
+         *
+         * @param rec unused record parameter provided by the WindowTimestampFunction interface
+         * @return the constant timestamp value used for nulls
+         */
+        @Override
+        public long getTimestamp(Record rec) {
+            return zeroValue;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        /**
+         * Writes the configured zero timestamp value into the window buffer for the given record offset.
+         *
+         * @param record       the source record (unused; kept for interface compatibility)
+         * @param recordOffset byte offset of the record within window memory
+         */
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
+        }
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -142,7 +142,7 @@ public class CairoMemoryTest extends AbstractTest {
 
         class X extends FilesFacadeImpl {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 int n = name.size();
                 if (n > 5 && Utf8s.equalsAscii(".fail", name, n - 5, n)) {
                     return -1;
@@ -271,7 +271,7 @@ public class CairoMemoryTest extends AbstractTest {
 
         class X extends FilesFacadeImpl {
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, int opts) {
                 int n = name.size();
                 if (n > 5 && Utf8s.equalsAscii(".fail", name, n - 5, n)) {
                     return -1;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
@@ -35,7 +34,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.VirtualFunctionDirectSymbolRecordCursor;
+import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -88,8 +87,6 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         final RecordCursor baseCursor = base.getCursor(executionContext);
         cursor.of(baseCursor, executionContext);
         return cursor;
@@ -140,7 +137,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         closed = true;
     }
 
-    class WindowRecordCursor extends VirtualFunctionDirectSymbolRecordCursor {
+    class WindowRecordCursor extends AbstractVirtualFunctionRecordCursor {
 
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
@@ -177,7 +174,12 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void skipRows(Counter rowCount) {
             // we can't skip to an arbitrary result set point because current window function value might depend
             // on values in other rows that could be located anywhere
             RecordCursor.skipRows(this, rowCount);

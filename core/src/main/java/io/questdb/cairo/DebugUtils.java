@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,41 +55,14 @@ public class DebugUtils {
         return true;
     }
 
-    public static boolean isSparseVarCol(long colRowCount, long iAddr, long dAddr, int colType) {
-        if (colType == ColumnType.STRING || colType == ColumnType.BINARY) {
-            for (int row = 0; row < colRowCount; row++) {
-                long offset = Unsafe.getUnsafe().getLong(iAddr + (long) row * Long.BYTES);
-                long iLen = Unsafe.getUnsafe().getLong(iAddr + (long) (row + 1) * Long.BYTES) - offset;
-                long dLen = ColumnType.isString(colType) ? Unsafe.getUnsafe().getInt(dAddr + offset) : Unsafe.getUnsafe().getLong(dAddr + offset);
-                int lenLen = ColumnType.isString(colType) ? 4 : 8;
-                long dataLen = ColumnType.isString(colType) ? dLen * 2 : dLen;
-                long dStorageLen = dLen > 0 ? dataLen + lenLen : lenLen;
-                if (iLen != dStorageLen) {
-                    // Swiss cheese hole in var col file
-                    return true;
-                }
-            }
-            return false;
-        } else if (colType == ColumnType.VARCHAR) {
-            ColumnTypeDriver driver = ColumnType.getDriver(colType);
-            long lastSizeInDataVector = 0;
-            for (int row = 0; row < colRowCount; row++) {
-                long offset = driver.getDataVectorOffset(iAddr, row);
-                if (offset != lastSizeInDataVector) {
-                    // Swiss cheese hole in var col file
-                    return true;
-                }
-                lastSizeInDataVector = driver.getDataVectorSizeAt(iAddr, row);
-            }
-            return false;
-        } else {
-            throw new AssertionError("Not a var col");
-        }
+    public static boolean isSparseVarCol(long colRowCount, long auxMemAddr, long dataMemAddr, int colType) {
+        return ColumnType.getDriver(colType).isSparseDataVector(auxMemAddr, dataMemAddr, colRowCount);
     }
 
     // Useful debugging method
     public static boolean reconcileColumnTops(int partitionsSlotSize, LongList openPartitionInfo, ColumnVersionReader columnVersionReader, TableReader reader) {
         int partitionCount = reader.getPartitionCount();
+        TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
         for (int p = 0; p < partitionCount; p++) {
             long partitionRowCount = reader.getPartitionRowCount(p);
             if (partitionRowCount != -1) {
@@ -99,7 +72,7 @@ public class DebugUtils {
                     long columnTopRaw = columnVersionReader.getColumnTop(partitionTimestamp, c);
                     long columnTop = Math.min(columnTopRaw == -1 ? partitionRowCount : columnTopRaw, partitionRowCount);
                     if (columnTop != colTop) {
-                        LOG.critical().$("failed to reconcile column top [partition=").$ts(partitionTimestamp)
+                        LOG.critical().$("failed to reconcile column top [partition=").$ts(driver, partitionTimestamp)
                                 .$(", column=").$(c)
                                 .$(", expected=").$(columnTop)
                                 .$(", actual=").$(colTop).$(']').
@@ -131,20 +104,20 @@ public class DebugUtils {
         }
     }
 
-    static void logO3Index(long indexAddr, long indexSize, long tailLen) {
+    static void logO3Index(TimestampDriver driver, long indexAddr, long indexSize, long tailLen) {
         long start = Math.max(0, indexSize - tailLen);
         for (long i = start; i < indexSize; i++) {
             long ts = Unsafe.getUnsafe().getLong(indexAddr + 16 * i);
             long rowId = Unsafe.getUnsafe().getLong(indexAddr + 16 * i + 8);
-            LOG.info().$("index [").$(i).$("] = ").$ts(ts).$(", ts=").$(ts).$(", rowId=").$(rowId).$();
+            LOG.info().$("index [").$(i).$("] = ").$ts(driver, ts).$(", ts=").$(ts).$(", rowId=").$(rowId).$();
         }
     }
 
-    static void logTimestampColumn(long colAddr, long colSize, long tailLen) {
+    static void logTimestampColumn(TimestampDriver driver, long colAddr, long colSize, long tailLen) {
         long start = Math.max(0, colSize - tailLen);
         for (long i = start; i < colSize; i++) {
             long ts = Unsafe.getUnsafe().getLong(colAddr + 8 * i);
-            LOG.info().$("ts_col [").$(i).$("] = ").$ts(ts).$(", ts=").$(ts).$();
+            LOG.info().$("ts_col [").$(i).$("] = ").$ts(driver, ts).$(", ts=").$(ts).$();
         }
     }
 }

@@ -3,7 +3,7 @@ use std::{cmp, io, mem, slice};
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
 use parquet2::compression::CompressionOptions;
-use parquet2::encoding::hybrid_rle::encode_bool;
+use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
@@ -16,6 +16,12 @@ use parquet2::write::Version;
 pub struct MaxMin<T> {
     pub max: Option<T>,
     pub min: Option<T>,
+}
+
+impl<T: Copy + NativeType> Default for MaxMin<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Copy + NativeType> MaxMin<T> {
@@ -36,7 +42,34 @@ impl<T: Copy + NativeType> MaxMin<T> {
     }
 }
 
-pub struct BinaryMaxMin {
+impl MaxMin<i32> {
+    /// Updates max/min by interpreting `x` as an unsigned value for comparison.
+    /// Useful for types like IPv4 where the bit pattern represents an unsigned
+    /// value but is stored as `i32`.
+    pub fn update_unsigned(&mut self, x: i32) {
+        let xu = x as u32;
+        self.max = Some(if let Some(max) = self.max {
+            if xu > max as u32 {
+                x
+            } else {
+                max
+            }
+        } else {
+            x
+        });
+        self.min = Some(if let Some(min) = self.min {
+            if xu < min as u32 {
+                x
+            } else {
+                min
+            }
+        } else {
+            x
+        });
+    }
+}
+
+pub struct BinaryMaxMinStats {
     primitive_type: PrimitiveType,
     max_value: Option<Vec<u8>>,
     min_value: Option<Vec<u8>>,
@@ -44,7 +77,7 @@ pub struct BinaryMaxMin {
 
 const SIZEOF_I64: usize = mem::size_of::<i64>();
 
-impl BinaryMaxMin {
+impl BinaryMaxMinStats {
     pub fn new(primitive_type: &PrimitiveType) -> Self {
         Self {
             primitive_type: primitive_type.clone(),
@@ -122,6 +155,27 @@ fn binary_upper_bound(max_value: Vec<u8>) -> Vec<u8> {
     upper_bound.to_be_bytes().to_vec()
 }
 
+pub struct ArrayStats {
+    null_count: usize,
+}
+
+impl ArrayStats {
+    pub fn new(null_count: usize) -> Self {
+        Self { null_count }
+    }
+
+    pub fn into_parquet_stats(self) -> ParquetStatistics {
+        ParquetStatistics {
+            null_count: Some(self.null_count as i64),
+            distinct_count: None,
+            max_value: None,
+            min_value: None,
+            min: None,
+            max: None,
+        }
+    }
+}
+
 pub struct ExactSizedIter<T, I: Iterator<Item = T>> {
     iter: I,
     remaining: usize,
@@ -155,36 +209,86 @@ impl<T, I: Iterator<Item = T>> Iterator for ExactSizedIter<T, I> {
     }
 }
 
-fn encode_iter_v1<I: Iterator<Item = bool>>(buffer: &mut Vec<u8>, iter: I) -> io::Result<()> {
+fn encode_primitive_def_levels_v1<I: Iterator<Item = bool>>(
+    buffer: &mut Vec<u8>,
+    iter: I,
+    length: usize,
+) -> io::Result<()> {
     buffer.extend_from_slice(&[0; 4]);
     let start = buffer.len();
-    encode_bool(buffer, iter)?;
+    encode_bool(buffer, iter, length)?;
     let end = buffer.len();
-    let length = end - start;
+    let length_bytes = end - start;
 
     // write the first 4 bytes as length
-    let length = (length as i32).to_le_bytes();
-    (0..4).for_each(|i| buffer[start - 4 + i] = length[i]);
+    let length_bytes = (length_bytes as i32).to_le_bytes();
+    (0..4).for_each(|i| buffer[start - 4 + i] = length_bytes[i]);
     Ok(())
 }
 
-fn encode_iter_v2<I: Iterator<Item = bool>>(buffer: &mut Vec<u8>, iter: I) -> io::Result<()> {
-    encode_bool(buffer, iter)
-}
-
-pub fn encode_bool_iter<I: Iterator<Item = bool>>(
+fn encode_primitive_def_levels_v2<I: Iterator<Item = bool>>(
     buffer: &mut Vec<u8>,
     iter: I,
+    length: usize,
+) -> io::Result<()> {
+    encode_bool(buffer, iter, length)
+}
+
+pub fn encode_primitive_def_levels<I: Iterator<Item = bool>>(
+    buffer: &mut Vec<u8>,
+    iter: I,
+    length: usize,
     version: Version,
 ) -> io::Result<()> {
     match version {
-        Version::V1 => encode_iter_v1(buffer, iter),
-        Version::V2 => encode_iter_v2(buffer, iter),
+        Version::V1 => encode_primitive_def_levels_v1(buffer, iter, length),
+        Version::V2 => encode_primitive_def_levels_v2(buffer, iter, length),
+    }
+}
+
+fn encode_group_levels_v1<I: Iterator<Item = u32>>(
+    buffer: &mut Vec<u8>,
+    iter: I,
+    length: usize,
+    num_bits: u32,
+) -> io::Result<()> {
+    buffer.extend_from_slice(&[0; 4]);
+    let start = buffer.len();
+    encode_u32(buffer, iter, length, num_bits)?;
+    let end = buffer.len();
+    let length_bytes = end - start;
+
+    // write the first 4 bytes as length
+    let length_bytes = (length_bytes as i32).to_le_bytes();
+    (0..4).for_each(|i| buffer[start - 4 + i] = length_bytes[i]);
+    Ok(())
+}
+
+fn encode_group_levels_v2<I: Iterator<Item = u32>>(
+    buffer: &mut Vec<u8>,
+    iter: I,
+    length: usize,
+    num_bits: u32,
+) -> io::Result<()> {
+    encode_u32(buffer, iter, length, num_bits)
+}
+
+pub fn encode_group_levels<I: Iterator<Item = u32>>(
+    buffer: &mut Vec<u8>,
+    iter: I,
+    length: usize,
+    max_level: u32,
+    version: Version,
+) -> io::Result<()> {
+    let num_bits = bit_width(max_level as u64);
+    match version {
+        Version::V1 => encode_group_levels_v1(buffer, iter, length, num_bits.into()),
+        Version::V2 => encode_group_levels_v2(buffer, iter, length, num_bits.into()),
     }
 }
 
 #[inline]
-pub fn get_bit_width(max: u64) -> u8 {
+pub fn bit_width(max: u64) -> u8 {
     (64 - max.leading_zeros()) as u8
 }
 
@@ -198,6 +302,7 @@ pub fn build_plain_page(
     primitive_type: PrimitiveType,
     options: WriteOptions,
     encoding: Encoding,
+    required: bool,
 ) -> ParquetResult<DataPage> {
     let header = match options.version {
         Version::V1 => DataPageHeader::V1(DataPageHeaderV1 {
@@ -221,7 +326,11 @@ pub fn build_plain_page(
     Ok(DataPage::new(
         header,
         buffer,
-        Descriptor { primitive_type, max_def_level: 1, max_rep_level: 0 },
+        Descriptor {
+            primitive_type,
+            max_def_level: if required { 0 } else { 1 },
+            max_rep_level: 0,
+        },
         Some(num_rows),
     ))
 }
@@ -241,7 +350,7 @@ mod tests {
     use parquet2::encoding::bitpacked;
     use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 
-    use crate::parquet_write::util::encode_bool_iter;
+    use crate::parquet_write::util::encode_primitive_def_levels;
 
     #[test]
     fn decode_bitmap_v2() {
@@ -255,9 +364,10 @@ mod tests {
             .map(|x| if *x { 1u8 } else { 0u8 })
             .collect::<Vec<_>>();
         let mut buff = vec![];
-        encode_bool_iter(
+        encode_primitive_def_levels(
             &mut buff,
             expected.iter().cloned(),
+            expected.len(),
             parquet2::write::Version::V2,
         )
         .unwrap();
@@ -287,9 +397,10 @@ mod tests {
             .map(|x| if *x { 1u8 } else { 0u8 })
             .collect::<Vec<_>>();
         let mut buff = vec![];
-        encode_bool_iter(
+        encode_primitive_def_levels(
             &mut buff,
             expected.iter().cloned(),
+            expected.len(),
             parquet2::write::Version::V1,
         )
         .unwrap();
@@ -308,5 +419,25 @@ mod tests {
         } else {
             panic!()
         };
+    }
+
+    #[test]
+    fn test_max_min_update_unsigned() {
+        let mut mm: super::MaxMin<i32> = super::MaxMin::new();
+
+        // i32::MIN (0x80000000) is largest as unsigned (2^31)
+        // i32::MAX (0x7FFFFFFF) is 2^31 - 1 as unsigned
+        mm.update_unsigned(0);
+        assert_eq!(mm.min, Some(0));
+        assert_eq!(mm.max, Some(0));
+
+        mm.update_unsigned(i32::MAX); // 0x7FFFFFFF = 2147483647u32
+        assert_eq!(mm.max, Some(i32::MAX));
+
+        mm.update_unsigned(-1); // 0xFFFFFFFF = 4294967295u32 (max u32)
+        assert_eq!(mm.max, Some(-1));
+
+        mm.update_unsigned(i32::MIN); // 0x80000000 = 2147483648u32
+        assert_eq!(mm.min, Some(0)); // 0 is still the smallest unsigned
     }
 }

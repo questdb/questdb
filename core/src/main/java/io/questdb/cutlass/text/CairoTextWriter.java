@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -259,7 +259,8 @@ public class CairoTextWriter implements Closeable, Mutable {
                 path,
                 false,
                 tableStructureAdapter.of(names, detectedTypes),
-                false
+                false,
+                TableUtils.TABLE_KIND_REGULAR_TABLE
         );
         this.types = detectedTypes;
         return tableToken;
@@ -308,21 +309,24 @@ public class CairoTextWriter implements Closeable, Mutable {
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.DATE:
                         logTypeError(i);
-                        this.types.setQuick(i, BadDateAdapter.INSTANCE);
+                        types.setQuick(i, BadDateAdapter.INSTANCE);
                         break;
                     case ColumnType.TIMESTAMP:
-                        if (detectedAdapter instanceof TimestampCompatibleAdapter) {
-                            this.types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));
+                        // different timestamp type
+                        if (detectedAdapter instanceof TimestampAdapter) {
+                            ((TimestampAdapter) detectedAdapter).reCompileDateFormat(ColumnType.getTimestampDriver(columnType).getTimestampDateFormatFactory());
+                        } else if (detectedAdapter instanceof TimestampCompatibleAdapter) {
+                            types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter, columnType));
                         } else {
                             logTypeError(i);
-                            this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                            types.setQuick(i, BadTimestampAdapter.INSTANCE);
                         }
                         break;
                     case ColumnType.BINARY:
                         writer.close();
                         throw CairoException.nonCritical().put("cannot import text into BINARY column [index=").put(i).put(']');
                     default:
-                        this.types.setQuick(i, typeManager.getTypeAdapter(columnType));
+                        types.setQuick(i, typeManager.getTypeAdapter(columnType));
                         break;
                 }
             }
@@ -340,7 +344,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void logTypeError(int i) {
         LOG.info()
-                .$("mis-detected [table=").$(tableName)
+                .$("mis-detected [table=").$safe(tableName)
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(types.getQuick(i).getType()))
                 .$(']').$();
@@ -398,6 +402,12 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 tableToken = engine.getTableTokenIfExists(tableName);
+                if (tableToken != null && tableToken.isView()) {
+                    throw CairoException.nonCritical()
+                            .put("cannot modify view [view=")
+                            .put(tableToken.getTableName())
+                            .put(']');
+                }
                 if (tableToken != null && tableToken.isMatView()) {
                     throw CairoException.nonCritical()
                             .put("cannot modify materialized view [view=")
@@ -406,7 +416,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
-                    engine.dropTableOrMatView(path, tableToken);
+                    engine.dropTableOrViewOrMatView(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     tableReCreated = true;
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
@@ -439,11 +449,11 @@ public class CairoTextWriter implements Closeable, Mutable {
             // to use table's maxUncommittedRows and o3MaxLag if they're not set.
             if (o3MaxLag == -1 && !writer.getMetadata().isWalEnabled()) {
                 o3MaxLag = TableUtils.getO3MaxLag(writer.getMetadata(), engine);
-                LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
+                LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").$safe(tableName).$();
             }
             if (maxUncommittedRows == -1) {
                 maxUncommittedRows = TableUtils.getMaxUncommittedRows(writer.getMetadata(), engine);
-                LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
+                LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").$safe(tableName).$();
             }
         }
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,29 +27,15 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.Collection;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 
-@RunWith(Parameterized.class)
 public class PGMemoryLimitTest extends BasePGTest {
-
-    public PGMemoryLimitTest(LegacyMode legacyMode) {
-        super(legacyMode);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return legacyModeParams();
-    }
-
     @Test
     public void testUpdateRecoversFromOomError() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {

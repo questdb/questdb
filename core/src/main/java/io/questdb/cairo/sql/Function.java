@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,11 +26,14 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -43,6 +46,22 @@ import java.io.Closeable;
 
 public interface Function extends Closeable, StatefulAtom, Plannable {
 
+    int COMPLEXITY_ARITHMETIC = 2;
+    int COMPLEXITY_CAST = 3;
+    int COMPLEXITY_COLUMN = 1;
+    int COMPLEXITY_GEO = 30;
+    int COMPLEXITY_JSON = 80;
+    int COMPLEXITY_MAX = 10_000;
+    int COMPLEXITY_NONE = 0;
+    int COMPLEXITY_REGEX = 50;
+    int COMPLEXITY_STRING_OP = 10;
+    int COMPLEXITY_SUBQUERY = 1000;
+
+    static int addComplexity(int a, int b) {
+        long sum = (long) a + b;
+        return (int) Math.min(sum, COMPLEXITY_MAX);
+    }
+
     /**
      * Initializes each function in the list of clones. It is assumed by this method that "clones" are copies of
      * the same function.
@@ -54,7 +73,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * During concurrent SQL execution it might be beneficial to split the "init" phase into per-SQL execution and
      * per-thread. For example "init" could be a heavy SQL execution itself, which would benefit from executing once and
      * copying state of this execution to clones, so that clones to not have to repeat that heavy SQL execution. The
-     * "prototype" function is the one that has already been fully initialized and it is ready to pass its state to
+     * "prototype" function is the one that has already been fully initialized, and it is ready to pass its state to
      * all the clones.
      * <p>
      * Even though the prototype will be trying to pass its state, the clones do not have to accept it and choose to
@@ -101,10 +120,32 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void close() {
     }
 
+    /**
+     * Called when the cursor is closed.
+     */
     default void cursorClosed() {
     }
 
-    int getArrayLength();
+    /**
+     * Returns the extended operations for this function, if any.
+     *
+     * @return the function extension, or null if none
+     */
+    default FunctionExtension extendedOps() {
+        return null;
+    }
+
+    default int getComplexity() {
+        return COMPLEXITY_COLUMN;
+    }
+
+    /**
+     * Returns the array value from the record.
+     *
+     * @param rec the record to read from
+     * @return the array view
+     */
+    ArrayView getArray(Record rec);
 
     BinarySequence getBin(Record rec);
 
@@ -118,31 +159,97 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     long getDate(Record rec);
 
+    /**
+     * Sets the raw value of sink (the scale is caller saved).
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write the decimal value to
+     */
+    void getDecimal128(Record rec, Decimal128 sink);
+
+    short getDecimal16(Record rec);
+
+    /**
+     * Sets the raw value of sink (the scale is caller saved).
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write the decimal value to
+     */
+    void getDecimal256(Record rec, Decimal256 sink);
+
+    int getDecimal32(Record rec);
+
+    long getDecimal64(Record rec);
+
+    byte getDecimal8(Record rec);
+
     double getDouble(Record rec);
 
     float getFloat(Record rec);
 
+    /**
+     * Returns the geohash byte value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash byte value
+     */
     byte getGeoByte(Record rec);
 
+    /**
+     * Returns the geohash int value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash int value
+     */
     int getGeoInt(Record rec);
 
+    /**
+     * Returns the geohash long value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash long value
+     */
     long getGeoLong(Record rec);
 
+    /**
+     * Returns the geohash short value from the record.
+     *
+     * @param rec the record to read from
+     * @return the geohash short value
+     */
     short getGeoShort(Record rec);
 
     int getIPv4(Record rec);
 
     int getInt(Record rec);
 
+    /**
+     * Returns the interval value from the record.
+     *
+     * @param rec the record to read from
+     * @return the interval value
+     */
     @NotNull
     Interval getInterval(Record rec);
 
+    /**
+     * Returns the long value from the record.
+     *
+     * @param rec the record to read from
+     * @return the long value
+     */
     long getLong(Record rec);
 
     long getLong128Hi(Record rec);
 
     long getLong128Lo(Record rec);
 
+    /**
+     * Writes the Long256 value to the given sink.
+     *
+     * @param rec  the record to read from
+     * @param sink the sink to write to
+     */
     void getLong256(Record rec, CharSink<?> sink);
 
     Long256 getLong256A(Record rec);
@@ -161,9 +268,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getClass().getName();
     }
 
-    // function returns a record of values
-    Record getRecord(Record rec);
-
     // when function returns factory it becomes factory
     // on other words this is not a tear-away instance
     RecordCursorFactory getRecordCursorFactory();
@@ -172,18 +276,18 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     CharSequence getStrA(Record rec);
 
-    CharSequence getStrA(Record rec, int arrayIndex);
-
     CharSequence getStrB(Record rec);
-
-    CharSequence getStrB(Record rec, int arrayIndex);
 
     int getStrLen(Record rec);
 
-    int getStrLen(Record rec, int arrayIndex);
-
     CharSequence getSymbol(Record rec);
 
+    /**
+     * Returns the symbol value from the record (alternate buffer).
+     *
+     * @param rec the record to read from
+     * @return the symbol value
+     */
     CharSequence getSymbolB(Record rec);
 
     long getTimestamp(Record rec);
@@ -197,6 +301,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     Utf8Sequence getVarcharB(Record rec);
 
     /**
+     * Returns the size of the varchar value.
+     *
+     * @param rec the record to read from
      * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
      */
     int getVarcharSize(Record rec);
@@ -212,6 +319,30 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+    default boolean isConstantOrRuntimeConstant() {
+        return isConstant() || isRuntimeConstant();
+    }
+
+    /**
+     * Performs a best-effort comparison to check if two functions are equivalent.
+     * This is used for optimization purposes to identify duplicate or equivalent expressions.
+     * <p>
+     * Note: A false result does not guarantee that the functions are different - it just means
+     * equivalence could not be determined through this best-effort comparison.
+     *
+     * @param obj the function to compare with
+     * @return true if the functions are definitely equivalent, false if they may or may not be equivalent.
+     */
+    default boolean isEquivalentTo(Function obj) {
+        return this == obj;
+    }
+
+    /**
+     * Returns true if this function is non-deterministic.
+     *
+     * @return true if non-deterministic
+     */
     default boolean isNonDeterministic() {
         return false;
     }
@@ -222,6 +353,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     // used in generic toSink implementations
     default boolean isOperator() {
+        return false;
+    }
+
+    default boolean isRandom() {
         return false;
     }
 
@@ -266,6 +401,18 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     default void offerStateTo(Function that) {
+    }
+
+    /**
+     * For exactly once per-row execution functions can declare themselves memoizable by
+     * returning true out of this method. Typically, this is all what's required. FunctionParser will
+     * wrap memoizable functions into type-specific Memoizers. These memoizers will implement {@see memoize} method.
+     * Caching heavy or potentially volatile computations for each data row.
+     *
+     * @return if function is memoizable
+     */
+    default boolean shouldMemoize() {
+        return false;
     }
 
     /**

@@ -3,6 +3,7 @@ name = "sqllogictest"
 version = "0.21.0"
 description = "Sqllogictest parser and runner."
 edition = "2021"
+license = "Apache-2.0"
 
 [lib]
 name = "sqllogictest"

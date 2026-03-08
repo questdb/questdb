@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DefaultDdlListener;
@@ -43,25 +44,34 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.text.CopyImportRequestJob;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -72,6 +82,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
@@ -87,9 +98,11 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -99,8 +112,10 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.QuestDBTestNode;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.cutlass.http.HttpUtils;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
@@ -116,19 +131,30 @@ import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.test.AbstractTest.CLOSEABLE;
 import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
+    public static final boolean INVALID = true;
+    public static final boolean VALID = false;
+    private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -180,7 +206,7 @@ public final class TestUtils {
 
     public static void assertContains(String message, CharSequence sequence, CharSequence term) {
         // Assume that "" is contained in any string.
-        if (term.length() == 0) {
+        if (term.isEmpty()) {
             return;
         }
         if (Chars.contains(sequence, term)) {
@@ -191,6 +217,30 @@ public final class TestUtils {
 
     public static void assertContains(CharSequence sequence, CharSequence term) {
         assertContains(null, sequence, term);
+    }
+
+    public static void assertContainsEither(CharSequence sequence, CharSequence term1, CharSequence term2) {
+        // Assume that "" is contained in any string.
+        if (term1.isEmpty() || term2.isEmpty()) {
+            return;
+        }
+
+        if (Chars.contains(sequence, term1)) {
+            return;
+        }
+        if (Chars.contains(sequence, term2)) {
+            return;
+        }
+        Assert.fail("'" + sequence + "' does not contain either: " + term1 + " or " + term2);
+    }
+
+    public static void assertContainsEither(CharSequence sequence, CharSequence... terms) {
+        for (CharSequence term : terms) {
+            if (Chars.contains(sequence, term)) {
+                return;
+            }
+        }
+        Assert.fail("'" + sequence + "' does not contain either: " + String.join(" or ", terms));
     }
 
     public static void assertCursor(
@@ -228,6 +278,8 @@ public final class TestUtils {
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
         final int timestampIndex = metadataActual.getTimestampIndex();
+        final int timestampType = metadataActual.getTimestampType();
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
 
         long timestampValue = -1;
         HashMap<String, Integer> mapL = null;
@@ -256,8 +308,8 @@ public final class TestUtils {
                 if (tsL != tsR) {
                     throw new AssertionError(String.format(
                             "Row %d column %s[%s] %s. Expected %s but found %s",
-                            rowIndex, metadataActual.getColumnName(timestampIndex), ColumnType.TIMESTAMP,
-                            "timestamp mismatch", Timestamps.toUSecString(tsL), Timestamps.toUSecString(tsR)
+                            rowIndex, metadataActual.getColumnName(timestampIndex), timestampType,
+                            "timestamp mismatch", driver.toMSecString(tsL), driver.toUSecString(tsR)
                     ));
                 }
 
@@ -568,6 +620,26 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(ArrayView expected, ArrayView actual) {
+        if (expected == null) {
+            Assert.assertNull("expected NULL array", actual);
+            return;
+        }
+        Assert.assertNotNull("expected NON-NULL array", actual);
+        // Check that the number of dimensions matches
+        final int expectedDimCount = expected.getDimCount();
+        Assert.assertEquals("Array dimensionality mismatch", expectedDimCount, actual.getDimCount());
+        if (expectedDimCount == 0) {
+            return;
+        }
+        // Check if each dimension has the same length
+        for (int i = 0; i < expectedDimCount; i++) {
+            Assert.assertEquals(expected.getDimLen(i), actual.getDimLen(i));
+        }
+        // Compare elements using flat indexing
+        assertEqualsRecursive(expected, actual, 0, 0, 0);
+    }
+
     public static void assertEqualsExactOrder(
             RecordCursor cursorExpected, RecordMetadata metadataExpected,
             RecordCursor cursorActual, RecordMetadata metadataActual, boolean genericStringMatch
@@ -628,7 +700,34 @@ public final class TestUtils {
     }
 
     public static void assertEventually(EventualCode assertion) throws Exception {
-        assertEventually(assertion, 30);
+        assertEventually(assertion, 60);
+    }
+
+    public static void assertEventually(EventualCode assertion, Set<Class<?>> exceptionTypesToCatch) throws Exception {
+        exceptionTypesToCatch.add(AssertionError.class);
+        assertEventually(assertion, 30, exceptionTypesToCatch);
+    }
+
+    public static void assertEventually(EventualCode assertion, int timeoutSeconds, Set<Class<?>> exceptionTypesToCatch) throws Exception {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (Exception error) {
+                if (!exceptionTypesToCatch.contains(error.getClass())) {
+                    throw error;
+                }
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
     }
 
     public static void assertEventually(EventualCode assertion, int timeoutSeconds) throws Exception {
@@ -648,6 +747,72 @@ public final class TestUtils {
             Os.sleep(nextSleepingTimeMillis);
             nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
         }
+    }
+
+    public static void assertException(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            CharSequence expectedMessage,
+            int expectedPosition,
+            MutableCharSink<?> sink
+    ) throws SqlException {
+        try {
+            assertException(
+                    engine,
+                    sqlExecutionContext,
+                    false,
+                    sql,
+                    sink
+            );
+            Assert.fail();
+        } catch (CairoException | SqlException e) {
+            assertContains(e.getMessage(), expectedMessage);
+            Assert.assertEquals(expectedPosition, e.getPosition());
+        }
+    }
+
+    public static void assertException(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            boolean fullFatJoins,
+            CharSequence sql,
+            MutableCharSink<?> sink
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoins);
+            CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
+            if (cq.getRecordCursorFactory() != null) {
+                try (
+                        RecordCursorFactory factory = cq.getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    sink.clear();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // ignore the output, we're looking for an error
+                        println(record, factory.getMetadata(), sink);
+                        sink.clear();
+                    }
+                }
+            } else if (cq.getOperation() != null) {
+                try (
+                        Operation op = cq.getOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, null)
+                ) {
+                    fut.await();
+                }
+            } else {
+                // make sure to close update/insert operation
+                try (
+                        UpdateOperation ignore = cq.getUpdateOperation();
+                        InsertOperation ignored = cq.popInsertOperation()
+                ) {
+                    CairoEngine.execute(compiler, sql, sqlExecutionContext, null);
+                }
+            }
+        }
+        Assert.fail("SQL statement should have failed");
     }
 
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
@@ -723,7 +888,7 @@ public final class TestUtils {
      * @param term     the {@code CharSequence} to search for (and assert its absence).
      */
     public static void assertNotContains(String message, CharSequence sequence, CharSequence term) {
-        if (term.length() == 0) {
+        if (term.isEmpty()) {
             String formatted = "";
             if (message != null) {
                 formatted = message + " ";
@@ -745,6 +910,77 @@ public final class TestUtils {
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
         try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
             assertCursor(expected, cursor, reader.getMetadata(), true, sink);
+        }
+    }
+
+    public static void assertResponse(HttpClient.Request request, int expectedStatusCode, String expectedHttpResponse) {
+        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
+            responseHeaders.await();
+            assertEquals(String.valueOf(expectedStatusCode), responseHeaders.getStatusCode());
+            HttpUtils.assertChunkedBody(responseHeaders, expectedHttpResponse);
+        }
+    }
+
+    /**
+     * Asserts that the actual lines are the same as the expected lines in the reverse order.
+     * For example, assertion with expected: "123\n456\n789\n" and actual: "789\n456\n123\n" passes.
+     * This method expects for the char sequences to end up with a newline character.
+     */
+    public static void assertReverseLinesEqual(@Nullable String message, CharSequence expected, CharSequence actual) {
+        String cleanMessage = message == null ? "" : message;
+        if (expected == null && actual == null) {
+            return;
+        }
+
+        if (expected != null && actual == null) {
+            Assert.fail(cleanMessage + "expected:<" + expected + "> but was: NULL");
+        }
+
+        if (expected == null) {
+            Assert.fail(cleanMessage + "expected: NULL but was:<" + actual + ">");
+        }
+
+        if (expected.length() != actual.length()) {
+            Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+        }
+
+        if (expected.isEmpty()) {
+            // If expected is empty, so is actual here (otherwise it would have failed the last condition).
+            return;
+        }
+
+        if (expected.charAt(expected.length() - 1) != '\n') {
+            Assert.fail(cleanMessage + "expected must end up with a newline character");
+        }
+
+        if (actual.charAt(actual.length() - 1) != '\n') {
+            Assert.fail(cleanMessage + "actual must end up with a newline character");
+        }
+
+        int expLo = expected.length();
+        int actHi = -1;
+        final int actLen = actual.length();
+        while (expLo != 0) {
+            int idx = Chars.lastIndexOf(expected, 0, expLo - 1, '\n');
+            final int len = expLo - idx - 1;
+            expLo = idx + 1;
+
+            final int actLo = actHi + 1;
+            idx = Chars.indexOf(actual, actLo, actLen, '\n');
+            if (idx == -1 || idx - actHi != len) {
+                Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+            }
+            actHi = idx;
+
+            for (int j = 0; j < len; j++) {
+                if (expected.charAt(expLo + j) != actual.charAt(actLo + j)) {
+                    Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
+                }
+            }
+        }
+
+        if (actHi != actLen - 1) {
+            Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
         }
     }
 
@@ -901,11 +1137,24 @@ public final class TestUtils {
     }
 
     public static void assertSqlWithTypes(
-            SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            CharSequence sql, MutableUtf16Sink sink, CharSequence expected
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink,
+            CharSequence expected
     ) throws SqlException {
         printSqlWithTypes(compiler, sqlExecutionContext, sql, sink);
         assertEquals(expected, sink);
+    }
+
+    public static void assertViewState(boolean expectedInvalid, ViewState viewState) {
+        assertNotNull(viewState);
+        try {
+            viewState.lockForRead();
+            Assert.assertEquals(expectedInvalid, viewState.isInvalid());
+        } finally {
+            viewState.unlockAfterRead();
+        }
     }
 
     public static void await(CyclicBarrier barrier) {
@@ -920,6 +1169,19 @@ public final class TestUtils {
             latch.await();
         } catch (Throwable ignore) {
         }
+    }
+
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static long beHexToLong(String hex) {
+        return Long.parseLong(reverseBeHex(hex), 16);
+    }
+
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static String beHexToTs(String hex, TimestampDriver driver) {
+        long l = beHexToLong(hex);
+        return driver.toUSecString(l);
     }
 
     /**
@@ -954,6 +1216,10 @@ public final class TestUtils {
 
     public static int connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
+        // clients may run out of ephemeral ports, that are still lingering
+        // enable port reuse to avoid WSAEADDRINUSE(10048)
+        Net.setReusePort(fd);
+        Net.setReuseAddress(fd);
         return Net.connect(fd, sockAddr);
     }
 
@@ -1018,16 +1284,31 @@ public final class TestUtils {
     }
 
     public static String createPopulateTableStmt(
-            CharSequence tableName, TableModel tableModel,
-            int totalRows, String startDate, int partitionCount
+            CharSequence tableName,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
-        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod =
-                    PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+        int timestampType = TableUtils.getTimestampType(tableModel);
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        long fromTimestamp = driver.parseFloorLiteral(startDate);
+        int partitionBy = tableModel.getPartitionBy();
+        long increment = partitionIncrement(
+                driver,
+                partitionBy,
+                fromTimestamp,
+                totalRows,
+                partitionCount
+        );
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            final TimestampDriver.PartitionAddMethod partitionAddMethod =
+                    PartitionBy.getPartitionAddMethod(
+                            timestampType,
+                            partitionBy
+                    );
             assert partitionAddMethod != null;
-            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - driver.fromSeconds(1);
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
         }
 
@@ -1054,7 +1335,7 @@ public final class TestUtils {
                     sql.append("x / 1000.0 ").append(colName);
                     break;
                 case ColumnType.TIMESTAMP:
-                    sql.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ")
+                    sql.append("CAST(").append(fromTimestamp).append("L AS ").append(ColumnType.nameOf(timestampType)).append(") + x * ")
                             .append(increment).append("  ").append(colName);
                     break;
                 case ColumnType.SYMBOL:
@@ -1159,7 +1440,7 @@ public final class TestUtils {
                 Path path = new Path();
                 MemoryMARW mem = Vm.getCMARWInstance()
         ) {
-            TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
+            TableUtils.createTable(configuration, mem, null, path, model, tableVersion, tableId, tableToken.getDirName());
         }
     }
 
@@ -1177,12 +1458,12 @@ public final class TestUtils {
             int tableId,
             CharSequence tableName
     ) {
-        TableToken token = engine.lockTableName(tableName, tableId, structure.isMatView(), structure.isWalEnabled());
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isView(), structure.isMatView(), structure.isWalEnabled());
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }
         path.of(engine.getConfiguration().getDbRoot()).concat(token);
-        TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
+        TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
         if (structure.isWalEnabled()) {
             engine.getTableSequencerAPI().registerTable(tableId, structure, token);
@@ -1207,6 +1488,12 @@ public final class TestUtils {
         return ts;
     }
 
+    public static void drainCopyImportJobQueue(CairoEngine engine) throws Exception {
+        try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
+            copyRequestJob.drain(0);
+        }
+    }
+
     @SuppressWarnings("StatementWithEmptyBody")
     public static void drainCursor(RecordCursor cursor) {
         while (cursor.hasNext()) {
@@ -1214,9 +1501,13 @@ public final class TestUtils {
     }
 
     public static void drainPurgeJob(CairoEngine engine) {
+        drainPurgeJob(engine, engine.getConfiguration().getFilesFacade());
+    }
+
+    public static void drainPurgeJob(CairoEngine engine, FilesFacade filesFacade) {
         try (WalPurgeJob job = new WalPurgeJob(
                 engine,
-                engine.getConfiguration().getFilesFacade(),
+                filesFacade,
                 engine.getConfiguration().getMicrosecondClock()
         )) {
             engine.setWalPurgeJobRunLock(job.getRunLock());
@@ -1224,14 +1515,8 @@ public final class TestUtils {
         }
     }
 
-    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
-            copyRequestJob.drain(0);
-        }
-    }
-
     public static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
             walApplyJob.drain(0);
             new CheckWalTransactionsJob(engine).run(0);
             // run once again as there might be notifications to handle now
@@ -1298,6 +1583,24 @@ public final class TestUtils {
         }
     }
 
+    public static void execute(Connection conn, String sql, String... bindVars) throws SQLException {
+        //noinspection SqlSourceToSinkFlow
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (int i = 0; i < bindVars.length; i++) {
+                stmt.setString(i + 1, bindVars[i]);
+            }
+            stmt.execute();
+        }
+    }
+
+    public static void executeSQLViaPostgres(String username, String password, int pgPort, String... sqls) throws SQLException {
+        try (final Connection connection = getConnectionForUser(username, password, pgPort)) {
+            for (String sql : sqls) {
+                execute(connection, sql);
+            }
+        }
+    }
+
     @NotNull
     public static Rnd generateRandom(Log log) {
         return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
@@ -1332,6 +1635,21 @@ public final class TestUtils {
             }
         }
         return Integer.parseInt(version);
+    }
+
+    public static long getMetricValue(CairoEngine engine, String tag) {
+        try (DirectUtf8Sink metricsSink = new DirectUtf8Sink(1024)) {
+            engine.getMetrics().scrapeIntoPrometheus(metricsSink);
+            String[] lines = metricsSink.toString().split("\n");
+            Optional<String> metricsLine = Arrays.stream(lines)
+                    .filter(line -> line.startsWith(tag + ' ')).findFirst();
+            Assert.assertTrue(tag + " missing", metricsLine.isPresent());
+            return Long.parseLong(metricsLine.get().substring(tag.length() + 1));
+        }
+    }
+
+    public static String getPgConnectionUri(int pgPort) {
+        return "jdbc:postgresql://127.0.0.1:" + pgPort + "/qdb";
     }
 
     public static String getResourcePath(String resourceName) {
@@ -1394,6 +1712,14 @@ public final class TestUtils {
         }
     }
 
+    public static TestTimestampType getTimestampType() {
+        return getTimestampType(generateRandom(LOG));
+    }
+
+    public static TestTimestampType getTimestampType(Rnd rnd) {
+        return rnd.nextBoolean() ? TestTimestampType.MICRO : TestTimestampType.NANO;
+    }
+
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
         return getWriter(engine, engine.verifyTableName(tableName));
     }
@@ -1403,10 +1729,20 @@ public final class TestUtils {
     }
 
     public static String insertFromSelectPopulateTableStmt(
-            TableModel tableModel, int totalRows, String startDate, int partitionCount
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
-        long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
+        TimestampDriver driver = ColumnType.getTimestampDriver(TableUtils.getTimestampType(tableModel));
+        long fromTimestamp = driver.parseFloorLiteral(startDate);
+        long increment = partitionIncrement(
+                driver,
+                tableModel.getPartitionBy(),
+                fromTimestamp,
+                totalRows,
+                partitionCount
+        );
 
         StringBuilder insertFromSelect = new StringBuilder();
         insertFromSelect.append("INSERT ATOMIC INTO ")
@@ -1430,7 +1766,7 @@ public final class TestUtils {
                     insertFromSelect.append("x / 1000.0 ").append(colName);
                     break;
                 case ColumnType.TIMESTAMP:
-                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ")
+                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS ").append(ColumnType.nameOf(tableModel.getColumnType(i))).append(") + x * ")
                             .append(increment).append("  ").append(colName);
                     break;
                 case ColumnType.SYMBOL:
@@ -1492,26 +1828,26 @@ public final class TestUtils {
         return sink.toString();
     }
 
+    /**
+     * Helper method to bias probability of "wal" tests to 80%
+     *
+     * @return true when tests should run in WAL-enabled mode, false otherwise.
+     */
+    public static boolean isWal() {
+        return isWal(generateRandom(LOG));
+    }
+
+    public static boolean isWal(Rnd rnd) {
+        return rnd.nextInt(100) < 80;
+    }
+
     public static int maxDayOfMonth(int month) {
-        switch (month) {
-            case 1:
-            case 3:
-            case 5:
-            case 7:
-            case 8:
-            case 10:
-            case 12:
-                return 31;
-            case 2:
-                return 28;
-            case 4:
-            case 6:
-            case 9:
-            case 11:
-                return 30;
-            default:
-                throw new IllegalArgumentException("[1..12]");
-        }
+        return switch (month) {
+            case 1, 3, 5, 7, 8, 10, 12 -> 31;
+            case 2 -> 28;
+            case 4, 6, 9, 11 -> 30;
+            default -> throw new IllegalArgumentException("[1..12]");
+        };
     }
 
     public static void messTxnUnallocated(FilesFacade ff, Path path, Rnd rnd, TableToken tableToken) {
@@ -1552,7 +1888,6 @@ public final class TestUtils {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> Numbers.LONG_NULL,
                 engine
         );
     }
@@ -1682,15 +2017,26 @@ public final class TestUtils {
         }
     }
 
+    public static boolean remove(LPSZ lpsz) {
+        if (Files.remove(lpsz)) {
+            return true;
+        }
+
+        // could not remove file, logging error
+        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        LOG.error().$("Could not remove file [path=").$safe(lpsz).$(", errno=").$(ff.errno()).I$();
+        return false;
+    }
+
     public static void removeTestPath(CharSequence root) {
         try (Path path = new Path()) {
             path.of(root);
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             path.slash();
-            if (ff.exists(path.$()) && !ff.rmdir(path, true)) {
+            if (ff.exists(path.$()) && !Files.rmdir(path, true)) {
                 StringSink dir = new StringSink();
                 dir.put(path.$());
-                Assert.fail("Test dir " + dir + " cleanup error: " + ff.errno());
+                Assert.fail("Test dir " + dir + " cleanup error: " + Os.errno());
             }
 
             path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
@@ -1735,6 +2081,17 @@ public final class TestUtils {
             sink.put(line).put('\n');
         }
         return sink.toString();
+    }
+
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static String reverseBeHex(String hex) {
+        var sb = new char[hex.length()];
+        for (int i = 0; i < hex.length(); i += 2) {
+            sb[hex.length() - i - 1] = hex.charAt(i + 1);
+            sb[hex.length() - i - 2] = hex.charAt(i);
+        }
+        return new String(sb);
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
@@ -1820,8 +2177,9 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getDate(i), lr.getDate(i));
                         break;
                     case ColumnType.TIMESTAMP:
+                        TimestampDriver driver = ColumnType.getTimestampDriver(columnType);
                         if (rr.getTimestamp(i) != lr.getTimestamp(i)) {
-                            Assert.assertEquals(Timestamps.toString(rr.getTimestamp(i)), Timestamps.toString(lr.getTimestamp(i)));
+                            Assert.assertEquals(driver.toMSecString(rr.getTimestamp(i)), driver.toMSecString(lr.getTimestamp(i)));
                         }
                         break;
                     case ColumnType.DOUBLE:
@@ -1880,6 +2238,9 @@ public final class TestUtils {
                         Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
                         Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
                         break;
+                    case ColumnType.ARRAY:
+                        assertEquals(rr.getArray(i, columnType), lr.getArray(i, columnType));
+                        break;
                     default:
                         // Unknown record type.
                         assert false;
@@ -1930,6 +2291,36 @@ public final class TestUtils {
                         || expected.getLong3() != actual.getLong3()
         ) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
+        }
+    }
+
+    private static void assertEqualsRecursive(
+            ArrayView expected,
+            ArrayView actual,
+            int dim,
+            int expectedFlatIndex,
+            int actualFlatIndex
+    ) {
+        // last dimension
+        int dimLen = actual.getDimLen(dim);
+        if (dim == actual.getDimCount() - 1) {
+            for (int i = 0; i < dimLen; i++) {
+                Assert.assertEquals(
+                        expected.getDouble(expectedFlatIndex + i * expected.getStride(dim)),
+                        actual.getDouble(actualFlatIndex + i * actual.getStride(dim)),
+                        Numbers.TOLERANCE
+                );
+            }
+        } else {
+            for (int i = 0; i < dimLen; i++) {
+                assertEqualsRecursive(
+                        expected,
+                        actual,
+                        dim + 1,
+                        expectedFlatIndex + i * expected.getStride(dim),
+                        actualFlatIndex + i * actual.getStride(dim)
+                );
+            }
         }
     }
 
@@ -1995,8 +2386,9 @@ public final class TestUtils {
         Object[][] res = new Object[currentLvlValues.length * lowerLvlValues.length][lowerLvlValues[0].length + 1];
         for (int i = 0; i < currentLvlValues.length; i++) {
             for (int j = 0; j < lowerLvlValues.length; j++) {
-                res[i * lowerLvlValues.length + j][0] = currentLvlValues[i];
-                System.arraycopy(lowerLvlValues[j], 0, res[i * lowerLvlValues.length + j], 1, lowerLvlValues[0].length);
+                int m = i * lowerLvlValues.length + j;
+                res[m][0] = currentLvlValues[i];
+                System.arraycopy(lowerLvlValues[j], 0, res[m], 1, lowerLvlValues[0].length);
             }
         }
         return res;
@@ -2048,12 +2440,12 @@ public final class TestUtils {
         return ss;
     }
 
-    private static long partitionIncrement(int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
+    private static long partitionIncrement(TimestampDriver driver, int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
         long increment = 0;
         if (PartitionBy.isPartitioned(partitionBy)) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(partitionBy);
+            final TimestampDriver.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(driver.getTimestampType(), partitionBy);
             assert partitionAddMethod != null;
-            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - driver.fromSeconds(1);
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
         }
         return increment;
@@ -2082,17 +2474,16 @@ public final class TestUtils {
 
     @Nullable
     private static CharSequence readAsCharSequence(int columnType, Record rr, int col) {
-        switch (columnType) {
-            case ColumnType.SYMBOL:
-                return rr.getSymA(col);
-            case ColumnType.STRING:
-                return rr.getStrA(col);
-            case ColumnType.VARCHAR:
+        return switch (columnType) {
+            case ColumnType.SYMBOL -> rr.getSymA(col);
+            case ColumnType.STRING -> rr.getStrA(col);
+            case ColumnType.VARCHAR -> {
                 Utf8Sequence vc = rr.getVarcharA(col);
-                return vc == null ? null : vc.toString();
-            default:
-                throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(columnType));
-        }
+                yield vc == null ? null : vc.toString();
+            }
+            default ->
+                    throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(columnType));
+        };
     }
 
     private static String recordToString(Record record, RecordMetadata metadata, boolean genericStringMatch) {
@@ -2104,6 +2495,15 @@ public final class TestUtils {
             }
         }
         return sink.toString();
+    }
+
+    private static CharSequence reverseLines(CharSequence expected) {
+        String[] lines = expected.toString().split("\n");
+        StringSink sink = new StringSink(expected.length());
+        for (int i = 0, n = lines.length; i < n; i++) {
+            sink.put(lines[n - i - 1]).put('\n');
+        }
+        return sink;
     }
 
     private static String toHexString(Long256 expected) {
@@ -2139,6 +2539,13 @@ public final class TestUtils {
         );
     }
 
+    static Connection getConnectionForUser(String username, String password, int pgPort) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", username);
+        properties.setProperty("password", password);
+        return DriverManager.getConnection(getPgConnectionUri(pgPort), properties);
+    }
+
     public interface CheckedIntFunction {
         int get() throws Throwable;
     }
@@ -2163,6 +2570,7 @@ public final class TestUtils {
 
     public static class LeakCheck implements QuietCloseable {
         private final int addrInfoCount;
+        private final long cachedFileCount;
         private final long fileCount;
         private final String fileDebugInfo;
         private final long mem;
@@ -2171,7 +2579,9 @@ public final class TestUtils {
         private boolean skipChecksOnClose;
 
         public LeakCheck() {
+            Files.getMmapCache().asyncMunmap();
             Path.clearThreadLocals();
+            CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
@@ -2179,6 +2589,7 @@ public final class TestUtils {
 
             Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
             fileCount = Files.getOpenFileCount();
+            cachedFileCount = Files.getOpenCachedFileCount();
             fileDebugInfo = Files.getOpenFdDebugInfo();
             Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
 
@@ -2196,12 +2607,19 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
-            if (fileCount != Files.getOpenFileCount()) {
-                Assert.assertEquals(
-                        "file descriptors, expected: " + fileDebugInfo + ", actual: "
-                                + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount()
+            CLOSEABLE.forEach(Misc::free);
+            if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
+                Assert.fail(
+                        "expected: cached file descriptors: " + cachedFileCount +
+                                ", expected OS file descriptors: " + fileCount +
+                                ", list: " + fileDebugInfo +
+                                " actual: cached file descriptors: " + Files.getOpenCachedFileCount() +
+                                ", OS file descriptors: " + Files.getOpenFileCount() +
+                                ", list: " + Files.getOpenFdDebugInfo()
                 );
             }
+
+            Files.getMmapCache().asyncMunmap();
 
             // Checks that the same tag used for allocation and freeing native memory
             long memAfter = Unsafe.getMemUsed();

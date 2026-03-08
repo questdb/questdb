@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
             CairoConfiguration configuration,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
             ObjList<GroupByFunction> groupByFunctions,
             GroupByFunctionsUpdater groupByFunctionsUpdater,
@@ -55,6 +56,7 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,
@@ -71,7 +73,7 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function f = recordFunctions.getQuick(i);
             if (f == null) {
-                recordFunctions.setQuick(i, new TimestampFunc());
+                recordFunctions.setQuick(i, new TimestampFunc(timestampType));
             }
         }
     }

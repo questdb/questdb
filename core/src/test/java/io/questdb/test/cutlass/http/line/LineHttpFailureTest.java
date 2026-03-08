@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,11 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.Bootstrap;
-import io.questdb.DefaultBootstrapConfiguration;
-import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.ServerMain;
+import io.questdb.*;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.client.Sender;
+import io.questdb.client.std.bytes.DirectByteSlice;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
@@ -49,15 +48,40 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.ByteArrayOutputStream;
+import java.time.Instant;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.zip.GZIPOutputStream;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.test.tools.TestUtils.assertEventually;
+import static io.questdb.test.tools.TestUtils.assertResponse;
+import static java.net.HttpURLConnection.HTTP_BAD_METHOD;
+import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 
 public class LineHttpFailureTest extends AbstractBootstrapTest {
+
+    @NotNull
+    private static AtomicInteger countWalWriterTakenFromPool(TestServerMain serverMain) {
+        AtomicInteger walWriterTaken = new AtomicInteger();
+
+        serverMain.getEngine().setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WAL_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
+                if (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE) {
+                    walWriterTaken.incrementAndGet();
+                }
+                if (event == PoolListener.EV_RETURN) {
+                    walWriterTaken.decrementAndGet();
+                }
+            }
+        });
+        return walWriterTaken;
+    }
 
     @Before
     public void setUp() {
@@ -68,9 +92,8 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testChunkedDisconnect() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-            )) {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
@@ -100,7 +123,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testChunkedEncodingMalformed() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
@@ -128,9 +151,8 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testChunkedRedundantBytes() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-            )) {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
                 Rnd rnd = TestUtils.generateRandom(LOG);
@@ -170,21 +192,20 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
 
                 serverMain.awaitTable("line");
-                serverMain.assertSql("select count() from line", "count\n" +
-                        "0\n");
+                serverMain.assertSql("select count() from line", "count\n0\n");
             }
         });
     }
 
     @Test
     public void testClientDisconnectedBeforeCommitted() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             AtomicReference<HttpClient> httpClientRef = new AtomicReference<>();
             SOCountDownLatch ping = new SOCountDownLatch(1);
             SOCountDownLatch pong = new SOCountDownLatch(1);
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     if (Utf8s.endsWithAscii(name, "field1.d") && Utf8s.containsAscii(name, "wal")) {
                         ping.await();
                         httpClientRef.get().disconnect();
@@ -227,7 +248,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
 
                 assertEventually(() -> {
-                    // Assert no Wal Writers are left in ILP http TUD cache
+                    // Assert no WAL writers are left in ILP http TUD cache
                     Assert.assertEquals(0, walWriterTaken.get());
                 });
             }
@@ -236,16 +257,27 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testClientDisconnectedDuringCommit() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             AtomicReference<HttpClient> httpClientRef = new AtomicReference<>();
             SOCountDownLatch ping = new SOCountDownLatch(1);
             SOCountDownLatch pong = new SOCountDownLatch(1);
             AtomicInteger counter = new AtomicInteger(2);
+
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
+                long addr = 0;
 
                 @Override
-                public long append(long fd, long buf, long len) {
-                    if (fd == this.fd && counter.decrementAndGet() == 0) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                    if (fd == this.fd) {
+                        this.addr = addr;
+                    }
+                    return addr;
+                }
+
+                @Override
+                public void msync(long addr, long len, boolean async) {
+                    if ((addr == this.addr) && (counter.decrementAndGet() == 0)) {
                         ping.await();
                         httpClientRef.get().disconnect();
                         pong.countDown();
@@ -253,11 +285,11 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                         // the disconnect happens during sending the response. But it also makes the test slower.
                         Os.sleep(10);
                     }
-                    return Files.append(fd, buf, len);
+                    super.msync(addr, len, async);
                 }
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, int opts) {
                     long fd = super.openRW(name, opts);
                     if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
                             && Utf8s.containsAscii(name, "second_table")) {
@@ -267,7 +299,15 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
             };
 
+            final Map<String, String> env = new HashMap<>(System.getenv());
+            env.put("QDB_CAIRO_COMMIT_MODE", "sync");
+
             final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public Map<String, String> getEnv() {
+                    return env;
+                }
+
                 @Override
                 public FilesFacade getFilesFacade() {
                     return filesFacade;
@@ -305,7 +345,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testClientDisconnectsMidRequest() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
@@ -349,8 +389,200 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                     }
 
                     serverMain.awaitTxn("line", 1);
-                    serverMain.assertSql("select * from line", "sym1\tfield1\ttimestamp\n" +
-                            "123\t123\t2009-02-13T23:31:30.000000Z\n");
+                    serverMain.assertSql("select * from line",
+                            "sym1\tfield1\ttimestamp\n" +
+                                    "123\t123\t2009-02-13T23:31:30.000000Z\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGzipBomb() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512",
+                    PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE.getEnvVarName(), "5M"
+            )) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    // Create a gzip bomb: a small compressed payload that expands to a very large size
+                    // This creates a 10KB buffer of 'a's that compresses to ~10KB bytes but will attempt to decompress to 10MB
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    try (GZIPOutputStream gzip = new GZIPOutputStream(out)) {
+                        byte[] raw = new byte[10 * 1024]; // 10KB of 'a's
+                        Arrays.fill(raw, 0, raw.length, (byte) 'a');
+                        for (int i = 0; i < 1000; i++) { // Write 1000 times = 10MB uncompressed
+                            gzip.write(raw);
+                        }
+                    }
+                    byte[] gzipBomb = out.toByteArray();
+
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+                    request.POST()
+                            .url("/write")
+                            .header("Content-Encoding", "gzip")
+                            .withContent();
+
+                    for (byte b : gzipBomb) {
+                        request.put(b);
+                    }
+
+                    try (HttpClient.ResponseHeaders resp = request.send()) {
+                        resp.await();
+                        // Server should reject or handle the bomb gracefully
+                        // Expecting 413 (Payload Too Large)
+                        TestUtils.assertEquals("413", resp.getStatusCode());
+                    }
+                }
+
+                // Verify no data was committed
+                TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
+                if (tt != null) {
+                    Assert.assertEquals(0, getSeqTxn(serverMain, tt));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGzipCorruptedData() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    // Send corrupted gzip stream (valid header but corrupt data)
+                    final byte[] corruptGzip = new byte[]{
+                            0x1f, (byte) 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff
+                    };
+
+                    final HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort())
+                            .POST()
+                            .url("/write")
+                            .header("Content-Encoding", "gzip")
+                            .withContent();
+                    for (byte b : corruptGzip) {
+                        request.put(b);
+                    }
+
+                    try (HttpClient.ResponseHeaders resp = request.send()) {
+                        resp.await();
+                        TestUtils.assertEquals("415", resp.getStatusCode());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGzipDisconnectDuringDecompression() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    // Start a gzip header but disconnect mid-stream
+                    final byte[] partialGzip = new byte[]{0x1f, (byte) 0x8b, 0x08, 0x00};
+
+                    final HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort())
+                            .POST()
+                            .url("/write")
+                            .header("Content-Encoding", "gzip")
+                            .withContent();
+                    for (byte b : partialGzip) {
+                        request.put(b);
+                    }
+
+                    request.sendPartialContent(100, 500);
+                    Os.sleep(100);
+                    httpClient.disconnect();
+                }
+
+                // Verify no partial data was committed
+                TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
+                if (tt != null) {
+                    Assert.assertEquals(0, getSeqTxn(serverMain, tt));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGzipEmptyStream() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+
+                    try (
+                            HttpClient.ResponseHeaders resp = request.POST()
+                                    .url("/write")
+                                    .header("Content-Encoding", "gzip")
+                                    .withContent()
+                                    .send()
+                    ) {
+                        resp.await();
+                        TestUtils.assertEquals("204", resp.getStatusCode());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGzipEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+                assertEventually(() -> Assert.assertTrue(serverMain.hasStarted()));
+
+                try (Sender sender = Sender.fromConfig("http::addr=127.0.0.1:" + serverMain.getHttpServerPort() + ";protocol_version=1;auto_flush=off;")) {
+                    sender.table("m1")
+                            .symbol("tag1", "value1")
+                            .doubleColumn("f1", 1)
+                            .longColumn("x", 12)
+                            .at(Instant.ofEpochSecond(123456));
+                    DirectByteSlice rawBuffer = sender.bufferView();
+                    byte[] b = new byte[rawBuffer.size()];
+                    for (int i = 0; i < rawBuffer.size(); i++) {
+                        b[i] = rawBuffer.byteAt(i);
+                    }
+
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    GZIPOutputStream strm = new GZIPOutputStream(out);
+                    strm.write(b);
+                    strm.finish();
+                    byte[] outBytes = out.toByteArray();
+
+                    try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = client
+                                .newRequest("127.0.0.1", serverMain.getHttpServerPort()).POST()
+                                .url("/write")
+                                .header("User-Agent", "QuestDB/java/gzip_test")
+                                .header("Content-Encoding", "gzip");
+                        request.withContent();
+
+                        for (byte outByte : outBytes) {
+                            request.put(outByte);
+                        }
+
+                        try (HttpClient.ResponseHeaders response = request.send()) {
+                            response.await();
+                            Assert.assertEquals("204", response.getStatusCode().asAsciiCharSequence().toString());
+                        }
+                    }
+
+                    serverMain.awaitTable("m1");
+                    serverMain.assertSql(
+                            "m1",
+                            "tag1\tf1\tx\ttimestamp\n" +
+                                    "value1\t1.0\t12\t1970-01-02T10:17:36.000000Z\n"
+                    );
                 }
             }
         });
@@ -358,71 +590,50 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testPutAndGetAreNotSupported() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
-            }})
-            ) {
+            }})) {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    try (
-                            HttpClient.ResponseHeaders resp = request.PUT()
-                                    .url("/write ")
-                                    .withContent()
-                                    .putAscii(line)
-                                    .putAscii(line)
-                                    .send()
-                    ) {
-                        resp.await();
-                        TestUtils.assertEquals("404", resp.getStatusCode());
-                    }
+                    request.PUT()
+                            .url("/write ")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line);
+                    assertResponse(request, HTTP_BAD_METHOD, "Method PUT not supported\r\n");
                 }
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    try (
-                            HttpClient.ResponseHeaders resp = request.GET()
-                                    .url("/api/v2/write ")
-                                    .withContent()
-                                    .putAscii(line)
-                                    .putAscii(line)
-                                    .send()
-                    ) {
-                        resp.await();
-                        TestUtils.assertEquals("400", resp.getStatusCode());
-                    }
+                    request.GET()
+                            .url("/api/v2/write ")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line);
+                    assertResponse(request, HTTP_BAD_REQUEST, "GET request method cannot have content\r\n");
                 }
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    try (
-                            HttpClient.ResponseHeaders resp = request.DELETE()
-                                    .url("/write ")
-                                    .withContent()
-                                    .putAscii(line)
-                                    .putAscii(line)
-                                    .send()
-                    ) {
-                        resp.await();
-                        TestUtils.assertEquals("400", resp.getStatusCode());
-                    }
+                    request.DELETE()
+                            .url("/write ")
+                            .withContent()
+                            .putAscii(line)
+                            .putAscii(line);
+                    assertResponse(request, HTTP_BAD_METHOD, "Method DELETE not supported\r\n");
                 }
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    try (
-                            HttpClient.ResponseHeaders resp = request.POST()
-                                    .url("/write ")
-                                    .putAscii(line)
-                                    .putAscii(line)
-                                    .send()
-                    ) {
-                        resp.await();
-                        TestUtils.assertEquals("400", resp.getStatusCode());
-                    }
+                    request.POST()
+                            .url("/write ")
+                            .putAscii(line)
+                            .putAscii(line);
+                    assertResponse(request, HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request\r\n");
                 }
             }
         });
@@ -430,7 +641,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testSlowPeerHeaderErrors() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "20"
             )) {
@@ -454,7 +665,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testUnsupportedPrecision() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
@@ -475,23 +686,6 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    @NotNull
-    private static AtomicInteger countWalWriterTakenFromPool(TestServerMain serverMain) {
-        AtomicInteger walWriterTaken = new AtomicInteger();
-
-        serverMain.getEngine().setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WAL_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
-                if (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE) {
-                    walWriterTaken.incrementAndGet();
-                }
-                if (event == PoolListener.EV_RETURN) {
-                    walWriterTaken.decrementAndGet();
-                }
-            }
-        });
-        return walWriterTaken;
     }
 
     private long getSeqTxn(TestServerMain serverMain, TableToken tt) {

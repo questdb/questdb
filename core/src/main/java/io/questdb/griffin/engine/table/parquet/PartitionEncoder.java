@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,45 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
 public class PartitionEncoder {
+
+    public static final double DEFAULT_BLOOM_FILTER_FPP = 0.01;
+
+    public static native void closeStreamingParquetWriter(
+            long writerPtr
+    ) throws CairoException;
+
+    public static native long createStreamingParquetWriter(
+            long allocator,
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesSize,
+            long columnMetadataPtr,
+            int timestampIndex,
+            boolean descending,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp
+    ) throws CairoException;
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
         encodeWithOptions(
@@ -40,9 +70,36 @@ public class PartitionEncoder {
                 destPath,
                 ParquetCompression.COMPRESSION_UNCOMPRESSED,
                 true,
+                false,
                 0, // DEFAULT_ROW_GROUP_SIZE (512 * 512) rows
                 0, // DEFAULT_DATA_PAGE_SIZE (1024 * 1024) bytes
                 ParquetVersion.PARQUET_VERSION_V1
+        );
+    }
+
+    @TestOnly
+    public static void encodeWithOptions(
+            PartitionDescriptor descriptor,
+            Path destPath,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version
+    ) {
+        encodeWithOptions(
+                descriptor,
+                destPath,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize,
+                version,
+                0,
+                0,
+                DEFAULT_BLOOM_FILTER_FPP
         );
     }
 
@@ -51,10 +108,18 @@ public class PartitionEncoder {
             Path destPath,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            int version
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp
     ) {
+        assert bloomFilterColumnCount >= 0;
+        assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
+        assert bloomFilterColumnCount == 0 || (bloomFilterFpp > 0.0 && bloomFilterFpp < 1.0);
+
         final Utf8Sequence tableName = descriptor.getTableName();
         final int columnCount = descriptor.getColumnCount();
         final long partitionSize = descriptor.getPartitionRowCount();
@@ -74,16 +139,45 @@ public class PartitionEncoder {
                     destPath.size(),
                     compressionCodec,
                     statisticsEnabled,
+                    rawArrayEncoding,
                     rowGroupSize,
                     dataPageSize,
-                    version
+                    version,
+                    bloomFilterColumnIndexesPtr,
+                    bloomFilterColumnCount,
+                    bloomFilterFpp
             );
         } finally {
             descriptor.clear();
         }
     }
 
-    public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) {
+    public static native long finishStreamingParquetWrite(long writerPtr) throws CairoException;
+
+    public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor) throws CairoException {
+        final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
+        descriptor.of(tableReader.getTableToken().getTableName(), 0, timestampIndex);
+        final TableReaderMetadata metadata = tableReader.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                descriptor.addColumn(
+                        metadata.getColumnName(i),
+                        columnType,
+                        metadata.getColumnMetadata(i).getWriterIndex(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0
+                );
+            }
+        }
+    }
+
+    public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) throws CairoException {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
         final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
@@ -102,13 +196,24 @@ public class PartitionEncoder {
                 final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, i);
                 final MemoryR primaryMem = tableReader.getColumn(primaryIndex);
 
+                if (primaryMem == null) {
+                    throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
+                            .put("could not map primary mem for column [table=").put(metadata.getTableToken())
+                            .put(", primaryIndex=").put(primaryIndex)
+                            .put(']');
+                }
+
                 if (ColumnType.isSymbol(columnType)) {
                     SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
                     final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
                     final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+                    int encodeColumnType = columnType;
+                    if (!symbolMapReader.containsNullValue()) {
+                        encodeColumnType |= Integer.MIN_VALUE;
+                    }
                     descriptor.addColumn(
                             columnName,
-                            columnType,
+                            encodeColumnType,
                             columnId,
                             colTop,
                             primaryMem.addressOf(0),
@@ -150,6 +255,23 @@ public class PartitionEncoder {
         }
     }
 
+    public static native long writeStreamingParquetChunk(
+            long writerPtr,
+            long columnDataPtr,
+            long rowCount
+    ) throws CairoException;
+
+    public static native long writeStreamingParquetChunkFromRowGroup(
+            long writerPtr,
+            long allocatorPtr,
+            long columnDataPtr,
+            long sourceParquetAddr,
+            long sourceParquetSize,
+            int rowGroupIndex,
+            int rowGroupLo,
+            int rowGroupHi
+    ) throws CairoException;
+
     private static native void encodePartition(
             long tableNamePtr,
             int tableNameSize,
@@ -164,9 +286,13 @@ public class PartitionEncoder {
             int destPathLength,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            int version
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp
     ) throws CairoException;
 
     static {

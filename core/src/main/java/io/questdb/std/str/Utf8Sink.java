@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,14 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Numbers;
+import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface Utf8Sink extends CharSink<Utf8Sink> {
 
-
     /**
-     * Differs from `escapeJsonStr` by instead escaping double quotes `"` with double
+     * Differs from `escapeJsonStr` by instead escaping double quotes `"` with
      * double quotes `""`. This follows recommendation from RFC 4180.
      * <a href="https://www.ietf.org/rfc/rfc4180.txt">...</a>
      */
@@ -43,16 +42,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             if (c < 32) {
                 escapeJsonStrChar(c);
             } else if (c < 128) {
-                switch (c) {
-                    case '"':
-                        putAscii("\"\"");
-                        break;
-                    case '\\':
-                        putAscii("\\\\");
-                        break;
-                    default:
-                        putAscii(c);
-                }
+                escapeAscii(c);
             } else {
                 i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
             }
@@ -70,16 +60,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             if (c > 0 && c < 32) {
                 escapeJsonStrChar(c);
             } else if (c > 0 && c < 128) {
-                switch (c) {
-                    case '"':
-                        putAscii("\"\"");
-                        break;
-                    case '\\':
-                        putAscii("\\\\");
-                        break;
-                    default:
-                        putAscii(c);
-                }
+                escapeAscii(c);
             } else {
                 put((byte) c);
             }
@@ -140,31 +121,6 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             }
         }
         return this;
-    }
-
-    default void escapeJsonStrChar(char c) {
-        switch (c) {
-            case '\b':
-                putAscii("\\b");
-                break;
-            case '\f':
-                putAscii("\\f");
-                break;
-            case '\n':
-                putAscii("\\n");
-                break;
-            case '\r':
-                putAscii("\\r");
-                break;
-            case '\t':
-                putAscii("\\t");
-                break;
-            default:
-                putAscii("\\u00");
-                put(c >> 4);
-                putAscii(Numbers.hexDigits[c & 15]);
-                break;
-        }
     }
 
     @Override
@@ -235,6 +191,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         if (dus != null) {
             putNonAscii(dus.lo(), dus.hi());
         }
+        return this;
+    }
+
+    default Utf8Sink put(Interval interval, int intervalType) {
+        interval.toSink(this, intervalType);
         return this;
     }
 
@@ -353,6 +314,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         return this;
     }
 
+    default Utf8Sink putQuotedEscapedStr(@NotNull CharSequence cs) {
+        putAscii('"').escapeJsonStr(cs).putAscii('"');
+        return this;
+    }
+
     /**
      * Encodes the given UTF-16 string or its fragment to UTF-8 and appends it
      * to this sink.
@@ -365,5 +331,13 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
      */
     default boolean putWithLimit(@NotNull CharSequence cs, int maxBytes) {
         return Utf8s.encodeUtf16WithLimit(this, cs, maxBytes);
+    }
+
+    private void escapeAscii(char c) {
+        switch (c) {
+            case '"' -> putAscii("\"\"");
+            case '\\' -> putAscii("\\\\");
+            default -> putAscii(c);
+        }
     }
 }

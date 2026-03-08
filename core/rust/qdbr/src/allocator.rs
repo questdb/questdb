@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ impl Display for AllocFailure {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             AllocFailure::OutOfMemory { requested_size } => {
-                write!(f, "out of memory when allocating {}", requested_size)
+                write!(f, "out of memory when allocating {requested_size}")
             }
             AllocFailure::MemoryLimitExceeded {
                 requested_size,
@@ -88,8 +88,7 @@ impl Display for AllocFailure {
                 rss_mem_used,
             } => write!(
                 f,
-                "memory limit exceeded when allocating {} with tag {} (rss used: {}, rss limit: {})",
-                requested_size, memory_tag, rss_mem_used, rss_mem_limit
+                "memory limit exceeded when allocating {requested_size} with tag {memory_tag} (rss used: {rss_mem_used}, rss limit: {rss_mem_limit})",
             ),
         }
     }
@@ -117,6 +116,25 @@ pub struct MemTracking {
 
     /// Tracking non-rss memory, such as mmap.
     _non_rss_mem_used: AtomicUsize,
+}
+
+impl Default for MemTracking {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MemTracking {
+    pub fn new() -> Self {
+        Self {
+            rss_mem_used: AtomicUsize::new(0),
+            rss_mem_limit: AtomicUsize::new(0),
+            malloc_count: AtomicUsize::new(0),
+            realloc_count: AtomicUsize::new(0),
+            free_count: AtomicUsize::new(0),
+            _non_rss_mem_used: AtomicUsize::new(0),
+        }
+    }
 }
 
 /// Custom allocator that fails once a memory limit watermark is reached.
@@ -149,6 +167,14 @@ const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
 
 #[cfg(not(test))]
 impl QdbAllocator {
+    pub fn new(
+        mem_tracking: *const MemTracking,
+        tagged_used: *const AtomicUsize,
+        memory_tag: i32,
+    ) -> Self {
+        Self { mem_tracking, tagged_used, memory_tag }
+    }
+
     fn rss_mem_used(&self) -> &AtomicUsize {
         unsafe { &(*self.mem_tracking).rss_mem_used }
     }
@@ -330,6 +356,13 @@ pub type AcVec<T> = alloc_checked::vec::Vec<T, QdbAllocator>;
 pub struct TestAllocatorState {
     mem_tracking: Arc<MemTracking>,
     tagged_used: Arc<AtomicUsize>,
+}
+
+#[cfg(test)]
+impl Default for TestAllocatorState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -547,17 +580,17 @@ mod tests {
             let barrier = barrier.clone();
             threads.push(std::thread::spawn(move || {
                 let mut allocations = Vec::with_capacity(2048);
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 barrier.wait();
                 let iterations = 10_000usize;
                 // Keep on allocating and deallocating randomly.
                 for _ in 0..iterations {
-                    let op_index = rng.gen_range(0..ops.len());
+                    let op_index = rng.random_range(0..ops.len());
                     let op = ops[op_index];
                     match op {
                         Op::Allocate => {
-                            let size = rng.gen_range(1..=1024);
-                            let alignment_index = rng.gen_range(0..=4);
+                            let size = rng.random_range(1..=1024);
+                            let alignment_index = rng.random_range(0..=4);
                             let alignment = alignments[alignment_index];
                             let layout = std::alloc::Layout::from_size_align(size, alignment)
                                 .expect("layout creation failed");
@@ -566,8 +599,8 @@ mod tests {
                             alloc_count += 1;
                         }
                         Op::AllocateZeroed => {
-                            let size = rng.gen_range(1..=1024);
-                            let alignment_index = rng.gen_range(0..=4);
+                            let size = rng.random_range(1..=1024);
+                            let alignment_index = rng.random_range(0..=4);
                             let alignment = alignments[alignment_index];
                             let layout = std::alloc::Layout::from_size_align(size, alignment)
                                 .expect("layout creation failed");
@@ -578,11 +611,11 @@ mod tests {
                         Op::Grow => {
                             // grow one at random, if any
                             if !allocations.is_empty() {
-                                let grow_index = rng.gen_range(0..allocations.len());
+                                let grow_index = rng.random_range(0..allocations.len());
                                 let (allocation, layout) = allocations[grow_index];
                                 let allocation =
                                     NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
-                                let new_size = layout.size() + rng.gen_range(1..=1024);
+                                let new_size = layout.size() + rng.random_range(1..=1024);
                                 let new_layout =
                                     std::alloc::Layout::from_size_align(new_size, layout.align())
                                         .expect("layout creation failed");
@@ -596,11 +629,11 @@ mod tests {
                         Op::GrowZeroed => {
                             // grow one at random, if any
                             if !allocations.is_empty() {
-                                let grow_index = rng.gen_range(0..allocations.len());
+                                let grow_index = rng.random_range(0..allocations.len());
                                 let (allocation, layout) = allocations[grow_index];
                                 let allocation =
                                     NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
-                                let new_size = layout.size() + rng.gen_range(1..=1024);
+                                let new_size = layout.size() + rng.random_range(1..=1024);
                                 let new_layout =
                                     std::alloc::Layout::from_size_align(new_size, layout.align())
                                         .expect("layout creation failed");
@@ -616,12 +649,12 @@ mod tests {
                         Op::Shrink => {
                             // shrink one at random, if any
                             if !allocations.is_empty() {
-                                let shrink_index = rng.gen_range(0..allocations.len());
+                                let shrink_index = rng.random_range(0..allocations.len());
                                 let (allocation, layout) = allocations[shrink_index];
                                 let allocation =
                                     NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
                                 if layout.size() > 1 {
-                                    let shrink_by = rng.gen_range(1..layout.size());
+                                    let shrink_by = rng.random_range(1..layout.size());
                                     assert!(shrink_by < layout.size());
                                     let new_size = layout.size() - shrink_by;
                                     let new_layout = std::alloc::Layout::from_size_align(
@@ -640,7 +673,7 @@ mod tests {
                         Op::Deallocate => {
                             // dealloc one at random, if any
                             if !allocations.is_empty() {
-                                let pop_index = rng.gen_range(0..allocations.len());
+                                let pop_index = rng.random_range(0..allocations.len());
                                 let (allocation, layout) = allocations.remove(pop_index);
                                 let allocation =
                                     NonNull::new(allocation.as_ptr() as *mut u8).unwrap();

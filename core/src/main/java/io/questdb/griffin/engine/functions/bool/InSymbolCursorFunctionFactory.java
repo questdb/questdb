@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -86,20 +86,13 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         // use first column to create list of values (over multiple records)
         // supported column types are VARCHAR, STRING and SYMBOL
-        final Record.CharSequenceFunction func;
-        switch (zeroColumnType) {
-            case ColumnType.STRING:
-                func = Record.GET_STR;
-                break;
-            case ColumnType.SYMBOL:
-                func = Record.GET_SYM;
-                break;
-            case ColumnType.VARCHAR:
-                func = Record.GET_VARCHAR;
-                break;
-            default:
-                throw SqlException.position(position).put("supported column types are VARCHAR, SYMBOL and STRING, found: ").put(ColumnType.nameOf(zeroColumnType));
-        }
+        final Record.CharSequenceFunction func = switch (zeroColumnType) {
+            case ColumnType.STRING -> Record.GET_STR;
+            case ColumnType.SYMBOL -> Record.GET_SYM;
+            case ColumnType.VARCHAR -> Record.GET_VARCHAR;
+            default ->
+                    throw SqlException.position(position).put("supported column types are VARCHAR, SYMBOL and STRING, found: ").put(ColumnType.nameOf(zeroColumnType));
+        };
 
         if (valueFunction.isNullConstant()) {
             return new StrInCursorFunc(NullConstant.NULL, cursorFunction, func);
@@ -179,8 +172,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof StrInCursorFunc) {
-                StrInCursorFunc thatF = (StrInCursorFunc) that;
+            if (that instanceof StrInCursorFunc thatF) {
                 thatF.valueSet.clear();
                 thatF.valueSet.addAll(valueSet);
                 thatF.stateInherited = this.stateShared = true;
@@ -280,8 +272,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void offerStateTo(Function that) {
-            if (that instanceof SymbolInCursorFunc) {
-                SymbolInCursorFunc thatF = (SymbolInCursorFunc) that;
+            if (that instanceof SymbolInCursorFunc thatF) {
                 thatF.symbolKeys.clear();
                 thatF.symbolKeys.addAll(symbolKeys);
                 thatF.stateInherited = this.stateShared = true;

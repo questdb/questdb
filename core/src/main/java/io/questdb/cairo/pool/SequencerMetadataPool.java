@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,8 @@ import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.std.IntList;
 import io.questdb.std.Transient;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
@@ -54,16 +56,18 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
     @Override
     protected SequencerMetadataTenantImpl newTenant(
             TableToken tableToken,
+            Entry<SequencerMetadataTenantImpl> rootEntry,
             Entry<SequencerMetadataTenantImpl> entry,
             int index,
             @Nullable ResourcePoolSupervisor<SequencerMetadataTenantImpl> supervisor
     ) {
-        return new SequencerMetadataTenantImpl(this, entry, index, tableToken, engine.getTableSequencerAPI());
+        return new SequencerMetadataTenantImpl(this, rootEntry, entry, index, tableToken, engine.getTableSequencerAPI());
     }
 
     public static class SequencerMetadataTenantImpl extends GenericRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink, PoolTenant<SequencerMetadataTenantImpl> {
         private final Comparator<TableColumnMetadata> columnOrderComparator;
         private final int index;
+        private final AbstractMultiTenantPool.Entry<SequencerMetadataTenantImpl> rootEntry;
         private final TableSequencerAPI tableSequencerAPI;
         private AbstractMultiTenantPool.Entry<SequencerMetadataTenantImpl> entry;
         private long metadataVersion;
@@ -74,6 +78,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
 
         public SequencerMetadataTenantImpl(
                 AbstractMultiTenantPool<SequencerMetadataTenantImpl> pool,
+                Entry<SequencerMetadataTenantImpl> rootEntry,
                 Entry<SequencerMetadataTenantImpl> entry,
                 int index,
                 TableToken tableToken,
@@ -82,6 +87,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
             super();
             columnOrderComparator = this::compareColumnOrder;
             this.pool = pool;
+            this.rootEntry = rootEntry;
             this.entry = entry;
             this.index = index;
             this.tableSequencerAPI = tableSequencerAPI;
@@ -143,6 +149,11 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
         }
 
         @Override
+        public AbstractMultiTenantPool.Entry<SequencerMetadataTenantImpl> getRootEntry() {
+            return rootEntry;
+        }
+
+        @Override
         public int getTableId() {
             return tableId;
         }
@@ -152,7 +163,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
             return tableToken;
         }
 
-
         public void goodbye() {
             entry = null;
             pool = null;
@@ -160,7 +170,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
 
         @Override
         public boolean isDedupKey(int columnIndex) {
-            throw new UnsupportedOperationException();
+            return false;
         }
 
         @Override
@@ -175,7 +185,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 int tableId,
                 int timestampIndex,
                 int compressedTimestampIndex,
-                boolean suspended,
                 long structureVersion,
                 int columnCount,
                 @Transient @Nullable IntList readColumnOrder
@@ -204,6 +213,11 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
         @Override
         public void refresh(@Nullable ResourcePoolSupervisor<SequencerMetadataTenantImpl> supervisor) {
             tableSequencerAPI.reloadMetadataConditionally(tableToken, getMetadataVersion(), this);
+        }
+
+        @Override
+        public void toSink(@NotNull CharSink<?> sink) {
+            sink.put("SequencerMetadataTenantImpl{index=").put(index).put(", tableToken=").put(tableToken).put('}');
         }
 
         public void updateTableToken(TableToken tableToken) {

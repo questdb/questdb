@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.FunctionFactory;
@@ -54,7 +53,7 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
         return new WaitWalFunction(tableName);
     }
 
-    private static class WaitWalFunction extends BooleanFunction implements ScalarFunction {
+    private static class WaitWalFunction extends BooleanFunction implements Function {
         private final CharSequence tableName;
         private SqlExecutionContext executionContext;
         private long seqTxn;

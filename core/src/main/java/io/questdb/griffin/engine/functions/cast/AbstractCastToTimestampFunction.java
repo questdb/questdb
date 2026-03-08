@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,13 +28,23 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 
-public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimestampFunction {
-    protected AbstractCastToTimestampFunction(Function arg) {
-        super(arg);
+/**
+ * Abstract base class for functions that cast values to timestamp.
+ */
+public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimestampFunction implements CastFunction {
+
+    /**
+     * Constructs a new cast to timestamp function.
+     *
+     * @param arg           the function argument to cast
+     * @param timestampType the target timestamp type
+     */
+    protected AbstractCastToTimestampFunction(Function arg, int timestampType) {
+        super(arg, timestampType);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(getArg()).val("::timestamp");
+        timestampDriver.appendTypeToPlan(sink.val(getArg()).val("::"));
     }
 }

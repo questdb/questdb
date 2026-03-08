@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,17 +35,15 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
+    public static final int EXCEPTION_TABLE_DOES_NOT_EXIST = -105;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final int EXCEPTION_TABLE_DOES_NOT_EXIST = -105;
-    private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_TABLE_DOES_NOT_EXIST - 1;
+    private static final int EXCEPTION_VIEW_DOES_NOT_EXIST = EXCEPTION_TABLE_DOES_NOT_EXIST - 1;
+    private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_VIEW_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
     private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private int error;
     private int position;
-
-    protected SqlException() {
-    }
 
     public static SqlException $(int position, CharSequence message) {
         return position(position).put(message);
@@ -90,11 +88,26 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(", to=").put(toName).put(']');
     }
 
+    public static SqlException inconvertibleTypes(
+            int position,
+            int fromType,
+            int toType
+    ) {
+        return $(position, "inconvertible types: ")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType));
+    }
+
     public static SqlException invalidColumn(int position, CharSequence column) {
         return position(position).put("Invalid column: ").put(column);
     }
 
     public static SqlException invalidDate(CharSequence str, int position) {
+        return position(position).put("Invalid date [str=").put(str).put(']');
+    }
+
+    public static SqlException invalidDate(Utf8Sequence str, int position) {
         return position(position).put("Invalid date [str=").put(str).put(']');
     }
 
@@ -107,7 +120,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public static SqlException nonDeterministicColumn(int position, CharSequence column) {
-        return position(position).put("Non-deterministic column: ").put(column);
+        return position(position).put("non-deterministic function cannot be used in materialized view: ").put(column);
     }
 
     public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
@@ -151,8 +164,16 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(']');
     }
 
+    public static SqlException viewDoesNotExist(int position, CharSequence viewName) {
+        return position(position).errorCode(EXCEPTION_VIEW_DOES_NOT_EXIST).put("view does not exist [view=").put(viewName).put(']');
+    }
+
     public static SqlException walRecoverable(int position) {
         return position(position).errorCode(EXCEPTION_WAL_RECOVERABLE);
+    }
+
+    public int getErrorCode() {
+        return error;
     }
 
     @Override
@@ -188,6 +209,13 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     public SqlException put(@Nullable CharSequence cs) {
         if (cs != null) {
             message.put(cs);
+        }
+        return this;
+    }
+
+    public SqlException put(@Nullable CharSequence cs, int lo, int hi) {
+        if (cs != null) {
+            message.put(cs, lo, hi);
         }
         return this;
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -47,7 +46,7 @@ import org.jetbrains.annotations.NotNull;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
-
+    private final int defaultDispatchLimit;
     private final Function filter;
     // Used for random access: we may have to deserialize Parquet page frame.
     private final PageFrameMemoryPool frameMemoryPool;
@@ -55,6 +54,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private final PageFrameMemoryRecord record;
     private boolean allFramesActive;
     private long cursor = -1;
+    private int dispatchLimit;
     private int frameIndex;
     private int frameLimit;
     private long frameRowCount;
@@ -72,14 +72,15 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public AsyncFilteredRecordCursor(@NotNull CairoConfiguration configuration, Function filter, int scanDirection) {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        this.defaultDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
     }
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (frameIndex == -1) {
-            fetchNextFrame();
+            fetchNextFrame(dispatchLimit, true);
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
 
@@ -105,7 +106,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         collectCursor(false);
 
         while (frameIndex < frameLimit) {
-            fetchNextFrame();
+            fetchNextFrame(dispatchLimit, true);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowsRemaining);
                 rowsRemaining -= frameRowsLeft;
@@ -130,24 +131,33 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            LOG.debug()
-                    .$("closing [shard=").$(frameSequence.getShard())
-                    .$(", frameIndex=").$(frameIndex)
-                    .$(", frameCount=").$(frameLimit)
-                    .$(", frameId=").$(frameSequence.getId())
-                    .$(", cursor=").$(cursor)
-                    .I$();
+            try {
+                if (frameSequence != null) {
+                    LOG.debug()
+                            .$("closing [shard=").$(frameSequence.getShard())
+                            .$(", frameIndex=").$(frameIndex)
+                            .$(", frameCount=").$(frameLimit)
+                            .$(", frameId=").$(frameSequence.getId())
+                            .$(", cursor=").$(cursor)
+                            .I$();
 
-            if (frameSequence != null) {
-                collectCursor(true);
-                if (frameLimit > -1) {
-                    frameSequence.await();
+                    collectCursor(true);
+                    if (frameLimit > -1) {
+                        frameSequence.await();
+                    }
+                    frameSequence.reset();
                 }
-                frameSequence.clear();
+            } finally {
+                Misc.free(frameMemoryPool);
+                isOpen = false;
             }
-            Misc.free(frameMemoryPool);
-            isOpen = false;
         }
+    }
+
+    @Override
+    public void expectLimitedIteration() {
+        // it must be a LIMIT N query, so put a cap the number of in-flight page frame tasks
+        dispatchLimit = defaultDispatchLimit;
     }
 
     public void freeRecords() {
@@ -179,11 +189,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public boolean hasNext() {
         // Check for the first hasNext call.
         if (frameIndex == -1) {
-            fetchNextFrame();
+            fetchNextFrame(dispatchLimit, false);
         }
 
         // Check for already reached row limit.
-        if (rowsRemaining < 0) {
+        if (rowsRemaining <= 0) {
             return false;
         }
 
@@ -201,7 +211,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
         // Do we have more frames?
         if (frameIndex < frameLimit) {
-            fetchNextFrame();
+            fetchNextFrame(dispatchLimit, false);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 record.setRowIndex(rows.get(rowIndex()));
                 frameRowIndex++;
@@ -221,6 +231,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
@@ -233,9 +248,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) {
         if (frameIndex == -1) {
-            fetchNextFrame();
+            fetchNextFrame(dispatchLimit, false);
         }
 
         long rowCountLeft = Math.min(rowsRemaining, rowCount.get());
@@ -258,7 +273,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         collectCursor(false);
 
         while (frameIndex < frameLimit) {
-            fetchNextFrame();
+            fetchNextFrame(dispatchLimit, false);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 long frameRowsLeft = Math.min(frameRowCount - frameRowIndex, rowCountLeft);
                 rowsRemaining -= frameRowsLeft;
@@ -312,7 +327,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
     }
 
-    private void fetchNextFrame() {
+    private void fetchNextFrame(int dispatchLimit, boolean countOnly) {
         if (frameLimit == -1) {
             frameSequence.prepareForDispatch();
             frameLimit = frameSequence.getFrameCount() - 1;
@@ -320,7 +335,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
         try {
             do {
-                cursor = frameSequence.next();
+                cursor = frameSequence.next(dispatchLimit, countOnly);
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
                     LOG.debug()
@@ -337,12 +352,18 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                                 .position(task.getErrorMessagePosition())
                                 .put(task.getErrorMsg())
                                 .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled());
+                                .setInterruption(task.isCancelled())
+                                .setOutOfMemory(task.isOutOfMemory());
                     }
 
                     allFramesActive &= frameSequence.isActive();
-                    rows = task.getFilteredRows();
-                    frameRowCount = rows.size();
+                    frameRowCount = task.getFilteredRowCount();
+                    if (task.isCountOnly()) {
+                        rows = null;
+                    } else {
+                        rows = task.getFilteredRows();
+                        assert rows.size() == frameRowCount;
+                    }
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;
                     if (frameRowCount > 0 && frameSequence.isActive()) {
@@ -360,10 +381,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
             } while (frameIndex < frameLimit);
         } catch (Throwable th) {
-            if (th instanceof CairoException) {
-                CairoException ce = (CairoException) th;
+            if (th instanceof CairoException ce) {
                 if (ce.isInterruption() || ce.isCancellation()) {
-                    LOG.error().$("filter error [ex=").$(((CairoException) th).getFlyweightMessage()).I$();
+                    LOG.error().$("filter error [ex=").$safe(ce.getFlyweightMessage()).I$();
                     throwTimeoutException();
                 } else {
                     LOG.error().$("filter error [ex=").$(th).I$();
@@ -388,15 +408,17 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
-        isOpen = true;
+        this.isOpen = true;
         this.frameSequence = frameSequence;
         this.rowsRemaining = rowsRemaining;
-        ogRowsRemaining = rowsRemaining;
-        frameIndex = -1;
-        frameLimit = -1;
-        frameRowIndex = -1;
-        frameRowCount = -1;
-        allFramesActive = true;
+        this.ogRowsRemaining = rowsRemaining;
+        // put a cap the number of in-flight page frame tasks in case of LIMIT N query
+        this.dispatchLimit = rowsRemaining != Long.MAX_VALUE ? defaultDispatchLimit : Integer.MAX_VALUE;
+        this.frameIndex = -1;
+        this.frameLimit = -1;
+        this.frameRowIndex = -1;
+        this.frameRowCount = -1;
+        this.allFramesActive = true;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {

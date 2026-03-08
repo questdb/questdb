@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
         if (token == null) {
-            throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName);
+            throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName).put(']');
         }
         return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0)));
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,8 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHandler;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -46,7 +48,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.ErrorTag.*;
 
-public class WarningsProcessor implements HttpRequestProcessor {
+public class WarningsProcessor implements HttpRequestProcessor, HttpRequestHandler {
     private static final long RECOMMENDED_FILE_LIMIT = 1048576;
     private static final long RECOMMENDED_MAP_COUNT_LIMIT = 1048576;
     private static final String TAG = "tag";
@@ -130,6 +132,11 @@ public class WarningsProcessor implements HttpRequestProcessor {
             }
             sinkRef.set(sink);
         }
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
     }
 
     @Override

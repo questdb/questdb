@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,15 +26,18 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.client.cutlass.http.client.HttpClient;
+import io.questdb.client.cutlass.http.client.HttpClientFactory;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.std.str.DirectUtf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import static io.questdb.test.cutlass.http.SettingsEndpointTest.assertSettingsRequest;
 
 public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
     private static final String PASSWORD = "quest";
@@ -93,7 +96,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 ) {
                     responseHeaders.await();
                     DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
-                    TestUtils.assertEquals("401", statusCode);
+                    TestUtils.assertEquals("401", statusCode.asAsciiCharSequence());
                 }
             }
         });
@@ -112,7 +115,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                     try (HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_MIN_PORT).GET().url("/health").send()) {
                         responseHeaders.await();
                         DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
-                        TestUtils.assertEquals("200", statusCode);
+                        TestUtils.assertEquals("200", statusCode.asAsciiCharSequence());
                     }
                 }
             }
@@ -133,7 +136,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 ) {
                     responseHeaders.await();
                     DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
-                    TestUtils.assertEquals("401", statusCode);
+                    TestUtils.assertEquals("401", statusCode.asAsciiCharSequence());
                 }
             }
         });
@@ -154,7 +157,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 ) {
                     responseHeaders.await();
                     DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
-                    TestUtils.assertEquals("200", statusCode);
+                    TestUtils.assertEquals("200", statusCode.asAsciiCharSequence());
                 }
             }
         });
@@ -171,6 +174,35 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                     sender.flush();
                 } catch (LineSenderException e) {
                     TestUtils.assertContains(e.getMessage(), "Unauthorized");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSettingsEndpointShowsAclEnabled() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertSettingsRequest(httpClient, "{" +
+                            "\"config\":{" +
+                            "\"release.type\":\"OSS\"," +
+                            "\"release.version\":\"[DEVELOPMENT]\"," +
+                            "\"http.settings.readonly\":false," +
+                            "\"acl.enabled\":true," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
+                            "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                            "\"posthog.enabled\":false," +
+                            "\"posthog.api.key\":null," +
+                            "\"cairo.max.file.name.length\":127" +
+                            "}," +
+                            "\"preferences.version\":0," +
+                            "\"preferences\":{" +
+                            "}" +
+                            "}");
                 }
             }
         });

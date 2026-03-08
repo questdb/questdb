@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -107,11 +107,18 @@ struct EnumTypeMap<ColumnType::DOUBLE> {
     static constexpr bool has_null = true;
 };
 
-template<>
-struct EnumTypeMap<ColumnType::TIMESTAMP> {
-    using type = int64_t;
-    static constexpr type null_value =  static_cast<int64_t>(0x8000000000000000LL);
-    static constexpr bool has_null = true;
+template <>
+struct EnumTypeMap<ColumnType::TIMESTAMP_MICRO> {
+  using type = int64_t;
+  static constexpr type null_value = static_cast<int64_t>(0x8000000000000000LL);
+  static constexpr bool has_null = true;
+};
+
+template <>
+struct EnumTypeMap<ColumnType::TIMESTAMP_NANO> {
+  using type = int64_t;
+  static constexpr type null_value = static_cast<int64_t>(0x8000000000000000LL);
+  static constexpr bool has_null = true;
 };
 
 template<>

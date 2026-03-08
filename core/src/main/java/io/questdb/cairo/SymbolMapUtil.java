@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,11 @@ import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Hash;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -52,6 +56,26 @@ public class SymbolMapUtil {
             long columnNameTxn,
             int symbolCount,
             int symbolCapacity
+    ) {
+        rebuildSymbolFiles(
+                configuration,
+                path,
+                name,
+                columnNameTxn,
+                symbolCount,
+                symbolCapacity,
+                0
+        );
+    }
+
+    public void rebuildSymbolFiles(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            int symbolCount,
+            int symbolCapacity,
+            int indexBlockCapacity
     ) {
         final int plen = path.size();
         try {
@@ -85,18 +109,19 @@ public class SymbolMapUtil {
             if (this.indexWriter == null) {
                 this.indexWriter = new BitmapIndexWriter(configuration);
             }
-            this.indexWriter.of(path.trimTo(plen), name, columnNameTxn);
+            int indexBlockCap = Math.max(TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE, indexBlockCapacity);
+            this.indexWriter.of(path.trimTo(plen), name, columnNameTxn, indexBlockCap);
 
             // clean the files, except .c file
             truncate(symbolCapacity);
 
             // open .c file
             long charFileLen = ff.length(charFileName(path.trimTo(plen), name, columnNameTxn));
-            if (charFileLen == 0) {
+            if (charFileLen <= 0) {
                 // .c file is empty, nothing to do
                 return;
             }
-            charMem = open(configuration, ff, mapPageSize, -1, charFileName(path.trimTo(plen), name, columnNameTxn), charMem);
+            charMem = open(configuration, ff, mapPageSize, charFileLen, path.$(), charMem);
 
             // Read .c file and rebuild symbol map
             long strOffset = 0;
@@ -111,7 +136,7 @@ public class SymbolMapUtil {
                 // read symbol value
                 CharSequence symbol = charMem.getStrA(strOffset);
                 strOffset += Vm.getStorageLength(symbol);
-                if (symbol.length() == 0) {
+                if (symbol.isEmpty()) {
                     LOG.info().$("symbol is empty [index=").$(i).$(']').$();
                 }
 
@@ -134,16 +159,18 @@ public class SymbolMapUtil {
         }
     }
 
-    private static MemoryCMOR open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, LPSZ path, MemoryCMOR mem) {
-        if (size == -1) {
-            long fileSize = ff.length(path);
-            if (fileSize > 0) {
-                size = fileSize;
-            }
-        }
+    private static MemoryCMOR open(
+            CairoConfiguration configuration,
+            FilesFacade ff,
+            long mapPageSize,
+            long size,
+            LPSZ path,
+            MemoryCMOR mem
+    ) {
+        assert size != -1;
 
         if (mem == null) {
-            mem = Vm.getMemoryCMOR();
+            mem = Vm.getMemoryCMOR(false);
         }
         mem.of(
                 ff,
@@ -190,5 +217,9 @@ public class SymbolMapUtil {
         offsetMem.jumpTo(keyToOffset(0));
 
         indexWriter.truncate();
+    }
+
+    static long calculateExtendSegmentSize(CairoConfiguration configuration, long fileLen) {
+        return Math.min(Numbers.floorPow2(Math.max(configuration.getSymbolTableMinAllocationPageSize(), fileLen)), configuration.getSymbolTableMaxAllocationPageSize());
     }
 }

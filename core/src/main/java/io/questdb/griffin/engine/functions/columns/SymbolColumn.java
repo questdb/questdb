@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,17 +25,15 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
-public class SymbolColumn extends SymbolFunction implements ScalarFunction {
+public class SymbolColumn extends SymbolFunction implements ColumnFunction {
     private final int columnIndex;
     private final boolean symbolTableStatic;
     private boolean ownSymbolTable;
@@ -52,6 +50,11 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
         if (ownSymbolTable) {
             symbolTable = Misc.freeIfCloseable(symbolTable);
         }
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -110,11 +113,6 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public boolean supportsParallelism() {
         return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     @Override

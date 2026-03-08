@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,10 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
@@ -39,8 +40,6 @@ import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
 
@@ -48,13 +47,11 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Collection;
 import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 
-@RunWith(Parameterized.class)
 public class PGSecurityTest extends BasePGTest {
 
     private static final SecurityContextFactory READ_ONLY_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);
@@ -64,7 +61,7 @@ public class PGSecurityTest extends BasePGTest {
             return READ_ONLY_SECURITY_CONTEXT_FACTORY;
         }
     };
-    private static final PGWireConfiguration READ_ONLY_CONF = new Port0PGWireConfiguration() {
+    private static final PGConfiguration READ_ONLY_CONF = new Port0PGConfiguration() {
         @Override
         public FactoryProvider getFactoryProvider() {
             return READ_ONLY_FACTORY_PROVIDER;
@@ -77,7 +74,7 @@ public class PGSecurityTest extends BasePGTest {
             return READ_ONLY_USER_SECURITY_CONTEXT_FACTORY;
         }
     };
-    private static final PGWireConfiguration READ_ONLY_USER_CONF = new Port0PGWireConfiguration() {
+    private static final PGConfiguration READ_ONLY_USER_CONF = new Port0PGConfiguration() {
         @Override
         public FactoryProvider getFactoryProvider() {
             return READ_ONLY_USER_FACTORY_PROVIDER;
@@ -89,18 +86,9 @@ public class PGSecurityTest extends BasePGTest {
         }
     };
 
-    public PGSecurityTest(LegacyMode legacyMode) {
-        super(legacyMode);
-    }
-
     @BeforeClass
     public static void init() {
         inputRoot = TestUtils.getCsvRoot();
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return legacyModeParams();
     }
 
     @Test
@@ -226,8 +214,10 @@ public class PGSecurityTest extends BasePGTest {
             // if this asserts fails then it means UPDATE are already implemented
             // please change this test to check the update throws an exception in the read-only mode
             // this is in place, so we won't forget to test UPDATE honours read-only security context
-            assertSql("ts\tname\n" +
-                    "2022-04-12T17:30:45.145921Z\tfoo\n", "select * from src");
+            assertSql("""
+                    ts\tname
+                    2022-04-12T17:30:45.145921Z\tfoo
+                    """, "select * from src");
         });
     }
 
@@ -236,26 +226,6 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
             assertQueryDisallowed("vacuum partitions src");
-        });
-    }
-
-    @Test
-    public void testDisallowsBackupDatabase() throws Exception {
-        assertMemoryLeak(() -> {
-            configureForBackups();
-            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            execute("insert into src values (now(), 'foo')");
-            assertQueryDisallowed("backup database");
-        });
-    }
-
-    @Test
-    public void testDisallowsBackupTable() throws Exception {
-        assertMemoryLeak(() -> {
-            configureForBackups();
-            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            execute("insert into src values (now(), 'foo')");
-            assertQueryDisallowed("backup table src");
         });
     }
 
@@ -291,7 +261,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             execute("create table src (ts TIMESTAMP)");
             try (
-                    final IPGWireServer server = createPGServer(READ_ONLY_USER_CONF);
+                    final PGServer server = createPGServer(READ_ONLY_USER_CONF);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -314,6 +284,38 @@ public class PGSecurityTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testSecurityContextFactoryThrowsCairoException() throws Exception {
+        final PGConfiguration conf = new Port0PGConfiguration() {
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return new DefaultFactoryProvider() {
+                    @Override
+                    public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                        return (principalContext, interfaceId) -> {
+                            throw CairoException.nonCritical().put("test security context error");
+                        };
+                    }
+                };
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGServer server = createPGServer(conf);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try {
+                    getConnection(server.getPort(), false, true);
+                    Assert.fail("Connection should have been denied");
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), "test security context error");
+                }
+            }
+        });
+    }
+
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
@@ -325,7 +327,7 @@ public class PGSecurityTest extends BasePGTest {
 
     private void executeWithPg(String query) throws Exception {
         try (
-                final IPGWireServer server = createPGServer(READ_ONLY_CONF);
+                final PGServer server = createPGServer(READ_ONLY_CONF);
                 final WorkerPool workerPool = server.getWorkerPool()
         ) {
             workerPool.start(LOG);

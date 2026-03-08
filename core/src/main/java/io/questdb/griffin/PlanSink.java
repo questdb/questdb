@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -83,6 +86,8 @@ public interface PlanSink {
 
     PlanSink putColumnName(int columnIdx);
 
+    void setMetadata(RecordMetadata metadata);
+
     PlanSink type(CharSequence type);
 
     void useBaseMetadata(boolean b);
@@ -113,11 +118,21 @@ public interface PlanSink {
 
     PlanSink val(Plannable s);
 
+    PlanSink val(Plannable s, RecordCursorFactory factory);
+
     PlanSink val(long hash, int geoHashBits);
+
+    PlanSink valDecimal(long value, int precision, int scale);
+
+    PlanSink valDecimal(long hi, long lo, int precision, int scale);
+
+    PlanSink valDecimal(long hh, long hl, long lh, long ll, int precision, int scale);
 
     PlanSink valIPv4(int ip);
 
-    PlanSink valISODate(long l);
+    PlanSink valISODate(TimestampDriver driver, long l);
+
+    PlanSink valInterval(Interval interval, int intervalType);
 
     PlanSink valLong256(long long0, long long1, long long2, long long3);
 

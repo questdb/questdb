@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -80,7 +80,7 @@ public class ConcurrentQueueFuzzTest {
         int elementsCount = 33 + rnd.nextInt(1_000) + (int) Math.pow(2, rnd.nextInt(20));
         boolean[] received = new boolean[elementsCount];
 
-        ConcurrentQueue<IntHolderQueue> queue = new ConcurrentQueue<>(IntHolderQueue::new);
+        ConcurrentQueue<IntHolderQueue> queue = ConcurrentQueue.createConcurrentQueue(IntHolderQueue::new);
         AtomicInteger counter = new AtomicInteger();
 
         CyclicBarrier barrier = new CyclicBarrier(nProducers + nConsumers);
@@ -112,7 +112,6 @@ public class ConcurrentQueueFuzzTest {
 
         boolean pauseReader = rnd.nextBoolean();
         for (int i = 0; i < nConsumers; i++) {
-            Rnd consumerRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
             Thread th = new Thread(() -> {
                 try {
                     barrier.await();

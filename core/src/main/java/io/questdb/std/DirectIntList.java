@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,6 @@ import java.io.Closeable;
 import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 public class DirectIntList implements Mutable, Closeable, Reopenable {
-
     private static final Log LOG = LogFactory.getLog(DirectIntList.class);
     private final long initialCapacity;
     private final int memoryTag;
@@ -45,12 +44,20 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private long pos;
 
     public DirectIntList(long capacity, int memoryTag) {
+        this(capacity, memoryTag, false);
+    }
+
+    public DirectIntList(long capacity, int memoryTag, boolean keepClosed) {
+        assert capacity >= 0;
         this.memoryTag = memoryTag;
-        this.capacity = (capacity * Integer.BYTES);
-        this.address = Unsafe.malloc(this.capacity, memoryTag);
-        this.pos = address;
-        this.limit = pos + this.capacity;
-        this.initialCapacity = this.capacity;
+        final long capacityBytes = capacity * Integer.BYTES;
+        this.initialCapacity = capacityBytes;
+        if (!keepClosed) {
+            this.address = capacityBytes > 0 ? Unsafe.malloc(capacityBytes, memoryTag) : 0;
+            this.capacity = capacityBytes;
+            this.pos = address;
+            this.limit = pos + capacityBytes;
+        }
     }
 
     public void add(int x) {
@@ -73,6 +80,13 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         pos = address;
     }
 
+    /**
+     * Overwrites the range from `address` to `pos` (exclusive) with the provided
+     * value, and then resets `pos` to `address`. The value is interpreted as a
+     * single byte, so this sets all the involved bytes to that value.
+     *
+     * @param b the byte value to set
+     */
     public void clear(int b) {
         zero(b);
         pos = address;
@@ -125,7 +139,20 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     public void resetCapacity() {
-        setCapacityBytes(initialCapacity);
+        if (initialCapacity == 0) {
+            close();
+        } else {
+            setCapacityBytes(initialCapacity);
+        }
+    }
+
+    public void reverse() {
+        final long len = size();
+        for (long index = 0, mid = len / 2; index < mid; ++index) {
+            final int temp = get(index);
+            set(index, get(len - index - 1));
+            set(len - index - 1, temp);
+        }
     }
 
     public void set(long p, int v) {
@@ -133,7 +160,8 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         Unsafe.getUnsafe().putInt(address + (p << 2), v);
     }
 
-    // desired capacity in INTs (not count of bytes)
+    // Desired capacity in INTs (not count of bytes).
+    // Safe to call on a closed list - it will allocate memory.
     public void setCapacity(long capacity) {
         assert capacity > 0;
         setCapacityBytes(capacity << 2);
@@ -179,30 +207,25 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
 
     // desired capacity in bytes (not count of INT values)
     private void setCapacityBytes(long capacity) {
+        assert capacity > 0;
         if (this.capacity != capacity) {
             if ((capacity >>> 2) > MAX_SAFE_INT_POW_2) {
                 throw CairoException.nonCritical().put("int list capacity overflow");
             }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
-            try {
-                long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-                this.capacity = capacity;
-                this.address = address;
-                this.limit = address + capacity;
-                this.pos = Math.min(this.limit, address + oldSize);
-                LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
+            final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+            this.capacity = capacity;
+            this.address = address;
+            this.limit = address + capacity;
+            this.pos = Math.min(this.limit, address + oldSize);
+            LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
         }
     }
 
     void checkCapacity() {
-        if (pos < limit) {
-            return;
+        if (pos >= limit) {
+            setCapacityBytes((Math.max(capacity, Integer.BYTES)) << 1);
         }
-        setCapacityBytes(capacity << 1);
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,8 @@ import io.questdb.std.Vect;
 
 import java.util.Arrays;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
 
 public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
     private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
@@ -49,14 +50,17 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private final int workerCount;
     private int valueOffset;
 
-    public KSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
+    public KSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         this.sum = new double[workerCount * SUM_PADDING];
         this.count = new long[workerCount * COUNT_PADDING];
         this.workerCount = workerCount;
-        if (keyKind == GKK_HOUR_INT) {
-            this.distinctFunc = Rosti::keyedHourDistinct;
-            this.keyValueFunc = Rosti::keyedHourKSumDouble;
+        if (keyKind == GKK_MICRO_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedMicroHourDistinct;
+            this.keyValueFunc = Rosti::keyedMicroHourKSumDouble;
+        } else if (keyKind == GKK_NANO_HOUR_INT) {
+            this.distinctFunc = Rosti::keyedNanoHourDistinct;
+            this.keyValueFunc = Rosti::keyedNanoHourKSumDouble;
         } else {
             this.keyValueFunc = Rosti::keyedIntKSumDouble;
             this.distinctFunc = Rosti::keyedIntDistinct;

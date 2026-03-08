@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,8 +29,18 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -88,7 +98,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             header = true;
         } else {
             LOG.info()
-                    .$("no header [table=").$(tableName)
+                    .$("no header [table=").$safe(tableName)
                     .$(", lineCount=").$(lineCount)
                     .$(", errorCount=").$(errorCount)
                     .$(", forceHeader=").$(forceHeader)
@@ -178,11 +188,11 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
      * Histogram contains counts for every probe that validates field. It is possible for multiple probes to validate same field.
      * It can happen because of two reasons.
      * <p>
-     * probes are compatible, for example INT is compatible with DOUBLE in a sense that DOUBLE probe will positively
-     * validate every INT. If this the case we will use order of probes as priority. First probe wins
+     * Probes are compatible, for example INT is compatible with DOUBLE in a sense that DOUBLE probe will positively
+     * validate every INT. If this the case we will use order of probes as priority. First probe wins.
      * <p>
-     * it is possible to have mixed types in same column, in which case column has to become string.
-     * to establish if we have mixed column we check if probe count + blank values add up to total number of rows.
+     * It is possible to have mixed types in same column, in which case column has to become string.
+     * To establish if we have mixed column we check if probe count + blank values add up to total number of rows.
      */
     private boolean calcTypes(long count, boolean setDefault) {
         boolean allStrings = true;
@@ -288,7 +298,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             if (Utf8s.utf8ToUtf16(value.lo(), value.hi(), utf8Sink)) {
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
-                LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();
+                LOG.info().$("utf8 error [table=").$safe(tableName).$(", line=0, col=").$(i).$(']').$();
                 columnNames.setQuick(i, "");
             }
         }

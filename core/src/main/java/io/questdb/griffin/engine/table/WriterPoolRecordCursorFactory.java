@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -112,6 +112,11 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }
@@ -164,7 +169,7 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(TABLE_NAME_COLUMN_INDEX, new TableColumnMetadata("table_name", ColumnType.STRING))
                 .add(OWNER_THREAD_COLUMN_INDEX, new TableColumnMetadata("owner_thread_id", ColumnType.LONG))
-                .add(LAST_ACCESS_TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("last_access_timestamp", ColumnType.TIMESTAMP))
+                .add(LAST_ACCESS_TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("last_access_timestamp", ColumnType.TIMESTAMP_MICRO))
                 .add(OWNERSHIP_REASON_COLUMN_INDEX, new TableColumnMetadata("ownership_reason", ColumnType.STRING));
         METADATA = metadata;
     }

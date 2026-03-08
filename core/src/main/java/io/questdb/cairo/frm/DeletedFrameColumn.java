@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,6 +23,8 @@
  ******************************************************************************/
 
 package io.questdb.cairo.frm;
+
+import io.questdb.cairo.frm.file.RecycleBin;
 
 public class DeletedFrameColumn implements FrameColumn {
     public static final FrameColumn INSTANCE = new DeletedFrameColumn();
@@ -73,6 +75,20 @@ public class DeletedFrameColumn implements FrameColumn {
 
     @Override
     public int getStorageType() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setRecycleBin(RecycleBin<FrameColumn> pool) {
+    }
+
+    @Override
+    public long getContiguousAuxAddr(long rowHi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getContiguousDataAddr(long rowHi) {
         throw new UnsupportedOperationException();
     }
 }

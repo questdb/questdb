@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,12 +26,14 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -43,6 +45,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
@@ -155,7 +158,12 @@ public abstract class HttpClient implements QuietCloseable {
 
     private void growBuffer(long requiredSize) {
         if (requiredSize > maxBufferSize) {
-            throw new HttpClientException("maximum buffer size exceeded [maxBufferSize=").put(maxBufferSize).put(", requiredSize=").put(requiredSize).put(']');
+            throw new HttpClientException("transaction is too large, either flush more frequently or " +
+                    "increase buffer size \"max_buf_size\" [maxBufferSize=")
+                    .putSize(maxBufferSize)
+                    .put(", transactionSize=")
+                    .putSize(requiredSize)
+                    .put(']');
         }
         long newBufferSize = Math.min(Numbers.ceilPow2((int) requiredSize), maxBufferSize);
         long newBufLo = Unsafe.realloc(bufLo, bufferSize, newBufferSize, MemoryTag.NATIVE_DEFAULT);
@@ -221,6 +229,7 @@ public abstract class HttpClient implements QuietCloseable {
 
     protected abstract void setupIoWait();
 
+    @SuppressWarnings("unused")
     private static class BinarySequenceAdapter implements BinarySequence, Mutable {
         private final Utf8StringSink baseSink = new Utf8StringSink();
 
@@ -261,7 +270,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
-    public class Request implements Utf8Sink {
+    public class Request implements Utf8Sink, ArrayBufferAppender {
         private static final int STATE_CONTENT = 5;
         private static final int STATE_HEADER = 4;
         private static final int STATE_QUERY = 3;
@@ -276,27 +285,28 @@ public abstract class HttpClient implements QuietCloseable {
         public Request DELETE() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("DELETE ");
+            return putAscii("DELETE ");
         }
 
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("GET ");
+            return putAscii("GET ");
         }
 
         public Request POST() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("POST ");
+            return putAscii("POST ");
         }
 
         public Request PUT() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("PUT ");
+            return putAscii("PUT ");
         }
 
+        @SuppressWarnings("unused")
         public Request authBasic(CharSequence username, CharSequence password) {
             beforeHeader();
             putAsciiInternal("Authorization: Basic ");
@@ -313,6 +323,7 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @SuppressWarnings("unused")
         public Request authToken(CharSequence username, CharSequence token) {
             beforeHeader();
             putAsciiInternal("Authorization: Bearer ");
@@ -324,12 +335,22 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @SuppressWarnings("unused")
         public int getContentLength() {
             if (contentStart > -1) {
                 return (int) (ptr - contentStart);
             } else {
                 return 0;
             }
+        }
+
+        @SuppressWarnings("unused")
+        public long getContentStart() {
+            return contentStart;
+        }
+
+        public long getPtr() {
+            return ptr;
         }
 
         public Request header(CharSequence name, CharSequence value) {
@@ -392,6 +413,39 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
+        public void putBlockOfBytes(long from, long len) {
+            checkCapacity(len);
+            Vect.memcpy(ptr, from, len);
+            ptr += len;
+        }
+
+        @Override
+        public void putByte(byte value) {
+            put(value);
+        }
+
+        @Override
+        public void putDouble(double value) {
+            checkCapacity(Double.BYTES);
+            Unsafe.getUnsafe().putDouble(ptr, value);
+            ptr += Double.BYTES;
+        }
+
+        @Override
+        public void putInt(int value) {
+            checkCapacity(Integer.BYTES);
+            Unsafe.getUnsafe().putInt(ptr, value);
+            ptr += Integer.BYTES;
+        }
+
+        @Override
+        public void putLong(long value) {
+            checkCapacity(Long.BYTES);
+            Unsafe.getUnsafe().putLong(ptr, value);
+            ptr += Long.BYTES;
+        }
+
+        @Override
         public Request putNonAscii(long lo, long hi) {
             final long size = hi - lo;
             checkCapacity(size);
@@ -423,22 +477,73 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public Request query(CharSequence name, Utf8Sequence value) {
+            assert state == STATE_URL_DONE || state == STATE_QUERY;
+            if (state == STATE_URL_DONE) {
+                putAsciiInternal('?');
+            } else {
+                putAsciiInternal('&');
+            }
+            state = STATE_QUERY;
+            urlEncode = true;
+            try {
+                put(name).putAsciiInternal('=').put(value);
+            } finally {
+                urlEncode = false;
+            }
+            return this;
+        }
+
         public ResponseHeaders send() {
             return send(defaultTimeout);
         }
 
-        public ResponseHeaders send(int timeout) {
+        /**
+         * Sends the HTTP request to the specified host and port with connection management.
+         * <p>
+         * This method intelligently manages the underlying socket connection:
+         * <ul>
+         *   <li>Reuses the existing connection if already connected to the same host:port</li>
+         *   <li>Establishes a new connection if not connected or connecting to a different host:port</li>
+         *   <li>Automatically reconnects if the existing connection is closed or broken (when configured)</li>
+         * </ul>
+         * <p>
+         * The request must be in a valid state (URL set, optional query parameters, headers, or content added)
+         * before calling this method. The HTTP version (1.1) and Host header are automatically appended.
+         * <p>
+         * Common use cases include:
+         * <ul>
+         *   <li>Failover scenarios - retry the same request on a different server</li>
+         *   <li>Multi-publishing - send the same data to multiple endpoints</li>
+         * </ul>
+         * Important: If the request buffer already contains an HTTP request header with a host
+         * then the host will not change! This means reverse proxies routing requests to different
+         * host based on the Host header will not work! Routing on TLS SNI will not be affected.
+         *
+         * @param host    the hostname or IP address to connect to
+         * @param port    the port number to connect on
+         * @param timeout the request timeout in milliseconds for socket operations
+         * @return the parsed response headers from the server
+         * @throws AssertionError if the request is not in a valid state
+         */
+        public ResponseHeaders send(CharSequence host, int port, int timeout) {
             assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
             if (socket == null || socket.isClosed()) {
                 connect(host, port);
             } else if (fixBrokenConnection && nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
                 socket.close();
                 connect(host, port);
+            } else if (!Chars.equalsNc(host, HttpClient.this.host) || (port != HttpClient.this.port)) {
+                socket.close();
+                connect(host, port);
+                HttpClient.this.host = host;
+                HttpClient.this.port = port;
             }
 
             if (state == STATE_URL_DONE || state == STATE_QUERY) {
                 putAsciiInternal(" HTTP/1.1").putEOL();
                 putAsciiInternal("Host: ").put(host).putAscii(':').put(port).putEOL();
+                state = STATE_HEADER;
             }
 
             if (contentStart > -1) {
@@ -452,6 +557,10 @@ public abstract class HttpClient implements QuietCloseable {
             return responseHeaders;
         }
 
+        public ResponseHeaders send(int timeout) {
+            return send(host, port, timeout);
+        }
+
         public void sendPartialContent(int maxContentLen, int timeout) {
             if (state != STATE_CONTENT || contentStart == -1) {
                 throw new IllegalStateException("No content to send");
@@ -463,6 +572,7 @@ public abstract class HttpClient implements QuietCloseable {
             sendHeaderAndContent(maxContentLen, timeout);
         }
 
+        @SuppressWarnings("unused")
         public Request setCookie(CharSequence name, CharSequence value) {
             beforeHeader();
             put(HEADER_COOKIE).putAscii(": ").put(name);
@@ -473,8 +583,22 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        @Override
+        public String toString() {
+            StringSink ss = new StringSink();
+            DirectUtf8String s = new DirectUtf8String();
+            s.of(bufLo, ptr);
+            ss.put(s);
+            return ss.toString();
+        }
+
+        @SuppressWarnings("unused")
         public void trimContentToLen(int contentLen) {
             ptr = contentStart + contentLen;
+        }
+
+        public void truncate() {
+            throw new UnsupportedOperationException();
         }
 
         public Request url(CharSequence url) {
@@ -557,10 +681,15 @@ public abstract class HttpClient implements QuietCloseable {
             }
 
             if (socket.supportsTls()) {
-                if (socket.startTlsSession(host) < 0) {
+                try {
+                    socket.startTlsSession(host);
+                } catch (TlsSessionInitFailedException e) {
                     int errno = nf.errno();
                     disconnect();
-                    throw new HttpClientException("could not start TLS session [fd=").put(fd).put(", errno=").put(errno).put(']');
+                    throw new HttpClientException("could not start TLS session [fd=").put(fd)
+                            .put(", error=").put(e.getFlyweightMessage())
+                            .put(", errno=").put(errno)
+                            .put(']');
                 }
             }
             setupIoWait();
@@ -698,6 +827,15 @@ public abstract class HttpClient implements QuietCloseable {
                 case '}':
                     putAsciiInternal("%7D");
                     break;
+                case '\n':
+                    putAsciiInternal("%0A");
+                    break;
+                case '\r':
+                    putAsciiInternal("%0D");
+                    break;
+                case '\t':
+                    putAsciiInternal("%09");
+                    break;
                 default:
                     // there are symbols to escape, but those we do not tend to use at all
                     // https://www.w3schools.com/tags/ref_urlencode.ASP
@@ -804,7 +942,7 @@ public abstract class HttpClient implements QuietCloseable {
             if (isIncomplete()) {
                 throw new HttpClientException("http response headers not yet received");
             }
-            return Utf8s.equalsNcAscii("chunked", getHeader(HEADER_TRANSFER_ENCODING));
+            return HttpKeywords.isChunked(getHeader(HEADER_TRANSFER_ENCODING));
         }
 
         private void free() {

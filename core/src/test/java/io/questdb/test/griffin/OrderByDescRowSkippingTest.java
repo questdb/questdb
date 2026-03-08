@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,17 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.FullBwdPartitionFrameCursorFactory;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.engine.table.BwdPageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -46,11 +47,13 @@ import org.junit.Test;
  */
 public class OrderByDescRowSkippingTest extends AbstractCairoTest {
 
-    private static final String DATA = "10\t2022-01-13T10:00:00.000000Z\n" +
-            "9\t2022-01-12T06:13:20.000000Z\n" +
-            "8\t2022-01-11T02:26:40.000000Z\n" +
-            "7\t2022-01-09T22:40:00.000000Z\n" +
-            "6\t2022-01-08T18:53:20.000000Z\n";
+    private static final String DATA = """
+            10\t2022-01-13T10:00:00.000000Z
+            9\t2022-01-12T06:13:20.000000Z
+            8\t2022-01-11T02:26:40.000000Z
+            7\t2022-01-09T22:40:00.000000Z
+            6\t2022-01-08T18:53:20.000000Z
+            """;
     private static final String EXPECTED = "rectype\tcreaton\n" + DATA;
 
     // partitioned table with designated timestamp and two partitions, 5 rows per partition
@@ -997,8 +1000,8 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
         return new PageFrameRecordCursorFactory(
                 engine.getConfiguration(),
                 metadata,
-                new FullBwdPartitionFrameCursorFactory(reader.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.deepCopyOf(metadata)),
-                new BwdPageFrameRowCursorFactory(),
+                new FullPartitionFrameCursorFactory(reader.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOfNew(metadata), PartitionFrameCursorFactory.ORDER_DESC, null, 0, false),
+                new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_DESC),
                 false,
                 null,
                 true,

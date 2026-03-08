@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -371,7 +371,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts) {
+    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, int opts, int madviseOpts) {
         auxMem.of(
                 ff,
                 fileName,
@@ -389,7 +389,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
+    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, int opts) {
         auxMem.ofOffset(
                 ff,
                 fd,
@@ -412,15 +412,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             long rowLo,
             long rowHi,
             int memoryTag,
-            long opts
+            int opts
     ) {
-        long lo;
-        if (rowLo > 0) {
-            lo = getDataOffset(auxMem, VARCHAR_AUX_WIDTH_BYTES * rowLo);
-        } else {
-            lo = 0;
-        }
-        long hi = getDataVectorSize(auxMem, VARCHAR_AUX_WIDTH_BYTES * (rowHi - 1));
+        long lo = rowLo > 0 ? getDataOffset(auxMem, VARCHAR_AUX_WIDTH_BYTES * rowLo) : 0;
+        long hi = rowHi > 0 ? getDataVectorSize(auxMem, VARCHAR_AUX_WIDTH_BYTES * (rowHi - 1)) : 0;
         dataMem.ofOffset(
                 ff,
                 dataFd,
@@ -498,6 +493,20 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     @Override
     public long getMinAuxVectorSize() {
         return 0;
+    }
+
+    @Override
+    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
+        long lastSizeInDataVector = 0;
+        for (int row = 0; row < rowCount; row++) {
+            long offset = getDataVectorOffset(auxMemAddr, row);
+            if (offset != lastSizeInDataVector) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+            lastSizeInDataVector = getDataVectorSizeAt(auxMemAddr, row);
+        }
+        return false;
     }
 
     @Override
@@ -586,7 +595,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount) {
+    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount) {
         if (rowCount > 0) {
             auxMem.jumpTo(VARCHAR_AUX_WIDTH_BYTES * (rowCount - HEADER_FLAG_INLINED));
             final long dataMemOffset = getDataVectorSize(auxMem.getAppendAddress());
@@ -642,13 +651,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     public void shiftCopyAuxVector(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
         // +1 since srcHi is inclusive
         assert (srcHi - srcLo + 1) * VARCHAR_AUX_WIDTH_BYTES <= dstAddrSize;
-        O3Utils.shiftCopyVarcharColumnAux(
-                shift,
-                srcAddr,
-                srcLo,
-                srcHi,
-                dstAddr
-        );
+        Vect.shiftCopyVarcharColumnAux(shift, srcAddr, srcLo, srcHi, dstAddr);
     }
 
     private static long getDataOffset(long auxEntry) {

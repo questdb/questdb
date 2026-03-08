@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -64,7 +64,7 @@ public class IPv4VarcharNetmaskFunctionFactory implements FunctionFactory {
         return new Func(varcharFunc);
     }
 
-    private static class Func extends IPv4Function implements UnaryFunction {
+    private static class Func extends IPv4Function implements ArithmeticUnaryFunction {
         private final Function arg;
 
         public Func(Function arg) {

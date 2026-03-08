@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -75,7 +75,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
         mapValueTypes.add(ROW_ID_VALUE_IDX, ColumnType.LONG);
         if (!orderedByTimestampAsc) {
-            mapValueTypes.add(TIMESTAMP_VALUE_IDX, ColumnType.TIMESTAMP);
+            mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
         }
         Map latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
         this.cursor = new LatestByLightRecordCursor(latestByMap);
@@ -90,8 +90,6 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         cursor.of(baseCursor, circuitBreaker);
@@ -198,6 +196,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
             baseRecord = baseCursor.getRecord();
             this.circuitBreaker = circuitBreaker;
             isMapBuilt = false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return isMapBuilt ? 1 : 0;
         }
 
         @Override

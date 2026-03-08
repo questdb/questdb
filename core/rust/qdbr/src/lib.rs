@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,15 +23,16 @@
  ******************************************************************************/
 
 #![feature(allocator_api)]
+#![feature(portable_simd)]
 extern crate core;
 pub extern crate jni;
 
-mod allocator;
-mod cairo;
-mod files;
-mod parquet;
-mod parquet_read;
-mod parquet_write;
+pub mod allocator;
+pub mod files;
+pub mod parquet;
+pub mod parquet_read;
+pub mod parquet_write;
+mod wal_lock;
 
 use jni::sys::jlong;
 use jni::{objects::JClass, JNIEnv};
@@ -48,7 +49,7 @@ pub static POOL: Lazy<ThreadPool> = Lazy::new(|| {
         });
     ThreadPoolBuilder::new()
         .num_threads(num_threads)
-        .thread_name(move |i| format!("questdb-parquet-{}", i))
+        .thread_name(|i| format!("qdb-parq-{i}"))
         .build()
         .expect("could not spawn threads")
 });
@@ -66,7 +67,7 @@ pub extern "system" fn Java_io_questdb_std_Os_initRust(_env: JNIEnv, _class: JCl
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Os_rustSmokeTest(
+pub extern "system" fn Java_io_questdb_std_Os_smokeTest(
     _env: JNIEnv,
     _class: JClass,
     a: i64,

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,4 +33,7 @@ public final class IntervalOperation {
     public static final short SUBTRACT = 5;
     public static final short SUBTRACT_BETWEEN = 6;
     public static final short SUBTRACT_INTERVALS = 7;
+    // UNION is used for bracket expansion in dynamic mode: subsequent intervals
+    // are unioned with the first before applying the overall operation
+    public static final short UNION = 8;
 }

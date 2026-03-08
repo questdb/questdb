@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -96,7 +96,7 @@ public class InfluxDBClientStreamingTest extends AbstractTest {
                 try {
                     assertSql(server.getEngine(),
                             "select count(*) from " + tableName,
-                            "count\n" + pointCounter.get() + "\n"
+                            "count()\n" + pointCounter.get() + "\n"
                     );
                 } catch (SqlException e) {
                     throw new RuntimeException(e);
@@ -126,7 +126,10 @@ public class InfluxDBClientStreamingTest extends AbstractTest {
                     influxDB.enableBatch(
                             BatchOptions.DEFAULTS
                                     .actions(batchSize)
-                                    .bufferLimit(batchSize * 1024)
+                                    .bufferLimit(Integer.MAX_VALUE)
+                                    .exceptionHandler((p, t) -> {
+                                        LOG.error().$("Error sending points ").$(p).$(" ").$(t).$();
+                                    })
                     );
 
                     while (!stop.get()) {

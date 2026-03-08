@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,7 +48,9 @@ public class IDGeneratorFactory {
         protected final String uniqueIdFileName;
         protected final long uniqueIdMemSize;
         protected long uniqueIdFd = -1;
-        protected long uniqueIdMem = 0;
+        // the current ID is consumed by other threads, and we need to make sure
+        // memory address is visible to them
+        protected volatile long uniqueIdMem = 0;
 
         public AbstractIDGenerator(CairoConfiguration configuration, String uniqueIdFileName) {
             this.configuration = configuration;

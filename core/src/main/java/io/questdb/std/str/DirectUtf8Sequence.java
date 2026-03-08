@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,10 +38,20 @@ public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
     }
 
     @Override
+    default int intAt(int offset) {
+        return Unsafe.getUnsafe().getInt(ptr() + offset);
+    }
+
+    @Override
     default long longAt(int offset) {
         return Unsafe.getUnsafe().getLong(ptr() + offset);
     }
 
     @Override
     long ptr();
+
+    @Override
+    default short shortAt(int offset) {
+        return Unsafe.getUnsafe().getShort(ptr() + offset);
+    }
 }

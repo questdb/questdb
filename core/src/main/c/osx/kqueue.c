@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -174,53 +174,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_evtAlloc
     (JNIEnv *e, jclass cl, jlong ident, jint filter, jint flags, jint fflags, jlong data) {
     struct kevent *event = malloc(sizeof(struct kevent));
     if (!event) {
-        return (jlong)0;
+        return (jlong) 0;
     }
     EV_SET(event, ident, filter, flags, fflags, data, NULL);
-    return (jlong)event;
+    return (jlong) event;
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_KqueueAccessor_evtFree
         (JNIEnv *e, jclass cl, jlong event) {
     free((void *) event);
-}
-
-
-JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_pipe
-        (JNIEnv *e, jclass cl) {
-    int fds[2];
-    int res = pipe(fds);
-    if (res < 0) {
-        return res;
-    }
-    res = fcntl(fds[0], F_SETFL, O_NONBLOCK);
-    if (res < 0) {
-        close(fds[0]);
-        close(fds[1]);
-        return res;
-    }
-    return (jlong) fds[0] << 32 | (jlong) fds[1];
-}
-
-JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_readPipe
-        (JNIEnv *e, jclass cl, jint fd) {
-    char buf[1];
-    ssize_t s;
-    s = read((int) fd, &buf[0], 1);
-    if (s != 1) {
-        return -1;
-    }
-    return (jint) buf[0];
-}
-
-JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_writePipe
-        (JNIEnv *e, jclass cl, jint fd) {
-    char buf[1];
-    ssize_t s;
-    buf[0] = 1;
-    s = write((int) fd, &buf[0], 1);
-    if (s != 1) {
-        return -1;
-    }
-    return 0;
 }

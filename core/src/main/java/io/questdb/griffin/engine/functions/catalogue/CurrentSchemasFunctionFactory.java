@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -46,11 +47,20 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         return new CurrentSchemaFunction();
     }
 
-    private static class CurrentSchemaFunction extends StrArrayFunction {
+    private static class CurrentSchemaFunction extends StrArrayFunction implements FunctionExtension {
+        @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
 
         @Override
         public int getArrayLength() {
             return 1;
+        }
+
+        @Override
+        public Record getRecord(Record rec) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

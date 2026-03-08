@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,16 +30,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.http.LineHttpSender;
+import io.questdb.client.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkError;
-import io.questdb.std.Chars;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
@@ -55,6 +52,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -62,6 +60,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.ColumnType.*;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 
 abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
@@ -111,30 +110,21 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     public static int changeColumnTypeTo(Rnd rnd, int columnType) {
         int nextColType = columnType;
-        switch (columnType) {
-            case ColumnType.STRING:
-                return rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
-            case ColumnType.SYMBOL:
-                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
-            case ColumnType.VARCHAR:
-                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
+        return switch (columnType) {
+            case ColumnType.STRING -> rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
+            case ColumnType.SYMBOL -> rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
+            case ColumnType.VARCHAR -> rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> {
                 while (nextColType == columnType) { // disallow noop conversion
                     nextColType = integerColumnTypes[rnd.nextInt(integerColumnTypes.length)];
                 }
-                return nextColType;
-            case ColumnType.FLOAT:
-                return ColumnType.DOUBLE;
-            case ColumnType.DOUBLE:
-                return ColumnType.FLOAT;
-            case TIMESTAMP:
-                return ColumnType.LONG;
-
-        }
-        return columnType;
+                yield nextColType;
+            }
+            case ColumnType.FLOAT -> ColumnType.DOUBLE;
+            case ColumnType.DOUBLE -> ColumnType.FLOAT;
+            case TIMESTAMP -> ColumnType.LONG;
+            default -> columnType;
+        };
     }
 
     @BeforeClass
@@ -147,12 +137,18 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         AbstractBootstrapTest.tearDownStatic();
     }
 
-    public void ingest(CairoEngine engine, int port) {
+    protected static void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+        cursor.toTop();
+        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
+    }
+
+    public void ingest(CairoEngine engine, int port, Rnd rnd) {
         int waitCount = numOfThreads;
         threadPushFinished.setCount(waitCount);
         AtomicInteger failureCounter = new AtomicInteger();
         for (int i = 0; i < numOfThreads; i++) {
-            startThread(i, port, threadPushFinished, failureCounter);
+            startThread(i, port, threadPushFinished, failureCounter, rnd.nextInt(PROTOCOL_VERSION_V2 + 1));
         }
         Thread alterTableThread = null;
         if (columnConvertProb > 0) {
@@ -226,7 +222,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                     }
 
                     try {
-                        ingest(serverMain.getEngine(), serverMain.getHttpServerPort());
+                        ingest(serverMain.getEngine(), serverMain.getHttpServerPort(), random);
 
                         for (int i = 0; i < numOfTables; i++) {
                             final String tableName = getTableName(i);
@@ -254,6 +250,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         });
     }
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -269,50 +266,86 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         getLog().info().$("random seed : ").$(random.getSeed0()).$("L, ").$(random.getSeed1()).$('L').$();
     }
 
-    private CharSequence addColumn(LineData line, int colIndex) {
+    private CharSequence addColumn(LineData line, int colIndex, AbstractLineHttpSender httpSender) {
         final CharSequence colName = generateColumnName(colIndex, false);
-        final CharSequence colValue = generateColumnValue(colIndex);
+        final CharSequence colValue = addColumnValue(colIndex, colName, httpSender);
         line.addColumn(colName, colValue);
         return colName;
     }
 
-    private void addDuplicateColumn(LineData line, int colIndex, CharSequence colName) {
+    private String addColumnValue(int index, CharSequence colName, AbstractLineHttpSender httpSender) {
+        return addColumnValue(colTypes[index], colValueBases[index], colName, httpSender);
+    }
+
+    private String addColumnValue(short type, String valueBase, CharSequence colName, AbstractLineHttpSender httpSender) {
+        final String postfix;
+        switch (type) {
+            case DOUBLE:
+                int d = random.nextInt(9);
+                double value = Numbers.parseInt(valueBase) * Math.pow(10, valueBase.length()) + d;
+                httpSender.doubleColumn(colName, value);
+                postfix = d + ".0";
+                return valueBase + postfix;
+            case SYMBOL:
+                postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
+                if (sendSymbolsWithSpace && random.nextInt(SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR) == 0) {
+                    final int spaceIndex = random.nextInt(valueBase.length() - 1);
+                    valueBase = valueBase.substring(0, spaceIndex) + "  " + valueBase.substring(spaceIndex);
+                }
+                String val = valueBase + postfix;
+                httpSender.symbol(colName, val);
+                return val;
+            case STRING:
+                postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
+                httpSender.stringColumn(colName, valueBase + postfix);
+                return "\"" + valueBase + postfix + "\"";
+            default:
+                httpSender.stringColumn(colName, valueBase);
+                return valueBase;
+        }
+    }
+
+    private void addDuplicateColumn(LineData line, int colIndex, CharSequence colName, AbstractLineHttpSender httpSender) {
         if (shouldFuzz(duplicatesFactor)) {
-            final CharSequence colValueDupe = generateColumnValue(colIndex);
+            final CharSequence colValueDupe = addColumnValue(colIndex, colName, httpSender);
             line.addColumn(colName, colValueDupe);
         }
     }
 
-    private void addDuplicateTag(LineData line, int tagIndex, CharSequence tagName) {
+    private void addDuplicateTag(LineData line, int tagIndex, CharSequence tagName, AbstractLineHttpSender httpSender) {
         if (shouldFuzz(duplicatesFactor)) {
-            final CharSequence tagValueDupe = generateTagValue(tagIndex);
+            final CharSequence tagValueDupe = addTagValue(tagIndex, tagName, httpSender);
             line.addTag(tagName, tagValueDupe);
         }
     }
 
-    private void addNewColumn(LineData line) {
+    private void addNewColumn(LineData line, AbstractLineHttpSender httpSender) {
         if (shouldFuzz(newColumnFactor)) {
             final int extraColIndex = random.nextInt(colNameBases.length);
             final CharSequence colNameNew = generateColumnName(extraColIndex, true);
-            final CharSequence colValueNew = generateColumnValue(extraColIndex);
+            final CharSequence colValueNew = addColumnValue(extraColIndex, colNameNew, httpSender);
             line.addColumn(colNameNew, colValueNew);
         }
     }
 
-    private void addNewTag(LineData line) {
+    private void addNewTag(LineData line, AbstractLineHttpSender httpSender) {
         if (shouldFuzz(newColumnFactor)) {
             final int extraTagIndex = random.nextInt(tagNameBases.length);
             final CharSequence tagNameNew = generateTagName(extraTagIndex, true);
-            final CharSequence tagValueNew = generateTagValue(extraTagIndex);
+            final CharSequence tagValueNew = addTagValue(extraTagIndex, tagNameNew, httpSender);
             line.addTag(tagNameNew, tagValueNew);
         }
     }
 
-    private CharSequence addTag(LineData line, int tagIndex) {
+    private CharSequence addTag(LineData line, int tagIndex, AbstractLineHttpSender httpSender) {
         final CharSequence tagName = generateTagName(tagIndex, false);
-        final CharSequence tagValue = generateTagValue(tagIndex);
+        final CharSequence tagValue = addTagValue(tagIndex, tagName, httpSender);
         line.addTag(tagName, tagValue);
         return tagName;
+    }
+
+    private String addTagValue(int index, CharSequence colName, AbstractLineHttpSender httpSender) {
+        return addColumnValue(SYMBOL, tagValueBases[index], colName, httpSender);
     }
 
     private void assertTable(TestServerMain serverMain, TableData table, @NotNull String tableName) {
@@ -323,11 +356,11 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 TableReader reader = serverMain.getEngine().getReader(tableName);
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
         ) {
-            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+            getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             final TableReaderMetadata metadata = reader.getMetadata();
             final CharSequence expected = table.generateRows(metadata);
-            getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
+            getLog().info().$safe(table.getName()).$(" expected:\n").$safe(expected).$();
 
             // Assert reader min timestamp
             long txnMinTs = reader.getMinTimestamp();
@@ -348,10 +381,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     private String generateColumnName(int index, boolean randomize) {
         return generateName(colNameBases[index], randomize);
-    }
-
-    private String generateColumnValue(int index) {
-        return generateValue(colTypes[index], colValueBases[index]);
     }
 
     private String generateName(String[] names, boolean randomize) {
@@ -381,31 +410,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     private String generateTagName(int index, boolean randomize) {
         return generateName(tagNameBases[index], randomize);
-    }
-
-    private String generateTagValue(int index) {
-        return generateValue(SYMBOL, tagValueBases[index]);
-    }
-
-    private String generateValue(short type, String valueBase) {
-        final String postfix;
-        switch (type) {
-            case DOUBLE:
-                postfix = random.nextInt(9) + ".0";
-                return valueBase + postfix;
-            case SYMBOL:
-                postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                if (sendSymbolsWithSpace && random.nextInt(SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR) == 0) {
-                    final int spaceIndex = random.nextInt(valueBase.length() - 1);
-                    valueBase = valueBase.substring(0, spaceIndex) + "  " + valueBase.substring(spaceIndex);
-                }
-                return valueBase + postfix;
-            case STRING:
-                postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                return "\"" + valueBase + postfix + "\"";
-            default:
-                return valueBase;
-        }
     }
 
     private int[] getColumnIndexes() {
@@ -488,28 +492,25 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         return thread;
     }
 
-    protected static void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-        cursor.toTop();
-        TestUtils.assertCursor(expected, cursor, metadata, true, sink);
-    }
-
-    protected LineData generateLine() {
+    protected LineData generateLine(CharSequence tableName, AbstractLineHttpSender httpSender) {
         final LineData line = new LineData(timestampMicros.incrementAndGet());
+        httpSender.table(tableName);
+
         if (exerciseTags) {
             final int[] tagIndexes = getTagIndexes();
             for (final int tagIndex : tagIndexes) {
-                final CharSequence tagName = addTag(line, tagIndex);
-                addDuplicateTag(line, tagIndex, tagName);
-                addNewTag(line);
+                final CharSequence tagName = addTag(line, tagIndex, httpSender);
+                addDuplicateTag(line, tagIndex, tagName, httpSender);
+                addNewTag(line, httpSender);
             }
         }
         final int[] columnIndexes = getColumnIndexes();
         for (final int colIndex : columnIndexes) {
-            final CharSequence colName = addColumn(line, colIndex);
-            addDuplicateColumn(line, colIndex, colName);
-            addNewColumn(line);
+            final CharSequence colName = addColumn(line, colIndex, httpSender);
+            addDuplicateColumn(line, colIndex, colName, httpSender);
+            addNewColumn(line, httpSender);
         }
+        httpSender.at(line.getTimestamp(), ChronoUnit.MICROS);
         return line;
     }
 
@@ -534,43 +535,36 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         this.errorMsg = errorMsg;
     }
 
-    protected void startThread(int threadId, int port, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
+    protected void startThread(int threadId, int port, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter, final int protocolVersion) {
         new Thread(() -> {
             final String username = "root";
             final String password = "root";
-            try (
-                    Sender sender = Sender.builder(Sender.Transport.HTTP)
-                            .address("localhost:" + port)
-                            .httpUsernamePassword(username, password)
-                            .retryTimeoutMillis(0)
-                            .httpTimeoutMillis(60000)
-                            .build()
-            ) {
-                LineHttpSender httpSender = (LineHttpSender) sender;
-                List<String> points = new ArrayList<>();
+            Sender.LineSenderBuilder builder = Sender.builder(Sender.Transport.HTTP)
+                    .address("localhost:" + port)
+                    .httpUsernamePassword(username, password)
+                    .retryTimeoutMillis(0)
+                    .httpTimeoutMillis(60000);
+
+            if (protocolVersion > 0) {
+                builder.protocolVersion(protocolVersion);
+            }
+
+            try (Sender sender = builder.build()) {
+                AbstractLineHttpSender httpSender = (AbstractLineHttpSender) sender;
+                long points = 0;
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {
-                        final LineData line = generateLine();
                         final CharSequence tableName = pickTableName(threadId);
+                        final LineData line = generateLine(tableName, httpSender);
                         final TableData table = tables.get(tableName);
                         table.addLine(line);
-                        points.add(line.toLine(tableName));
-                        if (points.size() % batchSize == 0) {
-                            for (String point : points) {
-                                httpSender.putRawMessage(point);
-                            }
+
+                        if (++points % batchSize == 0) {
                             httpSender.flush();
-                            points.clear();
                         }
-                    }
-                    if (!points.isEmpty()) {
-                        for (String point : points) {
-                            httpSender.putRawMessage(point);
-                        }
-                        httpSender.flush();
-                        points.clear();
                     }
 
+                    httpSender.flush();
                     Os.sleep(waitBetweenIterationsMillis);
                 }
             } catch (Exception e) {

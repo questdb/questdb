@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
@@ -35,8 +36,10 @@ public class SeqTxnTracker {
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
+    private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private volatile long dirtyWriterTxn;
+    private boolean dropped;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
@@ -49,6 +52,7 @@ public class SeqTxnTracker {
 
     public SeqTxnTracker(CairoConfiguration configuration) {
         this.pressureControl = new TableWriterPressureControlImpl(configuration);
+        this.metrics = configuration.getMetrics();
     }
 
     public String getErrorMessage() {
@@ -78,16 +82,20 @@ public class SeqTxnTracker {
     }
 
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
-        Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1);
+        if (Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1) && isSuspended) {
+            metrics.tableWriterMetrics().incSuspendedTables();
+        }
         // seqTxn has to be initialized before writerTxn since isInitialised() method checks writerTxn
         long stxn = seqTxn;
         while (stxn < newSeqTxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
             stxn = seqTxn;
         }
+        metrics.walMetrics().addSeqTxn(newSeqTxn - Math.max(0, stxn));
         long wtxn = writerTxn;
         while (newWriterTxn > wtxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, wtxn, newWriterTxn)) {
             wtxn = writerTxn;
         }
+        metrics.walMetrics().addWriterTxn(newWriterTxn - Math.max(0, wtxn));
         return seqTxn > 0 && seqTxn > writerTxn;
     }
 
@@ -115,6 +123,7 @@ public class SeqTxnTracker {
         long stxn = seqTxn;
         while (newSeqTxn > stxn) {
             if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+                metrics.walMetrics().addSeqTxn(newSeqTxn - stxn);
                 break;
             }
             stxn = seqTxn;
@@ -126,6 +135,15 @@ public class SeqTxnTracker {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
+    public synchronized void notifyOnDrop() {
+        if (dropped) {
+            return;
+        }
+        dropped = true;
+        metrics.walMetrics().addSeqTxn(-seqTxn);
+        metrics.walMetrics().addWriterTxn(-writerTxn);
+    }
+
     public void setSuspended(ErrorTag errorTag, String errorMessage) {
         this.errorTag = errorTag;
         this.errorMessage = errorMessage;
@@ -133,6 +151,8 @@ public class SeqTxnTracker {
         // should be the last one to be set
         // to make sure error details are available for read when the table is suspended
         this.suspendedState = -1;
+
+        metrics.tableWriterMetrics().incSuspendedTables();
     }
 
     public void setUnsuspended() {
@@ -142,24 +162,30 @@ public class SeqTxnTracker {
 
         this.errorTag = ErrorTag.NONE;
         this.errorMessage = "";
+
+        metrics.tableWriterMetrics().decSuspendedTables();
     }
 
     /**
-     * Updates writerTxn and dirtyWriterTxn and returns true if the Apply2Wal job should be notified.
-     * This method is not thread-safe and should be called under TableWriter lock.
+     * Updates writerTxn and dirtyWriterTxn and returns true if the ApplyWal2Tables job should be notified.
      *
      * @param writerTxn      txn that is available for reading
      * @param dirtyWriterTxn txn that is in flight that is not yet fully written
-     * @return true if Apply2Wal job should be notified
+     * @return true if ApplyWal2Tables job should be notified
      */
     public synchronized boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
+        if (dropped) {
+            return false;
+        }
         long prevWriterTxn = this.writerTxn;
         long prevDirtyWriterTxn = this.dirtyWriterTxn;
         this.writerTxn = writerTxn;
         this.dirtyWriterTxn = dirtyWriterTxn;
-
         // Progress made means table is not suspended
-        if (writerTxn > prevWriterTxn || dirtyWriterTxn > prevDirtyWriterTxn) {
+        if (writerTxn > prevWriterTxn) {
+            suspendedState = 1;
+            metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
+        } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
             suspendedState = 1;
         }
         return writerTxn < seqTxn;

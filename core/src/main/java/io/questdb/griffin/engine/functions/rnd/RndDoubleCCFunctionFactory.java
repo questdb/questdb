@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Transient;
 
 public class RndDoubleCCFunctionFactory implements FunctionFactory {
 
@@ -45,7 +46,13 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         int nanRate = args.getQuick(0).getInt(null);
         if (nanRate < 0) {
             throw SqlException.$(argPositions.getQuick(0), "invalid NaN rate");
@@ -54,7 +61,6 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
     }
 
     private static class RndFunction extends DoubleFunction implements Function {
-
         private final int nanRate;
         private Rnd rnd;
 
@@ -77,6 +83,16 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
             return true;
         }
 

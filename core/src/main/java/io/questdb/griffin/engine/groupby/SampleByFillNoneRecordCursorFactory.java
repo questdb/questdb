@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,11 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
@@ -56,6 +60,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             int timestampIndex,
+            int timestampType,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -68,7 +73,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         super(base, groupByMetadata, recordFunctions);
         try {
             // sink will be storing record columns to map key
-            final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
+            final RecordSink mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter);
             // this is the map itself, which we must not forget to free when factory closes
             final Map map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
             final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
@@ -80,6 +85,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
                     groupByFunctionsUpdater,
                     this.recordFunctions,
                     timestampIndex,
+                    timestampType,
                     timestampSampler,
                     timezoneNameFunc,
                     timezoneNameFuncPos,

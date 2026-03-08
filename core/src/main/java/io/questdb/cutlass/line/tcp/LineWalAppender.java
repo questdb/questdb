@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,22 +28,28 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8s;
 
+import static io.questdb.cutlass.line.LineUtils.from;
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
@@ -51,26 +57,24 @@ import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.
 public class LineWalAppender {
     private static final Log LOG = LogFactory.getLog(LineWalAppender.class);
     private final boolean autoCreateNewColumns;
+    private final Decimal256 decimal256;
     private final Long256Impl long256;
     private final int maxFileNameLength;
-    private final MicrosecondClock microsecondClock;
     private final boolean stringToCharCastAllowed;
-    private LineTcpTimestampAdapter timestampAdapter;
+    private final DirectUtf8Sink utf8Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
+    private byte timestampUnit;
 
-    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, LineTcpTimestampAdapter timestampAdapter, int maxFileNameLength, MicrosecondClock microsecondClock) {
+    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink utf8Sink, int maxFileNameLength) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
-        this.timestampAdapter = timestampAdapter;
         this.maxFileNameLength = maxFileNameLength;
-        this.microsecondClock = microsecondClock;
+        this.timestampUnit = timestampUnit;
         this.long256 = new Long256Impl();
+        this.decimal256 = new Decimal256();
+        this.utf8Sink = utf8Sink;
     }
 
-    public void appendToWal(
-            SecurityContext securityContext,
-            LineTcpParser parser,
-            TableUpdateDetails tud
-    ) throws CommitFailedException {
+    public void appendToWal(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
         while (!tud.isDropped()) {
             try {
                 appendToWal0(securityContext, parser, tud);
@@ -83,38 +87,13 @@ public class LineWalAppender {
     }
 
     public void setTimestampAdapter(byte precision) {
-        switch (precision) {
-            case LineTcpParser.ENTITY_UNIT_NANO:
-                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_NANO_INSTANCE;
-                break;
-            case LineTcpParser.ENTITY_UNIT_MICRO:
-                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_MICRO_INSTANCE;
-                break;
-            case LineTcpParser.ENTITY_UNIT_MILLI:
-                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_MILLI_INSTANCE;
-                break;
-            case LineTcpParser.ENTITY_UNIT_SECOND:
-                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_SECOND_INSTANCE;
-                break;
-            case LineTcpParser.ENTITY_UNIT_MINUTE:
-                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_MINUTE_INSTANCE;
-                break;
-            case LineTcpParser.ENTITY_UNIT_HOUR:
-                timestampAdapter = LineTcpTimestampAdapter.DEFAULT_TS_HOUR_INSTANCE;
-                break;
-            default:
-                throw new UnsupportedOperationException("precision: " + precision);
-        }
+        this.timestampUnit = precision;
     }
 
-    private void appendToWal0(
-            SecurityContext securityContext,
-            LineTcpParser parser,
-            TableUpdateDetails tud
-    ) throws CommitFailedException, MetadataChangedException {
+    private void appendToWal0(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException {
 
         // pass 1: create all columns that do not exist
-        final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(0); // IO thread id is not relevant
+        final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(0); // IO thread id is irrelevant
         ld.resetStateIfNecessary();
         ld.clearColumnTypes();
 
@@ -127,9 +106,12 @@ public class LineWalAppender {
             if (timestamp < 0) {
                 throw LineProtocolException.designatedTimestampMustBePositive(tud.getTableNameUtf16(), timestamp);
             }
-            timestamp = timestampAdapter.getMicros(timestamp, parser.getTimestampUnit());
+            timestamp = from(tud.getTimestampDriver(), timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
+            if (timestamp > CommonUtils.MAX_TIMESTAMP) {
+                throw LineProtocolException.designatedTimestampValueOverflow(tud.getTableNameUtf16(), timestamp);
+            }
         } else {
-            timestamp = microsecondClock.getTicks();
+            timestamp = tud.getTimestampDriver().getTicks();
         }
 
         final int entCount = parser.getEntityCount();
@@ -142,7 +124,7 @@ public class LineWalAppender {
                     final int columnType = metadata.getColumnType(columnWriterIndex);
                     if (columnType > -1) {
                         if (columnWriterIndex == tud.getTimestampIndex()) {
-                            timestamp = timestampAdapter.getMicros(ent.getLongValue(), ent.getUnit());
+                            timestamp = from(tud.getTimestampDriver(), ent.getLongValue(), ent.getUnit());
                             ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
                         } else {
                             ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
@@ -160,7 +142,15 @@ public class LineWalAppender {
                         if (columnWriterIndex < 0) {
                             securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
                             try {
-                                int newColumnType = ld.getColumnType(ld.getColNameUtf8(), ent.getType());
+                                int newColumnType = ld.getColumnType(ld.getColNameUtf8(), ent);
+                                if (newColumnType == ColumnType.DECIMAL) {
+                                    throw CairoException.nonCritical()
+                                            .put("decimal columns cannot be created automatically [table=")
+                                            .put(writer.getTableToken())
+                                            .put(", columnName=")
+                                            .put(columnNameUtf16)
+                                            .put(']');
+                                }
                                 writer.addColumn(columnNameUtf16, newColumnType, securityContext);
                                 columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnNameUtf16));
                                 // Add the column to metadata cache too
@@ -194,9 +184,8 @@ public class LineWalAppender {
         TableWriter.Row r = writer.newRow(timestamp);
         try {
             for (int i = 0; i < entCount; i++) {
-                int colTypeAndIndex = ld.getColumnType(i);
-                int colType = Numbers.decodeLowShort(colTypeAndIndex);
-                int columnIndex = Numbers.decodeHighShort(colTypeAndIndex);
+                final int colType = ld.getColumnType(i);
+                final int columnIndex = ld.getColumnIndex(i);
 
                 if (columnIndex < 0) {
                     continue;
@@ -222,7 +211,27 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_INTEGER: {
-                        switch (colType) {
+                        switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                final int scale = ColumnType.getDecimalScale(colType);
+                                decimal256.ofLong(ent.getLongValue(), 0);
+                                if (scale != 0) {
+                                    try {
+                                        decimal256.rescale(scale);
+                                    } catch (NumericException ignored) {
+                                        throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
+                                    }
+                                }
+                                if (!decimal256.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
+                                    throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
+                                }
+                                DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
+                                break;
                             case ColumnType.LONG:
                                 r.putLong(columnIndex, ent.getLongValue());
                                 break;
@@ -272,7 +281,13 @@ public class LineWalAppender {
                                 r.putFloat(columnIndex, ent.getLongValue());
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue());
+                                if (ent.isBinaryFormat()) {
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
+                                } else {
+                                    r.putSymUtf8(columnIndex, ent.getValue());
+                                }
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "INTEGER", colType, ent.getName());
@@ -280,15 +295,53 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_FLOAT: {
-                        switch (colType) {
+                        switch (ColumnType.tagOf(colType)) {
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getFloatValue());
                                 break;
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
                                 break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                final int precision = ColumnType.getDecimalPrecision(colType);
+                                final int scale = ColumnType.getDecimalScale(colType);
+                                if (ent.isBinaryFormat()) {
+                                    double d = ent.getFloatValue();
+                                    if (Numbers.isNull(d)) {
+                                        DecimalUtil.storeNull(r, columnIndex, colType);
+                                        break;
+                                    } else {
+                                        utf8Sink.clear();
+                                        Numbers.append(utf8Sink, ent.getFloatValue());
+                                        try {
+                                            decimal256.ofString(utf8Sink.asAsciiCharSequence(), precision, scale);
+                                        } catch (NumericException ignored) {
+                                            throw precisionLossError(tud.getTableNameUtf16(), ent.getName(), utf8Sink, colType);
+                                        }
+                                        DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
+                                    }
+                                } else {
+                                    try {
+                                        decimal256.ofString(ent.getValue().asAsciiCharSequence(), precision, scale);
+                                    } catch (NumericException ignored) {
+                                        throw precisionLossError(tud.getTableNameUtf16(), ent.getName(), ent.getValue(), colType);
+                                    }
+                                    DecimalUtil.store(decimal256, r, columnIndex, colType);
+                                }
+                                break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue());
+                                if (ent.isBinaryFormat()) {
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getFloatValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
+                                } else {
+                                    r.putSymUtf8(columnIndex, ent.getValue());
+                                }
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "FLOAT", colType, ent.getName());
@@ -296,10 +349,9 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_STRING: {
-                        final int geoHashBits = ColumnType.getGeoHashBits(colType);
                         final DirectUtf8Sequence entityValue = ent.getValue();
-                        if (geoHashBits == 0) { // not geohash
-                            switch (colType) {
+                        if (!ColumnType.isGeoHash(colType)) { // not geohash
+                            switch (ColumnType.tagOf(colType)) {
                                 case ColumnType.IPv4:
                                     try {
                                         int value = Numbers.parseIPv4Nl(entityValue);
@@ -349,6 +401,21 @@ public class LineWalAppender {
                                         break;
                                     }
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
+                                case ColumnType.DECIMAL8:
+                                case ColumnType.DECIMAL16:
+                                case ColumnType.DECIMAL32:
+                                case ColumnType.DECIMAL64:
+                                case ColumnType.DECIMAL128:
+                                case ColumnType.DECIMAL256:
+                                    final int precision = ColumnType.getDecimalPrecision(colType);
+                                    final int scale = ColumnType.getDecimalScale(colType);
+                                    try {
+                                        decimal256.ofString(entityValue.asAsciiCharSequence(), precision, scale);
+                                    } catch (NumericException ignored) {
+                                        throw valueError(tud.getTableNameUtf16(), colType, entityValue, ent.getName());
+                                    }
+                                    DecimalUtil.store(decimal256, r, columnIndex, colType);
+                                    break;
                                 default:
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                             }
@@ -356,7 +423,7 @@ public class LineWalAppender {
                             long geoHash;
                             try {
                                 DirectUtf8Sequence value = ent.getValue();
-                                geoHash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), geoHashBits);
+                                geoHash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), ColumnType.getGeoHashBits(colType));
                             } catch (NumericException e) {
                                 geoHash = GeoHashes.NULL;
                             }
@@ -401,7 +468,13 @@ public class LineWalAppender {
                                 r.putDouble(columnIndex, ent.getBooleanValue() ? 1 : 0);
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue());
+                                if (ent.isBinaryFormat()) {
+                                    utf8Sink.clear();
+                                    utf8Sink.put(ent.getBooleanValue() ? 't' : 'f');
+                                    r.putSymUtf8(columnIndex, utf8Sink);
+                                } else {
+                                    r.putSymUtf8(columnIndex, ent.getValue());
+                                }
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "BOOLEAN", colType, ent.getName());
@@ -409,23 +482,64 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
-                        switch (colType) {
+                        switch (ColumnType.tagOf(colType)) {
                             case ColumnType.TIMESTAMP:
-                                long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
+                                long timestampValue = from(ColumnType.getTimestampDriver(colType), ent.getLongValue(), ent.getUnit());
                                 r.putTimestamp(columnIndex, timestampValue);
                                 break;
                             case ColumnType.DATE:
-                                long dateValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
-                                r.putTimestamp(columnIndex, dateValue / 1000);
+                                TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+                                long dateValue = driver.toDate(from(driver, ent.getLongValue(), ent.getUnit()));
+                                r.putTimestamp(columnIndex, dateValue);
                                 break;
                             case ColumnType.SYMBOL:
-                                r.putSymUtf8(columnIndex, ent.getValue());
+                                if (ent.isBinaryFormat()) {
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
+                                } else {
+                                    r.putSymUtf8(columnIndex, ent.getValue());
+                                }
                                 break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "TIMESTAMP", colType, ent.getName());
                         }
                         break;
                     }
+                    case LineTcpParser.ENTITY_TYPE_ARRAY:
+                        if (ColumnType.isArray(colType)) {
+                            ArrayView array = ent.getArray();
+                            if (array.getType() != colType && !array.isNull()) {
+                                throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, ent.getName());
+                            }
+                            r.putArray(columnIndex, array);
+                        } else {
+                            throw castError(tud.getTableNameUtf16(), "ARRAY", colType, ent.getName());
+                        }
+                        break;
+                    case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                        Decimal256 decimal = ent.getDecimalValue();
+                        if (decimal.isNull()) {
+                            DecimalUtil.storeNull(r, columnIndex, colType);
+                        } else {
+                            final int scale = ColumnType.getDecimalScale(colType);
+                            if (decimal.getScale() != scale) {
+                                try {
+                                    decimal.rescale(scale);
+                                } catch (NumericException ignored) {
+                                    if (decimal.getScale() > scale) {
+                                        throw precisionLossError(tud.getTableNameUtf16(), ent.getName(), ent.getDecimalValue(), colType);
+                                    } else {
+                                        throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), ent.getName().asAsciiCharSequence());
+                                    }
+                                }
+                            }
+                            if (!decimal.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
+                                throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), ent.getName().asAsciiCharSequence());
+                            }
+                            DecimalUtil.storeNonNull(decimal, r, columnIndex, colType);
+                        }
+                        break;
                     default:
                         break; // unsupported types are ignored
                 }
@@ -435,17 +549,26 @@ public class LineWalAppender {
         } catch (CommitFailedException commitFailedException) {
             throw commitFailedException;
         } catch (CairoException th) {
-            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getFlyweightMessage()).I$();
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$safe(th.getFlyweightMessage()).$(", trace: ").$((Throwable) th).I$();
             if (r != null) {
                 r.cancel();
             }
             throw th;
         } catch (Throwable th) {
-            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$(th.getMessage()).$(th).I$();
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$(th).I$();
             if (r != null) {
                 r.cancel();
             }
             throw th;
         }
+    }
+
+    private byte getOverloadTimestampUnit(byte unit) {
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS,
+                 CommonUtils.TIMESTAMP_UNIT_MILLIS,
+                 CommonUtils.TIMESTAMP_UNIT_MICROS -> unit;
+            default -> timestampUnit;
+        };
     }
 }

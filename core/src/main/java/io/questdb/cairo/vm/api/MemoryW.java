@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,6 +44,26 @@ public interface MemoryW extends Closeable {
     void putByte(long offset, byte value);
 
     void putChar(long offset, char value);
+
+    /**
+     * Writes a Decimal value to memory using 128 bits.
+     *
+     * @param offset the memory offset to write to
+     * @param high   the high 64-bit part of the value
+     * @param low    the low 64-bit part of the value
+     */
+    void putDecimal128(long offset, long high, long low);
+
+    /**
+     * Writes a Decimal value to memory using 256 bits.
+     *
+     * @param offset the memory offset to write to
+     * @param hh     the highest 64-bit part of the value
+     * @param hl     the high 64-bit part of the value
+     * @param lh     the middle 64-bit part of the value
+     * @param ll     the low 64-bit part of the value
+     */
+    void putDecimal256(long offset, long hh, long hl, long lh, long ll);
 
     void putDouble(long offset, double value);
 

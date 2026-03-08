@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,10 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.Nullable;
 
-public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
+public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable, Sinkable {
 
     /**
      * Pool tenant must keep track of the Entry it belongs to and provide this entry when requested. Entry is
@@ -45,6 +46,24 @@ public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
      * @return opaque index value
      */
     int getIndex();
+
+    /**
+     * Returns the root entry (first segment) of the entry chain this tenant belongs to.
+     * This is used to check if the table has been dropped from the pool.
+     *
+     * @return root entry instance (segment 0).
+     */
+    AbstractMultiTenantPool.Entry<T> getRootEntry();
+
+    /**
+     * Supervisor this reader is attached to.
+     *
+     * @return supervisor instance or null if reader is not attached to any supervisor.
+     */
+    @Nullable
+    default ResourcePoolSupervisor<T> getSupervisor() {
+        return null;
+    }
 
     /**
      * Name of table this reader is attached to. Pooled reader instances cannot be reused across

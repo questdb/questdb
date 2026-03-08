@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
@@ -249,6 +250,30 @@ public class JsonPlanSink extends BasePlanSink {
         quoteValue = true;
         checkType(NODE_VALUE);
         GeoHashes.append(hash, geoHashBits, sink);
+        return this;
+    }
+
+    @Override
+    public PlanSink valDecimal(long value, int precision, int scale) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        Decimals.append(value, precision, scale, sink);
+        return this;
+    }
+
+    @Override
+    public PlanSink valDecimal(long hi, long lo, int precision, int scale) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        Decimals.append(hi, lo, precision, scale, sink);
+        return this;
+    }
+
+    @Override
+    public PlanSink valDecimal(long hh, long hl, long lh, long ll, int precision, int scale) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        Decimals.append(hh, hl, lh, ll, precision, scale, sink);
         return this;
     }
 

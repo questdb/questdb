@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,15 +40,6 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default void offerStateTo(Function that) {
-        if (that instanceof TernaryFunction) {
-            getLeft().offerStateTo(((TernaryFunction) that).getLeft());
-            getCenter().offerStateTo(((TernaryFunction) that).getCenter());
-            getRight().offerStateTo(((TernaryFunction) that).getRight());
-        }
-    }
-
-    @Override
     default void cursorClosed() {
         getLeft().cursorClosed();
         getCenter().cursorClosed();
@@ -56,6 +47,14 @@ public interface TernaryFunction extends Function {
     }
 
     Function getCenter();
+
+    @Override
+    default int getComplexity() {
+        return Function.addComplexity(
+                getLeft().getComplexity(),
+                Function.addComplexity(getCenter().getComplexity(), getRight().getComplexity())
+        );
+    }
 
     Function getLeft();
 
@@ -74,8 +73,26 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean isEquivalentTo(Function other) {
+        if (other == this) {
+            return true;
+        }
+        if (other instanceof TernaryFunction that) {
+            return getLeft().isEquivalentTo(that.getLeft())
+                    && getCenter().isEquivalentTo(that.getCenter())
+                    && getRight().isEquivalentTo(that.getRight());
+        }
+        return false;
+    }
+
+    @Override
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getCenter().isNonDeterministic() || getRight().isNonDeterministic();
+    }
+
+    @Override
+    default boolean isRandom() {
+        return getLeft().isRandom() || getCenter().isRandom() || getRight().isRandom();
     }
 
     @Override
@@ -97,8 +114,27 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof TernaryFunction other) {
+            getLeft().offerStateTo(other.getLeft());
+            getCenter().offerStateTo(other.getCenter());
+            getRight().offerStateTo(other.getRight());
+        }
+    }
+
+    @Override
+    default boolean shouldMemoize() {
+        return getLeft().shouldMemoize() || getCenter().shouldMemoize() || getRight().shouldMemoize();
+    }
+
+    @Override
     default boolean supportsParallelism() {
         return getLeft().supportsParallelism() && getCenter().supportsParallelism() && getRight().supportsParallelism();
+    }
+
+    @Override
+    default boolean supportsRandomAccess() {
+        return getLeft().supportsRandomAccess() && getRight().supportsRandomAccess() && getCenter().supportsRandomAccess();
     }
 
     @Override

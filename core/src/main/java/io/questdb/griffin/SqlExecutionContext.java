@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,10 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -51,6 +55,12 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public interface SqlExecutionContext extends Sinkable, Closeable {
+
+    // Returns true when the context doesn't require all SQL functions to be deterministic.
+    // Deterministic-only functions are enforced e.g. when compiling a mat view.
+    boolean allowNonDeterministicFunctions();
+
+    void changePageFrameSizes(int minRows, int maxRows);
 
     void clearWindowContext();
 
@@ -68,12 +78,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
+            char rowsLoUnit,
             int rowsLoExprPos,
             long rowsHi,
+            char rowsHiUnit,
             int rowsHiExprPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
+            int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
     );
@@ -99,6 +112,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean getCloneSymbolTables();
 
+    Decimal128 getDecimal128();
+
+    Decimal256 getDecimal256();
+
+    Decimal64 getDecimal64();
+
+    int getIntervalFunctionType();
+
     int getJitMode();
 
     default @NotNull MessageBus getMessageBus() {
@@ -115,18 +136,32 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     long getMicrosecondTimestamp();
 
-    long getNow();
+    long getNanosecondTimestamp();
+
+    /**
+     * Gets the current timestamp with specified precision.
+     *
+     * @param timestampType the timestamp precision type (micros or nanos)
+     * @return current timestamp value in the specified precision
+     */
+    long getNow(int timestampType);
+
+    int getNowTimestampType();
+
+    int getPageFrameMaxRows();
+
+    int getPageFrameMinRows();
 
     QueryFutureUpdateListener getQueryFutureUpdateListener();
 
     Rnd getRandom();
 
-    default TableReader getReader(TableToken tableName, long version) {
-        return getCairoEngine().getReader(tableName, version);
+    default TableReader getReader(TableToken tableToken, long version) {
+        return getCairoEngine().getReader(tableToken, version);
     }
 
-    default TableReader getReader(TableToken tableName) {
-        return getCairoEngine().getReader(tableName);
+    default TableReader getReader(TableToken tableToken) {
+        return getCairoEngine().getReader(tableToken);
     }
 
     long getRequestFd();
@@ -134,9 +169,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     @NotNull
     SecurityContext getSecurityContext();
 
-    default int getSharedWorkerCount() {
-        return getWorkerCount();
-    }
+    int getSharedQueryWorkerCount();
 
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
@@ -166,16 +199,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     WindowContext getWindowContext();
 
-    int getWorkerCount();
+    int hasInterval();
 
     void initNow();
 
     boolean isCacheHit();
-
-    boolean isColumnPreTouchEnabled();
-
-    // Used to disable column pre-touch without affecting the explain plan
-    boolean isColumnPreTouchEnabledOverride();
 
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
@@ -188,25 +216,49 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelReadParquetEnabled();
 
+    boolean isParquetRowGroupPruningEnabled();
+
+    boolean isParallelTopKEnabled();
+
+    boolean isParallelHorizonJoinEnabled();
+
+    boolean isParallelWindowJoinEnabled();
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
         return false;
     }
 
+    boolean isValidationOnly();
+
     boolean isWalApplication();
 
     // This method is used to override intrinsic values in the query execution context
     // Its initial usage is in the materialized view refresh
     // where the queried timestamp of the base table is limited to the range affected since last refresh
-    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
+    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
     }
+
+    RuntimeIntrinsicIntervalModel peekIntervalModel();
+
+    void popHasInterval();
+
+    void popIntervalModel();
 
     void popTimestampRequiredFlag();
 
+    void pushHasInterval(int hasInterval);
+
+    void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel);
+
     void pushTimestampRequiredFlag(boolean flag);
 
-    void resetFlags();
+    void reset();
+
+    void restoreToDefaultPageFrameSizes();
+
+    void setAllowNonDeterministicFunction(boolean value);
 
     void setCacheHit(boolean value);
 
@@ -214,14 +266,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
-    void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
-
-    // Used to disable column pre-touch without affecting the explain plan
-    void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
+    void setIntervalFunctionType(int intervalType);
 
     void setJitMode(int jitMode);
 
-    void setNowAndFixClock(long now);
+    void setNowAndFixClock(long now, int nowTimestampType);
 
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
@@ -229,9 +278,21 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
+    void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled);
+
+    void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
+    void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
+
+    void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
+
     void setRandom(Rnd rnd);
 
     void setUseSimpleCircuitBreaker(boolean value);
+
+    default boolean shouldLogSql() {
+        return true;
+    }
 
     default void storeTelemetry(short event, short origin) {
     }

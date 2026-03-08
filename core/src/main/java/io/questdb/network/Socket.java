@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -110,9 +110,9 @@ public interface Socket extends QuietCloseable {
      * on server connections.
      *
      * @param peerName server name to use for SNI and certificate validation.
-     * @return 0 if the call is successful; -1 if there was an error.
+     * @throws TlsSessionInitFailedException if the call fails.
      */
-    int startTlsSession(@Nullable CharSequence peerName);
+    void startTlsSession(@Nullable CharSequence peerName) throws TlsSessionInitFailedException;
 
     /**
      * @return true if the socket support TLS encryption; false otherwise.

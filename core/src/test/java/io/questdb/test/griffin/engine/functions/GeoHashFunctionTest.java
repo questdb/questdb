@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -51,6 +51,11 @@ public class GeoHashFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        nullFunction.getArray(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         nullFunction.getBin(null);
     }
@@ -73,6 +78,36 @@ public class GeoHashFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         nullFunction.getDate(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128() {
+        nullFunction.getDecimal128(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        nullFunction.getDecimal16(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256() {
+        nullFunction.getDecimal256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        nullFunction.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        nullFunction.getDecimal64(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        nullFunction.getDecimal8(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

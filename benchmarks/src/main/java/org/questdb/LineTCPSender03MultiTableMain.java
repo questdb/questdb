@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,12 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.client.cutlass.line.AbstractLineTcpSender;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
 public class LineTCPSender03MultiTableMain {
@@ -48,9 +49,9 @@ public class LineTCPSender03MultiTableMain {
         int bufferCapacity = 4 * 1024;
 
         final Rnd rnd = new Rnd();
-        MicrosecondClock clock = new MicrosecondClockImpl();
+        Clock clock = new MicrosecondClockImpl();
         String tab = "weather" + k;
-        try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
+        try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             while (true) {
                 sender.metric(tab);
                 sender

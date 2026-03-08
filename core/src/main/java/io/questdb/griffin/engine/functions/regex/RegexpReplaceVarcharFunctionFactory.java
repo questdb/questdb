@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,8 +35,18 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
@@ -260,6 +270,11 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
+        }
+
+        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             return getVarchar(rec, utf8SinkA, viewA);
         }
@@ -275,12 +290,12 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
-        public boolean isThreadSafe() {
+        public boolean isRuntimeConstant() {
             return false;
         }
 
         @Override
-        public boolean isRuntimeConstant() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -364,6 +379,11 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
+        }
+
+        @Override
         public CharSequence getStrA(Record rec) {
             return getStr(rec, utf16SinkA);
         }
@@ -379,12 +399,12 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
-        public boolean isThreadSafe() {
+        public boolean isRuntimeConstant() {
             return false;
         }
 
         @Override
-        public boolean isRuntimeConstant() {
+        public boolean isThreadSafe() {
             return false;
         }
 

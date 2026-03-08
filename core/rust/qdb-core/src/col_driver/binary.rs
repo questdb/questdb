@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -197,7 +197,7 @@ mod tests {
 
         // out of range
         let err = BinaryDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         // eprintln!("{}", &msg);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("binary entry index 6 not found in aux for column b1 in"));
@@ -213,7 +213,7 @@ mod tests {
 
         // out of range
         let err = BinaryDriver.col_sizes_for_row_count(&col, 1).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         // eprintln!("{msg}");
         assert!(msg.contains("binary entry index 1 not found in aux for column bempty in"));

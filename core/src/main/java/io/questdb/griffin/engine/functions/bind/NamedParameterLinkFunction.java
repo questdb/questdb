@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,22 +25,26 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-public class NamedParameterLinkFunction implements ScalarFunction {
+public class NamedParameterLinkFunction implements Function {
     private final int type;
     private final String variableName;
     private Function base;
@@ -53,6 +57,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public void close() {
         base = Misc.free(base);
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        return getBase().getArray(rec);
     }
 
     @Override
@@ -83,6 +92,36 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public long getDate(Record rec) {
         return getBase().getDate(rec);
+    }
+
+    @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        getBase().getDecimal128(rec, sink);
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        return getBase().getDecimal16(rec);
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        getBase().getDecimal256(rec, sink);
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        return getBase().getDecimal32(rec);
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        return getBase().getDecimal64(rec);
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        return getBase().getDecimal8(rec);
     }
 
     @Override
@@ -123,6 +162,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public int getInt(Record rec) {
         return getBase().getInt(rec);
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

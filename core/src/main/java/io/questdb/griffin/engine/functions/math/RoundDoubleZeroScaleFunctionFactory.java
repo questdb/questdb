@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,8 +31,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
@@ -46,7 +47,7 @@ public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
         return new RoundDoubleZeroScaleFunction(args.getQuick(0));
     }
 
-    static class RoundDoubleZeroScaleFunction extends DoubleFunction implements UnaryFunction {
+    static class RoundDoubleZeroScaleFunction extends DoubleFunction implements ArithmeticUnaryFunction {
         private final Function arg;
 
         public RoundDoubleZeroScaleFunction(Function arg) {
@@ -61,7 +62,7 @@ public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             final double d = arg.getDouble(rec);
-            return d == d ? Math.round(d) : Double.NaN;
+            return Numbers.isFinite(d) ? Math.round(d) : Double.NaN;
         }
 
         @Override

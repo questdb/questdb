@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.model;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
@@ -125,6 +126,49 @@ public class IntervalUtilsTest {
         add(intervals, 9, 12);
 
         runTestIntersectInplace(intervals, 4, "[1,2], [4,5], [7,7], [9,10], [12,12]");
+    }
+
+    @Test
+    public void testIntersectInplaceCopiedIntervalAboveNextB() {
+        // This test covers line 328 in intersectInPlace:
+        // When an A interval is copied to the end (because it would be overwritten),
+        // and the copied interval is then compared with a later B interval
+        // where aHi < bLo (a fully above b), we increment aUpper.
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 0, 5);
+        add(intervals, 10, 15);
+
+        // B
+        add(intervals, 0, 2);  // intersects with A[0]
+        add(intervals, 20, 25);  // no intersection with A[1] or copied A[0]
+
+        // When A[0] intersects B[0], A[0] is copied to end since writePoint==aLower.
+        // Then the copied interval [0,5] is compared with B[1]=[20,25].
+        // Since 5 < 20, aHi < bLo triggers the aUpper++ branch.
+        runTestIntersectInplace(intervals, 4, "[0,2]");
+    }
+
+    @Test
+    public void testIntersectInplaceCopiedIntervalPartialOverlap() {
+        // This test covers line 341 in intersectInPlace:
+        // When a copied A interval intersects a B interval where aHi < bHi
+        // (b hanging lower than a), we increment aUpper.
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 0, 5);
+        add(intervals, 100, 110);
+
+        // B
+        add(intervals, 0, 2);  // intersects A[0], aHi(5) >= bHi(2), so intervalB++, A[0] copied
+        add(intervals, 4, 20); // intersects copied A[0]=[0,5] where aHi(5) < bHi(20)
+
+        // Iteration 1: A[0]=[0,5] intersects B[0]=[0,2]. Since aHi >= bHi, intervalB++.
+        //              A[0] is copied to end, aUpperSize increases.
+        // Iteration 2: Copied interval [0,5] intersects B[1]=[4,20].
+        //              aHi(5) < bHi(20), so aUpper++ is triggered (line 341).
+        // Note: gap between [0,2] and [4,5] prevents merging by append().
+        runTestIntersectInplace(intervals, 4, "[0,2], [4,5]");
     }
 
     @Test
@@ -230,6 +274,10 @@ public class IntervalUtilsTest {
 
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 125));
         Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 125));
+
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 100));
+
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 102));
     }
 
     @Test
@@ -300,13 +348,13 @@ public class IntervalUtilsTest {
 
     @Test
     public void testParseFloorPartialTimestamp_truncateNanos() throws NumericException {
-        long expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456Z");
+        long expected = MicrosTimestampDriver.floor("2019-01-01T00:00:00.123456Z");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789Z");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678Z");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567Z");
 
         // with offset
-        expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456+01:00");
+        expected = MicrosTimestampDriver.floor("2019-01-01T00:00:00.123456+01:00");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789+01:00");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678+01:00");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567+01:00");
@@ -375,7 +423,7 @@ public class IntervalUtilsTest {
     }
 
     private static void assertParseFloorPartialTimestampEquals(long expectedTimestamp, CharSequence actual) throws NumericException {
-        Assert.assertEquals(expectedTimestamp, IntervalUtils.parseFloorPartialTimestamp(actual));
+        Assert.assertEquals(expectedTimestamp, MicrosTimestampDriver.floor(actual));
     }
 
     private static long getIntervalHi(LongList intervals, int pos) {

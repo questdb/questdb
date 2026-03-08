@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -92,7 +92,12 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             boolean isEmpty
     ) {
         super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-        indexWriter.of(partitionPath, columnName, columnTxn, isEmpty ? indexBlockCapacity : 0);
+        try {
+            indexWriter.of(partitionPath, columnName, columnTxn, isEmpty ? indexBlockCapacity : 0);
+        } catch (Throwable e) {
+            // indexWriter has already closed
+            super.close();
+        }
     }
 
     @Override
@@ -104,6 +109,9 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             long columnTop,
             int columnIndex
     ) {
+        // close to reuse
+        closed = false;
+        super.close();
         throw new UnsupportedOperationException();
     }
 

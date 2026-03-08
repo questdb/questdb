@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -171,19 +171,19 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    umask(0);
+    umask(2);
     return open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
-        (JNIEnv *e, jclass cl, jlong lpszName, jlong opts) {
-    umask(0);
+        (JNIEnv *e, jclass cl, jlong lpszName, jint opts) {
+    umask(2);
     return open((const char *) lpszName, O_CREAT | O_RDWR | opts, 0644);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    umask(0);
+    umask(2);
     return open((const char *) lpszName, O_CREAT | O_WRONLY | O_APPEND, 0644);
 }
 

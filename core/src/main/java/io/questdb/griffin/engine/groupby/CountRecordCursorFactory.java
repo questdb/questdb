@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,8 +56,6 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             cursor.of(baseCursor, executionContext.getCircuitBreaker());
@@ -123,17 +121,25 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             if (hasNext) {
-                long size = baseCursor.size();
-                if (size > -1) {
-                    count = size;
-                } else {
-                    baseCursor.calculateSize(circuitBreaker, counter);
-                    count = counter.get();
+                // recalculate state only when new query is executed and not after toTop() is called.
+                if (this.count == -1) {
+                    long size = baseCursor.size();
+                    if (size > -1) {
+                        count = size;
+                    } else {
+                        baseCursor.calculateSize(circuitBreaker, counter);
+                        count = counter.get();
+                    }
                 }
                 hasNext = false;
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return count;
         }
 
         @Override
@@ -145,14 +151,14 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         public void toTop() {
             baseCursor.toTop();
             hasNext = true;
-            count = 0;
-            counter.clear();
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.baseCursor = baseCursor;
             this.circuitBreaker = circuitBreaker;
-            toTop();
+            this.count = -1;
+            this.hasNext = true;
+            this.counter.clear();
         }
 
         private class CountRecord implements Record {

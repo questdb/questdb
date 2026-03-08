@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@master
-      - name: Use Node.js 18.x
+      - name: Use Node.js 22.x
         uses: actions/setup-node@master
         with:
-          node-version: 18.x
+          node-version: 22.x
       - name: install danger
         run: yarn global add danger
       - name: Validate PR title validation rules

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,6 @@ import java.lang.management.ThreadMXBean;
 @RunListener.ThreadSafe
 public class TestListener extends RunListener {
     private static final Log LOG = LogFactory.getLog(TestListener.class);
-
     long testStartMs = -1;
 
     public static void dumpThreadStacks() {
@@ -50,6 +49,9 @@ public class TestListener extends RunListener {
 
         s.append("Thread dump: ");
         for (ThreadInfo threadInfo : threadInfos) {
+            if (threadInfo == null) {
+                continue;
+            }
             final Thread.State state = threadInfo.getThreadState();
             s.append('\n');
             s.append('\'').append(threadInfo.getThreadName()).append("': ").append(state);
@@ -66,9 +68,9 @@ public class TestListener extends RunListener {
     public void testAssumptionFailure(Failure failure) {
         Description description = failure.getDescription();
         LOG.error()
-                .$("***** Test Assumption Violated *****")
-                .$(description.getClassName()).$('.')
-                .$(description.getMethodName())
+                .$("***** Test Assumption Violated ***** ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
                 .$(" duration_ms=")
                 .$(getTestDuration())
                 .$(" : ")
@@ -79,24 +81,31 @@ public class TestListener extends RunListener {
     public void testFailure(Failure failure) {
         Description description = failure.getDescription();
         LOG.error()
-                .$("***** Test Failed *****")
-                .$(description.getClassName()).$('.')
-                .$(description.getMethodName())
-                .$(" duration_ms=")
-                .$(getTestDuration())
+                .$("***** Test Failed ***** ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$(" duration_ms=").$(getTestDuration())
                 .$(" : ")
                 .$(failure.getException()).$();
     }
 
     @Override
     public void testFinished(Description description) {
-        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$(" duration_ms=").$(getTestDuration()).$();
+        LOG.infoW().$("<<<< ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$(" duration_ms=").$(getTestDuration()).$();
+        System.out.println("<<<<= " + description.getClassName() + '.' + description.getMethodName() + " duration_ms=" + getTestDuration());
     }
 
     @Override
     public void testStarted(Description description) {
         testStartMs = System.currentTimeMillis();
-        LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+        LOG.infoW().$(">>>> ")
+                .$safe(description.getClassName()).$('.')
+                .$safe(description.getMethodName())
+                .$();
+        System.out.println(">>>>= " + description.getClassName() + '.' + description.getMethodName());
     }
 
     private long getTestDuration() {
@@ -111,8 +120,8 @@ public class TestListener extends RunListener {
                     Os.sleep(10 * 60 * 1000);
                 }
             } catch (Throwable t) {
-                System.out.println("Thread dumper failed!");
-                t.printStackTrace();
+                System.out.println("Thread dumper failed! [kind=java]");
+                t.printStackTrace(System.out);
             }
         });
 
@@ -122,9 +131,14 @@ public class TestListener extends RunListener {
 
     static {
         Thread monitor = new Thread(() -> {
-            while (true) {
-                DumpThreadStacksFunctionFactory.dumpThreadStacks();
-                Os.sleep(10 * 60 * 1000);
+            try {
+                while (true) {
+                    DumpThreadStacksFunctionFactory.dumpThreadStacks();
+                    Os.sleep(10 * 60 * 1000);
+                }
+            } catch (Throwable t) {
+                System.out.println("Thread dumper failed! [kind=native]");
+                t.printStackTrace(System.out);
             }
         });
 

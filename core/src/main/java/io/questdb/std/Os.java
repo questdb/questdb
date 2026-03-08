@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,12 +29,16 @@ import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
+import java.net.URL;
+import java.nio.file.Paths;
+import java.security.CodeSource;
 import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
@@ -259,6 +263,68 @@ public final class Os {
 
     private static native int setCurrentThreadAffinity0(int cpu);
 
+    private static boolean isJlinkRuntime() {
+        // Detect jlink-ed runtime by checking if CodeSource uses jrt: protocol
+        CodeSource codeSource = Os.class.getProtectionDomain().getCodeSource();
+        if (codeSource == null) {
+            return false;
+        }
+        URL location = codeSource.getLocation();
+        return location != null && "jrt".equals(location.getProtocol());
+    }
+
+    @Nullable
+    public static String getNativeLibsDir(String libName) {
+        // the property name must be synced with questdb.sh and docker-entrypoint.sh
+        String libsDir = System.getProperty("questdb.libs.dir");
+        if (libsDir != null) {
+            // hooray, we are running from a distribution and the lib dir was set explicitly!
+            return libsDir;
+        }
+
+        // let's try to detect the lib location
+        if (!isJlinkRuntime()) {
+            // we are not in a jlink-ed runtime image -> we have to extract the native libs from the jar
+            return null;
+        }
+
+        // In jlink-ed runtime images, java.home points to the runtime image root,
+        // modules and native libs are in $JAVA_HOME/lib/
+        String javaHome = System.getProperty("java.home");
+        if (javaHome == null) {
+            return null;
+        }
+
+        java.nio.file.Path libDir = Paths.get(javaHome, "lib");
+        if (!libDir.toFile().isDirectory()) {
+            return null;
+        }
+
+        java.nio.file.Path libPath = libDir.resolve(libName);
+        if (!libPath.toFile().exists()) {
+            return null;
+        }
+        return libDir.toString();
+    }
+
+    private static boolean tryLoadFromDistribution(String cxxLibName, String rustLibName) {
+        String libsDir = getNativeLibsDir(cxxLibName);
+        if (libsDir == null) {
+            return false;
+        }
+
+        try {
+            // we are in a binary distribution, let's load libraries from the libs dir
+            System.load(Paths.get(libsDir, cxxLibName).toAbsolutePath().toString());
+            System.load(Paths.get(libsDir, rustLibName).toAbsolutePath().toString());
+        } catch (Throwable e) {
+            // if we fail to load distribution libraries, we will try to load them from the jar
+            System.err.println("Failed to load libraries from " + libsDir + ": " + e.getMessage());
+            return false;
+        }
+        return true;
+    }
+
     static {
         if ("aarch64".equals(System.getProperty("os.arch"))) {
             arch = ARCH_AARCH64;
@@ -297,18 +363,7 @@ public final class Os {
             String cxxLibName = "libquestdb" + outputLibExt;
             String devCXXLib = devCXXLibRoot + cxxLibName;
 
-            // try dev CXX lib first
-            InputStream libCXXStream = Os.class.getResourceAsStream(devCXXLib);
-            if (libCXXStream == null) {
-                loadLib(prdLibRoot + cxxLibName);
-            } else {
-                System.err.println("Loading DEV CXX library: " + devCXXLib);
-                loadLib(devCXXLib, libCXXStream);
-            }
-
-            // Rust library is loaded conditionally to allow for convenience
-            // of the development environments that target Rust source code
-            // The library file is missing "lib" prefix on Windows
+            // The Rust library file is missing "lib" prefix on Windows
             String devRustLibRoot = "/io/questdb/rust/";
             final String rustLibName;
             if (type == WINDOWS) {
@@ -317,13 +372,28 @@ public final class Os {
                 rustLibName = "libquestdbr" + outputLibExt;
             }
 
-            final String devRustLib = devRustLibRoot + rustLibName;
+            // questdb distribution can override libs dir
+            boolean loaded = tryLoadFromDistribution(cxxLibName, rustLibName);
+            if (!loaded) {
+                // not a binary distribution, let's try to load libraries from the jar
+                // try dev CXX lib first
+                InputStream libCXXStream = Os.class.getResourceAsStream(devCXXLib);
+                if (libCXXStream == null) {
+                    loadLib(prdLibRoot + cxxLibName);
+                } else {
+                    System.err.println("Loading DEV CXX library: " + devCXXLib);
+                    loadLib(devCXXLib, libCXXStream);
+                }
 
-            InputStream libRustStream = Os.class.getResourceAsStream(devRustLib);
-            if (libRustStream == null) {
-                loadLib(prdLibRoot + rustLibName);
-            } else {
-                loadLib(devRustLib, libRustStream);
+
+                final String devRustLib = devRustLibRoot + rustLibName;
+                InputStream libRustStream = Os.class.getResourceAsStream(devRustLib);
+                if (libRustStream == null) {
+                    loadLib(prdLibRoot + rustLibName);
+                } else {
+                    System.err.println("Loading DEV Rust library: " + devRustLib);
+                    loadLib(devRustLib, libRustStream);
+                }
             }
             initRust();
         } else {

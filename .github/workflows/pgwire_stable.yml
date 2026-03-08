@@ -4,7 +4,7 @@ name: PGWire - Stable clients
 
 on:
   pull_request:
-    types: [ synchronize, opened, reopened, edited ]
+    types: [ synchronize, opened, reopened ]
   workflow_dispatch:
 
 jobs:
@@ -34,14 +34,19 @@ jobs:
         # even if the original tag is moved or deleted
         uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
         with:
-          toolchain: 1.79.0
+          toolchain: 1.90.0
           cache-workspaces: compat/src/test/rust/scenarios
+      - name: Setup golang toolchain
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+          cache-dependency-path: compat/src/test/golang/go.sum
       - name: Setup .NET
         uses: actions/setup-dotnet@v3
         with:
           dotnet-version: '9.0.x'
       - name: Setup Python version
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: 3.8
       - name: Setup Node.js
@@ -60,6 +65,3 @@ jobs:
           path: ~/.questdb/log/*
           name: logs
           retention-days: 5
-
-        
-

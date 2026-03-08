@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastByteToTimestampFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Bn)";
@@ -46,12 +47,13 @@ public class CastByteToTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CastByteToTimestampFunction(args.getQuick(0));
+        return new Func(args.getQuick(0), args.getQuick(1).getType());
     }
 
-    public static class CastByteToTimestampFunction extends AbstractCastToTimestampFunction {
-        public CastByteToTimestampFunction(Function arg) {
-            super(arg);
+    public static class Func extends AbstractCastToTimestampFunction {
+
+        public Func(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override

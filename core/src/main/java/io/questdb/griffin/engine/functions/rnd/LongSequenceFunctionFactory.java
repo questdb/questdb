@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,11 @@
 
 package io.questdb.griffin.engine.functions.rnd;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -37,6 +41,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.Transient;
 
 public class LongSequenceFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
@@ -47,7 +52,13 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function countFunc;
         final Function seedLoFunc;
         final Function seedHiFunc;
@@ -55,7 +66,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
             final int argCount = args.size();
             countFunc = args.getQuick(0);
 
-            if (argCount == 1 && ColumnType.isAssignableFrom(countFunc.getType(), ColumnType.LONG)) {
+            if (argCount == 1 && ColumnType.isConvertibleFrom(countFunc.getType(), ColumnType.LONG)) {
                 try {
                     return new CursorFunction(
                             new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
@@ -68,9 +79,9 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
             if (
                     argCount > 2
-                            && ColumnType.isAssignableFrom((countFunc = args.getQuick(0)).getType(), ColumnType.LONG)
-                            && ColumnType.isAssignableFrom((seedLoFunc = args.getQuick(1)).getType(), ColumnType.LONG)
-                            && ColumnType.isAssignableFrom((seedHiFunc = args.getQuick(2)).getType(), ColumnType.LONG)
+                            && ColumnType.isSameOrBuiltInWideningCast((countFunc = args.getQuick(0)).getType(), ColumnType.LONG)
+                            && ColumnType.isSameOrBuiltInWideningCast((seedLoFunc = args.getQuick(1)).getType(), ColumnType.LONG)
+                            && ColumnType.isSameOrBuiltInWideningCast((seedHiFunc = args.getQuick(2)).getType(), ColumnType.LONG)
             ) {
                 return new CursorFunction(
                         new SeedingLongSequenceCursorFactory(
@@ -169,6 +180,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -249,7 +249,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         );
 
         assertUpdate(
-                "update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from (select-group-by [first(y) y, timestamp_floor('1h',ts,null,'00:00',null) ts] timestamp_floor('1h',ts,null,'00:00',null) ts, first(y) y from (select [y, ts] from tbly timestamp (ts) stride 1h) order by ts) y on y = x))",
+                "update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from (select-group-by [first(y) y, timestamp_floor('1h', ts, null, '00:00', null) ts] timestamp_floor('1h', ts, null, '00:00', null) ts, first(y) y from (select [y, ts] from tbly timestamp (ts) stride 1h) order by ts) y on y = x))",
                 "update tblx set tt = 1 from (select ts, first(y) as y from tbly SAMPLE BY 1h ALIGN TO CALENDAR) y where x = y",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)

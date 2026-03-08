@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
 public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordSampleByCursor {
-    private final SimpleMapValue simpleMapValue;
+    private final SimpleMapValue value;
 
     public SampleByFillPrevNotKeyedRecordCursor(
             CairoConfiguration configuration,
@@ -38,8 +38,9 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
-            SimpleMapValue simpleMapValue,
+            SimpleMapValue value,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -53,6 +54,7 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,
@@ -65,8 +67,8 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
                 sampleToFunc,
                 sampleToFuncPos
         );
-        this.simpleMapValue = simpleMapValue;
-        this.record.of(simpleMapValue);
+        this.value = value;
+        record.of(value);
     }
 
     @Override
@@ -88,6 +90,6 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             return true;
         }
 
-        return notKeyedLoop(simpleMapValue);
+        return notKeyedLoop(value);
     }
 }

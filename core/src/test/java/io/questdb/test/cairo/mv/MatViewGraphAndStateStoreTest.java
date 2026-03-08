@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,11 +25,13 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -55,7 +57,7 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     @Test
     public void testAddSameViewTwice() {
         TableToken table1 = newTableToken("table1");
-        TableToken view1 = newViewToken("view1");
+        TableToken view1 = newMatViewToken("view1");
 
         MatViewDefinition viewDefinition = createDefinition(view1, table1);
         try {
@@ -70,10 +72,24 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         Assert.assertFalse(graph.addView(viewDefinition));
     }
 
+    // loops
+    @Test
+    public void testDirectSelfLoop() {
+        TableToken viewA = newMatViewToken("viewA");
+
+        MatViewDefinition viewDefinition = createDefinition(viewA, viewA);
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+    }
+
     @Test
     public void testDroppedState() {
         TableToken table1 = newTableToken("table1");
-        TableToken view1 = newViewToken("view1");
+        TableToken view1 = newMatViewToken("view1");
         MatViewDefinition viewDefinition = createDefinition(view1, table1);
         graph.addView(viewDefinition);
         MatViewState state = stateStore.addViewState(viewDefinition);
@@ -96,10 +112,10 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         //v3
         newTableToken("table2");
         newTableToken("table3");
-        TableToken view1 = newViewToken("view1");
+        TableToken view1 = newMatViewToken("view1");
         addDefinition(view1, newTableToken("table1"));
-        addDefinition(newViewToken("view2"), newTableToken("table1"));
-        addDefinition(newViewToken("view3"), view1);
+        addDefinition(newMatViewToken("view2"), newTableToken("table1"));
+        addDefinition(newMatViewToken("view3"), view1);
 
         graph.orderByDependentViews(tableTokens, ordered);
         Assert.assertEquals(6, ordered.size());
@@ -110,6 +126,24 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         Assert.assertEquals("view2", ordered.getQuick(4).getTableName());
         Assert.assertEquals("table1", ordered.getQuick(5).getTableName());
 
+    }
+
+    @Test
+    public void testIndirectLoopViaSharedDependency() {
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
+        TableToken viewC = newMatViewToken("viewC");
+
+        addDefinition(viewA, viewB);
+        addDefinition(viewC, viewB);
+        MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
+
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
     }
 
     @Test
@@ -131,7 +165,7 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     @Test
     public void testSingleView() {
         TableToken table1 = newTableToken("table1");
-        TableToken view1 = newViewToken("view1");
+        TableToken view1 = newMatViewToken("view1");
         addDefinition(view1, table1);
         graph.orderByDependentViews(tableTokens, ordered);
         Assert.assertEquals(2, ordered.size());
@@ -139,41 +173,11 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         Assert.assertEquals("table1", ordered.getQuick(1).getTableName());
     }
 
-    // loops
-    @Test
-    public void testDirectSelfLoop() {
-        TableToken viewA = newViewToken("viewA");
-
-        MatViewDefinition viewDefinition = createDefinition(viewA, viewA);
-        try {
-            graph.addView(viewDefinition);
-            Assert.fail("Expected a dependency loop exception");
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-        }
-    }
-
-    @Test
-    public void testTwoLevelLoop() {
-        TableToken viewA = newViewToken("viewA");
-        TableToken viewB = newViewToken("viewB");
-
-        addDefinition(viewA, viewB);
-        MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
-
-        try {
-            graph.addView(viewDefinition);
-            Assert.fail("Expected a dependency loop exception");
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-        }
-    }
-
     @Test
     public void testThreeLevelLoop() {
-        TableToken viewA = newViewToken("viewA");
-        TableToken viewB = newViewToken("viewB");
-        TableToken viewC = newViewToken("viewC");
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
+        TableToken viewC = newMatViewToken("viewC");
 
         addDefinition(viewA, viewB);
         addDefinition(viewB, viewC);
@@ -188,13 +192,11 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndirectLoopViaSharedDependency() {
-        TableToken viewA = newViewToken("viewA");
-        TableToken viewB = newViewToken("viewB");
-        TableToken viewC = newViewToken("viewC");
+    public void testTwoLevelLoop() {
+        TableToken viewA = newMatViewToken("viewA");
+        TableToken viewB = newMatViewToken("viewB");
 
         addDefinition(viewA, viewB);
-        addDefinition(viewC, viewB);
         MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
 
         try {
@@ -214,27 +216,38 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     private MatViewDefinition createDefinition(TableToken viewToken, TableToken baseTableToken) {
         MatViewDefinition viewDefinition = new MatViewDefinition();
         viewDefinition.init(
-                MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
+                false,
+                ColumnType.TIMESTAMP_MICRO,
                 viewToken,
                 "x",
                 baseTableToken.getTableName(),
                 0,
                 'm',
                 null,
-                null
+                null,
+                0,
+                0,
+                (char) 0,
+                Numbers.LONG_NULL,
+                null,
+                0,
+                (char) 0,
+                0,
+                (char) 0
         );
         return viewDefinition;
     }
 
-    private TableToken newTableToken(String tableName) {
-        TableToken t = new TableToken(tableName, tableName, 0, false, true, false, false, true);
-        tableTokens.add(t);
-        return t;
-    }
-
-    private TableToken newViewToken(String tableName) {
-        TableToken v = new TableToken(tableName, tableName, 0, true, true, false, false, true);
+    private TableToken newMatViewToken(String tableName) {
+        TableToken v = new TableToken(tableName, tableName, null, 0, false, true, true, false, false, true);
         tableTokens.add(v);
         return v;
+    }
+
+    private TableToken newTableToken(String tableName) {
+        TableToken t = new TableToken(tableName, tableName, null, 0, false, false, true, false, false, true);
+        tableTokens.add(t);
+        return t;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,6 +55,14 @@ public class TableWriterTask implements Closeable {
         this.data = data;
         this.dataSize = dataSize;
         reset();
+    }
+
+    public static String getCommandName(int cmd) {
+        return switch (cmd) {
+            case CMD_ALTER_TABLE -> "ALTER TABLE";
+            case CMD_UPDATE_TABLE -> "UPDATE TABLE";
+            default -> "UNKNOWN COMMAND";
+        };
     }
 
     @Override

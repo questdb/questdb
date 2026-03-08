@@ -1,17 +1,36 @@
 use num_traits::AsPrimitive;
 
+pub mod array;
 mod binary;
 mod boolean;
+pub(crate) mod decimal;
 pub(crate) mod file;
+pub use file::ParquetWriter;
 mod fixed_len_bytes;
 mod jni;
 mod primitive;
 pub mod schema;
+pub mod simd;
 mod string;
 mod symbol;
 mod update;
 mod util;
 pub mod varchar;
+
+#[doc(hidden)]
+pub mod bench {
+    pub use super::array::array_to_raw_page;
+    pub use super::binary::binary_to_page;
+    pub use super::boolean::slice_to_page as boolean_to_page;
+    pub use super::file::WriteOptions;
+    pub use super::fixed_len_bytes::bytes_to_page;
+    pub use super::primitive::{
+        int_slice_to_page_notnull, int_slice_to_page_nullable, slice_to_page_simd,
+    };
+    pub use super::string::string_to_page;
+    pub use super::symbol::symbol_to_pages;
+    pub use super::varchar::varchar_to_page;
+}
 
 pub trait Nullable {
     fn is_null(&self) -> bool;
@@ -128,6 +147,7 @@ mod tests {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::deserialize::{HybridEncoded, HybridRleIter};
     use parquet2::encoding::{hybrid_rle, uleb128};
+    use parquet2::metadata::SortingColumn;
     use parquet2::page::CompressedPage;
     use parquet2::types;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
@@ -166,6 +186,8 @@ mod tests {
                     0,
                     null(),
                     0,
+                    false,
+                    false,
                 )
                 .expect("column")
             })
@@ -275,6 +297,8 @@ mod tests {
             col_chars.len(),
             offsets.as_ptr(),
             offsets.len(),
+            false,
+            false,
         )
         .unwrap();
 
@@ -338,6 +362,8 @@ mod tests {
             0,
             null(),
             0,
+            false,
+            false,
         )
         .unwrap();
 
@@ -353,6 +379,8 @@ mod tests {
             0,
             null(),
             0,
+            false,
+            false,
         )
         .unwrap();
 
@@ -410,6 +438,8 @@ mod tests {
             0,
             null(),
             0,
+            false,
+            false,
         )
         .unwrap();
 
@@ -506,5 +536,1369 @@ mod tests {
         ];
         let len = types::decode::<i32>(&data[0..4]);
         assert_eq!(len, 1);
+    }
+
+    #[test]
+    fn test_write_parquet_with_designated_timestamp_descending() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let timestamps: Vec<i64> = vec![1000, 2000, 3000, 4000, 5000];
+        let row_count = timestamps.len();
+        let ts_col = Column::from_raw_data(
+            0,
+            "timestamp",
+            ColumnTypeTag::Timestamp.into_type().code(),
+            0,
+            row_count,
+            timestamps.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            true,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![ts_col],
+        };
+
+        let sorting_columns = Some(vec![SortingColumn::new(0, true, false)]); // descending=true
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_sorting_columns(sorting_columns)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let mut reader = Cursor::new(bytes);
+        let meta = parquet2::read::read_metadata(&mut reader).expect("metadata");
+
+        assert!(!meta.row_groups.is_empty());
+        let sorting_cols = meta.row_groups[0].sorting_columns();
+        assert!(
+            sorting_cols.is_some(),
+            "Expected sorting columns in metadata"
+        );
+        let sorting_cols = sorting_cols.as_ref().unwrap();
+        assert_eq!(sorting_cols.len(), 1);
+        assert_eq!(sorting_cols[0].column_idx, 0);
+        assert!(
+            sorting_cols[0].descending,
+            "Expected descending=true for timestamp column"
+        );
+        assert!(!sorting_cols[0].nulls_first);
+    }
+
+    #[test]
+    fn test_write_parquet_with_designated_timestamp_ascending() {
+        use parquet2::metadata::SortingColumn;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let timestamps: Vec<i64> = vec![1000, 2000, 3000, 4000, 5000];
+        let row_count = timestamps.len();
+
+        let ts_col = Column::from_raw_data(
+            0,
+            "timestamp",
+            ColumnTypeTag::Timestamp.into_type().code(),
+            0,
+            row_count,
+            timestamps.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            true,
+            true,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![ts_col],
+        };
+
+        let sorting_columns = Some(vec![SortingColumn::new(0, false, false)]); // descending=false
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_sorting_columns(sorting_columns)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let mut reader = Cursor::new(bytes);
+        let meta = parquet2::read::read_metadata(&mut reader).expect("metadata");
+
+        assert!(!meta.row_groups.is_empty());
+        let sorting_cols = meta.row_groups[0].sorting_columns();
+        assert!(
+            sorting_cols.is_some(),
+            "Expected sorting columns in metadata"
+        );
+        let sorting_cols = sorting_cols.as_ref().unwrap();
+        assert_eq!(sorting_cols.len(), 1);
+        assert_eq!(sorting_cols[0].column_idx, 0);
+        assert!(
+            !sorting_cols[0].descending,
+            "Expected descending=false for ascending timestamp"
+        );
+        assert!(!sorting_cols[0].nulls_first);
+    }
+
+    #[test]
+    fn test_write_row_group_from_partitions_symbol_non_parallel() {
+        test_write_row_group_from_partitions_symbol(false);
+    }
+
+    #[test]
+    fn test_write_row_group_from_partitions_symbol_parallel() {
+        test_write_row_group_from_partitions_symbol(true);
+    }
+
+    fn test_write_row_group_from_partitions_symbol(parallel: bool) {
+        use crate::parquet_write::schema::{to_encodings, to_parquet_schema};
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let (col_chars, offsets) =
+            serialize_as_symbols(vec!["apple", "banana", "cherry", "date", "elderberry"]);
+
+        // Partition 1: keys [0, 1, 2] -> "apple", "banana", "cherry"
+        let keys1 = [0i32, 1, 2];
+        // Partition 2: keys [null, 3, 4] -> null, "date", "elderberry"
+        let keys2 = [i32::MIN, 3, 4];
+        // Partition 3: keys [1, null, 0] -> "banana", null, "apple"
+        let keys3 = [1i32, i32::MIN, 0];
+        let col1 = Column::from_raw_data(
+            0,
+            "sym",
+            12,
+            0,
+            keys1.len(),
+            keys1.as_ptr() as *const u8,
+            keys1.len() * size_of::<i32>(),
+            col_chars.as_ptr(),
+            col_chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+            false,
+            false,
+        )
+        .unwrap();
+
+        let col2 = Column::from_raw_data(
+            0,
+            "sym",
+            12,
+            0,
+            keys2.len(),
+            keys2.as_ptr() as *const u8,
+            keys2.len() * size_of::<i32>(),
+            col_chars.as_ptr(),
+            col_chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+            false,
+            false,
+        )
+        .unwrap();
+
+        let col3 = Column::from_raw_data(
+            0,
+            "sym",
+            12,
+            0,
+            keys3.len(),
+            keys3.as_ptr() as *const u8,
+            keys3.len() * size_of::<i32>(),
+            col_chars.as_ptr(),
+            col_chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+            false,
+            false,
+        )
+        .unwrap();
+
+        let partition1 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1],
+        };
+        let partition2 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col2],
+        };
+        let partition3 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col3],
+        };
+
+        let (schema, additional_meta) = to_parquet_schema(&partition1, false).unwrap();
+        let encodings = to_encodings(&partition1);
+
+        let mut chunked = ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_parallel(parallel)
+            .chunked(schema, encodings)
+            .unwrap();
+
+        let partitions: Vec<&Partition> = vec![&partition1, &partition2, &partition3];
+        chunked
+            .write_row_group_from_partitions(&partitions, 0, keys3.len())
+            .unwrap();
+        chunked.finish(additional_meta).unwrap();
+
+        // Verify output
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        let expected = vec![
+            Some("apple"),
+            Some("banana"),
+            Some("cherry"),
+            None,
+            Some("date"),
+            Some("elderberry"),
+            Some("banana"),
+            None,
+            Some("apple"),
+        ];
+
+        for batch in parquet_reader.flatten() {
+            let symbol_array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+                .expect("Failed to downcast");
+            let collected: Vec<_> = symbol_array.iter().collect();
+            assert_eq!(collected, expected);
+        }
+    }
+
+    #[test]
+    fn test_bloom_filter_roundtrip_i64() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnTypeTag;
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i64> = (100..110).collect();
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        // Read it back with parquet2 and verify bloom filter works
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        // Values NOT in the data: should skip
+        let absent_vals: Vec<i64> = vec![0, 1, 50, 999];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (absent_vals.len() as u64) << 32,
+            ptr: absent_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
+
+        // Values IN the data: should not skip
+        let present_vals: Vec<i64> = vec![0, 105, 999];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (present_vals.len() as u64) << 32,
+            ptr: present_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 105 is in the row group");
+    }
+
+    #[test]
+    fn test_bloom_filter_roundtrip_i32() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnTypeTag;
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i32> = (200..210).collect();
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        // Verify metadata has bloom filter offset
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let bf_offset = meta.row_groups[0].columns()[0]
+            .metadata()
+            .bloom_filter_offset;
+        assert!(
+            bf_offset.is_some(),
+            "bloom filter offset should be present in metadata"
+        );
+
+        // Values not in the data
+        let absent_vals: Vec<i64> = vec![0, 1, 50, 999];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (absent_vals.len() as u64) << 32,
+            ptr: absent_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
+
+        let present_vals: Vec<i64> = vec![200, 205];
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: (present_vals.len() as u64) << 32,
+            ptr: present_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(
+            !can_skip,
+            "should NOT skip: filter values are present in the row group"
+        );
+    }
+
+    #[test]
+    fn test_bloom_filter_not_written_for_unselected_columns() {
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i64> = (0..10).collect();
+        let col2: Vec<i32> = (0..10).collect();
+        let row_count = col1.len();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "col1",
+            ColumnTypeTag::Long.into_type().code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let col2_w = Column::from_raw_data(
+            1,
+            "col2",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            row_count,
+            col2.as_ptr() as *const u8,
+            row_count * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w, col2_w],
+        };
+
+        // Only enable bloom filter for column 0
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        let bf_offset_col0 = meta.row_groups[0].columns()[0]
+            .metadata()
+            .bloom_filter_offset;
+        let bf_offset_col1 = meta.row_groups[0].columns()[1]
+            .metadata()
+            .bloom_filter_offset;
+
+        assert!(bf_offset_col0.is_some(), "col0 should have bloom filter");
+        assert!(
+            bf_offset_col1.is_none(),
+            "col1 should not have bloom filter"
+        );
+    }
+
+    fn i64_to_be_bytes_vec(values: &[i64]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+
+    fn i32_to_be_bytes_vec(values: &[i32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+
+    fn i16_to_be_bytes_vec(values: &[i16]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+
+    fn i8_to_be_bytes_vec(values: &[i8]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+
+    #[test]
+    fn test_bloom_filter_roundtrip_decimal8() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i8> = (10i8..20).collect();
+        let row_count = col1.len();
+        let decimal_type = ColumnType::new_decimal(2, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i8>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        let absent_vals_be = i8_to_be_bytes_vec(&[0, 1, 5, 99]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: absent_vals_be.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
+
+        let present_vals_be = i8_to_be_bytes_vec(&[0, 15, 99]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: present_vals_be.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 15 is in the row group");
+    }
+
+    #[test]
+    fn test_bloom_filter_roundtrip_decimal16() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i16> = (100i16..110).collect();
+        let row_count = col1.len();
+
+        // Decimal16 requires precision 3-4
+        let decimal_type = ColumnType::new_decimal(4, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i16>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        let absent_vals_be = i16_to_be_bytes_vec(&[0, 1, 50, 999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: absent_vals_be.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
+
+        let present_vals_be = i16_to_be_bytes_vec(&[0, 105, 999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: present_vals_be.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 105 is in the row group");
+    }
+
+    #[test]
+    fn test_bloom_filter_roundtrip_decimal32() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i32> = (10000i32..10010).collect();
+        let row_count = col1.len();
+        let decimal_type = ColumnType::new_decimal(9, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        let absent_vals_be = i32_to_be_bytes_vec(&[0, 1, 5000, 99999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: absent_vals_be.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
+
+        let present_vals_be = i32_to_be_bytes_vec(&[0, 10005, 99999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: present_vals_be.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 10005 is in the row group");
+    }
+
+    #[test]
+    fn test_bloom_filter_roundtrip_decimal64() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i64> = (100i64..110).collect();
+        let row_count = col1.len();
+        let decimal_type = ColumnType::new_decimal(18, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        let absent_vals_be = i64_to_be_bytes_vec(&[0, 1, 50, 999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: absent_vals_be.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
+
+        let present_vals_be = i64_to_be_bytes_vec(&[0, 105, 999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: present_vals_be.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 105 is in the row group");
+    }
+
+    // Decimal128 memory layout: (hi: i64, lo: u64) in native byte order
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct TestDecimal128(i64, u64);
+
+    #[test]
+    fn test_bloom_filter_roundtrip_decimal128() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+        use std::collections::HashSet;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<TestDecimal128> = (100u64..110).map(|v| TestDecimal128(0, v)).collect();
+        let row_count = col1.len();
+
+        let decimal_type = ColumnType::new_decimal(38, 0).unwrap();
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * 16,
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(0);
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_bloom_filter_columns(bloom_cols)
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let meta =
+            parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
+        assert!(
+            meta.row_groups[0].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .is_some(),
+            "bloom filter offset should be present"
+        );
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        // Helper to create 128-bit big-endian bytes for filter values
+        // This matches Decimal128.to_bytes() which outputs hi.to_be_bytes() + lo.to_be_bytes()
+        let to_be_128 = |hi: i64, lo: u64| -> [u8; 16] {
+            let mut bytes = [0u8; 16];
+            bytes[0..8].copy_from_slice(&hi.to_be_bytes());
+            bytes[8..16].copy_from_slice(&lo.to_be_bytes());
+            bytes
+        };
+
+        let absent_vals: Vec<[u8; 16]> = [0u64, 1, 50, 999]
+            .iter()
+            .map(|&v| to_be_128(0, v))
+            .collect();
+        let absent_vals_flat: Vec<u8> =
+            absent_vals.iter().flat_map(|b| b.iter().copied()).collect();
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: absent_vals_flat.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(
+            can_skip,
+            "should skip: none of the filter values are in the row group"
+        );
+
+        let present_vals: Vec<[u8; 16]> =
+            [0u64, 105, 999].iter().map(|&v| to_be_128(0, v)).collect();
+        let present_vals_flat: Vec<u8> = present_vals
+            .iter()
+            .flat_map(|b| b.iter().copied())
+            .collect();
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: present_vals_flat.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 105 is in the row group");
+    }
+
+    #[test]
+    fn test_min_max_skip_decimal8() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        // Data range: 10..20 (min=10, max=19)
+        let col1: Vec<i8> = (10i8..20).collect();
+        let row_count = col1.len();
+        let decimal_type = ColumnType::new_decimal(2, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i8>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        // No bloom filter, only statistics
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        // All values outside [10, 19] - should skip
+        let outside_vals = i8_to_be_bytes_vec(&[0, 5, 25, 99]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: outside_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(can_skip, "should skip: all values outside [10, 19]");
+
+        // One value inside [10, 19] - should not skip
+        let inside_vals = i8_to_be_bytes_vec(&[0, 15, 99]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: inside_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 15 is inside [10, 19]");
+    }
+
+    #[test]
+    fn test_min_max_skip_decimal16() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i16> = (100i16..110).collect();
+        let row_count = col1.len();
+        let decimal_type = ColumnType::new_decimal(4, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i16>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        // All values outside [100, 109]
+        let outside_vals = i16_to_be_bytes_vec(&[0, 50, 200, 999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: outside_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(can_skip, "should skip: all values outside [100, 109]");
+
+        // One value inside [100, 109]
+        let inside_vals = i16_to_be_bytes_vec(&[0, 105, 999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: inside_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 105 is inside [100, 109]");
+    }
+
+    #[test]
+    fn test_min_max_skip_decimal32() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i32> = (10000i32..10010).collect();
+        let row_count = col1.len();
+        let decimal_type = ColumnType::new_decimal(9, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        // All values outside [10000, 10009]
+        let outside_vals = i32_to_be_bytes_vec(&[0, 5000, 20000, 99999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: outside_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(can_skip, "should skip: all values outside [10000, 10009]");
+
+        // One value inside [10000, 10009]
+        let inside_vals = i32_to_be_bytes_vec(&[0, 10005, 99999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: inside_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 10005 is inside [10000, 10009]");
+    }
+
+    #[test]
+    fn test_min_max_skip_decimal64() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1: Vec<i64> = (100i64..110).collect();
+        let row_count = col1.len();
+        let decimal_type = ColumnType::new_decimal(18, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        // All values outside [100, 109]
+        let outside_vals = i64_to_be_bytes_vec(&[0, 50, 200, 999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: outside_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(can_skip, "should skip: all values outside [100, 109]");
+
+        // One value inside [100, 109]
+        let inside_vals = i64_to_be_bytes_vec(&[0, 105, 999]);
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: inside_vals.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 105 is inside [100, 109]");
+    }
+
+    #[test]
+    fn test_min_max_skip_decimal128() {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_read::{ColumnFilterPacked, ParquetDecoder};
+        use qdb_core::col_type::ColumnType;
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        // Data range: 100..110 (hi=0, lo=100..110)
+        let col1: Vec<TestDecimal128> = (100u64..110).map(|v| TestDecimal128(0, v)).collect();
+        let row_count = col1.len();
+        let decimal_type = ColumnType::new_decimal(38, 0).unwrap();
+
+        let col1_w = Column::from_raw_data(
+            0,
+            "val",
+            decimal_type.code(),
+            0,
+            row_count,
+            col1.as_ptr() as *const u8,
+            row_count * 16,
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+        )
+        .expect("column");
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1_w],
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let data = buf.into_inner();
+
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut reader = Cursor::new(data.as_slice());
+        let decoder =
+            ParquetDecoder::read(allocator, &mut reader, data.len() as u64).expect("decoder");
+
+        let to_be_128 = |hi: i64, lo: u64| -> [u8; 16] {
+            let mut bytes = [0u8; 16];
+            bytes[0..8].copy_from_slice(&hi.to_be_bytes());
+            bytes[8..16].copy_from_slice(&lo.to_be_bytes());
+            bytes
+        };
+
+        // All values outside [100, 109]
+        let outside_vals: Vec<[u8; 16]> = [0u64, 50, 200, 999]
+            .iter()
+            .map(|&v| to_be_128(0, v))
+            .collect();
+        let outside_vals_flat: Vec<u8> = outside_vals
+            .iter()
+            .flat_map(|b| b.iter().copied())
+            .collect();
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 4u64 << 32,
+            ptr: outside_vals_flat.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(can_skip, "should skip: all values outside [100, 109]");
+
+        // One value inside [100, 109]
+        let inside_vals: Vec<[u8; 16]> =
+            [0u64, 105, 999].iter().map(|&v| to_be_128(0, v)).collect();
+        let inside_vals_flat: Vec<u8> =
+            inside_vals.iter().flat_map(|b| b.iter().copied()).collect();
+        let filters = [ColumnFilterPacked {
+            col_idx_and_count: 3u64 << 32,
+            ptr: inside_vals_flat.as_ptr() as u64,
+            column_type: 0,
+        }];
+        let can_skip = decoder
+            .can_skip_row_group(0, &data, &filters, u64::MAX)
+            .expect("can_skip");
+        assert!(!can_skip, "should not skip: 105 is inside [100, 109]");
     }
 }

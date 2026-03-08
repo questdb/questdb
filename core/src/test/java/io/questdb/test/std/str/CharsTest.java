@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.*;
+import io.questdb.std.str.FileNameExtractorUtf8Sequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -369,6 +373,55 @@ public class CharsTest {
     }
 
     @Test
+    public void testEqualsLowerCaseAscii() {
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "foo bar baz", 0, 11));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "FoO bAr BaZ", 0, 11));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar", "foo bar baz", 0, 7));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar", "bar foo bar baz", 4, 11));
+        Assert.assertFalse(Chars.equalsLowerCaseAscii("foo bar baz", "foo bar", 0, 7));
+        Assert.assertTrue(Chars.equalsLowerCaseAscii("foo_bar_baz", "foo_BAR_baz", 0, 11));
+        Assert.assertFalse(Chars.equalsLowerCaseAscii("foo_bar_baz", "foo_foo_baz", 0, 11));
+    }
+
+    @Test
+    public void testGreaterThanAndLessThan() {
+        Assert.assertFalse(Chars.greaterThan(null, "a"));
+        Assert.assertFalse(Chars.greaterThan("a", null));
+        Assert.assertFalse(Chars.greaterThan(null, null));
+        Assert.assertFalse(Chars.lessThan(null, "a"));
+        Assert.assertFalse(Chars.lessThan("a", null));
+        Assert.assertFalse(Chars.lessThan(null, null));
+
+        // equality
+        Assert.assertFalse(Chars.greaterThan("abc", "abc"));
+        Assert.assertFalse(Chars.lessThan("abc", "abc"));
+
+        // basic ordering
+        Assert.assertTrue(Chars.greaterThan("b", "a"));
+        Assert.assertFalse(Chars.greaterThan("a", "b"));
+        Assert.assertTrue(Chars.lessThan("a", "b"));
+        Assert.assertFalse(Chars.lessThan("b", "a"));
+
+        Assert.assertFalse(Chars.greaterThan("ab", "abc"));
+        Assert.assertTrue(Chars.greaterThan("abc", "ab"));
+        Assert.assertTrue(Chars.lessThan("ab", "abc"));
+        Assert.assertFalse(Chars.lessThan("abc", "ab"));
+
+        Assert.assertFalse(Chars.greaterThan("", "a"));
+        Assert.assertTrue(Chars.greaterThan("a", ""));
+        Assert.assertTrue(Chars.lessThan("", "a"));
+        Assert.assertFalse(Chars.lessThan("a", ""));
+        Assert.assertFalse(Chars.greaterThan("", ""));
+        Assert.assertFalse(Chars.lessThan("", ""));
+
+        Assert.assertTrue(Chars.greaterThan("a\uD834\uDD1E", "a"));
+        Assert.assertTrue(Chars.lessThan("a", "a\uD834\uDD1E"));
+
+        Assert.assertTrue(Chars.greaterThan("\uD834\uDD1E", "z"));
+        Assert.assertTrue(Chars.lessThan("z", "\uD834\uDD1E"));
+    }
+
+    @Test
     public void testIPv4ToString() {
         Assert.assertEquals("255.255.255.255", TestUtils.ipv4ToString(0xffffffff));
         Assert.assertEquals("0.0.0.25", TestUtils.ipv4ToString(25));
@@ -427,6 +480,18 @@ public class CharsTest {
     }
 
     @Test
+    public void testIndexOfNonWhitespace() {
+        String in = " a bbbbs   sss";
+        Assert.assertEquals(-1, Chars.indexOfNonWhitespace(in, 0, in.length(), 0));
+
+        Assert.assertEquals(7, Chars.indexOfNonWhitespace(in, 3, 11, -1));
+        Assert.assertEquals(-1, Chars.indexOfNonWhitespace(in, 0, 1, -1));
+
+        Assert.assertEquals(11, Chars.indexOfNonWhitespace(in, 8, in.length(), 1));
+        Assert.assertEquals(-1, Chars.indexOfNonWhitespace(in, 8, 10, 1));
+    }
+
+    @Test
     public void testIsAscii() {
         Assert.assertTrue(Chars.isAscii(""));
         Assert.assertTrue(Chars.isAscii("foo bar baz"));
@@ -474,6 +539,14 @@ public class CharsTest {
         Assert.assertTrue(Chars.isQuoted("''"));
         Assert.assertTrue(Chars.isQuoted("\"banana\""));
         Assert.assertTrue(Chars.isQuoted("\"\""));
+    }
+
+    @Test
+    public void testLastIndexOfDifferent() {
+        Assert.assertEquals(-1, Chars.lastIndexOfDifferent("   ", 0, 3, ' '));
+        Assert.assertEquals(0, Chars.lastIndexOfDifferent("s  ", 0, 3, ' '));
+        Assert.assertEquals(0, Chars.lastIndexOfDifferent("s s ", 0, 2, ' '));
+        Assert.assertEquals(-1, Chars.lastIndexOfDifferent("s  ", 1, 3, ' '));
     }
 
     @Test

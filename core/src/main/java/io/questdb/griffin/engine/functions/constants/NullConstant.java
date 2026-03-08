@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,11 +27,15 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -39,14 +43,25 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public final class NullConstant implements ConstantFunction, ScalarFunction {
+public final class NullConstant implements ConstantFunction, FunctionExtension {
 
     public static final NullConstant NULL = new NullConstant();
+
 
     private final int type;
 
     private NullConstant() {
         this.type = ColumnType.NULL;
+    }
+
+    @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        return ArrayConstant.NULL;
     }
 
     @Override
@@ -82,6 +97,36 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     @Override
     public long getDate(Record rec) {
         return DateConstant.NULL.getDate(null);
+    }
+
+    @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        sink.ofRawNull();
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        return Decimals.DECIMAL16_NULL;
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        sink.ofRawNull();
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        return Decimals.DECIMAL32_NULL;
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        return Decimals.DECIMAL64_NULL;
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        return Decimals.DECIMAL8_NULL;
     }
 
     @Override
@@ -216,7 +261,7 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public long getTimestamp(Record rec) {
-        return TimestampConstant.NULL.getTimestamp(null);
+        return TimestampConstant.TIMESTAMP_MICRO_NULL.getTimestamp(null);
     }
 
     @Override

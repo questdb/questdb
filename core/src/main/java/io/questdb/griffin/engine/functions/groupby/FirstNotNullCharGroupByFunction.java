@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
@@ -38,9 +39,27 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final long hi = ptr + count * (long) Character.BYTES;
+            for (; ptr < hi; ptr += Character.BYTES) {
+                char value = Unsafe.getUnsafe().getChar(ptr);
+                if (value != CharConstant.ZERO.getChar(null)) {
+                    mapValue.putChar(valueIndex + 1, value);
+                    break;
+                }
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null)) {
-            computeFirst(mapValue, record, rowId);
+        char val = arg.getChar(record);
+        if (val != CharConstant.ZERO.getChar(null)) {
+            if (mapValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null) || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putChar(valueIndex + 1, val);
+            }
         }
     }
 
@@ -58,7 +77,7 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putChar(valueIndex + 1, srcVal);
         }

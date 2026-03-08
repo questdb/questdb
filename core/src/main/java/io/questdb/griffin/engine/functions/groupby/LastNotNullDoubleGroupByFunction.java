@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction {
@@ -37,9 +38,25 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
     }
 
     @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            long hi = ptr + (count - 1) * 8L;
+            for (; hi >= ptr; hi -= 8L) {
+                double value = Unsafe.getUnsafe().getDouble(hi);
+                if (!Numbers.isNull(value)) {
+                    mapValue.putDouble(valueIndex + 1, value);
+                    break;
+                }
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (Numbers.isFinite(arg.getDouble(record))) {
-            computeFirst(mapValue, record, rowId);
+            if (Numbers.isNull(mapValue.getDouble(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
+                computeFirst(mapValue, record, rowId);
+            }
         }
     }
 

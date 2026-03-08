@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,39 +33,41 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    @Override
-    public int getSampleByFlags() {
-        return GroupByFunction.SAMPLE_BY_FILL_ALL;
-    }
-
     public SumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
     @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            final double value = Vect.sumDouble(ptr, count);
+            mapValue.putDouble(valueIndex, value);
+        }
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
-            mapValue.putDouble(valueIndex, value);
-            mapValue.putLong(valueIndex + 1, 1);
-        } else {
-            mapValue.putDouble(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);
-        }
+        mapValue.putDouble(valueIndex, value);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
-            mapValue.addDouble(valueIndex, value);
-            mapValue.addLong(valueIndex + 1, 1);
+            final double sum = mapValue.getDouble(valueIndex);
+            if (Numbers.isFinite(sum)) {
+                mapValue.putDouble(valueIndex, sum + value);
+            } else {
+                mapValue.putDouble(valueIndex, value);
+            }
         }
     }
 
@@ -76,16 +78,17 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public double getDouble(Record rec) {
-        long valueCount = rec.getLong(valueIndex + 1);
-        if (valueCount > 0) {
-            return rec.getDouble(valueIndex);
-        }
-        return Double.NaN;
+        return rec.getDouble(valueIndex);
     }
 
     @Override
     public String getName() {
         return "sum";
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
     }
 
     @Override
@@ -102,7 +105,6 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -117,22 +119,30 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        double srcSum = srcValue.getDouble(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 1);
-        destValue.addDouble(valueIndex, srcSum);
-        destValue.addLong(valueIndex + 1, srcCount);
+        final double srcSum = srcValue.getDouble(valueIndex);
+        if (Numbers.isFinite(srcSum)) {
+            final double destSum = destValue.getDouble(valueIndex);
+            if (Numbers.isFinite(destSum)) {
+                destValue.putDouble(valueIndex, destSum + srcSum);
+            } else {
+                destValue.putDouble(valueIndex, srcSum);
+            }
+        }
     }
 
     @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
-        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-        mapValue.putLong(valueIndex + 1, 0);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

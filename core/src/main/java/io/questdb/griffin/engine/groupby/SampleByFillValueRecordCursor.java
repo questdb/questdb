@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,12 +39,11 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor implements Reopenable {
+class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor implements Reopenable {
     private final RecordSink keyMapSink;
     private final Map map;
     private final RecordCursor mapCursor;
     private final Record mapRecord;
-    private boolean hasNextPending;
     private boolean isMapBuildPending;
     private boolean isMapInitialized;
     private boolean isOpen;
@@ -59,6 +58,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             ObjList<Function> recordFunctions,
             ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
@@ -73,6 +73,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,
@@ -127,7 +128,6 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
         rowId = 0;
-        hasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
     }
@@ -141,11 +141,15 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     }
 
     @Override
+    public long preComputedStateSize() {
+        return (!isMapBuildPending && isMapInitialized ? 1 : 0) + super.preComputedStateSize();
+    }
+
+    @Override
     public void toTop() {
         super.toTop();
         map.clear();
         rowId = 0;
-        hasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
     }
@@ -173,37 +177,23 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         }
 
         final long next = timestampSampler.nextTimestamp(localEpoch);
-        while (true) {
+        do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
-                if (!hasNextPending) {
-                    adjustDstInFlight(timestamp - tzOffset);
-                    final MapKey key = map.withKey();
-                    keyMapSink.copy(baseRecord, key);
-                    final MapValue value = key.findValue();
-                    assert value != null;
+                adjustDstInFlight(timestamp - tzOffset);
+                final MapKey key = map.withKey();
+                keyMapSink.copy(baseRecord, key);
+                final MapValue value = key.findValue();
+                assert value != null;
 
-                    if (value.getLong(0) != localEpoch) {
-                        value.putLong(0, localEpoch);
-                        groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
-                    } else {
-                        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
-                    }
+                if (value.getLong(0) != localEpoch) {
+                    value.putLong(0, localEpoch);
+                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+                } else {
+                    groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                 }
-
-                hasNextPending = true;
-                boolean baseHasNext = baseCursor.hasNext();
-                hasNextPending = false;
-                // carry on with the loop if we still have data
-                if (baseHasNext) {
-                    continue;
-                }
-
-                // we ran out of data, make sure hasNext() returns false at the next
-                // opportunity, after we stream map that is
-                baseRecord = null;
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp column uses this variable.
@@ -213,10 +203,15 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);
                 }
+                isMapBuildPending = true;
+                return;
             }
-            isMapBuildPending = true;
-            break;
-        }
+        } while (baseCursor.hasNext());
+
+        // we ran out of data, make sure hasNext() returns false at the next
+        // opportunity, after we stream map that is
+        baseRecord = null;
+        isMapBuildPending = true;
     }
 
     private void initMap() {

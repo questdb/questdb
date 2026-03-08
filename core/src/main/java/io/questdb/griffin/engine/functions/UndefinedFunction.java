@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,29 +25,39 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-public class UndefinedFunction implements ScalarFunction {
+public class UndefinedFunction implements Function {
     public static UndefinedFunction INSTANCE = new UndefinedFunction();
 
     @Override
-    public final BinarySequence getBin(io.questdb.cairo.sql.Record rec) {
+    public ArrayView getArray(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getBinLen(io.questdb.cairo.sql.Record rec) {
+    public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final boolean getBool(io.questdb.cairo.sql.Record rec) {
+    public long getBinLen(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -57,82 +67,117 @@ public class UndefinedFunction implements ScalarFunction {
     }
 
     @Override
-    public final char getChar(io.questdb.cairo.sql.Record rec) {
+    public final char getChar(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getDate(io.questdb.cairo.sql.Record rec) {
+    public final long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public double getDouble(io.questdb.cairo.sql.Record rec) {
+    public final void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final byte getDecimal8(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public double getDouble(Record rec) {
         return getByte(rec);
     }
 
     @Override
-    public float getFloat(io.questdb.cairo.sql.Record rec) {
+    public float getFloat(Record rec) {
         return getByte(rec);
     }
 
     @Override
-    public byte getGeoByte(io.questdb.cairo.sql.Record rec) {
+    public byte getGeoByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getGeoInt(io.questdb.cairo.sql.Record rec) {
+    public int getGeoInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getGeoLong(io.questdb.cairo.sql.Record rec) {
+    public long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public short getGeoShort(io.questdb.cairo.sql.Record rec) {
+    public short getGeoShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getIPv4(io.questdb.cairo.sql.Record rec) {
+    public final int getIPv4(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getInt(io.questdb.cairo.sql.Record rec) {
+    public int getInt(Record rec) {
         return getByte(rec);
     }
 
     @Override
-    public long getLong(io.questdb.cairo.sql.Record rec) {
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong(Record rec) {
         return getByte(rec);
     }
 
     @Override
-    public long getLong128Hi(io.questdb.cairo.sql.Record rec) {
+    public long getLong128Hi(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getLong128Lo(io.questdb.cairo.sql.Record rec) {
+    public long getLong128Lo(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final void getLong256(io.questdb.cairo.sql.Record rec, CharSink<?> sink) {
+    public final void getLong256(Record rec, CharSink<?> sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final Long256 getLong256A(io.questdb.cairo.sql.Record rec) {
+    public final Long256 getLong256A(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final Long256 getLong256B(io.questdb.cairo.sql.Record rec) {
+    public final Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -142,37 +187,37 @@ public class UndefinedFunction implements ScalarFunction {
     }
 
     @Override
-    public short getShort(io.questdb.cairo.sql.Record rec) {
+    public short getShort(Record rec) {
         return getByte(rec);
     }
 
     @Override
-    public final CharSequence getStrA(io.questdb.cairo.sql.Record rec) {
+    public final CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final CharSequence getStrB(io.questdb.cairo.sql.Record rec) {
+    public final CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getStrLen(io.questdb.cairo.sql.Record rec) {
+    public final int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final CharSequence getSymbol(io.questdb.cairo.sql.Record rec) {
+    public final CharSequence getSymbol(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final CharSequence getSymbolB(io.questdb.cairo.sql.Record rec) {
+    public final CharSequence getSymbolB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getTimestamp(io.questdb.cairo.sql.Record rec) {
+    public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -182,12 +227,12 @@ public class UndefinedFunction implements ScalarFunction {
     }
 
     @Override
-    public Utf8Sequence getVarcharA(io.questdb.cairo.sql.Record rec) {
+    public Utf8Sequence getVarcharA(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Utf8Sequence getVarcharB(io.questdb.cairo.sql.Record rec) {
+    public Utf8Sequence getVarcharB(Record rec) {
         throw new UnsupportedOperationException();
     }
 

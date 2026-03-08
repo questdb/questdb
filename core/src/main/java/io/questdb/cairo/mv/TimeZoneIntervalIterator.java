@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,12 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -82,7 +82,7 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     }
 
     @Override
-    public int getStep() {
+    public long getStep() {
         return step;
     }
 
@@ -97,18 +97,19 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     }
 
     public TimeZoneIntervalIterator of(
+            TimestampDriver driver,
             @NotNull TimestampSampler sampler,
             @NotNull TimeZoneRules tzRules,
             long fixedOffset,
-            @Nullable LongList txnIntervals,
+            @Nullable LongList intervals,
             long minTs,
             long maxTs,
-            int step
+            long step
     ) {
-        super.of(sampler, txnIntervals);
+        super.of(sampler, intervals);
         this.tzRules = tzRules;
 
-        sampler.setStart(fixedOffset);
+        sampler.setOffset(fixedOffset);
         final long localMinTs = minTs + tzRules.getOffset(minTs);
         localMinTimestamp = sampler.round(localMinTs);
         final long localMaxTs = maxTs + tzRules.getOffset(maxTs);
@@ -116,8 +117,8 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
 
         // Collect shift intervals.
         localShifts.clear();
-        final long limitTs = Timestamps.ceilYYYY(localMaxTimestamp);
-        long ts = tzRules.getNextDST(Timestamps.floorYYYY(localMinTimestamp));
+        final long limitTs = driver.ceilYYYY(localMaxTimestamp);
+        long ts = tzRules.getNextDST(driver.floorYYYY(localMinTimestamp));
         while (ts < limitTs) {
             long offsetBefore = tzRules.getOffset(ts - 1);
             long offsetAfter = tzRules.getOffset(ts);
@@ -140,8 +141,8 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
         localMinTimestamp = adjustLoBoundary(localMinTimestamp);
         localMaxTimestamp = adjustHiBoundary(localMaxTimestamp);
 
-        utcMinTimestamp = Timestamps.toUTC(localMinTimestamp, tzRules);
-        utcMaxTimestamp = Timestamps.toUTC(localMaxTimestamp, tzRules);
+        utcMinTimestamp = driver.toUTC(localMinTimestamp, tzRules);
+        utcMaxTimestamp = driver.toUTC(localMaxTimestamp, tzRules);
 
         toTop(step);
         return this;
@@ -150,12 +151,12 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     private long adjustHiBoundary(long localTs) {
         final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
-            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx << 1);
+            final long shiftLo = IntervalUtils.decodeIntervalLo(localShifts, idx << 1);
             if (localTs == shiftLo) {
                 // We're precisely at the left of the shift interval. No need to adjust.
                 return localTs;
             }
-            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localShifts, idx << 1);
+            final long shiftHi = IntervalUtils.decodeIntervalHi(localShifts, idx << 1);
             return sampler.nextTimestamp(sampler.round(shiftHi - 1));
         }
         return localTs;
@@ -164,7 +165,7 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     private long adjustLoBoundary(long localTs) {
         final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
-            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx << 1);
+            final long shiftLo = IntervalUtils.decodeIntervalLo(localShifts, idx << 1);
             return sampler.round(shiftLo);
         }
         return localTs;

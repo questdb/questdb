@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 
@@ -49,17 +48,20 @@ public class TxReader implements Closeable, Mutable {
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
     public static final long PARTITION_SIZE_MASK = 0x80000FFFFFFFFFFFL;
+    public static final int PARTITION_SQUASH_COUNTER_MAX = 0xFFFF;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_PARQUET_FILE_SIZE_OFFSET = 3;
+    protected static final int PARTITION_SQUASH_COUNTER_BIT_OFFSET = 44;
+    protected static final long PARTITION_SQUASH_COUNTER_MASK = 0xFFFFL << PARTITION_SQUASH_COUNTER_BIT_OFFSET;
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
     //
-    // | reserved | read-only | parquet format | available bits | partition size |
-    // +----------+-----------+----------------+----------------+----------------+
-    // |  1 bit   |  1 bit    |  1 bit         |  17 bits       |      44 bits   |
+    // | reserved | read-only | parquet format | reserved | squash counter | partition size |
+    // +----------+-----------+----------------+----------+----------------+----------------+
+    // |  1 bit   |  1 bit    |  1 bit         |  1 bit   |   16 bit       |      44 bits   |
     //
     // when read-only bit is set, the partition is read only.
     // we reserve the highest bit to allow negative values to
@@ -87,12 +89,13 @@ public class TxReader implements Closeable, Mutable {
     protected long seqTxn;
     protected long structureVersion;
     protected int symbolColumnCount;
+    protected int timestampType;
     protected long transientRowCount;
     protected long truncateVersion;
     protected long txn;
     private int baseOffset;
-    private PartitionBy.PartitionCeilMethod partitionCeilMethod;
-    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
+    private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
     private MemoryMR roTxMemBase;
     private long size;
@@ -191,6 +194,10 @@ public class TxReader implements Closeable, Mutable {
         return columnVersion;
     }
 
+    public long getCurrentPartitionMaxTimestamp(long timestamp) {
+        return getNextPartitionTimestamp(timestamp) - 1;
+    }
+
     public long getDataVersion() {
         return dataVersion;
     }
@@ -236,6 +243,32 @@ public class TxReader implements Closeable, Mutable {
 
     public long getMinTimestamp() {
         return minTimestamp;
+    }
+
+    public long getNextExistingPartitionTimestamp(long timestamp) {
+        if (partitionBy == PartitionBy.NONE) {
+            return Long.MAX_VALUE;
+        }
+
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (index < 0) {
+            index = -index - 1;
+        } else {
+            index += LONGS_PER_TX_ATTACHED_PARTITION;
+        }
+        int nextIndex = index + PARTITION_TS_OFFSET;
+        if (nextIndex < attachedPartitions.size()) {
+            return attachedPartitions.get(nextIndex);
+        }
+        return Long.MAX_VALUE;
+    }
+
+    public long getNextLogicalPartitionTimestamp(long timestamp) {
+        if (partitionCeilMethod != null) {
+            return partitionCeilMethod.ceil(timestamp);
+        }
+        assert partitionBy == PartitionBy.NONE;
+        return Long.MAX_VALUE;
     }
 
     public long getNextPartitionTimestamp(long timestamp) {
@@ -319,6 +352,10 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionSizeByRawIndex(attachedPartitions, index);
     }
 
+    public int getPartitionSquashCount(int i) {
+        return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
     public long getPartitionTableVersion() {
         return partitionTableVersion;
     }
@@ -355,6 +392,10 @@ public class TxReader implements Closeable, Mutable {
         return symbolCountSnapshot.get(i);
     }
 
+    public int getTimestampType() {
+        return timestampType;
+    }
+
     public long getTransientRowCount() {
         return transientRowCount;
     }
@@ -371,11 +412,30 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
-    public void initRO(MemoryMR txnFile, int partitionBy) {
-        this.roTxMemBase = txnFile;
-        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-        this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
+    public boolean hasParquetPartitions() {
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            if (isPartitionParquetByRawIndex(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void initPartitionBy(int timestampType, int partitionBy) {
+        this.timestampType = timestampType;
         this.partitionBy = partitionBy;
+        this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
+        this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(timestampType, partitionBy);
+
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            // Add transient row count as the only partition in attached partitions list
+            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
+        }
+    }
+
+    public void initRO(MemoryMR txnFile) {
+        this.roTxMemBase = txnFile;
     }
 
     public boolean isLagOrdered() {
@@ -449,12 +509,11 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.addAll(srcReader.attachedPartitions);
     }
 
-    public TxReader ofRO(@Transient LPSZ path, int partitionBy) {
+    public TxReader ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
         clear();
         try {
             openTxnFile(ff, path);
-            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-            this.partitionBy = partitionBy;
+            initPartitionBy(timestampType, partitionBy);
         } catch (Throwable e) {
             close();
             throw e;
@@ -465,6 +524,7 @@ public class TxReader implements Closeable, Mutable {
     @Override
     public String toString() {
         // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         StringSink sink = new StringSink();
         sink.put("{");
         sink.put("txn: ").put(txn);
@@ -473,7 +533,7 @@ public class TxReader implements Closeable, Mutable {
             long timestamp = getPartitionTimestampByIndex(i / LONGS_PER_TX_ATTACHED_PARTITION);
             long rowCount = attachedPartitions.getQuick(i + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
 
-            if (i / LONGS_PER_TX_ATTACHED_PARTITION == getPartitionIndex(maxTimestamp)) {
+            if (i / LONGS_PER_TX_ATTACHED_PARTITION == getPartitionCount()) {
                 rowCount = transientRowCount;
             }
 
@@ -484,7 +544,8 @@ public class TxReader implements Closeable, Mutable {
                 sink.put(",");
             }
             sink.put("\n{ts: '");
-            TimestampFormatUtils.appendDateTime(sink, timestamp);
+
+            timestampDriver.append(sink, timestamp);
             sink.put("', rowCount: ").put(rowCount);
             sink.put(", nameTxn: ").put(nameTxn);
             if (isPartitionParquet(i / LONGS_PER_TX_ATTACHED_PARTITION)) {
@@ -498,9 +559,9 @@ public class TxReader implements Closeable, Mutable {
         sink.put("\n], transientRowCount: ").put(transientRowCount);
         sink.put(", fixedRowCount: ").put(fixedRowCount);
         sink.put(", minTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, minTimestamp);
+        timestampDriver.append(sink, minTimestamp);
         sink.put("', maxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, maxTimestamp);
+        timestampDriver.append(sink, maxTimestamp);
         sink.put("', dataVersion: ").put(dataVersion);
         sink.put(", structureVersion: ").put(structureVersion);
         sink.put(", partitionTableVersion: ").put(partitionTableVersion);
@@ -510,9 +571,9 @@ public class TxReader implements Closeable, Mutable {
         sink.put(", symbolColumnCount: ").put(symbolColumnCount);
         sink.put(", lagRowCount: ").put(lagRowCount);
         sink.put(", lagMinTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, lagMinTimestamp);
+        timestampDriver.append(sink, lagMinTimestamp);
         sink.put("', lagMaxTimestamp: '");
-        TimestampFormatUtils.appendDateTime(sink, lagMaxTimestamp);
+        timestampDriver.append(sink, lagMaxTimestamp);
         sink.put("', lagTxnCount: ").put(lagTxnCount);
         sink.put(", lagOrdered: ").put(lagOrdered);
         sink.put("}");
@@ -642,15 +703,29 @@ public class TxReader implements Closeable, Mutable {
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
-        if (ff.exists(path)) {
+        long len = ff.length(path);
+        // we check for length rather than file existence to account for possible delay
+        // in FS updating its catalog under pressure. Logically, the size of TXN file
+        // can never be less than the header. But async nature of FS updates have to be
+        // accounted for.
+        if (len >= TableUtils.TX_BASE_HEADER_SIZE) {
+            // This method is called from constructor, and it's possible that
+            // the code will run concurrently with table truncation. For that reason,
+            // we must not rely on the file size but only assume that header is present.
+            // The reload method will extend the file if needed.
+            long size = TableUtils.TX_BASE_HEADER_SIZE;
             if (roTxMemBase == null) {
-                roTxMemBase = Vm.getCMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
+                roTxMemBase = Vm.getCMRInstance(ff, path, size, MemoryTag.MMAP_DEFAULT);
             } else {
-                roTxMemBase.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.MMAP_DEFAULT);
+                roTxMemBase.of(ff, path, ff.getPageSize(), size, MemoryTag.MMAP_DEFAULT);
             }
             return;
         }
-        throw CairoException.fileNotFound().put("Cannot open. File does not exist: ").put(path);
+        throw CairoException.fileNotFound()
+                .put("could not open txn file [path=").put(path)
+                .put(", len=").put(len)
+                .put(", errno=").put(ff.errno())
+                .put(']');
     }
 
     private void unsafeLoadPartitions(long prevPartitionTableVersion, long prevColumnVersion, int partitionTableSize) {
@@ -677,9 +752,11 @@ public class TxReader implements Closeable, Mutable {
                 attachedPartitions.clear();
             }
         } else {
-            // Add transient row count as the only partition in attached partitions list
+            // If partitionBy is NONE, we have no partitions, but we still need to
+            // have a single partition with transient row count.
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
+            attachedPartitionsSize = 1;
         }
     }
 
@@ -724,8 +801,8 @@ public class TxReader implements Closeable, Mutable {
         seqTxn = -1;
     }
 
-    protected int findAttachedPartitionRawIndex(long ts) {
-        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+    protected int findAttachedPartitionRawIndex(long timestamp) {
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(timestamp);
         if (indexRaw > -1L) {
             return indexRaw;
         }
@@ -735,7 +812,7 @@ public class TxReader implements Closeable, Mutable {
             return -1;
         }
         long prevPartitionTimestamp = attachedPartitions.getQuick(prevIndexRaw + PARTITION_TS_OFFSET);
-        if (getPartitionFloor(prevPartitionTimestamp) == getPartitionFloor(ts)) {
+        if (getPartitionFloor(prevPartitionTimestamp) == getPartitionFloor(timestamp)) {
             return prevIndexRaw;
         }
         // Not found.
@@ -745,6 +822,11 @@ public class TxReader implements Closeable, Mutable {
     int findAttachedPartitionRawIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
         return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, Vect.BIN_SEARCH_SCAN_UP);
+    }
+
+    int getPartitionSquashCountByRawIndex(int indexRaw) {
+        long partitionSizeMasked = attachedPartitions.getQuick(indexRaw + PARTITION_MASKED_SIZE_OFFSET);
+        return (int) ((partitionSizeMasked >>> PARTITION_SQUASH_COUNTER_BIT_OFFSET) & PARTITION_SQUASH_COUNTER_MAX);
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {

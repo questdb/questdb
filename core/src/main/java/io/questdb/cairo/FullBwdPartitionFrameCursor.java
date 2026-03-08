@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,8 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.std.MemoryTag;
 
 public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
 
@@ -44,9 +42,9 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     }
 
     @Override
-    public PartitionFrame next() {
+    public PartitionFrame next(long skipTarget) {
         while (partitionIndex > -1) {
-            final long hi = reader.openPartition(partitionIndex);
+            final long hi = reader.getPartitionRowCountFromMetadata(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
                 partitionIndex--;
@@ -54,27 +52,11 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 frame.partitionIndex = partitionIndex;
                 frame.rowLo = 0;
                 frame.rowHi = hi;
-                partitionIndex--;
-
-                final byte format = reader.getPartitionFormat(frame.partitionIndex);
-                if (format == PartitionFormat.PARQUET) {
-                    final long addr = reader.getParquetAddr(frame.partitionIndex);
-                    assert addr != 0;
-                    final long parquetSize = reader.getParquetFileSize(frame.partitionIndex);
-                    assert parquetSize > 0;
-                    if (parquetDecoder == null) {
-                        parquetDecoder = new PartitionDecoder();
-                    }
-                    parquetDecoder.of(addr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                    frame.format = PartitionFormat.PARQUET;
-                    frame.parquetDecoder = parquetDecoder;
+                if (hi <= skipTarget) {
+                    partitionIndex--;
                     return frame;
                 }
-
-                assert format == PartitionFormat.NATIVE;
-                frame.format = PartitionFormat.NATIVE;
-                frame.parquetDecoder = null;
-                return frame;
+                return nextSlow();
             }
         }
         return null;
@@ -88,5 +70,26 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public void toTop() {
         partitionIndex = partitionHi - 1;
+    }
+
+    private FullTablePartitionFrame nextSlow() {
+        reader.openPartition(partitionIndex);
+
+        // opening partition may produce "data unavailable errors", in which case we must not
+        // change partition index prematurely
+        partitionIndex--;
+
+        final byte format = reader.getPartitionFormat(frame.partitionIndex);
+        if (format == PartitionFormat.PARQUET) {
+            frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(frame.partitionIndex);
+            assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
+            frame.format = PartitionFormat.PARQUET;
+            return frame;
+        }
+
+        assert format == PartitionFormat.NATIVE;
+        frame.format = PartitionFormat.NATIVE;
+        frame.parquetDecoder = null;
+        return frame;
     }
 }

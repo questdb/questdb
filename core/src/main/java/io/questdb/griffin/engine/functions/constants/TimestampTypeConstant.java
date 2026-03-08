@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,13 +24,19 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
 
 public class TimestampTypeConstant extends TimestampFunction implements TypeConstant {
-    public static final TimestampTypeConstant INSTANCE = new TimestampTypeConstant();
+    public static final TimestampTypeConstant TIMESTAMP_MS_CONSTANT = new TimestampTypeConstant(ColumnType.TIMESTAMP_MICRO);
+    public static final TimestampTypeConstant TIMESTAMP_NS_CONSTANT = new TimestampTypeConstant(ColumnType.TIMESTAMP_NANO);
+
+    public TimestampTypeConstant(int timestampType) {
+        super(timestampType);
+    }
 
     @Override
     public long getTimestamp(Record rec) {

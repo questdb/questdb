@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -154,9 +154,9 @@ public class StringToStringArrayFunctionTest {
 
     private static void assertArray(CharSequence expression, CharSequence[] expected) throws SqlException {
         StringToStringArrayFunction function = new StringToStringArrayFunction(5, expression);
-        Assert.assertEquals(expected.length, function.getArrayLength());
+        Assert.assertEquals(expected.length, function.extendedOps().getArrayLength());
         for (int i = 0, n = expected.length; i < n; i++) {
-            Assert.assertEquals(expected[i], function.getStrA(null, i));
+            Assert.assertEquals(expected[i], function.extendedOps().getStrA(null, i));
         }
     }
 

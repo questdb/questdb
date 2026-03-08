@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -528,6 +528,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
     //
 
     /**
+     * @param value the value for which to determine the bucket index
      * @return the lowest (and therefore highest precision) bucket index that can represent the value
      */
     public int getBucketIndex(final long value) {
@@ -995,7 +996,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * five (5) percentile reporting tick points.
      *
      * @param printStream                 Stream into which the distribution will be output
-     *                                    <p>
      * @param outputValueUnitScalingRatio The scaling factor by which to divide histogram recorded values units in
      *                                    output
      */
@@ -1029,9 +1029,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * <i>dumpTicksPerHalf</i> percentile reporting tick points.
      *
      * @param printStream                    Stream into which the distribution will be output
-     *                                       <p>
      * @param percentileTicksPerHalfDistance The number of reporting points per exponentially decreasing half-distance
-     *                                       <p>
      * @param outputValueUnitScalingRatio    The scaling factor by which to divide histogram recorded values units in
      *                                       output
      */
@@ -1047,9 +1045,7 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * <i>dumpTicksPerHalf</i> percentile reporting tick points.
      *
      * @param printStream                    Stream into which the distribution will be output
-     *                                       <p>
      * @param percentileTicksPerHalfDistance The number of reporting points per exponentially decreasing half-distance
-     *                                       <p>
      * @param outputValueUnitScalingRatio    The scaling factor by which to divide histogram recorded values units in
      *                                       output
      * @param useCsvFormat                   Output in CSV format if true. Otherwise use plain text form.
@@ -1126,7 +1122,6 @@ public abstract class AbstractHistogram extends AbstractHistogramBase implements
      * performed in steps that start at 0% and reduce their distance to 100% according to the
      * <i>percentileTicksPerHalfDistance</i> parameter, ultimately reaching 100% when all recorded histogram
      * values are exhausted.
-     * <p>
      *
      * @param percentileTicksPerHalfDistance The number of iteration steps per half-distance to 100%.
      * @return An {@link java.lang.Iterable}{@literal <}{@link HistogramIterationValue}{@literal >}

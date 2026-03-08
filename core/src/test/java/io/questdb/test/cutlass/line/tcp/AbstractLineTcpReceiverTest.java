@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,12 +26,14 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
@@ -54,15 +56,16 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
-import org.junit.Assert;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -88,6 +91,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_NO_WAIT = 0x0;
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
+    protected final boolean useLegacyStringDefault = true;
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     protected String authKeyId = null;
     private final FactoryProvider factoryProvider = new DefaultFactoryProvider() {
@@ -104,17 +108,18 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     };
     protected boolean autoCreateNewColumns = true;
     protected long commitIntervalDefault = 2000;
+    @SuppressWarnings("CanBeFinal")
     protected double commitIntervalFraction = 0.5;
     protected boolean disconnectOnError = false;
     protected long maintenanceInterval = 25;
-    protected int maxMeasurementSize = 256;
+    protected int maxMeasurementSize = 1024;
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected int partitionByDefault = PartitionBy.DAY;
-    protected boolean useLegacyStringDefault = true;
+    protected TestTimestampType timestampType = TestTimestampType.MICRO;
+    protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration(configuration) {
 
-    protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public boolean getAutoCreateNewColumns() {
             return autoCreateNewColumns;
@@ -142,6 +147,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public double getCommitIntervalFraction() {
             return commitIntervalFraction;
+        }
+
+        @Override
+        public int getDefaultCreateTimestampColumnType() {
+            return timestampType.getTimestampType();
         }
 
         @Override
@@ -187,6 +197,12 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public int getRecvBufferSize() {
             return msgBufferSize;
+        }
+
+        @Override
+        public long getTimeout() {
+            // we don't want the connections to time out due to slow CI box
+            return 10 * Dates.MINUTE_MILLIS;
         }
 
         @Override
@@ -285,6 +301,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         final int ipv4address = Net.parseIPv4("127.0.0.1");
         final long sockaddr = Net.sockaddr(ipv4address, bindPort);
         final long fd = Net.socketTcp(true);
+        Net.setTcpNoDelay(fd, true);
+        Net.configureKeepAlive(fd);
         final Socket socket = new Socket(sockaddr, fd);
 
         if (TestUtils.connect(fd, sockaddr) != 0) {
@@ -303,7 +321,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 if (needMaintenanceJob) {
-                    sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
+                    sharedWorkerPool.assign(new ServerMain.EngineMaintenanceJob(engine));
                 }
                 sharedWorkerPool.start(LOG);
                 try {
@@ -324,6 +342,16 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
         runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
+    }
+
+    protected void runInContext(WalLocker walLocker, LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
+        final WalLocker originalWalLocker = engine.getWalLocker();
+        engine.setWalLocker(walLocker);
+        try {
+            runInContext(AbstractCairoTest.ff, r, needMaintenanceJob, minIdleMsBeforeWriterRelease);
+        } finally {
+            engine.setWalLocker(originalWalLocker);
+        }
     }
 
     protected void send(CharSequence tableName, int wait, Runnable sendToSocket) {
@@ -391,7 +419,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         try (Socket socket = getSocket()) {
             sendToSocket(socket, lineData);
         } catch (Exception e) {
-            Assert.fail("Data sending failed [e=" + e + "]");
+            fail("Data sending failed [e=" + e + "]");
         }
     }
 

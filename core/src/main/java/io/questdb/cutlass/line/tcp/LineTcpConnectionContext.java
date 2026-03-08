@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
@@ -37,21 +38,20 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IOContext;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Utf8StringObjHashMap;
-import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
-import org.jetbrains.annotations.NotNull;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
+    private static final DummyPrincipalContext DUMMY_CONTEXT = new DummyPrincipalContext();
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
@@ -66,13 +66,10 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final LineTcpParser parser;
+    private final AdaptiveRecvBuffer recvBuffer;
     private final LineTcpMeasurementScheduler scheduler;
     private final Utf8StringObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new Utf8StringObjHashMap<>();
     protected boolean peerDisconnected;
-    protected long recvBufEnd;
-    protected long recvBufPos;
-    protected long recvBufStart;
-    protected long recvBufStartOfMeasurement;
     protected SecurityContext securityContext = DenyAllSecurityContext.INSTANCE;
     private boolean goodMeasurement;
     private long lastQueueFullLogMillis = 0;
@@ -95,6 +92,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             this.metrics = configuration.getMetrics();
             this.milliClock = configuration.getMillisecondClock();
             parser = new LineTcpParser();
+            recvBuffer = new AdaptiveRecvBuffer(parser, MemoryTag.NATIVE_ILP_RSS);
             this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
             clear();
             this.checkIdleInterval = configuration.getMaintenanceInterval();
@@ -125,9 +123,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         super.clear();
         securityContext = DenyAllSecurityContext.INSTANCE;
         authenticator.clear();
-        recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
+        Misc.free(recvBuffer);
         peerDisconnected = false;
-        resetParser();
+        goodMeasurement = true;
         ObjList<Utf8String> keys = tableUpdateDetailsUtf8.keys();
         for (int n = keys.size() - 1; n >= 0; --n) {
             final Utf8String tableNameUtf8 = keys.get(n);
@@ -141,6 +139,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public void close() {
         clear();
         Misc.free(authenticator);
+        Misc.free(parser);
     }
 
     public long commitWalTables(long wallClockMillis) {
@@ -162,14 +161,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 } catch (CommitFailedException ex) {
                     if (ex.isTableDropped()) {
                         // table dropped, nothing to worry about
-                        LOG.info().$("closing writer because table has been dropped (2) [table=").$(tud.getTableNameUtf16()).I$();
+                        LOG.info().$("closing writer because table has been dropped (2) [table=").$(tud.getTableToken()).I$();
                         tud.setWriterInError();
                         tud.releaseWriter(false);
                     } else {
-                        LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                        LOG.critical().$("commit failed [table=").$(tud.getTableToken()).$(",ex=").$(ex).I$();
                     }
                 } catch (Throwable ex) {
-                    LOG.critical().$("commit failed [table=").$(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                    LOG.critical().$("commit failed [table=").$(tud.getTableToken()).$(",ex=").$(ex).I$();
                 }
             }
         }
@@ -208,40 +207,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
     }
 
-    @Override
-    public void init() {
-        if (socket.supportsTls()) {
-            if (socket.startTlsSession(null) != 0) {
-                throw CairoException.nonCritical().put("failed to start TLS session");
-            }
-        }
-    }
-
-    @Override
-    public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
-        super.of(fd, dispatcher);
-        if (recvBufStart == 0) {
-            // re-read recv buffer size in case the config was reloaded
-            final int recvBufferSize = configuration.getRecvBufferSize();
-            recvBufStart = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_ILP_RSS);
-            recvBufEnd = recvBufStart + recvBufferSize;
-            recvBufPos = recvBufStart;
-            resetParser();
-        }
-        authenticator.init(socket, recvBufStart, recvBufEnd, 0, 0);
-        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
-            // when security context has not been set by anything else (subclass) we assume
-            // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    null,
-                    SecurityContext.AUTH_TYPE_NONE,
-                    SecurityContextFactory.ILP
-            );
-            securityContext.authorizeLineTcp();
-        }
-        return this;
-    }
-
     private boolean checkQueueFullLogHysteresis() {
         long millis = milliClock.getTicks();
         if ((millis - lastQueueFullLogMillis) >= QUEUE_FULL_LOG_HYSTERESIS_IN_MS) {
@@ -252,15 +217,17 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     private void doHandleDisconnectEvent() {
-        if (parser.getBufferAddress() == recvBufEnd) {
-            LOG.error().$('[').$(getFd()).$("] buffer overflow [line.tcp.msg.buffer.size=").$(recvBufEnd - recvBufStart).$(']').$();
+        if (parser.getBufferAddress() == recvBuffer.getBufEnd()) {
+            LOG.error().$('[').$(getFd()).$("] buffer overflow [line.tcp.max.recv.buffer.size=")
+                    .$(recvBuffer.getBufEnd() - recvBuffer.getBufStart()).$(']').$();
             return;
         }
 
         if (peerDisconnected) {
             // Peer disconnected, we have now finished disconnect our end
-            if (recvBufPos != recvBufStart) {
-                LOG.info().$('[').$(getFd()).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart)
+            if (recvBuffer.getBufPos() != recvBuffer.getBufStart()) {
+                LOG.info().$('[').$(getFd()).$("] peer disconnected with partial measurement, ")
+                        .$(recvBuffer.getBufPos() - recvBuffer.getBufStart())
                         .$(" unprocessed bytes").$();
             } else {
                 LOG.info().$('[').$(getFd()).$("] peer disconnected").$();
@@ -278,17 +245,16 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
                     securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                            authenticator.getPrincipal(),
-                            authenticator.getAuthType(),
-                            SecurityContextFactory.ILP
+                            authenticator, SecurityContextFactory.ILP
                     );
                     try {
                         securityContext.checkEntityEnabled();
                     } catch (CairoException e) {
-                        LOG.error().$('[').$(getFd()).$("] ").$(e.getFlyweightMessage()).$();
+                        LOG.error().$('[').$(getFd()).$("] ").$safe(e.getFlyweightMessage()).$();
                         return IOContextResult.NEEDS_DISCONNECT;
                     }
-                    recvBufPos = authenticator.getRecvBufPos();
+
+                    recvBuffer.setBufPos(authenticator.getRecvBufPos());
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);
                 case SocketAuthenticator.NEEDS_READ:
@@ -307,7 +273,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     private void logParseError() {
-        int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
+        int position = (int) (parser.getBufferAddress() - recvBuffer.getBufStartOfMeasurement());
         assert position >= 0;
         final LogRecord errorRec = LOG.error()
                 .$('[').$(getFd())
@@ -315,53 +281,42 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 .$(" at ").$(position);
         if (logMessageOnError) {
             errorRec.$(", line (may be mangled due to partial parsing): '")
-                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), false)).$("'");
+                    .$safe(byteCharSequence.of(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress(), false))
+                    .$("'");
         }
         errorRec.$();
     }
 
-    private void startNewMeasurement() {
-        parser.startNextMeasurement();
-        recvBufStartOfMeasurement = parser.getBufferAddress();
-        // we ran out of buffer, move to start and start parsing new data from socket
-        if (recvBufStartOfMeasurement == recvBufPos) {
-            recvBufPos = recvBufStart;
-            parser.of(recvBufStart);
-            recvBufStartOfMeasurement = recvBufStart;
-        }
+    private void resetParser(long pos) {
+        parser.of(pos);
+        goodMeasurement = true;
+        recvBuffer.setBufStartOfMeasurement(pos);
     }
 
     void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
         tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
     }
 
-    /**
-     * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
-     * context and protocol parser such that all pointers that point to the incomplete measurement will remain
-     * valid. This allows protocol parser to resume execution from the point of where measurement ended abruptly
-     *
-     * @param recvBufStartOfMeasurement the address in receive buffer where incomplete measurement starts. Everything from
-     *                                  this address to end of the receive buffer will be copied to the start of the
-     *                                  receive buffer
-     * @return true if there was an incomplete measurement in the first place
-     */
-    protected final boolean compactBuffer(long recvBufStartOfMeasurement) {
-        assert recvBufStartOfMeasurement <= recvBufPos;
-        if (recvBufStartOfMeasurement > recvBufStart) {
-            final long len = recvBufPos - recvBufStartOfMeasurement;
-            if (len > 0) {
-                Vect.memmove(recvBufStart, recvBufStartOfMeasurement, len); // Use memmove, there may be an overlap
-                final long shl = recvBufStartOfMeasurement - recvBufStart;
-                parser.shl(shl);
-                this.recvBufStartOfMeasurement -= shl;
-            } else {
-                assert len == 0;
-                resetParser();
-            }
-            recvBufPos = recvBufStart + len;
-            return true;
+    @Override
+    protected void doInit() throws TlsSessionInitFailedException {
+        if (recvBuffer.getBufStart() == 0) {
+            recvBuffer.of(configuration.getRecvBufferSize(), configuration.getMaxRecvBufferSize());
+            goodMeasurement = true;
         }
-        return false;
+
+        authenticator.init(socket, recvBuffer.getBufStart(), recvBuffer.getBufEnd(), 0, 0);
+        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
+            // when security context has not been set by anything else (subclass) we assume
+            // this is an authenticated, anonymous user
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                    DUMMY_CONTEXT, SecurityContextFactory.ILP
+            );
+            securityContext.authorizeLineTcp();
+        }
+
+        if (socket.supportsTls()) {
+            socket.startTlsSession(null);
+        }
     }
 
     protected SecurityContext getSecurityContext() {
@@ -371,7 +326,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
-                ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
+                ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBuffer.getBufPos()) : parser.skipMeasurement(recvBuffer.getBufPos());
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
@@ -387,7 +342,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                             goodMeasurement = true;
                         }
 
-                        startNewMeasurement();
+                        recvBuffer.startNewMeasurement();
                         continue;
                     }
 
@@ -401,7 +356,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     }
 
                     case BUFFER_UNDERFLOW: {
-                        if (recvBufPos == recvBufEnd && !compactBuffer(recvBufStartOfMeasurement)) {
+                        if (!recvBuffer.tryCompactOrGrowBuffer()) {
                             doHandleDisconnectEvent();
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
@@ -415,8 +370,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             } catch (CairoException ex) {
                 LogRecord error = ex.isCritical() ? LOG.critical() : LOG.error();
                 error
-                        .$('[').$(getFd()).$("] could not process line data [table=").$(parser.getMeasurementName())
-                        .$(", msg=").$(ex.getFlyweightMessage())
+                        .$('[').$(getFd()).$("] could not process line data 1 [table=").$safe(parser.getMeasurementName())
+                        .$(", msg=").$safe(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 if (disconnectOnError) {
@@ -428,7 +383,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 goodMeasurement = false;
             } catch (Throwable ex) {
                 LOG.critical()
-                        .$('[').$(getFd()).$("] could not process line data [table=").$(parser.getMeasurementName())
+                        .$('[').$(getFd()).$("] could not process line data 2 [table=").$safe(parser.getMeasurementName())
                         .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.
@@ -439,13 +394,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     protected boolean read() {
-        int bufferRemaining = (int) (recvBufEnd - recvBufPos);
+        long recvBufPos = recvBuffer.getBufPos();
+        int bufferRemaining = (int) (recvBuffer.getBufEnd() - recvBufPos);
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
             int bytesRead = socket.recv(recvBufPos, bufferRemaining);
             metrics.lineMetrics().totalIlpTcpBytesGauge().add(bytesRead);
             if (bytesRead > 0) {
-                recvBufPos += bytesRead;
+                recvBuffer.setBufPos(recvBufPos + bytesRead);
                 bufferRemaining -= bytesRead;
             } else {
                 peerDisconnected = bytesRead < 0;
@@ -465,17 +421,24 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         return null;
     }
 
-    protected void resetParser() {
-        resetParser(recvBufStart);
-    }
-
-    protected void resetParser(long pos) {
-        parser.of(pos);
-        goodMeasurement = true;
-        recvBufStartOfMeasurement = pos;
-    }
-
     public enum IOContextResult {
         NEEDS_READ, NEEDS_WRITE, QUEUE_FULL, NEEDS_DISCONNECT
+    }
+
+    private static class DummyPrincipalContext implements PrincipalContext {
+        @Override
+        public byte getAuthType() {
+            return SecurityContext.AUTH_TYPE_NONE;
+        }
+
+        @Override
+        public ReadOnlyObjList<CharSequence> getGroups() {
+            return null;
+        }
+
+        @Override
+        public CharSequence getPrincipal() {
+            return null;
+        }
     }
 }

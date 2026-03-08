@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,11 +25,13 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -37,6 +39,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -53,7 +56,6 @@ import java.io.FileInputStream;
 import java.util.zip.CRC32;
 
 public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
-
     @Test
     public void testFuzz() throws Exception {
         executeWithPool(0, this::testFuzz0);
@@ -64,7 +66,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             FuzzTransaction tx = transactions.getQuick(i);
             ObjList<FuzzTransactionOperation> ops = tx.operationList;
             for (int j = 0, k = ops.size(); j < k; j++) {
-                ops.getQuick(j).apply(rnd, engine, w, -1);
+                ops.getQuick(j).apply(rnd, engine, w, -1, null);
             }
             w.ic();
         }
@@ -74,6 +76,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName,
             Rnd rnd
     ) throws SqlException {
         long microsBetweenRows = 1000000L;
@@ -84,7 +87,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                 " cast(x as int) i," +
                 " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " (to_timestamp('2018-01', 'yyyy-MM') + x * 720000000)::" + timestampTypeName + " timestamp," +
                 " rnd_boolean() b," +
                 " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                 " rnd_double(2) d," +
@@ -93,7 +96,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(500000000000L, " + microsBetweenRows + "L) ts," +
+                " timestamp_sequence(500000000000L, " + microsBetweenRows + "L)::" + timestampTypeName + " ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
@@ -110,16 +113,18 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
         final int partitionIndex;
         final long partitionTs;
         StringSink stringSink = new StringSink();
+        TimestampDriver timestampDriver;
         try (TableReader xr = engine.getReader("x")) {
+            timestampDriver = ColumnType.getTimestampDriver(xr.getMetadata().getTimestampType());
             partitionIndex = rnd.nextInt(xr.getPartitionCount() - 1);
             partitionTs = xr.getPartitionTimestampByIndex(partitionIndex);
             int partitionBy = xr.getPartitionedBy();
-            PartitionBy.setSinkForPartition(stringSink, partitionBy, partitionTs);
+            PartitionBy.setSinkForPartition(stringSink, xr.getMetadata().getTimestampType(), partitionBy, partitionTs);
             engine.execute("alter table x convert partition to parquet list '" + stringSink + "'", sqlExecutionContext);
         }
 
-        long minTs = partitionTs - 3600000000L;
-        long maxTs = partitionTs + 2 * 3600000000L;
+        long minTs = partitionTs - timestampDriver.fromMicros(3600000000L);
+        long maxTs = partitionTs + timestampDriver.fromMicros(2 * 3600000000L);
 
         int txCount = Math.max(1, rnd.nextInt(10));
         int rowCount = Math.max(1, txCount * rnd.nextInt(20) * 100);
@@ -133,7 +138,13 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             String partitionName = stringSink.toString();
 
             Path parquet = Path.getThreadLocal(root).concat(tt.getDirName());
-            TableUtils.setPathForParquetPartition(parquet, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
+            TableUtils.setPathForParquetPartition(
+                    parquet,
+                    xw.getMetadata().getTimestampType(),
+                    xw.getPartitionBy(),
+                    partitionTs,
+                    xw.getPartitionNameTxnByPartitionTimestamp(partitionTs)
+            );
 
             final long fileSize = Files.length(parquet.$());
             final long checksumBefore = calcChecksum(parquet.toString(), fileSize);
@@ -161,39 +172,53 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                     0,
                     0,
                     0.0,
+                    0.0,
+                    0.0,
+                    0.0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
                     0
             );
 
-            Rnd rnd2 = new Rnd();
-            replayTransactions(rnd2, engine, yw, transactions);
-            yw.commit();
+            try {
+                Rnd rnd2 = new Rnd();
+                replayTransactions(rnd2, engine, yw, transactions);
+                yw.commit();
 
-            Rnd rnd1 = new Rnd();
-            replayTransactions(rnd1, engine, xw, transactions);
-            xw.commit();
+                Rnd rnd1 = new Rnd();
+                replayTransactions(rnd1, engine, xw, transactions);
+                xw.commit();
 
-            Path parquet2 = Path.getThreadLocal(root).concat(tt.getDirName());
-            TableUtils.setPathForParquetPartition(parquet2, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
+                Path parquet2 = Path.getThreadLocal(root).concat(tt.getDirName());
+                TableUtils.setPathForParquetPartition(
+                        parquet2,
+                        xw.getMetadata().getTimestampType(),
+                        xw.getPartitionBy(),
+                        partitionTs,
+                        xw.getPartitionNameTxnByPartitionTimestamp(partitionTs)
+                );
 
-            final long fileSize2 = Files.length(parquet2.$());
-            Assert.assertTrue(fileSize2 >= fileSize);
-            final long checksumAfter = calcChecksum(parquet2.toString(), fileSize);
-            Assert.assertEquals(checksumBefore, checksumAfter);
+                final long fileSize2 = Files.length(parquet2.$());
+                Assert.assertTrue(fileSize2 >= fileSize);
+                final long checksumAfter = calcChecksum(parquet2.toString(), fileSize);
+                Assert.assertEquals(checksumBefore, checksumAfter);
 
-            String y = "select * from y where ts in '" + partitionName + "'";
-            String x = "select * from read_parquet('" + parquet2 + "')";
-            assertEquals(compiler, sqlExecutionContext, y, x);
+                String y = "select * from y where ts in '" + partitionName + "'";
+                String x = "select * from read_parquet('" + parquet2 + "')";
+                assertEquals(compiler, sqlExecutionContext, y, x);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
+            }
         }
     }
 
     private void testFuzz0(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            String timestampTypeName
     ) throws SqlException {
-        testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG));
+        testFuzz00(engine, compiler, sqlExecutionContext, timestampTypeName, TestUtils.generateRandom(LOG));
     }
 
     static void assertEquals(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expectedSql, String parquetSql) throws SqlException {
@@ -231,5 +256,10 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
         }
 
         return crc.getValue();
+    }
+
+    @Override
+    protected boolean isParquetStatisticsEnabled() {
+        return rnd.nextBoolean();
     }
 }

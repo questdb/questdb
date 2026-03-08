@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,13 +27,28 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.arr.BorrowedFlatArrayView;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Long128;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
+import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.FlyweightDirectUtf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 
 public class LineTcpEventBuffer {
+    private final BorrowedArray borrowedDirectArrayView = new BorrowedArray();
     private final long bufLo;
     private final long bufSize;
     private final FlyweightDirectUtf16Sink tempSink = new FlyweightDirectUtf16Sink();
@@ -43,6 +58,38 @@ public class LineTcpEventBuffer {
     public LineTcpEventBuffer(long bufLo, long bufSize) {
         this.bufLo = bufLo;
         this.bufSize = bufLo + bufSize;
+    }
+
+    public long addArray(long address, BorrowedArray arrayView) {
+        if (arrayView == null) {
+            return addNull(address);
+        }
+
+        int dims = arrayView.getDimCount();
+        BorrowedFlatArrayView values = (BorrowedFlatArrayView) arrayView.flatView();
+
+        // record totalLength to trade space for time.
+        // +-------------+-------------+-------------+------------------------+--------------------+
+        // |  type flag  | totalLength |  arrayType  |       shapes           |    flat values     |
+        // +-------------+-------------+-------------+------------------------+--------------------+
+        // |    1 byte   |   4 bytes   |  4 bytes    |     $dims * 4 bytes    |                    |
+        // +-------------+-------------+-------------+------------------------+--------------------+
+        int totalLength = Integer.BYTES + Integer.BYTES + dims * Integer.BYTES + values.size();
+        // non-wal tables do not support large array ingestion.
+        checkCapacity(address, totalLength + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_ARRAY);
+        address += Byte.BYTES;
+        Unsafe.getUnsafe().putInt(address, totalLength);
+        address += Integer.BYTES;
+        Unsafe.getUnsafe().putInt(address, arrayView.getType());
+        address += Integer.BYTES;
+        for (int i = 0; i < dims; i++) {
+            Unsafe.getUnsafe().putInt(address, arrayView.getDimLen(i));
+            address += Integer.BYTES;
+        }
+        Vect.memcpy(address, values.ptr(), values.size());
+        address += values.size();
+        return address;
     }
 
     public long addBoolean(long address, byte value) {
@@ -102,6 +149,25 @@ public class LineTcpEventBuffer {
         return address + Long.BYTES + Byte.BYTES;
     }
 
+    public long addDecimal(long address, Decimal256 decimal256, int columnType) {
+        // Layout:
+        // +-------------+--------+----------+
+        // | column type | scale  |  values  |
+        // +-------------+--------+----------+
+        // |   4 bytes   | 1 byte | 32 bytes |
+        // +-------------+--------+----------+
+
+        checkCapacity(address, Byte.BYTES * 2 + Integer.BYTES + Decimal256.BYTES);
+        Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_DECIMAL);
+        Unsafe.getUnsafe().putInt(address + Byte.BYTES, columnType);
+        Unsafe.getUnsafe().putByte(address + Integer.BYTES + Byte.BYTES, (byte) decimal256.getScale());
+        Unsafe.getUnsafe().putLong(address + Integer.BYTES + Byte.BYTES * 2, decimal256.getHh());
+        Unsafe.getUnsafe().putLong(address + Integer.BYTES + Byte.BYTES * 2 + Long.BYTES, decimal256.getHl());
+        Unsafe.getUnsafe().putLong(address + Integer.BYTES + Byte.BYTES * 2 + Long.BYTES * 2, decimal256.getLh());
+        Unsafe.getUnsafe().putLong(address + Integer.BYTES + Byte.BYTES * 2 + Long.BYTES * 3, decimal256.getLl());
+        return address + Byte.BYTES * 2 + Integer.BYTES + Decimal256.BYTES;
+    }
+
     public void addDesignatedTimestamp(long address, long timestamp) {
         checkCapacity(address, Long.BYTES + Byte.BYTES);
         Unsafe.getUnsafe().putLong(address, timestamp);
@@ -129,11 +195,6 @@ public class LineTcpEventBuffer {
             geohash = GeoHashes.NULL;
         }
         switch (Numbers.decodeHighShort(colTypeMeta)) {
-            default:
-                checkCapacity(address, Long.BYTES + Byte.BYTES);
-                Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_GEOLONG);
-                Unsafe.getUnsafe().putLong(address + Byte.BYTES, geohash);
-                return address + Long.BYTES + Byte.BYTES;
             case ColumnType.GEOINT:
                 checkCapacity(address, Integer.BYTES + Byte.BYTES);
                 Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_GEOINT);
@@ -149,6 +210,11 @@ public class LineTcpEventBuffer {
                 Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_GEOBYTE);
                 Unsafe.getUnsafe().putByte(address + Byte.BYTES, (byte) geohash);
                 return address + Byte.BYTES + Byte.BYTES;
+            default:
+                checkCapacity(address, Long.BYTES + Byte.BYTES);
+                Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_GEOLONG);
+                Unsafe.getUnsafe().putLong(address + Byte.BYTES, geohash);
+                return address + Long.BYTES + Byte.BYTES;
         }
     }
 
@@ -268,46 +334,31 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putInt(address, valueSize);
         address += Integer.BYTES;
         value.writeTo(address, 0, valueSize);
-        return address + totalSize;
+        return address + valueSize;
     }
 
     public long columnValueLength(byte entityType, long offset) {
         CharSequence cs;
-        switch (entityType) {
-            case LineTcpParser.ENTITY_TYPE_TAG:
-            case LineTcpParser.ENTITY_TYPE_STRING:
-            case LineTcpParser.ENTITY_TYPE_LONG256:
+        return switch (entityType) {
+            case LineTcpParser.ENTITY_TYPE_TAG, LineTcpParser.ENTITY_TYPE_STRING, LineTcpParser.ENTITY_TYPE_LONG256 -> {
                 cs = readUtf16Chars(offset);
-                return cs.length() * 2L + Integer.BYTES;
-            case LineTcpParser.ENTITY_TYPE_BYTE:
-            case LineTcpParser.ENTITY_TYPE_GEOBYTE:
-            case LineTcpParser.ENTITY_TYPE_BOOLEAN:
-                return Byte.BYTES;
-            case LineTcpParser.ENTITY_TYPE_SHORT:
-            case LineTcpParser.ENTITY_TYPE_GEOSHORT:
-                return Short.BYTES;
-            case LineTcpParser.ENTITY_TYPE_CHAR:
-                return Character.BYTES;
-            case LineTcpParser.ENTITY_TYPE_CACHED_TAG:
-            case LineTcpParser.ENTITY_TYPE_INTEGER:
-            case LineTcpParser.ENTITY_TYPE_GEOINT:
-                return Integer.BYTES;
-            case LineTcpParser.ENTITY_TYPE_LONG:
-            case LineTcpParser.ENTITY_TYPE_GEOLONG:
-            case LineTcpParser.ENTITY_TYPE_DATE:
-            case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
-                return Long.BYTES;
-            case LineTcpParser.ENTITY_TYPE_FLOAT:
-                return Float.BYTES;
-            case LineTcpParser.ENTITY_TYPE_DOUBLE:
-                return Double.BYTES;
-            case LineTcpParser.ENTITY_TYPE_UUID:
-                return Long128.BYTES;
-            case ENTITY_TYPE_NULL:
-                return 0;
-            default:
-                throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
-        }
+                yield cs.length() * 2L + Integer.BYTES;
+            }
+            case LineTcpParser.ENTITY_TYPE_BYTE, LineTcpParser.ENTITY_TYPE_GEOBYTE, LineTcpParser.ENTITY_TYPE_BOOLEAN ->
+                    Byte.BYTES;
+            case LineTcpParser.ENTITY_TYPE_SHORT, LineTcpParser.ENTITY_TYPE_GEOSHORT -> Short.BYTES;
+            case LineTcpParser.ENTITY_TYPE_CHAR -> Character.BYTES;
+            case LineTcpParser.ENTITY_TYPE_CACHED_TAG, LineTcpParser.ENTITY_TYPE_INTEGER,
+                 LineTcpParser.ENTITY_TYPE_GEOINT -> Integer.BYTES;
+            case LineTcpParser.ENTITY_TYPE_LONG, LineTcpParser.ENTITY_TYPE_GEOLONG, LineTcpParser.ENTITY_TYPE_DATE,
+                 LineTcpParser.ENTITY_TYPE_TIMESTAMP -> Long.BYTES;
+            case LineTcpParser.ENTITY_TYPE_FLOAT -> Float.BYTES;
+            case LineTcpParser.ENTITY_TYPE_DOUBLE -> Double.BYTES;
+            case LineTcpParser.ENTITY_TYPE_UUID -> Long128.BYTES;
+            case LineTcpParser.ENTITY_TYPE_ARRAY -> readInt(offset);
+            case ENTITY_TYPE_NULL -> 0;
+            default -> throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
+        };
     }
 
     public long getAddress() {
@@ -319,12 +370,42 @@ public class LineTcpEventBuffer {
         return bufLo + 2 * Long.BYTES + Integer.BYTES;
     }
 
+    public ArrayView readArray(long address) {
+        int totalSize = readInt(address);
+        address += Integer.BYTES;
+        int type = readInt(address);
+        address += Integer.BYTES;
+        int dims = ColumnType.decodeWeakArrayDimensionality(type);
+        if (dims < 1 || dims > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw CairoException.critical(0).put("unsupported array dimensionality [dims=").put(dims).put(']');
+        }
+        borrowedDirectArrayView.of(
+                type,
+                address,
+                address + (long) dims * Integer.BYTES,
+                totalSize - (dims + 2) * Integer.BYTES
+        );
+        return borrowedDirectArrayView;
+    }
+
     public byte readByte(long address) {
         return Unsafe.getUnsafe().getByte(address);
     }
 
     public char readChar(long address) {
         return Unsafe.getUnsafe().getChar(address);
+    }
+
+    public int readDecimal(long address, Decimal256 result) {
+        int scale = Unsafe.getUnsafe().getByte(address + Integer.BYTES);
+        result.of(
+                Unsafe.getUnsafe().getLong(address + Integer.BYTES + Byte.BYTES),
+                Unsafe.getUnsafe().getLong(address + Integer.BYTES + Byte.BYTES + Long.BYTES),
+                Unsafe.getUnsafe().getLong(address + Integer.BYTES + Byte.BYTES + Long.BYTES * 2),
+                Unsafe.getUnsafe().getLong(address + Integer.BYTES + Byte.BYTES + Long.BYTES * 3),
+                scale
+        );
+        return Unsafe.getUnsafe().getInt(address);
     }
 
     public double readDouble(long address) {

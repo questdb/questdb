@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,18 +39,14 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -271,22 +267,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
     private void assertWarningsRequest(HttpClient httpClient, String httpContext, String expectedHttpResponse) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
         request.GET().url(httpContext + "/warnings");
-        try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
-            responseHeaders.await();
-
-            TestUtils.assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
-
-            final Utf8StringSink sink = new Utf8StringSink();
-
-            Fragment fragment;
-            final Response response = responseHeaders.getResponse();
-            while ((fragment = response.recv()) != null) {
-                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-            }
-
-            TestUtils.assertEquals(expectedHttpResponse, sink.toString());
-            sink.clear();
-        }
+        TestUtils.assertResponse(request, 200, expectedHttpResponse);
     }
 
     private void testWarningsWithProps(int fsMagic, long openFilesLimit, long mapCountLimit, String expectedWarnings) throws Exception {

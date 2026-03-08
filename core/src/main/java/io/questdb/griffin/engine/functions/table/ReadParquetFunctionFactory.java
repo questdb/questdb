@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.TelemetryEvent;
+import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -85,15 +87,22 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
-                decoder.metadata().copyTo(metadata, true);
+                decoder.metadata().copyToSansUnsupported(metadata, true);
+                if (metadata.getColumnCount() == 0) {
+                    throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
+                }
+
+                context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
                 if (context.isParallelReadParquetEnabled()) {
-                    return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(configuration, path, metadata));
+                    return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(path, metadata));
                 } else {
-                    return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, ff));
+                    return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata));
                 }
             } finally {
                 ff.close(fd);
-                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                if (addr != 0) {
+                    ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
             }
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -54,7 +55,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "aFFF");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "e");
 
-        assertTypeComplete(LineTcpParser.ENTITY_TYPE_TAG, "\"errt\"");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, CommonUtils.TIMESTAMP_UNIT_UNSET, "\"errt\"", "\"errt\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
         assertError(LineTcpParser.ENTITY_TYPE_SYMBOL, "errt");
 
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "t");
@@ -67,7 +68,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "tRuE");
 
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4\"");
-        assertType(LineTcpParser.ENTITY_TYPE_STRING, LineTcpParser.ENTITY_UNIT_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
+        assertType(LineTcpParser.ENTITY_TYPE_STRING, CommonUtils.TIMESTAMP_UNIT_UNSET, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks like=long256, but tis not!\"");
         assertError(LineTcpParser.ENTITY_TYPE_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!"); // missing closing '"'
         assertError(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4 looks \\\" like=long256,\\\n but tis not!\""); // wanted to be a string, missing opening '"'
@@ -78,12 +79,12 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "123i");
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "1i");
 
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "42t");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "-42t");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "9223372036854775807t");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MICRO, "-9223372036854775808t");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_NANO, "42n");
-        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, LineTcpParser.ENTITY_UNIT_MILLI, "42m");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_MICROS, "42t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_MICROS, "-42t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_MICROS, "9223372036854775807t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_MICROS, "-9223372036854775808t");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_NANOS, "42n");
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_MILLIS, "42m");
 
         assertType(LineTcpParser.ENTITY_TYPE_FLOAT, "1.45");
         assertType(LineTcpParser.ENTITY_TYPE_FLOAT, "1e-13");
@@ -114,11 +115,11 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
     }
 
     private static void assertError(byte type, String value) throws Exception {
-        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.ERROR);
+        assertType(type, CommonUtils.TIMESTAMP_UNIT_UNSET, value, value, LineTcpParser.ParseResult.ERROR);
     }
 
     private static void assertType(byte type, String value) throws Exception {
-        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value);
+        assertType(type, CommonUtils.TIMESTAMP_UNIT_UNSET, value);
     }
 
     private static void assertType(byte type, byte unit, String value) throws Exception {
@@ -132,58 +133,55 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
             String expectedValue,
             LineTcpParser.ParseResult expectedParseResult
     ) throws Exception {
-        final LineTcpParser lineTcpParser = new LineTcpParser();
         TestUtils.assertMemoryLeak(() -> {
-            sink.clear();
-            sink.put(type == LineTcpParser.ENTITY_TYPE_TAG ? "t,v=" : "t v=").put(value).put('\n'); // SYMBOLS are in tag set, not field set
-            byte[] bytes = sink.toString().getBytes(Files.UTF_8);
-            final int len = bytes.length;
-            long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int i = 0; i < bytes.length; i++) {
-                    Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
-                }
-                lineTcpParser.of(mem);
-                Assert.assertEquals(expectedParseResult, lineTcpParser.parseMeasurement(mem + len));
-                LineTcpParser.ProtoEntity entity = lineTcpParser.getEntity(0);
-                Assert.assertEquals(type, entity.getType());
-                Assert.assertEquals(unit, entity.getUnit());
-                Assert.assertEquals("v", entity.getName().toString());
-                if (expectedParseResult == LineTcpParser.ParseResult.MEASUREMENT_COMPLETE) {
-                    switch (type) {
-                        case LineTcpParser.ENTITY_TYPE_STRING:
-                            Assert.assertEquals(expectedValue, "\"" + entity.getValue().toString() + "\"");
-                            break;
-                        case LineTcpParser.ENTITY_TYPE_INTEGER:
-                        case LineTcpParser.ENTITY_TYPE_LONG256:
-                            Assert.assertEquals(expectedValue, entity.getValue().toString() + "i");
-                            break;
-                        case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
-                            switch (unit) {
-                                case LineTcpParser.ENTITY_UNIT_NANO:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "n");
-                                    break;
-                                case LineTcpParser.ENTITY_UNIT_MICRO:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "t");
-                                    break;
-                                case LineTcpParser.ENTITY_UNIT_MILLI:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString() + "m");
-                                    break;
-                                default:
-                                    Assert.assertEquals(expectedValue, entity.getValue().toString());
-                            }
-                            break;
-                        default:
-                            Assert.assertEquals(expectedValue, entity.getValue().toString());
+            try (LineTcpParser lineTcpParser = new LineTcpParser()) {
+                sink.clear();
+                sink.put(type == LineTcpParser.ENTITY_TYPE_TAG ? "t,v=" : "t v=").put(value).put('\n'); // SYMBOLS are in tag set, not field set
+                byte[] bytes = sink.toString().getBytes(Files.UTF_8);
+                final int len = bytes.length;
+                long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < bytes.length; i++) {
+                        Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
                     }
+                    lineTcpParser.of(mem);
+                    Assert.assertEquals(expectedParseResult, lineTcpParser.parseMeasurement(mem + len));
+                    LineTcpParser.ProtoEntity entity = lineTcpParser.getEntity(0);
+                    Assert.assertEquals(type, entity.getType());
+                    Assert.assertEquals(unit, entity.getUnit());
+                    Assert.assertEquals("v", entity.getName().toString());
+                    if (expectedParseResult == LineTcpParser.ParseResult.MEASUREMENT_COMPLETE) {
+                        switch (type) {
+                            case LineTcpParser.ENTITY_TYPE_STRING:
+                                Assert.assertEquals(expectedValue, "\"" + entity.getValue().toString() + "\"");
+                                break;
+                            case LineTcpParser.ENTITY_TYPE_INTEGER:
+                            case LineTcpParser.ENTITY_TYPE_LONG256:
+                                Assert.assertEquals(expectedValue, entity.getValue().toString() + "i");
+                                break;
+                            case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
+                                switch (unit) {
+                                    case CommonUtils.TIMESTAMP_UNIT_NANOS:
+                                        Assert.assertEquals(expectedValue, entity.getValue().toString() + "n");
+                                        break;
+                                    case CommonUtils.TIMESTAMP_UNIT_MICROS:
+                                        Assert.assertEquals(expectedValue, entity.getValue().toString() + "t");
+                                        break;
+                                    case CommonUtils.TIMESTAMP_UNIT_MILLIS:
+                                        Assert.assertEquals(expectedValue, entity.getValue().toString() + "m");
+                                        break;
+                                    default:
+                                        Assert.assertEquals(expectedValue, entity.getValue().toString());
+                                }
+                                break;
+                            default:
+                                Assert.assertEquals(expectedValue, entity.getValue().toString());
+                        }
+                    }
+                } finally {
+                    Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
                 }
-            } finally {
-                Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
-    }
-
-    private static void assertTypeComplete(byte type, String value) throws Exception {
-        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
     }
 }

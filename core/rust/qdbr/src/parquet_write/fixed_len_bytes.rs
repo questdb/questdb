@@ -1,15 +1,32 @@
+use std::collections::HashSet;
+
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
+use crate::parquet_write::util::{build_plain_page, encode_primitive_def_levels};
+use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
-use super::util::BinaryMaxMin;
+use super::util::BinaryMaxMinStats;
 
-fn encode_plain_be<const N: usize>(data: &[[u8; N]], buffer: &mut Vec<u8>, null_value: [u8; N]) {
+fn encode_plain_be<const N: usize>(
+    data: &[[u8; N]],
+    buffer: &mut Vec<u8>,
+    null_value: [u8; N],
+    stats: &mut BinaryMaxMinStats,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) {
     for x in data.iter().filter(|&&x| x != null_value) {
-        buffer.extend(x.iter().rev());
+        let mut reversed = [0u8; N];
+        for (i, &b) in x.iter().rev().enumerate() {
+            reversed[i] = b;
+        }
+        buffer.extend_from_slice(&reversed);
+        stats.update(&reversed);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(reversed));
+        }
     }
 }
 
@@ -17,11 +34,15 @@ fn encode_plain<const N: usize>(
     data: &[[u8; N]],
     buffer: &mut Vec<u8>,
     null_value: [u8; N],
-    stats: &mut BinaryMaxMin,
+    stats: &mut BinaryMaxMinStats,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) {
     for x in data.iter().filter(|&&x| x != null_value) {
         buffer.extend_from_slice(x);
         stats.update(x);
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(x));
+        }
     }
 }
 
@@ -31,6 +52,7 @@ pub fn bytes_to_page<const N: usize>(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows = column_top + data.len();
     let null_value = {
@@ -54,14 +76,15 @@ pub fn bytes_to_page<const N: usize>(
             true
         }
     });
+    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
-    encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = buffer.len();
-    let mut stats = BinaryMaxMin::new(&primitive_type);
+
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
     if reverse {
-        encode_plain_be(data, &mut buffer, null_value);
+        encode_plain_be(data, &mut buffer, null_value, &mut stats, bloom_hashes);
     } else {
-        encode_plain(data, &mut buffer, null_value, &mut stats);
+        encode_plain(data, &mut buffer, null_value, &mut stats, bloom_hashes);
     }
 
     build_plain_page(
@@ -77,6 +100,7 @@ pub fn bytes_to_page<const N: usize>(
         primitive_type,
         options,
         Encoding::Plain,
+        false,
     )
     .map(Page::Data)
 }

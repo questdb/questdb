@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.model;
 
+import org.jetbrains.annotations.Nullable;
+
 public interface ExecutionModel {
     int QUERY = 1;                          // 1
     int CREATE_TABLE = QUERY + 1;           // 2
@@ -33,11 +35,17 @@ public interface ExecutionModel {
     int UPDATE = COPY + 1;                  // 6
     int EXPLAIN = UPDATE + 1;               // 7
     int CREATE_MAT_VIEW = EXPLAIN + 1;      // 8
-    int MAX = CREATE_MAT_VIEW + 1;
+    int CREATE_VIEW = CREATE_MAT_VIEW + 1;  // 9
+    int COMPILE_VIEW = CREATE_VIEW + 1;     // 10
+    int MAX = COMPILE_VIEW + 1;
 
     int getModelType();
 
     default QueryModel getQueryModel() {
+        return null;
+    }
+
+    default @Nullable CharSequence getSelectText() {
         return null;
     }
 
@@ -65,6 +73,8 @@ public interface ExecutionModel {
             typeNameMap[ExecutionModel.UPDATE] = "Update";
             typeNameMap[ExecutionModel.EXPLAIN] = "Explain";
             typeNameMap[ExecutionModel.CREATE_MAT_VIEW] = "Create materialized";
+            typeNameMap[ExecutionModel.CREATE_VIEW] = "Create view";
+            typeNameMap[ExecutionModel.COMPILE_VIEW] = "Compile view";
         }
     }
 }

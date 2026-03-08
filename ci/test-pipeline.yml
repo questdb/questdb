@@ -13,7 +13,7 @@ variables:
   excludeTests: ""
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g"
+  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
   MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
@@ -24,34 +24,138 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
-  - stage: RustTestAndLint
-    displayName: "Rust Test and Lint"
+  - stage: TriggerEnterpriseCI
+    displayName: "Trigger Enterprise CI"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
       - CheckChanges
     jobs:
-      - template: rust-test-and-lint.yaml
+      - job: TriggerEnterprise
+        displayName: "Trigger Enterprise Pipeline"
+        pool:
+          vmImage: "ubuntu-latest"
+        variables:
+          SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        steps:
+          - checkout: none
+          - bash: |
+              set -e
+              # Trigger the enterprise CI pipeline via Azure DevOps REST API
+              AUTH_HEADER="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_ENT_PAT" | base64 -w0)"
+
+              # For PR builds, Azure uses an ephemeral merge commit, not the actual PR head.
+              # Fetch the real PR head commit from GitHub API.
+              if [ -n "$OSS_PR_NUMBER" ]; then
+                OSS_COMMIT=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                  "https://api.github.com/repos/questdb/questdb/pulls/$OSS_PR_NUMBER" \
+                  | jq -r '.head.sha')
+                echo "Fetched PR head commit from GitHub API: $OSS_COMMIT"
+              fi
+
+              # Check if matching branch exists in enterprise repo (private, requires auth)
+              BRANCH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/questdb/questdb-enterprise/branches/$OSS_BRANCH")
+
+              if [ "$BRANCH_CHECK" = "200" ]; then
+                ENT_BRANCH="$OSS_BRANCH"
+                echo "Found matching enterprise branch: $ENT_BRANCH"
+              else
+                ENT_BRANCH="main"
+                echo "No matching branch '$OSS_BRANCH' in enterprise, using: $ENT_BRANCH"
+              fi
+
+              PAYLOAD=$(cat <<EOF
+              {
+                "resources": {
+                  "repositories": {
+                    "self": {
+                      "refName": "refs/heads/$ENT_BRANCH"
+                    }
+                  }
+                },
+                "templateParameters": {
+                  "ossCommit": "$OSS_COMMIT",
+                  "ossPrNumber": "$OSS_PR_NUMBER"
+                }
+              }
+              EOF
+              )
+
+              echo "Triggering enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER)"
+
+              HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X POST \
+                -H "$AUTH_HEADER" \
+                -H "Content-Type: application/json" \
+                "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/23/runs?api-version=7.0" \
+                -d "$PAYLOAD")
+
+              if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+                RUN_ID=$(jq -r '.id // empty' response.json)
+                echo "Triggered enterprise CI: https://dev.azure.com/questdb/questdb-enterprise/_build/results?buildId=$RUN_ID"
+              else
+                echo "##vso[task.logissue type=warning]Failed to trigger enterprise CI (HTTP $HTTP_CODE); see pipeline logs"
+                rm -f response.json
+                exit 1
+              fi
+              rm -f response.json
+            displayName: "Trigger Enterprise Pipeline"
+            env:
+              AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
+              GH_TOKEN: $(GH_TOKEN)
+              OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
+              OSS_BRANCH: $(System.PullRequest.SourceBranch)
 
   - stage: SelfHostedRunGriffin
-    displayName: "SelfHosted Griffin And Fuzz tests"
+    displayName: "SelfHosted Griffin tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
-      includeTests: "**/griffin/**,**/cairo/fuzz/**"
+      includeTests: "**/griffin/**"
 
-  - stage: SelfHostedRunOther
-    displayName: "SelfHosted Other tests"
+  - stage: SelfHostedRunCairoA
+    displayName: "SelfHosted Cairo tests (A)"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/start-self-hosted-job.yml
       - template: templates/self-hosted-jobs.yml
     variables:
-      excludeTests: "**/griffin/**,**/cairo/fuzz/**"
+      includeTests: "**/cairo/*,**/cairo/fuzz/**"
+
+  - stage: SelfHostedRunCairoB
+    displayName: "SelfHosted Cairo tests (B)"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      includeTests: "**/cairo/o3/**,**/cairo/wal/**,**/cairo/mv/**,**/cairo/map/**,**/cairo/pool/**,**/cairo/view/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
+
+  - stage: SelfHostedRunOtherA
+    displayName: "SelfHosted Other tests (A)"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      includeTests: "**/cutlass/pgwire/**,**/cutlass/http/**,**/std/*,**/std/str/**,**/std/datetime/microtime/**,**/std/fastdouble/**,**/std/bytes/**,**/log/**,**/sqllogictest/*,**/network/**"
+
+  - stage: SelfHostedRunOtherB
+    displayName: "SelfHosted Other tests (B)"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/self-hosted-jobs.yml
+    variables:
+      excludeTests: "**/griffin/**,**/cairo/**,**/cutlass/pgwire/**,**/cutlass/http/**,**/std/*,**/std/str/**,**/std/datetime/microtime/**,**/std/fastdouble/**,**/std/bytes/**,**/log/**,**/sqllogictest/*,**/network/**"
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"
@@ -60,32 +164,25 @@ stages:
     jobs:
       - template: templates/hosted-jobs.yml
 
-  - stage: HostedRunTestsCoverageBranches
-    displayName: "Hosted Running tests with cover"
+  - stage: SelfHostedRunTestsCoverageBranches
+    displayName: "SelfHosted Running tests with cover"
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/hosted-cover-jobs.yml
+      - template: templates/self-hosted-cover-jobs.yml
 
-  - stage: JavaCodeFormatting
-    displayName: "Check Java Code Formatting with IntelliJ"
+  - stage: JavaAndRustLint
+    displayName: "Rust Test and Lint"
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/java-code-formatting-intellij.yml
-
-  - stage: HostedRunCompatTestsBranches
-    displayName: "Hosted Running CLI util and compat tests"
-    dependsOn:
-      - CheckChanges
-    jobs:
-      - template: templates/hosted-compat-jobs.yml
+      - template: templates/aux-job.yml
 
   - stage: CoverageReports
     displayName: "Coverage Report"
     dependsOn:
       - CheckChanges
-      - HostedRunTestsCoverageBranches
+      - SelfHostedRunTestsCoverageBranches
     jobs:
       - job: CoverageReport
         displayName: "Coverage Report"
@@ -105,6 +202,7 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
+            persistCredentials: true
           - download: current
             artifact: jacoco-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -117,12 +215,14 @@ stages:
           - template: templates/install-llvm.yml
             parameters:
               shouldRun: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
+
           - task: Cache@2
             continueOnError: true
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               key: '"questdb_main" | "maven"'
               path: $(MAVEN_CACHE_FOLDER)
+
           - task: Maven@3
             displayName: "Compile with Maven"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -132,6 +232,7 @@ stages:
               goals: "compile"
               options: "--batch-mode -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
+
           - task: Maven@3
             displayName: "Merge partial JaCoCo reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -144,39 +245,67 @@ stages:
                 -DcoverDiff=$(COVERAGE_DIFF)
                 -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
+
           - bash: |
               set -eux
               export PATH=$LLVM_TOOLS_PATH:$PATH
               ls -al $(Pipeline.Workspace)/rust-llvm-coverage
 
-              # Merge partial profdata files into the complete report
+              # Merge partial profdata files from all jobs into the complete report
               llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
 
-              # Compile the merged coverage report into an HTML report
-              llvm-cov show \
-                --format=html \
-                --output-dir=rust-llvm-coverage \
-                --ignore-filename-regex='(\.cargo/registry|rustc/.*\.rs)' \
-                --instr-profile=questdbr.profdata \
-                --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
-                --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary
+              COVERAGE_DIR=$(Pipeline.Workspace)/rust-llvm-coverage
+              if [ ! -d "$COVERAGE_DIR/deps" ]; then
+                echo "##vso[task.logissue type=error]Rust coverage objects directory not found: $COVERAGE_DIR/deps"
+                exit 1
+              fi
+              # Restore execute permissions lost during artifact download
+              # (PublishBuildArtifacts does not preserve Unix permissions)
+              find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -exec chmod +x {} +
+              mapfile -d '' -t RUST_TEST_OBJECTS < <(find "$COVERAGE_DIR/deps" -maxdepth 1 -type f -executable -print0 | sort -z)
+              if [ ${#RUST_TEST_OBJECTS[@]} -eq 0 ]; then
+                echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
+                exit 1
+              fi
+              OBJECT_ARGS=(--object "$COVERAGE_DIR/libquestdbr.so")
+              for rust_test_object in "${RUST_TEST_OBJECTS[@]}"; do
+                OBJECT_ARGS+=(--object "$rust_test_object")
+              done
+              if [ ${#OBJECT_ARGS[@]} -le 1 ]; then
+                echo "##vso[task.logissue type=error]No Rust test objects were found in $COVERAGE_DIR/deps"
+                exit 1
+              fi
+              ORIG_PATH=$(strings $COVERAGE_DIR/libquestdbr.so | grep -oE '(/azp/_work|/home/agent/_work|/home/vsts/work)/[0-9]+/s' | head -n 1 || true)
+              if [ -z "$ORIG_PATH" ]; then
+                echo "##vso[task.logissue type=error]Could not detect original build path in libquestdbr.so"
+                exit 1
+              fi
+              PATH_EQUIV_ARGS="--path-equivalence=${ORIG_PATH},$(Build.SourcesDirectory)"
+              echo "Using $((${#OBJECT_ARGS[@]} / 2)) object files for llvm-cov"
 
               # Export the merged coverage report to LCOV format
               llvm-cov export \
-                --format=lcov \
+              --format=lcov \
+              --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+              $PATH_EQUIV_ARGS \
+              "${OBJECT_ARGS[@]}" \
+              --instr-profile=questdbr.profdata \
+              > questdbr.lcov.dat
+
+              # Generate HTML report for local inspection
+              llvm-cov show \
+                --format=html \
                 --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+                $PATH_EQUIV_ARGS \
+                "${OBJECT_ARGS[@]}" \
                 --instr-profile=questdbr.profdata \
-                --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
-                --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary \
-                > questdbr.lcov.dat
+                --output-dir $(Build.SourcesDirectory)/rust-coverage
+
+              # Merge LCOV coverage results from multiple objects into a single report
+              python3 ./ci/merge_lcov_paths.py questdbr.lcov.dat questdbr-patched.lcov.dat
 
               # Convert LCOV coverage results to Cobertura XML format
-              # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
-              curl -LsSf https://astral.sh/uv/install.sh | sh
-              uv run --with lcov_cobertura python3 -m lcov_cobertura \
-                  questdbr.lcov.dat \
-                  --output cobertura.xml \
-                  --base-dir core/rust/qdbr/src
+              python3 ./ci/lcov_cobertura.py questdbr-patched.lcov.dat --output cobertura.xml --base-dir core/rust
             displayName: "Merge partial Rust reports"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 
@@ -188,8 +317,15 @@ stages:
               done
               [ -f cobertura.xml ] && COVER_ARGS="$COVER_ARGS -type cobertura --cover cobertura.xml"
 
+              # cover-checker is able to automatically retrieve the diff from the Github Rest API.
+              # Unfortunately, it happpens that the Rest API responses are missing the patch field for some files
+              # which excludes these files from being covered.
+              git fetch origin $(System.PullRequest.targetBranchName)
+              git diff origin/$(System.PullRequest.targetBranchName)..HEAD > pr.diff
+
               $JAVA_HOME_17_X64/bin/java -jar \
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
+                -dt file -d pr.diff \
                 $COVER_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
             displayName: "Post combined report to GitHub"

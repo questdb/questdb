@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,10 +62,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     public static void inVolumeToSink(CairoConfiguration configuration, CairoTable table, CharSink<?> sink) {
-        if (table.getIsSoftLink()) {
+        if (table.isSoftLink()) {
             sink.putAscii(", IN VOLUME ");
 
-            Path.clearThreadLocals();
             Path softLinkPath = Path.getThreadLocal(configuration.getDbRoot()).concat(table.getDirectoryName());
             Path otherVolumePath = Path.getThreadLocal2("");
 
@@ -188,6 +187,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public long size() {
             return -1;
         }
@@ -206,7 +210,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             // CREATE TABLE table_name
             putCreateTable();
             // column_name TYPE
-            putColumns(config);
+            putColumns();
             // timestamp(ts)
             if (table.getTimestampIndex() != -1) {
                 putTimestamp();
@@ -217,8 +221,6 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 // (BYPASS) WAL
                 putWal();
             }
-            // WITH maxUncommittedRows=123, o3MaxLag=456s
-            putWith();
             // IN VOLUME OTHER_VOLUME
             putInVolume(config);
             // DEDUP UPSERT(key1, key2)
@@ -232,36 +234,28 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         protected void putAdditional() {
         }
 
-        protected void putColumn(CairoConfiguration config, CairoColumn column) {
+        protected void putColumn(CairoColumn column) {
             sink.put('\t')
                     .put(column.getName())
                     .putAscii(' ')
                     .put(ColumnType.nameOf(column.getType()));
 
             if (column.getType() == ColumnType.SYMBOL) {
-                // CAPACITY value (NO)CACHE
-                int symbolCapacity = column.getSymbolCapacity();
-
-                // some older versions of QuestDB can have `0` written to the metadata file
-                // this will produce an incorrect DDL if we print it
-                // so we fall back to default capacity
-                if (symbolCapacity < 2) {
-                    symbolCapacity = config.getDefaultSymbolCapacity();
+                // omit capacity due to autoscaling
+                if (!column.isSymbolCached()) {
+                    sink.putAscii(" NOCACHE");
                 }
 
-                sink.putAscii(" CAPACITY ").put(symbolCapacity);
-                sink.putAscii(column.getSymbolCached() ? " CACHE" : " NOCACHE");
-
-                if (column.getIsIndexed()) {
+                if (column.isIndexed()) {
                     // INDEX CAPACITY value
                     sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
                 }
             }
         }
 
-        protected void putColumns(CairoConfiguration configuration) {
+        protected void putColumns() {
             for (int i = 0, n = table.getColumnCount(); i < n; i++) {
-                putColumn(configuration, table.getColumnQuiet(i));
+                putColumn(table.getColumnQuiet(i));
                 if (i < n - 1) {
                     sink.putAscii(',');
                 }
@@ -278,13 +272,13 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         protected void putDedup() {
-            if (table.getIsDedup()) {
+            if (table.hasDedup()) {
                 boolean afterFirst = false;
                 sink.putAscii('\n');
                 sink.putAscii("DEDUP UPSERT KEYS(");
                 for (int i = 0, n = table.getColumnCount(); i < n; i++) {
                     final CairoColumn column = table.getColumnQuiet(i);
-                    if (column.getIsDedupKey()) {
+                    if (column.isDedupKey()) {
                         if (afterFirst) {
                             sink.putAscii(',');
                         } else {
@@ -312,17 +306,10 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         protected void putWal() {
-            if (!table.getWalEnabled()) {
+            if (!table.isWalEnabled()) {
                 sink.putAscii(" BYPASS");
+                sink.putAscii(" WAL");
             }
-            sink.putAscii(" WAL");
-        }
-
-        protected void putWith() {
-            sink.putAscii('\n').putAscii("WITH ");
-            sink.putAscii("maxUncommittedRows=").put(table.getMaxUncommittedRows());
-            sink.put(", ");
-            sink.putAscii("o3MaxLag=").put(table.getO3MaxLag()).putAscii("us");
         }
 
         public class ShowCreateTableRecord implements Record {

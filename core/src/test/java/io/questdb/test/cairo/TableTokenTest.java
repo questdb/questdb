@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ public class TableTokenTest {
 
     @Test
     public void testBasics() {
-        final TableToken t1 = new TableToken("table1", "dir1", 1, true, false, false);
+        final TableToken t1 = new TableToken("table1", "dir1", null, 1, true, false, false);
         Assert.assertEquals("table1", t1.getTableName());
         Assert.assertEquals("dir1", t1.getDirName());
         final boolean dirNameIdentity = t1.getDirName() == t1.getDirNameUtf8().toString();
@@ -45,7 +45,7 @@ public class TableTokenTest {
         Assert.assertEquals(t1.getTableId(), t1.hashCode());
 
         final String descr = t1.toString();
-        Assert.assertEquals("TableToken{tableName=table1, dirName=dir1, tableId=1, isMatView=false, isWal=true, isSystem=false, isProtected=false, isPublic=false}", descr);
+        Assert.assertEquals("TableToken{tableName=table1, dirName=dir1, tableId=1, isView=false, isMatView=false, isWal=true, isSystem=false, isProtected=false, isPublic=false}", descr);
 
         final TableToken t2 = t1.renamed("table2");
         Assert.assertEquals("table2", t2.getTableName());
@@ -54,11 +54,11 @@ public class TableTokenTest {
         Assert.assertTrue(t2.isWal());
 
         Assert.assertNotEquals(t1, t2);
-        final TableToken t1b = new TableToken("table1", "dir1", 1, true, false, false);
+        final TableToken t1b = new TableToken("table1", "dir1", null, 1, true, false, false);
 
         Assert.assertEquals(t1, t1b);
 
-        final TableToken t3 = new TableToken("table3", "dir3", 3, false, true, true);
+        final TableToken t3 = new TableToken("table3", "dir3", null, 3, false, true, true);
         Assert.assertEquals("table3", t3.getTableName());
         Assert.assertEquals("dir3", t3.getDirName());
         Assert.assertEquals(3, t3.getTableId());
@@ -68,7 +68,7 @@ public class TableTokenTest {
         Assert.assertEquals(t3.getTableId(), t3.hashCode());
 
         final String descr3 = t3.toString();
-        Assert.assertEquals("TableToken{tableName=table3, dirName=dir3, tableId=3, isMatView=false, isWal=false, isSystem=true, isProtected=true, isPublic=false}", descr3);
+        Assert.assertEquals("TableToken{tableName=table3, dirName=dir3, tableId=3, isView=false, isMatView=false, isWal=false, isSystem=true, isProtected=true, isPublic=false}", descr3);
     }
 
     @Test
@@ -82,7 +82,7 @@ public class TableTokenTest {
         };
 
         for (String str : strings) {
-            final TableToken tt1 = new TableToken(str, "dir1", 1, false, false, false);
+            final TableToken tt1 = new TableToken(str, "dir1", null, 1, false, false, false);
             LOG.xinfo().$("Testing logging a fancy pants table token: >>>").$(tt1).$("<<<").$();
         }
     }

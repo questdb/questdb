@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -89,6 +89,11 @@ public class SubStringFunctionFactory implements FunctionFactory {
 
             this.isSimplifiable = startFunc.isConstant() && lenFunc.isConstant()
                     && startFunc.getInt(null) + lenFunc.getInt(null) < 1;
+        }
+
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_STRING_OP, TernaryFunction.super.getComplexity());
         }
 
         @Override

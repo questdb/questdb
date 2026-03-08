@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -44,6 +44,7 @@ import org.junit.Test;
 
 import java.util.UUID;
 
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
@@ -53,6 +54,30 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", HTTP_PORT);
 
+    private static void assertTableExists(CairoEngine engine, CharSequence tableName) {
+        try (Path path = new Path()) {
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getTableStatus(path, engine.getTableTokenIfExists(tableName)));
+        }
+    }
+
+    private static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) throws Exception {
+        TestUtils.assertEventually(() -> {
+            assertTableExists(engine, tableName);
+
+            try (
+                    TableReader reader = engine.getReader(tableName);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                long size = cursor.size();
+                assertEquals(expectedSize, size);
+            } catch (EntryLockedException e) {
+                // if table is busy we want to fail this round and have the assertEventually() to retry later
+                fail("table +" + tableName + " is locked");
+            }
+        });
+    }
+
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -85,8 +110,8 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 long expectedSum = (count / 2) * (count + 1);
                 double expectedAvg = expectedSum / (double) count;
                 TestUtils.assertEventually(() -> serverMain.assertSql(
-                        "select sum(value), max(value), min(value), avg(value) from " + tableName,
-                        "sum\tmax\tmin\tavg\n"
+                        "select sum(value), max(value), min(value), round(avg(value), 3) from " + tableName,
+                        "sum\tmax\tmin\tround\n"
                                 + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
                 ));
             }
@@ -102,9 +127,9 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
             )) {
                 serverMain.start();
                 int port = tlsProxy.getListeningPort();
-                String adress = "localhost:" + port;
+                String address = "localhost:" + port;
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                        .address(adress)
+                        .address(address)
                         .enableTls()
                         .advancedTls()
                         .disableCertificateValidation()
@@ -202,6 +227,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         // expected message: Could not flush buffer: https://localhost:<ephemeral_port>/write?precision=n Connection Failed
                         TestUtils.assertContains(e.getMessage(), "Could not flush buffer: https://localhost:");
                         TestUtils.assertContains(e.getMessage(), "/write?precision=n Connection Failed");
+                        sender.reset();
                     }
                 }
                 assertTableSizeEventually(serverMain.getEngine(), tableName, 1);
@@ -238,6 +264,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         TestUtils.assertContains(e.getMessage(), "http-status=400");
                         TestUtils.assertContains(e.getMessage(), "error in line 1: table: testRecoveryAfterStructuralError, column: value; cast error from protocol type: STRING to column type: LONG");
                     }
+                    sender.reset();
 
                     // assert that we can still send new rows after a structural error
                     sender.table(tableName).longColumn("value", 42).atNow();
@@ -262,6 +289,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         .address(address)
                         .enableTls()
                         .retryTimeoutMillis(1000)
+                        .protocolVersion(PROTOCOL_VERSION_V1)
                         .build()
                 ) {
                     try {
@@ -270,31 +298,32 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         fail("should fail, the server is not trusted");
                     } catch (LineSenderException ex) {
                         TestUtils.assertContains(ex.getMessage(), "Could not flush buffer");
+                        sender.reset();
                     }
                 }
             }
         });
     }
 
-    private static void assertTableExists(CairoEngine engine, CharSequence tableName) {
-        try (Path path = new Path()) {
-            assertEquals(TableUtils.TABLE_EXISTS, engine.getTableStatus(path, engine.getTableTokenIfExists(tableName)));
-        }
-    }
-
-    private static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) throws Exception {
-        TestUtils.assertEventually(() -> {
-            assertTableExists(engine, tableName);
-
-            try (
-                    TableReader reader = engine.getReader(tableName);
-                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
-            ) {
-                long size = cursor.size();
-                assertEquals(expectedSize, size);
-            } catch (EntryLockedException e) {
-                // if table is busy we want to fail this round and have the assertEventually() to retry later
-                fail("table +" + tableName + " is locked");
+    @Test
+    public void testServerNotTrustedAutoDetection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String address = "localhost:" + port;
+                try {
+                    Sender ignore = Sender.builder(Sender.Transport.HTTP)
+                            .address(address)
+                            .enableTls()
+                            .retryTimeoutMillis(1000)
+                            .build();
+                    fail("should fail, the server is not trusted");
+                } catch (LineSenderException ex) {
+                    TestUtils.assertContains(ex.getMessage(), "Failed to detect server line protocol version");
+                }
             }
         });
     }

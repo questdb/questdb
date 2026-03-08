@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -134,7 +134,7 @@ public class HistogramLogReader implements Closeable {
                     // StartTime), we assume that timestamps in the log are not absolute
                     baseTimeSec = startTimeSec;
                 } else {
-                    // Timestamps are absolute
+                    // Micros are absolute
                     baseTimeSec = 0.0;
                 }
                 observedBaseTime = true;
@@ -244,7 +244,7 @@ public class HistogramLogReader implements Closeable {
      * absoluteStartTimeSec and absoluteEndTimeSec, or null if no such
      * interval line is found.
      * <p>
-     * Timestamps are assumed to appear in order in the log file, and as such
+     * Micros are assumed to appear in order in the log file, and as such
      * this method will return a null upon encountering a timestamp larger than
      * rangeEndTimeSec.
      * <p>
@@ -282,7 +282,7 @@ public class HistogramLogReader implements Closeable {
      * timestamp value found in each interval line in the log, and not
      * in absolute time.
      * <p>
-     * Timestamps are assumed to appear in order in the log file, and as such
+     * Micros are assumed to appear in order in the log file, and as such
      * this method will return a null upon encountering a timestamp larger than
      * rangeEndTimeSec.
      * <p>

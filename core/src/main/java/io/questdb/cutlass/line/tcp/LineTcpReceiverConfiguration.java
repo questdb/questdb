@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,12 +26,12 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration {
@@ -41,6 +41,8 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     boolean getAutoCreateNewColumns();
 
     boolean getAutoCreateNewTables();
+
+    CairoConfiguration getCairoConfiguration();
 
     long getCommitInterval();
 
@@ -54,6 +56,8 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     short getDefaultColumnTypeForInteger();
 
+    int getDefaultCreateTimestampColumnType();
+
     int getDefaultPartitionBy();
 
     boolean getDisconnectOnError();
@@ -61,8 +65,6 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
-
-    WorkerPoolConfiguration getIOWorkerPoolConfiguration();
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can
@@ -76,6 +78,8 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     int getMaxMeasurementSize();
 
+    long getMaxRecvBufferSize();
+
     Metrics getMetrics();
 
     MicrosecondClock getMicrosecondClock();
@@ -84,9 +88,11 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     NetworkFacade getNetworkFacade();
 
+    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
+
     long getSymbolCacheWaitBeforeReload();
 
-    LineTcpTimestampAdapter getTimestampAdapter();
+    byte getTimestampUnit();
 
     long getWriterIdleTimeout();
 

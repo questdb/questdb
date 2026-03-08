@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,7 +67,19 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
+        if (rowId < mapValue.getLong(valueIndex)) {
+            mapValue.putLong(valueIndex, rowId);
+            final CharSequence val = arg.getStrA(record);
+            if (val == null) {
+                mapValue.putLong(valueIndex + 1, 0);
+                mapValue.putBool(valueIndex + 2, true);
+            } else {
+                long ptr = mapValue.getLong(valueIndex + 1);
+                sink.of(ptr).clearAndSet(val);
+                mapValue.putLong(valueIndex + 1, sink.colouredPtr());
+                mapValue.putBool(valueIndex + 2, false);
+            }
+        }
     }
 
     @Override

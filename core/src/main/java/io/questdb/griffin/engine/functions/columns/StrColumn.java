@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,26 +25,18 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
-
-public class StrColumn extends StrFunction implements ScalarFunction {
-    private static final ObjList<StrColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
+public class StrColumn extends StrFunction implements ColumnFunction {
     private final int columnIndex;
 
     public StrColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 
-    public static StrColumn newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
-            return COLUMNS.getQuick(columnIndex);
-        }
-        return new StrColumn(columnIndex);
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -60,17 +52,5 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     @Override
     public int getStrLen(Record rec) {
         return rec.getStrLen(columnIndex);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
-    }
-
-    static {
-        COLUMNS.setPos(STATIC_COLUMN_COUNT);
-        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new StrColumn(i));
-        }
     }
 }

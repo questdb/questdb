@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,14 +33,23 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected int valueIndex;
 
-    public FirstTimestampGroupByFunction(@NotNull Function arg) {
+    public FirstTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
+        super(timestampType);
         this.arg = arg;
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            mapValue.putLong(valueIndex + 1, Unsafe.getUnsafe().getLong(ptr));
+        }
     }
 
     @Override
@@ -51,7 +60,9 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
+        if (rowId < mapValue.getLong(valueIndex)) {
+            computeFirst(mapValue, record, rowId);
+        }
     }
 
     @Override
@@ -88,7 +99,12 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);      // row id
-        columnTypes.add(ColumnType.TIMESTAMP); // value
+        columnTypes.add(timestampType); // value
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 
     @Override
@@ -110,6 +126,11 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putTimestamp(valueIndex + 1, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

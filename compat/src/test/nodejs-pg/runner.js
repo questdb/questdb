@@ -18,6 +18,44 @@ class TestRunner {
         return query.replace(/\$\[(\d+)\]/g, '$$$1');
     }
 
+    parseVarcharArray(input) {
+        const result = [];
+        let i = 0;
+
+        while (i < input.length) {
+            while (i < input.length && (input[i] === ' ' || input[i] === ',')) {
+                i++;
+            }
+
+            if (i >= input.length) break;
+
+            if (input[i] === '"') {
+                i++;
+                let value = '';
+                while (i < input.length && input[i] !== '"') {
+                    value += input[i];
+                    i++;
+                }
+                i++;
+                result.push(value);
+            } else {
+                let value = '';
+                while (i < input.length && input[i] !== ',') {
+                    value += input[i];
+                    i++;
+                }
+                const trimmed = value.trim();
+                if (trimmed.toLowerCase() === 'null') {
+                    result.push(null);
+                } else if (trimmed) {
+                    result.push(trimmed);
+                }
+            }
+        }
+
+        return result;
+    }
+
     async executeQuery(client, query, parameters = []) {
         try {
             const result = await client.query(query, parameters);
@@ -71,6 +109,47 @@ class TestRunner {
                 case 'date':
                     resolvedParameters.push(value);
                     break;
+                case 'array_float8':
+                    // Handle floating point arrays like {-1, 2, 3, 4, 5.42}
+                    if (typeof value === 'string') {
+                        // Handle empty array case "{}"
+                        if (value.trim() === '{}') {
+                            resolvedParameters.push([]);
+                            break;
+                        }
+
+                        // Strip curly braces and split by comma
+                        const strippedValue = value.replace(/^\{|\}$/g, '');
+                        // Convert each element to float, handling null values
+                        const floatArray = strippedValue.split(',').map(item => {
+                            const trimmedItem = item.trim();
+                            if (!trimmedItem) return undefined;
+                            if (trimmedItem.toLowerCase() === 'null') return null;
+                            return parseFloat(trimmedItem);
+                        }).filter(item => item !== undefined); // Filter out undefined values
+                        resolvedParameters.push(floatArray);
+                    }
+                    // If already an array, ensure all elements are floats or null
+                    else if (Array.isArray(value)) {
+                        const floatArray = value.map(item => {
+                            if (item === null || item === undefined) return null;
+                            return parseFloat(item);
+                        });
+                        resolvedParameters.push(floatArray);
+                    } else {
+                        throw new Error(`Invalid array_float8 value: ${value}`);
+                    }
+                    break;
+                case 'array_varchar':
+                    if (typeof value === 'string') {
+                        resolvedParameters.push(value);
+                    } else if (Array.isArray(value)) {
+                        const pgArray = '{' + value.map(v => v === null ? 'NULL' : v).join(',') + '}';
+                        resolvedParameters.push(pgArray);
+                    } else {
+                        throw new Error(`Invalid array_varchar value: ${value}`);
+                    }
+                    break;
                 default:
                     resolvedParameters.push(value);
             }
@@ -87,10 +166,34 @@ class TestRunner {
             // Pad or truncate to exactly 6 digits and add Z
             return `${datePart}.${(fractionPart + '000000').slice(0, 6)}Z`;
         }
-        // Handle numeric strings
-        // if (typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value)) {
-        //     return value.includes('.') ? parseFloat(value) : parseInt(value, 10);
+
+        // Handle array values if they come back as JavaScript arrays
+        if (Array.isArray(value)) {
+            // Format as PostgreSQL array string with proper handling of null values
+            return `{${value.map(v => {
+                if (v === null || v === undefined) return 'null';
+                if (typeof v === 'number') {
+                    // For integers, append .0, for decimals keep their original precision
+                    return Number.isInteger(v) ? `${v}.0` : v.toString();
+                }
+                return this.formatValue(v);
+            }).join(',')}}`;
+        }
+
+        // Handle array strings to ensure consistent format
+        // if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+        //     // It's already a PostgreSQL array string, ensure numbers have .0 format
+        //     return value.replace(/(-?\d+)(?!\.)/g, '$1.0').replace(/\s+/g, '');
         // }
+
+        // For decimals, ensure that they are normalized (e.g., 1.0 becomes 1)
+        if (typeof value === "string") {
+            const num = Number(value);
+            if (!isNaN(num)) {
+                return num.toString();
+            }
+        }
+
         return value;
     }
 

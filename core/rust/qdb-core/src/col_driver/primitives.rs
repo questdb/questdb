@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -78,6 +78,12 @@ impl_primitive_type_driver!(GeoLong);
 impl_primitive_type_driver!(Uuid);
 impl_primitive_type_driver!(Long128);
 impl_primitive_type_driver!(IPv4);
+impl_primitive_type_driver!(Decimal8);
+impl_primitive_type_driver!(Decimal16);
+impl_primitive_type_driver!(Decimal32);
+impl_primitive_type_driver!(Decimal64);
+impl_primitive_type_driver!(Decimal128);
+impl_primitive_type_driver!(Decimal256);
 
 #[cfg(test)]
 mod tests {
@@ -103,8 +109,8 @@ mod tests {
 
         let err = IntDriver.col_sizes_for_row_count(&col, 1).unwrap_err();
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
-        let msg = format!("{:#}", err);
-        eprintln!("{}", msg);
+        let msg = format!("{err:#}");
+        eprintln!("{msg}");
         assert!(msg.contains(
             "data file for int column int_col0 shorter than 1 rows, expected at least 4 bytes but is 0"
         ));
@@ -123,8 +129,8 @@ mod tests {
 
         let err = IntDriver.col_sizes_for_row_count(&col, 2).unwrap_err();
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
-        let msg = format!("{:#}", err);
-        // eprintln!("{}", msg);
+        let msg = format!("{err:#}");
+        // eprintln!("{msg}");
         assert!(msg.contains(
             "data file for int column int_col1 shorter than 2 rows, expected at least 8 bytes but is 4"
         ));
@@ -145,8 +151,8 @@ mod tests {
             .col_sizes_for_row_count(&col, 2)
             .unwrap_err();
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
-        let msg = format!("{:#}", err);
-        // eprintln!("{}", msg);
+        let msg = format!("{err:#}");
+        // eprintln!("{msg}");
         assert!(msg.contains(
             "data file for timestamp column timestamp_col1 shorter than 2 rows, expected at least 16 bytes but is 8"
         ));

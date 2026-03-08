@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,11 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,8 +38,8 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.QueryProgress;
-import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -74,12 +74,16 @@ public class ReaderLeakTest extends AbstractCairoTest {
                                         new PageFrameRecordCursorFactory(
                                                 engine.getConfiguration(),
                                                 metadata,
-                                                new FullFwdPartitionFrameCursorFactory(
+                                                new FullPartitionFrameCursorFactory(
                                                         token,
                                                         TableUtils.ANY_TABLE_VERSION,
-                                                        metadata
+                                                        metadata,
+                                                        PartitionFrameCursorFactory.ORDER_ASC,
+                                                        null,
+                                                        0,
+                                                        false
                                                 ),
-                                                new FwdPageFrameRowCursorFactory(),
+                                                new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_ASC),
                                                 false,
                                                 null,
                                                 true,
@@ -93,27 +97,29 @@ public class ReaderLeakTest extends AbstractCairoTest {
                 ) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         assertCursor(
-                                "a\n" +
-                                        "-1148479920\n" +
-                                        "315515118\n" +
-                                        "1548800833\n" +
-                                        "-727724771\n" +
-                                        "73575701\n" +
-                                        "-948263339\n" +
-                                        "1326447242\n" +
-                                        "592859671\n" +
-                                        "1868723706\n" +
-                                        "-847531048\n" +
-                                        "-1191262516\n" +
-                                        "-2041844972\n" +
-                                        "-1436881714\n" +
-                                        "-1575378703\n" +
-                                        "806715481\n" +
-                                        "1545253512\n" +
-                                        "1569490116\n" +
-                                        "1573662097\n" +
-                                        "-409854405\n" +
-                                        "339631474\n",
+                                """
+                                        a
+                                        -1148479920
+                                        315515118
+                                        1548800833
+                                        -727724771
+                                        73575701
+                                        -948263339
+                                        1326447242
+                                        592859671
+                                        1868723706
+                                        -847531048
+                                        -1191262516
+                                        -2041844972
+                                        -1436881714
+                                        -1575378703
+                                        806715481
+                                        1545253512
+                                        1569490116
+                                        1573662097
+                                        -409854405
+                                        339631474
+                                        """,
                                 cursor,
                                 factory.getMetadata(),
                                 true
@@ -158,7 +164,7 @@ public class ReaderLeakTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean hasNext() throws DataUnavailableException {
+        public boolean hasNext() {
             return base.hasNext();
         }
 
@@ -168,12 +174,17 @@ public class ReaderLeakTest extends AbstractCairoTest {
         }
 
         @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             base.recordAt(record, atRowId);
         }
 
         @Override
-        public long size() throws DataUnavailableException {
+        public long size() {
             return base.size();
         }
 

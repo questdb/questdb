@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
@@ -57,9 +59,23 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
         return new RndFunction();
     }
 
-    private static class RndFunction extends IntervalFunction implements Function {
+    private static class RndFunction extends IntervalFunction implements Function, FunctionExtension {
         private final Interval interval = new Interval();
         private Rnd rnd;
+
+        protected RndFunction() {
+            super(ColumnType.INTERVAL_TIMESTAMP_MICRO);
+        }
+
+        @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
+
+        @Override
+        public int getArrayLength() {
+            throw new UnsupportedOperationException();
+        }
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
@@ -74,8 +90,33 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Record getRecord(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getStrLen(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
         }
     }
 }

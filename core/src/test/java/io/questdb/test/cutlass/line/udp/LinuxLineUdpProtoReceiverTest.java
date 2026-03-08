@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,18 +24,9 @@
 
 package io.questdb.test.cutlass.line.udp;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DatabaseCheckpointStatus;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cutlass.line.LineUdpSender;
-import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
-import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiver;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
+import io.questdb.cairo.*;
+import io.questdb.client.cutlass.line.LineUdpSender;
+import io.questdb.cutlass.line.udp.*;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
@@ -54,9 +45,9 @@ import org.junit.Test;
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent) -> new LineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, sharedQueryWorkerCount, functionFactoryCache, snapshotAgent) -> new LineUdpReceiver(configuration, engine, workerPool);
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, sharedQueryWorkerCount, functionFactoryCache, snapshotAgent) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -253,7 +244,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
                     receiver.start();
 
-                    try (LineUdpSender sender = new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), receiverCfg.getPort(), 1400, 1)) {
+                    try (LineUdpSender sender = new LineUdpSender(io.questdb.client.network.NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("127.0.0.1"), receiverCfg.getPort(), 1400, 1)) {
                         for (int i = 0; i < 10; i++) {
                             sender.metric(tableName).tag("colour", "blue").tag("shape", "x square").field("size", 3.4).$(100000000000L);
                         }
@@ -288,7 +279,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                 CairoEngine engine,
                 WorkerPool workerPool,
                 boolean isWorkerPoolLocal,
-                int sharedWorkerCount,
+                int sharedQueryWorkerCount,
                 @Nullable FunctionFactoryCache functionFactoryCache,
                 @Nullable DatabaseCheckpointStatus snapshotAgent
         );

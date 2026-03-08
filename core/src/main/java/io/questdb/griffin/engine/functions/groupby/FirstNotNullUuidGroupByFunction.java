@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,8 +38,13 @@ public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Uuid.isNull(mapValue.getLong128Lo(valueIndex + 1), mapValue.getLong128Hi(valueIndex + 1))) {
-            computeFirst(mapValue, record, rowId);
+        long lo = arg.getLong128Lo(record);
+        long hi = arg.getLong128Hi(record);
+        if (!Uuid.isNull(lo, hi)) {
+            if (Uuid.isNull(mapValue.getLong128Lo(valueIndex + 1), mapValue.getLong128Hi(valueIndex + 1)) || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putLong128(valueIndex + 1, lo, hi);
+            }
         }
     }
 
@@ -58,7 +63,7 @@ public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || Uuid.isNull(destValue.getLong128Lo(valueIndex + 1), destValue.getLong128Hi(valueIndex + 1))) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong128(valueIndex + 1, srcValLo, srcValHi);
         }

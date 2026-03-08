@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,6 +73,18 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         T o = list.getQuick(pos++);
         o.clear();
         return o;
+    }
+
+    /**
+     * Gives access to an object in the pool without incrementing the position.
+     * This method does not validate the position, it's only safe to use it if you know that the position is valid
+     * (i.e. it's less than the number of objects in the pool).
+     *
+     * @param pos position of the object in the pool
+     * @return object at the specified position
+     */
+    public T peekQuick(int pos) {
+        return list.getQuick(pos);
     }
 
     /**

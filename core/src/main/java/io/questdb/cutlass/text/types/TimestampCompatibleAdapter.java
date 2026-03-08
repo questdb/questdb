@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,9 @@
 
 package io.questdb.cutlass.text.types;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public interface TimestampCompatibleAdapter extends TypeAdapter {
-    long getTimestamp(DirectUtf8Sequence value) throws Exception;
+    long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception;
 }

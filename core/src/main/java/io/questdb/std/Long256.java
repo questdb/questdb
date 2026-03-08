@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,13 @@ package io.questdb.std;
  */
 public interface Long256 extends Long256Acceptor {
     int BYTES = 32;
+
+    static void putLong256(Long256 value, long p) {
+        Unsafe.getUnsafe().putLong(p, value.getLong0());
+        Unsafe.getUnsafe().putLong(p + 8L, value.getLong1());
+        Unsafe.getUnsafe().putLong(p + 16L, value.getLong2());
+        Unsafe.getUnsafe().putLong(p + 24L, value.getLong3());
+    }
 
     long getLong0();
 

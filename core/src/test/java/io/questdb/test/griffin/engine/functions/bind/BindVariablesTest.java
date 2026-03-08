@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -33,16 +35,31 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory;
-import io.questdb.griffin.engine.functions.math.*;
-import io.questdb.griffin.engine.functions.str.*;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddFloatFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddIntFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddLongFunctionFactory;
+import io.questdb.griffin.engine.functions.math.SubIntFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ConcatFunctionFactory;
+import io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory;
+import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
+import io.questdb.griffin.engine.functions.str.RightStrFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory;
+import io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
@@ -512,6 +529,26 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testLeadWindowFunction() throws SqlException {
+        bindVariableService.setTimestamp("ts", 123456);
+
+        try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)) {
+            executionContext.with(bindVariableService);
+            TestUtils.assertSql(engine,
+                    executionContext,
+                    "SELECT LEAD(generate_series, 1, :ts) OVER (ORDER BY generate_series) FROM generate_series('1970-01-01T00:00:00Z', '1970-01-01T00:00:05Z', '1s');",
+                    sink,
+                    "LEAD\n" +
+                            "1970-01-01T00:00:01.000000Z\n" +
+                            "1970-01-01T00:00:02.000000Z\n" +
+                            "1970-01-01T00:00:03.000000Z\n" +
+                            "1970-01-01T00:00:04.000000Z\n" +
+                            "1970-01-01T00:00:05.000000Z\n" +
+                            "1970-01-01T00:00:00.123456Z\n");
+        }
+    }
+
+    @Test
     public void testLong() throws SqlException {
         bindVariableService.setLong("xyz", 9);
         Function func = expr("a + :xyz")
@@ -756,7 +793,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestamp() throws SqlException, NumericException {
-        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseTimestamp("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp("xyz", MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2015-04-10T10:00:00.000Z"));
 
         Function func = expr("to_str(:xyz, 'yyyy-MM')")
                 .withFunction(new ToStrTimestampFunctionFactory())
@@ -765,14 +802,14 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStrA(builder.getRecord()));
 
-        bindVariableService.setTimestamp("xyz", TimestampFormatUtils.parseTimestamp("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp("xyz", MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStrA(builder.getRecord()));
     }
 
     @Test
     public void testTimestampIndexed() throws SqlException, NumericException {
-        bindVariableService.setTimestamp(1, 25);
-        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp(1, 25L);
+        bindVariableService.setTimestamp(0, MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2015-04-10T10:00:00.000Z"));
 
         Function func = expr("to_str($1, 'yyyy-MM')")
                 .withFunction(new ToStrTimestampFunctionFactory())
@@ -781,7 +818,38 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("2015-04", func.getStrA(builder.getRecord()));
 
-        bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp(0, MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2015-08-10T10:00:00.000Z"));
+        TestUtils.assertEquals("2015-08", func.getStrA(builder.getRecord()));
+    }
+
+    @Test
+    public void testTimestampNano() throws SqlException, NumericException {
+        bindVariableService.setTimestampNano("xyz", NanosTimestampDriver.INSTANCE.parseFloorLiteral("2015-04-10T10:00:00.000Z"));
+
+        Function func = expr("to_str(:xyz, 'yyyy-MM')")
+                .withFunction(new ToStrTimestampFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("2015-04", func.getStrA(builder.getRecord()));
+
+        bindVariableService.setTimestampNano("xyz", NanosTimestampDriver.INSTANCE.parseFloorLiteral("2015-08-10T10:00:00.000Z"));
+        TestUtils.assertEquals("2015-08", func.getStrA(builder.getRecord()));
+    }
+
+    @Test
+    public void testTimestampNanoIndexed() throws SqlException, NumericException {
+        bindVariableService.setTimestampNano(1, 25L);
+        bindVariableService.setTimestampNano(0, NanosTimestampDriver.INSTANCE.parseFloorLiteral("2015-04-10T10:00:00.000000001Z"));
+
+        Function func = expr("to_str($1, 'yyyy-MM')")
+                .withFunction(new ToStrTimestampFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        TestUtils.assertEquals("2015-04", func.getStrA(builder.getRecord()));
+
+        bindVariableService.setTimestampNano(0, NanosTimestampDriver.INSTANCE.parseFloorLiteral("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStrA(builder.getRecord()));
     }
 
@@ -821,6 +889,24 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         func.init(null, sqlExecutionContext);
         TestUtils.assertEquals("ABCDEFGHIJKLMNOPQRSTUVXZ", func.getStrA(builder.getRecord()));
+    }
+
+    @Test
+    public void testUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a uuid)");
+
+            Uuid uuid = new Uuid();
+            uuid.of("75b30bf9-e4cc-48b9-9658-97d4a2307622");
+
+            sqlExecutionContext.getBindVariableService().getFunction(0);
+            sqlExecutionContext.getBindVariableService().setUuid(0, uuid.getLo(), uuid.getHi());
+            execute("insert into x(a) values($1)");
+            TestUtils.assertSql(engine, sqlExecutionContext, "x", sink, """
+                    a
+                    75b30bf9-e4cc-48b9-9658-97d4a2307622
+                    """);
+        });
     }
 
     private FunctionBuilder expr(String expression) {

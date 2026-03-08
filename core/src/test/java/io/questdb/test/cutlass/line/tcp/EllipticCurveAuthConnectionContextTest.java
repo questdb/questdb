@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoException;
+import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.std.Files;
@@ -54,10 +54,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     public void setUp() {
         super.setUp();
         nWriterThreads = 2;
-        microSecondTicks = -1;
+        timestampTicks = -1;
         recvBuffer = null;
         disconnected = true;
-        recvBufferSize.set(1024);
+        maxRecvBufferSize.set(1024);
         maxSendBytes = 1024;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
@@ -162,8 +162,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -179,8 +181,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -196,8 +200,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -213,8 +219,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -230,8 +238,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -247,8 +257,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -264,8 +276,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -290,8 +304,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -321,8 +337,10 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
     }
@@ -344,34 +362,19 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             }
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    """;
             assertTable(expected, "weather");
         });
-    }
-
-    @Test
-    public void testIncorrectConfig() throws Exception {
-        recvBufferSize.set(200);
-        try {
-            runInAuthContext(() -> {
-                recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
-                handleContextIO0();
-                Assert.assertFalse(disconnected);
-                waitForIOCompletion();
-                closeContext();
-                Assert.fail();
-            });
-        } catch (CairoException ex) {
-            TestUtils.assertEquals("Minimum buffer length is 513", ex.getFlyweightMessage());
-        }
     }
 
     @Test
     public void testInvalidKeyId() throws Exception {
         runInAuthContext(() -> {
             StringBuilder token = new StringBuilder("xxxxxxxx");
-            while (token.length() < recvBufferSize.get()) {
+            while (token.length() < maxRecvBufferSize.get()) {
                 token.append(token);
             }
             boolean authSequenceCompleted = authenticate(token.toString(), AUTH_PRIVATE_KEY1);
@@ -392,6 +395,21 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
             boolean authSequenceCompleted = authenticate(false, false, false, false, junkSignature);
             Assert.assertTrue(authSequenceCompleted);
             Assert.assertTrue(disconnected);
+        });
+    }
+
+    @Test
+    public void testMinBufferSizeForAuth() throws Exception {
+        maxRecvBufferSize.set(PropServerConfiguration.MIN_TCP_ILP_BUF_SIZE);
+        runInAuthContext(() -> {
+            // this is a big-ass token (that looks like valid ILP line)
+            recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
+            handleContextIO0();
+            Assert.assertFalse(disconnected);
+            // asserting there is no exception out of this method
+            waitForIOCompletion();
+            closeContext();
+            drainWalQueue();
         });
     }
 

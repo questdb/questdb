@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,8 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.client.cutlass.line.AbstractLineTcpSender;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
@@ -39,10 +40,6 @@ import org.junit.Test;
 public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverFuzzTest.class);
-
-    public LineTcpReceiverFuzzTest(WalMode walMode) {
-        super(walMode);
-    }
 
     @Test
     public void testAddColumns() throws Exception {
@@ -118,7 +115,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         Assume.assumeTrue(walEnabled);
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     for (int i = 0; i < 300; i++) {
                         lineTcpSender
                                 .metric("table")

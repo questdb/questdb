@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,11 +39,13 @@ public class LastNotNullStrGroupByFunction extends FirstStrGroupByFunction {
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final CharSequence val = arg.getStrA(record);
         if (val != null) {
-            mapValue.putLong(valueIndex, rowId);
-            long ptr = mapValue.getLong(valueIndex + 1);
-            sink.of(ptr).clearAndSet(val);
-            mapValue.putLong(valueIndex + 1, sink.colouredPtr());
-            mapValue.putBool(valueIndex + 2, false);
+            if (mapValue.getBool(valueIndex + 2) || rowId > mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                long ptr = mapValue.getLong(valueIndex + 1);
+                sink.of(ptr).clearAndSet(val);
+                mapValue.putLong(valueIndex + 1, sink.colouredPtr());
+                mapValue.putBool(valueIndex + 2, false);
+            }
         }
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     public HttpMinServerConfigurationWrapper(Metrics metrics) {
         this.metrics = metrics;
         delegate.set(null);
+    }
+
+    @Override
+    public long getAcceptLoopTimeout() {
+        return getDelegate().getAcceptLoopTimeout();
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,6 @@
 package io.questdb.network;
 
 import io.questdb.ClientTlsConfiguration;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.log.Log;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -66,6 +64,24 @@ public final class JavaTlsClientSocket implements Socket {
     private static final int STATE_EMPTY = 0;
     private static final int STATE_PLAINTEXT = 1;
     private static final int STATE_TLS = 2;
+
+    static {
+        Field addressField;
+        Field limitField;
+        Field capacityField;
+        try {
+            addressField = Buffer.class.getDeclaredField("address");
+            limitField = Buffer.class.getDeclaredField("limit");
+            capacityField = Buffer.class.getDeclaredField("capacity");
+        } catch (NoSuchFieldException e) {
+            // possible improvement: implement a fallback strategy when reflection is unavailable for any reason.
+            throw new ExceptionInInitializerError(e);
+        }
+        ADDRESS_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(addressField);
+        LIMIT_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(limitField);
+        CAPACITY_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(capacityField);
+    }
+
     private final Socket delegate;
     private final Log log;
     private final ClientTlsConfiguration tlsConfig;
@@ -95,6 +111,42 @@ public final class JavaTlsClientSocket implements Socket {
         // this way we can reuse the same ByteBuffer instances for multiple TLS sessions.
         this.wrapOutputBuffer = ByteBuffer.allocateDirect(0);
         this.unwrapInputBuffer = ByteBuffer.allocateDirect(0);
+    }
+
+    private static long allocateMemoryAndResetBuffer(ByteBuffer buffer, int capacity) {
+        long newAddress = Unsafe.malloc(capacity, MemoryTag.NATIVE_TLS_RSS);
+        resetBufferToPointer(buffer, newAddress, capacity);
+        return newAddress;
+    }
+
+    private static long expandBuffer(ByteBuffer buffer, long oldAddress) {
+        int oldCapacity = buffer.capacity();
+        int newCapacity = oldCapacity * 2;
+        long newAddress = Unsafe.realloc(oldAddress, oldCapacity, newCapacity, MemoryTag.NATIVE_TLS_RSS);
+        resetBufferToPointer(buffer, newAddress, newCapacity);
+        return newAddress;
+    }
+
+    private static InputStream openTrustStoreStream(String trustStorePath) throws FileNotFoundException {
+        InputStream trustStoreStream;
+        if (trustStorePath.startsWith("classpath:")) {
+            String adjustedPath = trustStorePath.substring("classpath:".length());
+            trustStoreStream = JavaTlsClientSocket.class.getResourceAsStream(adjustedPath);
+            if (trustStoreStream == null) {
+                throw new UnavailableTruststoreException("configured trust store is unavailable ")
+                        .put("[path=").put(trustStorePath).put("]");
+            }
+            return trustStoreStream;
+        }
+        return new FileInputStream(trustStorePath);
+    }
+
+    private static void resetBufferToPointer(ByteBuffer buffer, long ptr, int len) {
+        assert buffer.isDirect();
+        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
+        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
+        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
+        buffer.position(0);
     }
 
     @Override
@@ -284,7 +336,7 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     @Override
-    public int startTlsSession(CharSequence peerName) {
+    public void startTlsSession(CharSequence peerName) throws TlsSessionInitFailedException {
         assert state == STATE_PLAINTEXT;
         prepareInternalBuffers();
         try {
@@ -318,22 +370,21 @@ public final class JavaTlsClientSocket implements Socket {
                                 while (written < bufferLimit) {
                                     int n = delegate.send(wrapOutputBufferPtr + written, bufferLimit - written);
                                     if (n < 0) {
-                                        return n;
+                                        throw TlsSessionInitFailedException.instance("socket write error");
                                     }
                                     written += n;
                                 }
                                 wrapOutputBuffer.clear();
                                 break;
                             case CLOSED:
-                                log.error().$("server closed connection unexpectedly").$();
-                                return -1;
+                                throw TlsSessionInitFailedException.instance("server closed connection unexpectedly");
                         }
                         break;
                     }
                     case NEED_UNWRAP: {
                         int n = readFromSocket();
                         if (n < 0) {
-                            return n;
+                            throw TlsSessionInitFailedException.instance("socket read error");
                         }
                         SSLEngineResult result = sslEngine.unwrap(unwrapInputBuffer, unwrapOutputBuffer);
                         handshakeStatus = result.getHandshakeStatus();
@@ -347,8 +398,7 @@ public final class JavaTlsClientSocket implements Socket {
                                 // good, let's see what we need to do next
                                 break;
                             case CLOSED:
-                                log.error().$("server closed connection unexpectedly").$();
-                                return -1;
+                                throw TlsSessionInitFailedException.instance("server closed connection unexpectedly");
                         }
                     }
                     break;
@@ -362,11 +412,9 @@ public final class JavaTlsClientSocket implements Socket {
             unwrapOutputBuffer.clear();
             wrapOutputBuffer.clear();
             state = STATE_TLS;
-            return 0;
         } catch (KeyManagementException | NoSuchAlgorithmException | KeyStoreException | IOException |
                  CertificateException e) {
-            log.error().$("could not start SSL session").$(e).$();
-            return -1;
+            throw TlsSessionInitFailedException.instance("TLS session creation failed [error=").put(e.getMessage()).put(']');
         }
     }
 
@@ -406,42 +454,6 @@ public final class JavaTlsClientSocket implements Socket {
     public boolean wantsTlsWrite() {
         // we want to write if we have TLS data to send
         return wrapOutputBuffer.position() > 0;
-    }
-
-    private static long allocateMemoryAndResetBuffer(ByteBuffer buffer, int capacity) {
-        long newAddress = Unsafe.malloc(capacity, MemoryTag.NATIVE_TLS_RSS);
-        resetBufferToPointer(buffer, newAddress, capacity);
-        return newAddress;
-    }
-
-    private static long expandBuffer(ByteBuffer buffer, long oldAddress) {
-        int oldCapacity = buffer.capacity();
-        int newCapacity = oldCapacity * 2;
-        long newAddress = Unsafe.realloc(oldAddress, oldCapacity, newCapacity, MemoryTag.NATIVE_TLS_RSS);
-        resetBufferToPointer(buffer, newAddress, newCapacity);
-        return newAddress;
-    }
-
-    private static InputStream openTrustStoreStream(String trustStorePath) throws FileNotFoundException {
-        InputStream trustStoreStream;
-        if (trustStorePath.startsWith("classpath:")) {
-            String adjustedPath = trustStorePath.substring("classpath:".length());
-            trustStoreStream = DelegatingTlsChannel.class.getResourceAsStream(adjustedPath);
-            if (trustStoreStream == null) {
-                throw new LineSenderException("configured trust store is unavailable ")
-                        .put("[path=").put(trustStorePath).put("]");
-            }
-            return trustStoreStream;
-        }
-        return new FileInputStream(trustStorePath);
-    }
-
-    private static void resetBufferToPointer(ByteBuffer buffer, long ptr, int len) {
-        assert buffer.isDirect();
-        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
-        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
-        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
-        buffer.position(0);
     }
 
     private SSLEngine createSslEngine(CharSequence serverName) throws KeyManagementException, NoSuchAlgorithmException, KeyStoreException, IOException, CertificateException {
@@ -550,22 +562,5 @@ public final class JavaTlsClientSocket implements Socket {
         Vect.memmove(wrapOutputBufferPtr, wrapOutputBufferPtr + n, bytesRemaining);
         wrapOutputBuffer.position(bytesRemaining);
         return n;
-    }
-
-    static {
-        Field addressField;
-        Field limitField;
-        Field capacityField;
-        try {
-            addressField = Buffer.class.getDeclaredField("address");
-            limitField = Buffer.class.getDeclaredField("limit");
-            capacityField = Buffer.class.getDeclaredField("capacity");
-        } catch (NoSuchFieldException e) {
-            // possible improvement: implement a fallback strategy when reflection is unavailable for any reason.
-            throw new ExceptionInInitializerError(e);
-        }
-        ADDRESS_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(addressField);
-        LIMIT_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(limitField);
-        CAPACITY_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(capacityField);
     }
 }

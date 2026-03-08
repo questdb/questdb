@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@ import io.questdb.std.Misc;
  * SortedLightRecordCursor which implements LIMIT clause.
  */
 public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCursor, DynamicLimitCursor {
-
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
@@ -114,6 +113,11 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
         chain.clear();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(isChainBuilt) + baseCursor.preComputedStateSize();
     }
 
     @Override

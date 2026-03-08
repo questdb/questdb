@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,20 +29,14 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
-import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -60,24 +54,25 @@ public class HttpMinTest extends AbstractBootstrapTest {
     public void testResponsiveOnMemoryPressure() throws Exception {
         // TODO: fix on Windows
         Assume.assumeFalse(Os.isWindows());
-        Rnd random = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            long httpConnMem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
             assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
 
+            int httpMinConnectionLimit = 2;
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512M",
                     PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "512M",
+                    PropertyKey.HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY.getEnvVarName(), String.valueOf(httpMinConnectionLimit),
+                    PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(httpMinConnectionLimit),
                     PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
                     PropertyKey.HTTP_ENABLED.getEnvVarName(), "false"
             )) {
                 serverMain.start();
                 HttpServerConfiguration httpMinConfig = serverMain.getConfiguration().getHttpMinServerConfiguration();
                 HttpContextConfiguration httpMinContextConfig = httpMinConfig.getHttpContextConfiguration();
-                long expectedAllocation = httpMinConfig.getSendBufferSize() + 20
+                int expectedAllocation = (httpMinConfig.getSendBufferSize() + 20
                         + httpMinConfig.getRecvBufferSize()
                         + httpMinContextConfig.getRequestHeaderBufferSize() + 64
-                        + httpMinContextConfig.getMultipartHeaderBufferSize() + 64;
+                        + httpMinContextConfig.getMultipartHeaderBufferSize() + 64) * httpMinConnectionLimit;
 
                 // Wait http min threads to start, they will need to allocate some memory
                 // directly after the server start.
@@ -99,11 +94,9 @@ public class HttpMinTest extends AbstractBootstrapTest {
                     }
 
                     String expectedText = "questdb_memory_tag_NATIVE_DEFAULT " + Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
-                    final Utf8StringSink sink = new Utf8StringSink();
-
                     for (int i = 0; i < 10; i++) {
-                        checkResponse(httpClient, "/metrics", sink, expectedText, httpMinPort);
-                        checkResponse(httpClient, "/status", sink, "Status: Healthy", httpMinPort);
+                        checkResponse(httpClient, "/metrics", expectedText, httpMinPort);
+                        checkResponse(httpClient, "/status", "Status: Healthy", httpMinPort);
                     }
                 } finally {
                     Unsafe.free(buff, rssAvailable, MemoryTag.NATIVE_DEFAULT);
@@ -112,27 +105,14 @@ public class HttpMinTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void checkResponse(HttpClient httpClient, String url, Utf8StringSink sink, String expectedText, int port) {
+    private static void checkResponse(HttpClient httpClient, String url, String expectedText, int port) {
         HttpClient.Request request;
         request = httpClient.newRequest("localhost", port);
         request.GET().url(url);
-
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
-
             TestUtils.assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
-
-            Fragment fragment;
-            final Response response = responseHeaders.getResponse();
-            while ((fragment = response.recv()) != null) {
-                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-            }
-
-            Assert.assertTrue(
-                    Utf8s.containsAscii(sink,
-                            expectedText)
-            );
-            sink.clear();
+            HttpUtils.assertChunkedBodyContains(responseHeaders, expectedText);
         }
     }
 }

@@ -1,0 +1,142 @@
+name: Build and Commit async-profiler Library
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: asprof-${{ github.ref }}
+  cancel-in-progress: false
+# This workflow is triggered manually from the Actions tab.
+# It builds the async-profiler native library for Linux x86-64 from source
+# and commits it to the current branch, providing a full audit trail.
+#
+# The async-profiler submodule is located at: core/src/main/c/share/async-profiler
+# The built library will be placed at: core/src/main/bin/linux-x86-64/libasyncProfiler.so
+
+jobs:
+  build-async-profiler:
+    runs-on: ubuntu-latest
+    container:
+      # We build inside the same container as async-profiler official builds
+      # Source of the container: https://github.com/async-profiler/async-profiler/blob/07b3e747d167f8beb3ac961b87ff18ee40977ffb/docker/debian.Dockerfile
+      image: public.ecr.aws/async-profiler/asprof-builder-x86@sha256:5244657fc3e9e3c5a0162d44777411c44031065071665776651068f94f7214f4
+    steps:
+      - name: Patch Debian buster repo and install dependencies
+        run: |
+          set -eu
+          sed -i s/deb.debian.org/archive.debian.org/g /etc/apt/sources.list
+          apt-get update -y
+          apt-get install git file -y
+
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Get async-profiler version info
+        id: version
+        run: |
+          set -eu
+          cd core/src/main/c/share/async-profiler
+          ASYNC_VERSION=$(git describe --tags --always)
+          ASYNC_SHA=$(git rev-parse --short=8 HEAD)
+          echo "version=$ASYNC_VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$ASYNC_SHA" >> "$GITHUB_OUTPUT"
+          echo "Building async-profiler version: $ASYNC_VERSION (commit: $ASYNC_SHA)"
+
+      - name: Build async-profiler
+        run: |
+          set -eu
+          cd core/src/main/c/share/async-profiler
+          # Build release tarball (same as official async-profiler releases)
+          # This includes patchelf optimizations, again, the official builds do the same
+          make CC=/usr/local/musl/bin/musl-gcc release
+
+          # Extract the library and binaries from the release tarball
+          TARBALL=""
+          for f in async-profiler-*.tar.gz; do
+            # Skip if glob didn't match any files
+            [ -f "$f" ] || continue
+            case "$f" in
+              *debug*) continue ;;
+              *) TARBALL="$f"; break ;;
+            esac
+          done
+          [ -n "$TARBALL" ] || { echo "No release tarball found"; exit 1; }
+          echo "Extracting from: $TARBALL"
+
+          # Extract library
+          tar -xzf "$TARBALL" --strip-components=2 --wildcards "*/lib/libasyncProfiler.so"
+
+          # Extract binaries
+          tar -xzf "$TARBALL" --strip-components=2 --wildcards "*/bin/asprof"
+          tar -xzf "$TARBALL" --strip-components=2 --wildcards "*/bin/jfrconv"
+
+          ls -la libasyncProfiler.so asprof jfrconv
+          echo "Library dependencies:"
+          ldd libasyncProfiler.so || true
+          echo "Binary info:"
+          file asprof jfrconv
+
+      - name: Copy library and binaries to target location
+        run: |
+          set -eu
+          mkdir -p core/src/main/bin/linux-x86-64/
+          cp core/src/main/c/share/async-profiler/libasyncProfiler.so core/src/main/bin/linux-x86-64/
+          cp core/src/main/c/share/async-profiler/asprof core/src/main/bin/linux-x86-64/
+          cp core/src/main/c/share/async-profiler/jfrconv core/src/main/bin/linux-x86-64/
+          ls -la core/src/main/bin/linux-x86-64/
+          file core/src/main/bin/linux-x86-64/*
+          ldd core/src/main/bin/linux-x86-64/libasyncProfiler.so || true
+
+      - name: Commit and push changes
+        run: |
+          set -eu
+          # Configure git and fix ownership issues
+          git config --global --add safe.directory '*'
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+          git add core/src/main/bin/linux-x86-64/libasyncProfiler.so
+          git add core/src/main/bin/linux-x86-64/asprof
+          git add core/src/main/bin/linux-x86-64/jfrconv
+
+          # remove execute permission for library, keep for binaries
+          git update-index --chmod=-x core/src/main/bin/linux-x86-64/libasyncProfiler.so
+          git update-index --chmod=+x core/src/main/bin/linux-x86-64/asprof
+          git update-index --chmod=+x core/src/main/bin/linux-x86-64/jfrconv
+
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          cat << EOF > commit_message.txt
+          chore(build): rebuild async-profiler library and binaries for Linux x86-64 [skip ci]
+
+          Built from async-profiler ${{ steps.version.outputs.version }} (commit: ${{ steps.version.outputs.sha }})
+          Build timestamp: ${TIMESTAMP}
+          GitHub Action: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          EOF
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit --author="${GITHUB_ACTOR} <${GITHUB_ACTOR}@users.noreply.github.com>" -F commit_message.txt
+
+          # Push to current branch
+          git push origin HEAD
+
+          echo "Successfully committed and pushed async-profiler library update"
+
+      - name: Summary
+        run: |
+          set -eu
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **async-profiler library and binaries rebuilt and committed successfully**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ steps.version.outputs.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Files**: \`core/src/main/bin/linux-x86-64/libasyncProfiler.so\`, \`asprof\`, \`jfrconv\`" >> $GITHUB_STEP_SUMMARY

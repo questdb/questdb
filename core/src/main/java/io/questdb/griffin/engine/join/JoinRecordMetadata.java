@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,6 @@ import io.questdb.std.str.Utf16Sink;
 import java.io.Closeable;
 
 public class JoinRecordMetadata extends AbstractRecordMetadata implements Closeable {
-
     private static final ColumnTypes keyTypes;
     private static final ColumnTypes valueTypes;
     private final Map map;
@@ -105,7 +104,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         final int dot = addAlias(tableAlias, columnName);
         final Utf16Sink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
-        if (dot == -1) {
+        if (dot == -1 && tableAlias != null) {
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
                     m.getColumnType(),
@@ -136,7 +135,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         final MapKey key = map.withKey();
-        final int dot = Chars.indexOf(columnName, lo, '.');
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.', lo, hi);
         if (dot == -1) {
             key.putStr(null);
             key.putStrLowerCase(columnName, lo, hi);
@@ -160,14 +159,14 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     }
 
     private int addAlias(CharSequence tableAlias, CharSequence columnName) {
-        int dot = Chars.indexOf(columnName, '.');
-        assert dot != -1 || tableAlias != null;
-
+        int dot = Chars.indexOfLastUnquoted(columnName, '.');
         // add column with its own alias
         MapKey key = map.withKey();
 
         if (dot == -1) {
-            key.putStrLowerCase(tableAlias);
+            if (tableAlias != null) {
+                key.putStrLowerCase(tableAlias);
+            }
         } else {
             assert tableAlias == null;
             key.putStrLowerCase(columnName, 0, dot);

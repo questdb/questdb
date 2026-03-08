@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,18 +26,15 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
-import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class GeoByteColumn extends GeoByteFunction {
+public class GeoByteColumn extends GeoByteFunction implements ColumnFunction {
     private static final GeoByteColumn[] COLUMNS;
-
     private final int columnIndex;
 
-    public GeoByteColumn(int columnIndex, int columnType) {
+    private GeoByteColumn(int columnIndex, int columnType) {
         super(columnType);
         this.columnIndex = columnIndex;
     }
@@ -55,7 +52,7 @@ public class GeoByteColumn extends GeoByteFunction {
         return new GeoByteColumn(columnIndex, columnType);
     }
 
-    @TestOnly
+    @Override
     public int getColumnIndex() {
         return columnIndex;
     }
@@ -70,11 +67,6 @@ public class GeoByteColumn extends GeoByteFunction {
         return true;
     }
 
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
-    }
-
     static {
         int bits = ColumnType.GEOBYTE_MAX_BITS - ColumnType.GEOBYTE_MIN_BITS + 1;
         COLUMNS = new GeoByteColumn[STATIC_COLUMN_COUNT * bits];
@@ -85,5 +77,4 @@ public class GeoByteColumn extends GeoByteFunction {
             }
         }
     }
-
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,12 +33,14 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import org.jetbrains.annotations.Nullable;
 
@@ -49,6 +51,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
     private AlterOperation alterOp;
+    private boolean cacheable;
+    private boolean done;
     private InsertOperation insertOp;
     private boolean isExecutedAtParseTime;
     private Operation operation;
@@ -61,14 +65,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private UpdateOperation updateOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        // type inference fails on java 8 if <UpdateOperation> is removed
         updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution") {
             @Override
             protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation);
             }
         };
-        // type inference fails on java 8 if <AlterOperation> is removed
         alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute") {
             @Override
             protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
@@ -92,6 +94,29 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.statementName = null;
         this.operation = null;
         this.isExecutedAtParseTime = false;
+        this.done = false;
+    }
+
+    @Override
+    public void closeAllButSelect() {
+        switch (getType()) {
+            case CompiledQuery.INSERT:
+            case CompiledQuery.INSERT_AS_SELECT:
+                Misc.free(popInsertOperation());
+                break;
+            case CompiledQuery.UPDATE:
+                Misc.free(updateOp);
+                break;
+            case CompiledQuery.ALTER:
+                Misc.free(alterOp);
+                break;
+            default:
+                break;
+        }
+    }
+
+    public void done() {
+        this.done = true;
     }
 
     @Override
@@ -105,9 +130,18 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
             SCSequence eventSubSeq,
             boolean closeOnDone
     ) throws SqlException {
+        if (done) {
+            return doneFuture.of(0);
+        }
+
         switch (type) {
             case INSERT:
-                return insertOp.execute(sqlExecutionContext);
+            case INSERT_AS_SELECT:
+                OperationFuture future = insertOp.execute(sqlExecutionContext);
+                if (closeOnDone) {
+                    Misc.free(insertOp);
+                }
+                return future;
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
@@ -141,11 +175,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public InsertOperation getInsertOperation() {
-        return insertOp;
-    }
-
-    @Override
     public Operation getOperation() {
         return operation;
     }
@@ -175,6 +204,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return updateOp;
     }
 
+    @Override
+    public boolean isCacheable() {
+        return cacheable;
+    }
+
     public void ofAlter(AlterOperation alterOp) {
         of(ALTER);
         this.alterOp = alterOp;
@@ -187,8 +221,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = true;
     }
 
-    public void ofBackupTable() {
-        of(BACKUP_TABLE);
+    public void ofAlterView() {
+        of(ALTER_VIEW);
         this.isExecutedAtParseTime = true;
     }
 
@@ -217,6 +251,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    public void ofCompileView() {
+        of(COMPILE_VIEW);
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofCopyRemote() {
         of(COPY_REMOTE);
         this.isExecutedAtParseTime = true;
@@ -238,6 +277,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void ofCreateUser() {
         of(CREATE_USER);
         this.isExecutedAtParseTime = true;
+    }
+
+    public void ofCreateView(CreateViewOperation createViewOp) {
+        of(CREATE_VIEW);
+        this.operation = createViewOp;
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofDeallocate(CharSequence statementName) {
@@ -262,16 +307,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    public void ofInsert(InsertOperation insertOperation) {
+    public void ofInsert(InsertOperation insertOperation, boolean isInsectAsSelect) {
         this.insertOp = insertOperation;
-        of(INSERT);
+        of(isInsectAsSelect ? INSERT_AS_SELECT : INSERT);
         this.isExecutedAtParseTime = false;
-    }
-
-    public void ofInsertAsSelect(long affectedRowsCount) {
-        of(INSERT_AS_SELECT);
-        this.affectedRowsCount = affectedRowsCount;
-        this.isExecutedAtParseTime = true;
     }
 
     // although executor was there it had to fail back to the model
@@ -308,9 +347,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
-    public void ofSelect(RecordCursorFactory recordCursorFactory) {
+    public void ofSelect(RecordCursorFactory recordCursorFactory, boolean cacheable) {
         of(SELECT, recordCursorFactory);
         this.isExecutedAtParseTime = false;
+        this.cacheable = cacheable;
     }
 
     public void ofSet() {
@@ -349,11 +389,20 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = true;
     }
 
+    @Override
+    public InsertOperation popInsertOperation() {
+        InsertOperation op = insertOp;
+        this.insertOp = null;
+        return op;
+    }
+
+    @Override
     public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
         return this;
     }
 
+    @Override
     public void withSqlText(String sqlText) {
         this.sqlStatement = sqlText;
     }

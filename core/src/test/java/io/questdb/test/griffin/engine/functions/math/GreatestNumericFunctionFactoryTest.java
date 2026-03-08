@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,12 @@ import org.junit.Test;
 public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testGreatestNumericFunctionFactoryAllNulls() throws Exception {
+        assertSqlWithTypes("greatest\nnull:LONG\n", "select greatest(null::long, null::long)");
+        assertSqlWithTypes("greatest\nnull:DOUBLE\n", "select greatest(null::double, null::double)");
+    }
+
+    @Test
     public void testGreatestNumericFunctionFactoryBytes() throws Exception {
         assertSqlWithTypes("greatest\n40:BYTE\n", "select greatest(1::byte, 40::byte)");
         assertSqlWithTypes("greatest\n12:BYTE\n", "select greatest(1::byte, 4::byte, 3::byte, 12::byte, 8::byte)");
@@ -47,6 +53,11 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1::short, 4.0)");
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1f, 4.0::double)");
         assertSqlWithTypes("greatest\n4.0:FLOAT\n", "select greatest(1f, 4::int)");
+        // A short has a precision of 5 (32,768), when scaling it to match the decimal, we have a precision of 6 and a
+        // scale of 1 -> DECIMAL(6, 1)
+        assertSqlWithTypes("greatest\n4.0:DECIMAL(6,1)\n", "select greatest(1::decimal(2,1), 4::short)");
+        // Doubles takes precedence over decimal has they have a much bigger range
+        assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(4::decimal(2,1), 1d, null::decimal(1,0))");
     }
 
     @Test
@@ -59,6 +70,26 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
                 "greatest\n2020-09-13T00:00:00.000Z:DATE\n",
                 "select greatest('2020-09-10'::date, '2020-09-11'::date, '2020-09-13'::date)"
         );
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryDecimalOverflow() throws Exception {
+        assertException(
+                "select greatest(123.456::decimal(76,73), 99999::int)",
+                46,
+                "inconvertible value: 99999 [INT -> DECIMAL(76,73)]"
+        );
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryDecimals() throws Exception {
+        assertSqlWithTypes("greatest\n6.000:DECIMAL(8,3)\n", "select greatest(2::decimal(4,0), 6::decimal(4,3), null::decimal(5,0))");
+        assertSqlWithTypes("greatest\n6.000:DECIMAL(28,3)\n", "select greatest(2::decimal(24,0), 6::decimal(24,3), null::decimal(25,0))");
+        assertSqlWithTypes("greatest\n6.000:DECIMAL(48,3)\n", "select greatest(2::decimal(44,0), 6::decimal(44,3), null::decimal(45,0))");
+        assertSqlWithTypes("greatest\n2.0:DECIMAL(2,1)\n", "select greatest(null::decimal(1,0), 2::decimal(2,1), 1::decimal(1,0))");
+        assertSqlWithTypes("greatest\n12.34:DECIMAL(4,2)\n", "select greatest(1::decimal(1,0), 12.34::decimal(4,2), 6.7::decimal(2,1))");
+        assertSqlWithTypes("greatest\n123.456:DECIMAL(8,3)\n", "select greatest(123.456::decimal(6,3), 100::short, null::byte)");
+        assertSqlWithTypes("greatest\n123456.78901:DECIMAL(15,5)\n", "select greatest(123.456::decimal(6,3), 99999::int, 123456.78901::DECIMAL(11,5))");
     }
 
     @Test
@@ -87,7 +118,12 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Test
     public void testGreatestNumericFunctionFactoryNulls() throws Exception {
-        assertSqlWithTypes("greatest\nnull:NULL\n", "select greatest(1L, null, 2L)");
+        assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(1L, null, 2L)");
+        assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(null, 1L, 2L)");
+        assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(1L, 2L, null)");
+        assertSqlWithTypes("greatest\n2.0:DOUBLE\n", "select greatest(1.0, null, 2.0)");
+        assertSqlWithTypes("greatest\n2.0:DOUBLE\n", "select greatest(null, 1.0, 2.0)");
+        assertSqlWithTypes("greatest\n2.0:DOUBLE\n", "select greatest(1.0, 2.0, null)");
         // verify that we've cleaned up the counter array after the NULL returned earlier
         assertSqlWithTypes("greatest\n2:INT\n", "select greatest(1, 2)");
     }
@@ -106,7 +142,23 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
         );
         assertSqlWithTypes(
                 "greatest\n2020-09-11T20:00:00.000000Z:TIMESTAMP\n",
-                "select greatest('2020-09-10T20:00:00.000000Z'::timestamp, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000Z'::timestamp)"
+                "select greatest('2020-09-10T20:00:00.000000Z'::timestamp, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000Z'::timestamp, null)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T20:00:00.000000789Z:TIMESTAMP_NS\n",
+                "select greatest('2020-09-10T20:00:00.000000123Z'::timestamp_ns, '2020-09-10T20:01:00.000000123Z'::timestamp_ns, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T20:00:00.000000789Z:TIMESTAMP_NS\n",
+                "select greatest('2020-09-10T20:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T20:00:00.000000789Z:TIMESTAMP_NS\n",
+                "select greatest('2020-09-10T20:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000789Z'::timestamp_ns, null, 123456789L)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T20:00:00.000000Z:TIMESTAMP\n",
+                "select greatest('2020-09-10T20:00:00.000Z'::date, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000Z'::timestamp, null, 123456789L)"
         );
     }
 
@@ -114,6 +166,12 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     public void testGreatestNumericFunctionFactoryUnsupportedTypes() throws Exception {
         assertException("select greatest(5, 5.2, 'abc', 2)", 24, "unsupported type");
         assertException("select greatest(5, 5.2, 'abc'::varchar, 2)", 29, "unsupported type");
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryWith1Arg() throws Exception {
+        assertSqlWithTypes("greatest\n40:LONG\n", "select greatest(40::long)");
+        assertSqlWithTypes("greatest\n40.2:DOUBLE\n", "select greatest(40.2::double)");
     }
 
     @Test
@@ -146,6 +204,11 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
                     "select greatest(a, b) from x"
             );
         });
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryWithNoArgs() throws Exception {
+        assertException("select greatest();", 7, "at least one argument is required ");
     }
 
     @Test

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 public class O3PartitionPurgeTask {
     private int partitionBy;
     private TableToken tableToken;
+    private int timestampType;
 
     public int getPartitionBy() {
         return partitionBy;
@@ -38,8 +39,13 @@ public class O3PartitionPurgeTask {
         return tableToken;
     }
 
-    public void of(TableToken tableToken, int partitionBy) {
+    public int getTimestampType() {
+        return timestampType;
+    }
+
+    public void of(TableToken tableToken, int timestampType, int partitionBy) {
         this.tableToken = tableToken;
+        this.timestampType = timestampType;
         this.partitionBy = partitionBy;
     }
 }

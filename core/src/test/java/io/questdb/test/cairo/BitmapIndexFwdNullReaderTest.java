@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class BitmapIndexFwdNullReaderTest {
-    private static final BitmapIndexFwdNullReader reader = new BitmapIndexFwdNullReader();
+    private static final BitmapIndexFwdNullReader reader = new BitmapIndexFwdNullReader(-1, -1);
 
     @Test
     public void testAlwaysOpen() {
@@ -69,7 +69,7 @@ public class BitmapIndexFwdNullReaderTest {
         Assert.assertEquals(0, reader.getKeyMemorySize());
         Assert.assertEquals(0, reader.getValueBaseAddress());
         Assert.assertEquals(0, reader.getValueMemorySize());
-        Assert.assertEquals(0, reader.getUnIndexedNullCount());
+        Assert.assertEquals(0, reader.getColumnTop());
         Assert.assertEquals(0, reader.getValueBlockCapacity());
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
     }
 
     @Override
-    public int getStep() {
+    public long getStep() {
         return step;
     }
 
@@ -64,14 +64,14 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
     public FixedOffsetIntervalIterator of(
             @NotNull TimestampSampler sampler,
             long offset,
-            @Nullable LongList txnIntervals,
+            @Nullable LongList intervals,
             long minTs,
             long maxTs,
-            int step
+            long step
     ) {
-        super.of(sampler, txnIntervals);
+        super.of(sampler, intervals);
 
-        sampler.setStart(offset);
+        sampler.setOffset(offset);
         minTimestamp = sampler.round(minTs);
         maxTimestamp = sampler.nextTimestamp(sampler.round(maxTs));
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,9 +27,20 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.griffin.PlanSink;
@@ -38,8 +49,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.Worker;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Transient;
 import io.questdb.tasks.VectorAggregateTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -62,6 +81,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     private final int workerCount;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
+            CairoEngine engine,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
@@ -71,14 +91,14 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         super(metadata);
         try {
             this.base = base;
-            this.frameAddressCache = new PageFrameAddressCache(configuration);
+            this.frameAddressCache = new PageFrameAddressCache();
             this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             this.vafList = new ObjList<>(vafList.size());
             this.vafList.addAll(vafList);
             this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
             this.workerCount = workerCount;
             this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-            this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+            this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
             this.workStealingStrategy.of(startedCounter);
             this.frameMemoryPools = new ObjList<>(workerCount);
@@ -180,9 +200,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         private boolean areFunctionsBuilt;
         private MessageBus bus;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private int countDown = 1;
         private int frameCount;
         private PageFrameCursor frameCursor;
+        private boolean isExhausted;
 
         public GroupByNotKeyedVectorRecordCursor(ObjList<? extends Function> functions) {
             this.recordA = new VirtualRecordNoRowid(functions);
@@ -190,15 +210,15 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (countDown > 0) {
-                counter.add(countDown);
-                countDown = 0;
+            if (!isExhausted) {
+                counter.inc();
+                isExhausted = true;
             }
         }
 
         @Override
         public void close() {
-            frameAddressCache.clear();
+            Misc.free(frameAddressCache);
             frameCursor = Misc.free(frameCursor);
         }
 
@@ -209,11 +229,15 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public boolean hasNext() {
+            if (isExhausted) {
+                return false;
+            }
             if (!areFunctionsBuilt) {
                 buildFunctions();
                 areFunctionsBuilt = true;
             }
-            return countDown-- > 0;
+            isExhausted = true;
+            return true;
         }
 
         public GroupByNotKeyedVectorRecordCursor of(
@@ -225,7 +249,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
-            frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
+            frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
             for (int i = 0; i < workerCount; i++) {
                 frameMemoryPools.getQuick(i).of(frameAddressCache);
             }
@@ -236,13 +260,18 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         }
 
         @Override
+        public long preComputedStateSize() {
+            return RecordCursor.fromBool(areFunctionsBuilt);
+        }
+
+        @Override
         public long size() {
             return 1;
         }
 
         @Override
         public void toTop() {
-            countDown = 1;
+            isExhausted = false;
         }
 
         private void buildFunctions() {
@@ -338,14 +367,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 }
 
                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            } catch (DataUnavailableException e) {
-                // We're not yet done, so no need to cancel the circuit breaker. 
-                throw e;
-            } catch (Throwable e) {
+            } catch (Throwable th) {
                 sharedCircuitBreaker.cancel();
-                // Release page frame memory.
-                Misc.freeObjListAndKeepObjects(frameMemoryPools);
-                throw e;
+                throw th;
             } finally {
                 // all done? great start consuming the queue we just published
                 // how do we get to the end? If we consume our own queue there is chance we will be consuming
@@ -363,10 +387,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         sharedCircuitBreaker,
                         workStealingStrategy
                 );
+                // Release page frame memory now, when no worker is using it.
+                Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
-
-            // Release page frame memory.
-            Misc.freeObjListAndKeepObjects(frameMemoryPools);
 
             toTop();
 

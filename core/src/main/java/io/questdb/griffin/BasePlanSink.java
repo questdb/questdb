@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,11 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjStack;
@@ -42,6 +45,7 @@ public abstract class BasePlanSink implements PlanSink {
     protected final EscapingStringSink textSink;
     protected int depth;
     protected SqlExecutionContext executionContext;
+    protected RecordMetadata metadata;
     protected int order;
     protected EscapingStringSink sink;
     protected boolean useBaseMetadata;
@@ -154,14 +158,30 @@ public abstract class BasePlanSink implements PlanSink {
         if (useBaseMetadata) {
             putBaseColumnName(columnIndex);
         } else {
-            val(factoryStack.peek().getMetadata().getColumnName(columnIndex));
+            if (metadata != null) {
+                val(metadata.getColumnName(columnIndex));
+            } else {
+                val(factoryStack.peek().getMetadata().getColumnName(columnIndex));
+            }
         }
         return this;
+    }
+
+    public void setMetadata(RecordMetadata metadata) {
+        this.metadata = metadata;
     }
 
     @Override
     public void useBaseMetadata(boolean useBaseMetadata) {
         this.useBaseMetadata = useBaseMetadata;
+    }
+
+    @Override
+    public PlanSink val(Plannable s, RecordCursorFactory factory) {
+        factoryStack.push(factory);
+        val(s);
+        factoryStack.pop();
+        return this;
     }
 
     @Override
@@ -198,12 +218,18 @@ public abstract class BasePlanSink implements PlanSink {
     }
 
     @Override
-    public PlanSink valISODate(long l) {
-        sink.putISODate(l);
+    public PlanSink valISODate(TimestampDriver driver, long l) {
+        sink.putISODate(driver, l);
         return this;
     }
 
-    static class EscapingStringSink extends StringSink {
+    @Override
+    public PlanSink valInterval(Interval interval, int intervalType) {
+        interval.toSink(sink, intervalType);
+        return this;
+    }
+
+    protected static class EscapingStringSink extends StringSink {
 
         @Override
         public StringSink put(@Nullable CharSequence cs) {
@@ -270,7 +296,7 @@ public abstract class BasePlanSink implements PlanSink {
         }
     }
 
-    static class HtmlEscapingStringSink extends EscapingStringSink {
+    protected static class HtmlEscapingStringSink extends EscapingStringSink {
         protected void escape(char c) {
             if (c == '<') {
                 super.put("&lt;");

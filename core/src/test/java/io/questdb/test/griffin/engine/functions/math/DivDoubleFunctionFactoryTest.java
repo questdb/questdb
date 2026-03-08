@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import org.junit.Test;
 public class DivDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testDivByZero() throws SqlException {
-        call(10d, 0d).andAssert(Double.POSITIVE_INFINITY, 0.000001);
+        call(10d, 0d).andAssert(Double.NaN, 0.000001);
     }
 
     @Test

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,20 +33,20 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     protected final Socket socket;
     protected long heartbeatId = -1;
     private int disconnectReason;
-    // keep dispatcher private to avoid context scheduling itself multiple times
-    private IODispatcher<T> dispatcher;
+    private volatile boolean initialized = false;
 
-    protected IOContext(SocketFactory socketFactory, NetworkFacade nf, Log log) {
+    // IMPORTANT: Keep subclass constructors lightweight!
+    // Under high load, new context objects are created for each accepted connection.
+    // Since connection acceptance runs on a single thread, slow constructors can
+    // significantly degrade performance and throttle incoming connections.
+    // To avoid this, defer context initialization to the doInit() method.
+    protected IOContext(@NotNull SocketFactory socketFactory, NetworkFacade nf, Log log) {
         this.socket = socketFactory.newInstance(nf, log);
     }
 
     @Override
     public void clear() {
         _clear();
-    }
-
-    public void clearSuspendEvent() {
-        // no-op
     }
 
     @Override
@@ -72,15 +72,11 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return socket;
     }
 
-    public SuspendEvent getSuspendEvent() {
-        return null;
-    }
-
-    /**
-     * @throws io.questdb.cairo.CairoException if initialization fails
-     */
-    public void init() {
-        // no-op
+    public final void init() throws TlsSessionInitFailedException {
+        if (!initialized) {
+            doInit();
+            initialized = true;
+        }
     }
 
     public boolean invalid() {
@@ -88,9 +84,8 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     @SuppressWarnings("unchecked")
-    public T of(long fd, @NotNull IODispatcher<T> dispatcher) {
+    public final T of(long fd) {
         socket.of(fd);
-        this.dispatcher = dispatcher;
         return (T) this;
     }
 
@@ -118,8 +113,23 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     private void _clear() {
         heartbeatId = -1;
         socket.close();
-        dispatcher = null;
         disconnectReason = -1;
-        clearSuspendEvent();
+        initialized = false;
+    }
+
+    /**
+     * Initializes the state of the context object.
+     * <p>
+     * Override this method to perform any setup required.
+     * Note that this method is called once per connection, but not on the thread
+     * that accepts connections. Instead, it is invoked when the first I/O event
+     * is dispatched for this context.
+     * <p>
+     * Avoid placing initialization logic in the context's constructor, as it may
+     * negatively impact the database's ability to accept new connections under high load.
+     *
+     * @throws io.questdb.cairo.CairoException if initialization fails
+     */
+    protected void doInit() throws TlsSessionInitFailedException {
     }
 }

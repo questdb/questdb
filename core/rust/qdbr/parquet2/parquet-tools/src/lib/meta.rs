@@ -100,11 +100,11 @@ where
 fn parquet_type_str(parquet_type: &ParquetType) -> String {
     match parquet_type {
         ParquetType::PrimitiveType(PrimitiveType {
-                                       field_info,
-                                       logical_type,
-                                       converted_type,
-                                       physical_type,
-                                   }) => {
+            field_info,
+            logical_type,
+            converted_type,
+            physical_type,
+        }) => {
             format!(
                 "{:27} {:?} {:?} P:{:?} L:{:?} C:{:?}",
                 &field_info.name,

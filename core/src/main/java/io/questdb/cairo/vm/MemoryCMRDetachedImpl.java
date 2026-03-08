@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,8 +35,11 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     private static final Log LOG = LogFactory.getLog(MemoryCMRDetachedImpl.class);
 
     public MemoryCMRDetachedImpl(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean keepFdOpen) {
-        super();
-        of(ff, name, 0, size, memoryTag, 0, -1, keepFdOpen);
+        this(ff, name, size, memoryTag, keepFdOpen, -1);
+    }
+
+    public MemoryCMRDetachedImpl(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean keepFdOpen, int madviseOpts) {
+        of(ff, name, 0, size, memoryTag, 0, madviseOpts, keepFdOpen);
     }
 
     @Override
@@ -55,11 +58,11 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts) {
         of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts, false);
     }
 
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts, boolean keepFdOpen) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts, boolean keepFdOpen) {
         super.of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts);
         if (!keepFdOpen && ff != null && ff.close(fd)) {
             LOG.debug().$("closing [fd=").$(fd).I$();

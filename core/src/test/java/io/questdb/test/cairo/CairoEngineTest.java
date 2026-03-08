@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -46,7 +47,7 @@ import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -148,7 +149,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         long fd = super.openRW(name, opts);
                         if (Utf8s.endsWithAscii(name, TableUtils.TAB_INDEX_FILE_NAME)) {
                             this.fd = fd;
@@ -190,15 +191,6 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGetTableFlagResolver() throws Exception {
-        assertMemoryLeak(() -> {
-            final TableFlagResolver tableFlagResolver = engine.getTableFlagResolver();
-            assertTrue(tableFlagResolver.isSystem(engine.getConfiguration().getSystemTableNamePrefix() + ".tableName"));
-            assertTrue(tableFlagResolver.isPublic(TelemetryTask.TABLE_NAME));
-        });
-    }
-
-    @Test
     public void testExpiry() throws Exception {
         assertMemoryLeak(() -> {
             class MyListener implements PoolListener {
@@ -224,7 +216,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                         @Override
                         public long getIdleCheckInterval() {
                             // Make it big to prevent second run even on slow machines
-                            return Timestamps.DAY_MICROS;
+                            return Micros.DAY_MICROS;
                         }
                     })
             ) {
@@ -235,7 +227,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, x);
                 assertReader(engine, x);
 
-                Job job = engine.getEngineMaintenanceJob();
+                Job job = new ServerMain.EngineMaintenanceJob(engine);
                 Assert.assertNotNull(job);
 
                 Assert.assertTrue(job.run(0));
@@ -243,6 +235,15 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 Assert.assertEquals(2, listener.count);
             }
+        });
+    }
+
+    @Test
+    public void testGetTableFlagResolver() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableFlagResolver tableFlagResolver = engine.getTableFlagResolver();
+            assertTrue(tableFlagResolver.isSystem(engine.getConfiguration().getSystemTableNamePrefix() + ".tableName"));
+            assertTrue(tableFlagResolver.isPublic(TelemetryTask.TABLE_NAME));
         });
     }
 
@@ -327,7 +328,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 TableToken x = createX(engine);
                 assertReader(engine, x);
                 assertWriter(engine, x);
-                engine.dropTableOrMatView(path, x);
+                engine.dropTableOrViewOrMatView(path, x);
                 Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getTableStatus(path, x));
 
                 try {
@@ -349,7 +350,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testRemoveNewTable() {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             TableToken x = createX(engine);
-            engine.dropTableOrMatView(path, x);
+            engine.dropTableOrViewOrMatView(path, x);
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getTableStatus(path, x));
         }
     }
@@ -360,7 +361,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 createY(engine);
                 try {
-                    engine.dropTableOrMatView(path, engine.verifyTableName("x"));
+                    engine.dropTableOrViewOrMatView(path, engine.verifyTableName("x"));
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
@@ -377,7 +378,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 try (TableReader reader = engine.getReader(x)) {
                     Assert.assertNotNull(reader);
                     try {
-                        engine.dropTableOrMatView(path, x);
+                        engine.dropTableOrViewOrMatView(path, x);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -394,7 +395,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 try (TableWriter writer = getWriter(engine, x.getTableName())) {
                     Assert.assertNotNull(writer);
                     try {
-                        engine.dropTableOrMatView(path, x);
+                        engine.dropTableOrViewOrMatView(path, x);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -549,7 +550,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                         .col("a", ColumnType.BYTE)
                         .col("b", ColumnType.STRING)
                         .timestamp("ts");
-                Job job = engine.getEngineMaintenanceJob();
+                Job job = new ServerMain.EngineMaintenanceJob(engine);
                 workerPool.assign(job);
                 workerPool.start();
 

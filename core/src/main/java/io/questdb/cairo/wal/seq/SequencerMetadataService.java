@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class SequencerMetadataService implements MetadataServiceStub {
     private final SequencerMetadata metadata;
@@ -84,7 +85,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+    public boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         return false;
     }
 
@@ -110,6 +111,11 @@ public class SequencerMetadataService implements MetadataServiceStub {
     @Override
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    @Override
+    public int getTimestampType() {
+        return metadata.getTimestampType();
     }
 
     @Override

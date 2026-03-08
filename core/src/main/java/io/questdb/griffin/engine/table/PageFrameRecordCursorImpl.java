@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
-    private boolean isSkipped;
+    private boolean isExhausted;
     private RowCursor rowCursor;
 
     public PageFrameRecordCursorImpl(
@@ -64,10 +64,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
+        prepareRowCursorFactory();
 
         if (!frameCursor.supportsSizeCalculation() || filter != null || rowCursorFactory.isUsingIndex()) {
             while (hasNext()) {
@@ -84,7 +81,10 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             rowCursor = null;
         }
 
+        counter.add(frameCursor.getRemainingRowsInInterval());
+
         frameCursor.calculateSize(counter);
+        isExhausted = true;
     }
 
     public RowCursorFactory getRowCursorFactory() {
@@ -93,11 +93,10 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
+        if (isExhausted) {
+            return false;
         }
-
+        prepareRowCursorFactory();
         try {
             if (rowCursor != null && rowCursor.hasNext()) {
                 final int frameIndex = frameCount - 1;
@@ -119,9 +118,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 }
             }
         } catch (NoMoreFramesException ignore) {
+            isExhausted = true;
             return false;
         }
 
+        isExhausted = true;
         return false;
     }
 
@@ -140,10 +141,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
         areCursorsPrepared = false;
+        isExhausted = false;
         rowCursor = null;
-        isSkipped = false;
         // prepare for page frame iteration
         super.init();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return RecordCursor.fromBool(areCursorsPrepared);
     }
 
     @Override
@@ -153,39 +159,46 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void skipRows(Counter rowCount) {
-        if (isSkipped) {
-            return;
-        }
+        prepareRowCursorFactory();
 
-        if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor);
-            areCursorsPrepared = true;
-        }
-
+        // Use slow path when:
+        // - filter is present (need to evaluate each row)
+        // - using index (row order may not be sequential)
         if (filter != null || rowCursorFactory.isUsingIndex()) {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
-            isSkipped = true;
             return;
         }
 
-        long skipToPosition = rowCount.get();
+        // If we're mid-frame after hasNext() calls, exhaust current rowCursor first,
+        // then fall through to the fast path for remaining frames
+        if (rowCursor != null) {
+            while (rowCount.get() > 0 && rowCursor.hasNext()) {
+                rowCursor.next();
+                rowCount.dec();
+            }
+            if (rowCount.get() == 0) {
+                return;
+            }
+            rowCursor = null;
+        }
+
+        long skipTarget = rowCount.get();
         PageFrame pageFrame;
-        while ((pageFrame = frameCursor.next()) != null) {
+        while ((pageFrame = frameCursor.next(skipTarget)) != null) {
             frameAddressCache.add(frameCount++, pageFrame);
 
             long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
-            if (frameSize > skipToPosition) {
-                rowCount.dec(skipToPosition);
+            if (frameSize > skipTarget) {
+                rowCount.dec(skipTarget);
                 break;
             }
             rowCount.dec(frameSize);
-            skipToPosition -= frameSize;
+            skipTarget -= frameSize;
         }
 
         final int frameIndex = frameCount - 1;
-        isSkipped = true;
         // page frame is null when table has no partitions so there's nothing to skip
         if (pageFrame != null) {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
@@ -193,7 +206,9 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             recordA.init(frameMemory);
             recordA.setRowIndex(0);
             rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
-            rowCursor.jumpTo(skipToPosition);
+            rowCursor.jumpTo(skipTarget);
+        } else {
+            isExhausted = true;
         }
     }
 
@@ -207,9 +222,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (filter != null) {
             filter.toTop();
         }
-        areCursorsPrepared = false;
         rowCursor = null;
-        isSkipped = false;
+        isExhausted = false;
         super.toTop();
+    }
+
+    private void prepareRowCursorFactory() {
+        if (!areCursorsPrepared) {
+            rowCursorFactory.prepareCursor(frameCursor);
+            areCursorsPrepared = true;
+        }
     }
 }

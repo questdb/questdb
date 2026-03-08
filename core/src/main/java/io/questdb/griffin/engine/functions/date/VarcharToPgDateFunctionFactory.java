@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,6 +38,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
 
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
+
 public class VarcharToPgDateFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -68,7 +70,7 @@ public class VarcharToPgDateFunctionFactory implements FunctionFactory {
             Utf8Sequence value = arg.getVarcharA(rec);
             try {
                 if (value != null && value.isAscii()) {
-                    return DateFormatUtils.PG_DATE_FORMAT.parse(value.asAsciiCharSequence(), DateFormatUtils.EN_LOCALE);
+                    return DateFormatUtils.PG_DATE_FORMAT.parse(value.asAsciiCharSequence(), EN_LOCALE);
                 }
             } catch (NumericException ignore) {
             }

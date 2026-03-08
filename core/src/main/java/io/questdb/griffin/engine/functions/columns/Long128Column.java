@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,18 +25,16 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long128Function;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class Long128Column extends Long128Function implements ScalarFunction {
+public class Long128Column extends Long128Function implements ColumnFunction {
     private static final ObjList<Long128Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public Long128Column(int columnIndex) {
+    private Long128Column(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 
@@ -45,6 +43,11 @@ public class Long128Column extends Long128Function implements ScalarFunction {
             return COLUMNS.getQuick(columnIndex);
         }
         return new Long128Column(columnIndex);
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -60,11 +63,6 @@ public class Long128Column extends Long128Function implements ScalarFunction {
     @Override
     public boolean isThreadSafe() {
         return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     static {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,10 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -54,9 +54,9 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
     public PageFrameReduceJob(
+            CairoEngine engine,
             MessageBus bus,
-            Rnd rnd,
-            @NotNull SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration
+            Rnd rnd
     ) {
         this.messageBus = bus;
         this.shardCount = messageBus.getPageFrameReduceShardCount();
@@ -80,7 +80,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
         }
 
         this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(circuitBreakerConfiguration);
+        this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, engine.getConfiguration().getCircuitBreakerConfiguration());
     }
 
     /**
@@ -177,7 +177,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                     LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
                             .$(", id=").$(frameSequence.getId())
-                            .$(", taskType=").$(task.getType())
+                            .$(", taskType=").$(task.getTaskType())
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())
                             .$(", active=").$(frameSequence.isActive())
@@ -192,13 +192,12 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                     LOG.error()
                             .$("reduce error [error=").$(th)
                             .$(", id=").$(frameSequence.getId())
-                            .$(", taskType=").$(task.getType())
+                            .$(", taskType=").$(task.getTaskType())
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())
                             .I$();
                     int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
-                    if (th instanceof CairoException) {
-                        CairoException e = (CairoException) th;
+                    if (th instanceof CairoException e) {
                         interruptReason = e.getInterruptionReason();
                     }
                     task.setErrorMsg(th);

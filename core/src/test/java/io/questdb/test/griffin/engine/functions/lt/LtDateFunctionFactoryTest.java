@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,12 +24,12 @@
 
 package io.questdb.test.griffin.engine.functions.lt;
 
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.lt.LtDateFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
@@ -37,7 +37,7 @@ public class LtDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testGreaterOrEqThanNull() throws SqlException, NumericException {
-        long t1 = DateFormatUtils.parseDate("2020-12-31T23:59:59.000Z");
+        long t1 = MillisTimestampDriver.floor("2020-12-31T23:59:59.000Z");
         long t2 = Numbers.LONG_NULL;
         callBySignature(">=(MM)", t1, t1).andAssert(true);
         callBySignature(">=(MM)", t1, t2).andAssert(false);
@@ -47,8 +47,8 @@ public class LtDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testGreaterThan() throws SqlException, NumericException {
-        long t1 = DateFormatUtils.parseDate("2020-12-31T23:59:59.000Z");
-        long t2 = DateFormatUtils.parseDate("2020-12-31T23:59:59.001Z");
+        long t1 = MillisTimestampDriver.floor("2020-12-31T23:59:59.000Z");
+        long t2 = MillisTimestampDriver.floor("2020-12-31T23:59:59.001Z");
         callBySignature(">(MM)", t1, t1).andAssert(false);
         callBySignature(">(MM)", t1, t2).andAssert(false);
         callBySignature(">(MM)", t2, t1).andAssert(true);
@@ -56,7 +56,7 @@ public class LtDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testGreaterThanNull() throws SqlException, NumericException {
-        long t1 = DateFormatUtils.parseDate("2020-12-31T23:59:59.000Z");
+        long t1 = MillisTimestampDriver.floor("2020-12-31T23:59:59.000Z");
         long t2 = Numbers.LONG_NULL;
         callBySignature(">(MM)", t1, t1).andAssert(false);
         callBySignature(">(MM)", t1, t2).andAssert(false);
@@ -66,8 +66,8 @@ public class LtDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testGreaterThanOrEqualTo() throws SqlException, NumericException {
-        long t1 = DateFormatUtils.parseDate("2020-12-31T23:59:59.000Z");
-        long t2 = DateFormatUtils.parseDate("2020-12-31T23:59:59.001Z");
+        long t1 = MillisTimestampDriver.floor("2020-12-31T23:59:59.000Z");
+        long t2 = MillisTimestampDriver.floor("2020-12-31T23:59:59.001Z");
         callBySignature(">=(MM)", t1, t1).andAssert(true);
         callBySignature(">=(MM)", t1, t2).andAssert(false);
         callBySignature(">=(MM)", t2, t1).andAssert(true);
@@ -75,7 +75,7 @@ public class LtDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLessOrEqThanNull() throws SqlException, NumericException {
-        long t1 = DateFormatUtils.parseDate("2020-12-31T23:59:59.000Z");
+        long t1 = MillisTimestampDriver.floor("2020-12-31T23:59:59.000Z");
         long t2 = Numbers.LONG_NULL;
         callBySignature("<=(MM)", t1, t1).andAssert(true);
         callBySignature("<=(MM)", t1, t2).andAssert(false);
@@ -85,8 +85,8 @@ public class LtDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLessThan() throws SqlException, NumericException {
-        long t1 = DateFormatUtils.parseDate("2020-12-31T23:59:59.000Z");
-        long t2 = DateFormatUtils.parseDate("2020-12-31T23:59:59.001Z");
+        long t1 = MillisTimestampDriver.floor("2020-12-31T23:59:59.000Z");
+        long t2 = MillisTimestampDriver.floor("2020-12-31T23:59:59.001Z");
         callBySignature("<(MM)", t1, t1).andAssert(false);
         callBySignature("<(MM)", t1, t2).andAssert(true);
         callBySignature("<(MM)", t2, t1).andAssert(false);
@@ -94,8 +94,8 @@ public class LtDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLessThanOrEqualTo() throws SqlException, NumericException {
-        long t1 = DateFormatUtils.parseDate("2020-12-31T23:59:59.000Z");
-        long t2 = DateFormatUtils.parseDate("2020-12-31T23:59:59.001Z");
+        long t1 = MillisTimestampDriver.floor("2020-12-31T23:59:59.000Z");
+        long t2 = MillisTimestampDriver.floor("2020-12-31T23:59:59.001Z");
         callBySignature("<=(MM)", t1, t1).andAssert(true);
         callBySignature("<=(MM)", t1, t2).andAssert(true);
         callBySignature("<=(MM)", t2, t1).andAssert(false);

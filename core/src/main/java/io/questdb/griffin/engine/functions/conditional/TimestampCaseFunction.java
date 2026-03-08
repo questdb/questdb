@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,27 +24,31 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("resource")
 class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 
-    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
+    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args, int columnType) {
+        super(columnType);
         this.picker = picker;
         this.args = args;
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return picker.pick(rec).getTimestamp(rec);
+        Function f = picker.pick(rec);
+        return timestampDriver.from(f.getTimestamp(rec), ColumnType.getTimestampType(f.getType()));
     }
 }

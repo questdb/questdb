@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,15 @@ public class TimestampExtraTest {
         Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampCol));
         Assert.assertFalse(ColumnType.isDesignatedTimestamp(timestampCol));
         int timestampColD = ColumnType.setDesignatedTimestampBit(timestampCol, true);
+        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampColD));
+        Assert.assertTrue(ColumnType.isDesignatedTimestamp(timestampColD));
+        Assert.assertNotEquals(Integer.toBinaryString(timestampCol), Integer.toBinaryString(timestampColD));
+
+
+        timestampCol = ColumnType.TIMESTAMP_NANO;
+        Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampCol));
+        Assert.assertFalse(ColumnType.isDesignatedTimestamp(timestampCol));
+        timestampColD = ColumnType.setDesignatedTimestampBit(timestampCol, true);
         Assert.assertEquals(ColumnType.TIMESTAMP, ColumnType.tagOf(timestampColD));
         Assert.assertTrue(ColumnType.isDesignatedTimestamp(timestampColD));
         Assert.assertNotEquals(Integer.toBinaryString(timestampCol), Integer.toBinaryString(timestampColD));

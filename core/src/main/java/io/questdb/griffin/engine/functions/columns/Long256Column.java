@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -34,11 +32,11 @@ import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class Long256Column extends Long256Function implements ScalarFunction {
+public class Long256Column extends Long256Function implements ColumnFunction {
     private static final ObjList<Long256Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public Long256Column(int columnIndex) {
+    private Long256Column(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 
@@ -47,6 +45,11 @@ public class Long256Column extends Long256Function implements ScalarFunction {
             return COLUMNS.getQuick(columnIndex);
         }
         return new Long256Column(columnIndex);
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -62,11 +65,6 @@ public class Long256Column extends Long256Function implements ScalarFunction {
     @Override
     public Long256 getLong256B(Record rec) {
         return rec.getLong256B(columnIndex);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     static {

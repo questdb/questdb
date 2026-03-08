@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,13 +24,12 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.client.cutlass.line.AbstractLineTcpSender;
+import io.questdb.client.cutlass.line.LineTcpSenderV2;
 import io.questdb.network.Net;
-import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 import java.util.concurrent.locks.LockSupport;
 
@@ -95,12 +94,12 @@ public class LineTCPSenderMainFileLimitSimulation {
         int port = 9009;
         int bufferCapacity = 8 * 1024;
 
-        try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostid4v4), port, bufferCapacity)) {
+        try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4(hostid4v4), port, bufferCapacity)) {
 //            fillDates(rnd, sender);
 
             long ts = Os.currentTimeNanos();
             while (true) {
-                long shift = rnd.nextLong(Timestamps.HOUR_MICROS * 1000L / 3);
+                long shift = rnd.nextLong(MicrosTimestampDriver.INSTANCE.fromHours((int) (1000L / 3)));
                 if (rnd.nextBoolean()) {
                     shift = 0;
                 }
@@ -112,25 +111,13 @@ public class LineTCPSenderMainFileLimitSimulation {
         }
     }
 
-    private static void fillDates(Rnd rnd, LineTcpSender sender) throws NumericException {
-        long period = Timestamps.MINUTE_MICROS * 1000L * 10;
-        long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25") * 1000L;
-        long endTs = IntervalUtils.parseFloorPartialTimestamp("2022-03-26T20") * 1000L;
-
-        while (ts < endTs) {
-            sendLine(rnd, sender, ts);
-            ts += period + rnd.nextLong(Timestamps.MINUTE_MICROS * 1000L);
-        }
-        sender.flush();
-    }
-
     private static void generateStrings(Rnd rnd, String[] auui, int length) {
         for (int i = 0; i < auui.length; i++) {
             auui[i] = rnd.nextString(length);
         }
     }
 
-    private static void sendLine(Rnd rnd, LineTcpSender sender, long ts) {
+    private static void sendLine(Rnd rnd, AbstractLineTcpSender sender, long ts) {
         sender.metric("request_logs")
                 .tag("auui", auui[rnd.nextInt(auui.length)])
                 .tag("puui", puui[rnd.nextInt(puui.length)])

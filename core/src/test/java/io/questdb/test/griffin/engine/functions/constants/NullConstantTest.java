@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,25 @@ package io.questdb.test.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
-import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullBinConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -36,7 +54,7 @@ public class NullConstantTest {
 
     @Test
     public void testConstant() {
-        NullConstant constant = NullConstant.NULL;
+        Function constant = NullConstant.NULL;
 
         Assert.assertEquals(ColumnType.NULL, constant.getType());
         Assert.assertTrue(constant.isConstant());
@@ -44,7 +62,7 @@ public class NullConstantTest {
         Assert.assertTrue(constant.supportsRandomAccess());
         Assert.assertFalse(constant.isUndefined());
 
-        Assert.assertEquals(TableUtils.NULL_LEN, constant.getArrayLength());
+        Assert.assertEquals(TableUtils.NULL_LEN, constant.extendedOps().getArrayLength());
         Assert.assertEquals(StrConstant.NULL.getStrLen(null), constant.getStrLen(null));
 
         Assert.assertEquals(IntConstant.NULL.getInt(null), constant.getInt(null));
@@ -54,7 +72,8 @@ public class NullConstantTest {
         Assert.assertEquals(SymbolConstant.NULL.getSymbolB(null), constant.getSymbolB(null));
         Assert.assertEquals(LongConstant.NULL.getLong(null), constant.getLong(null));
         Assert.assertEquals(DateConstant.NULL.getDate(null), constant.getDate(null));
-        Assert.assertEquals(TimestampConstant.NULL.getTimestamp(null), constant.getTimestamp(null));
+        Assert.assertEquals(TimestampConstant.TIMESTAMP_MICRO_NULL.getTimestamp(null), constant.getTimestamp(null));
+        Assert.assertEquals(TimestampConstant.TIMESTAMP_NANO_NULL.getTimestamp(null), constant.getTimestamp(null));
         Assert.assertEquals(ByteConstant.ZERO.getByte(null), constant.getByte(null));
         Assert.assertEquals(ShortConstant.ZERO.getShort(null), constant.getShort(null));
         Assert.assertEquals(CharConstant.ZERO.getChar(null), constant.getChar(null));
@@ -70,7 +89,17 @@ public class NullConstantTest {
         Assert.assertEquals(GeoHashes.BYTE_NULL, constant.getGeoByte(null));
         Assert.assertEquals(GeoHashes.INT_NULL, constant.getGeoInt(null));
         Assert.assertEquals(GeoHashes.SHORT_NULL, constant.getGeoShort(null));
-        Assert.assertNull(constant.getRecord(null));
+        Assert.assertNull(constant.extendedOps().getRecord(null));
+        Assert.assertEquals(Decimals.DECIMAL8_NULL, constant.getDecimal8(null));
+        Assert.assertEquals(Decimals.DECIMAL16_NULL, constant.getDecimal16(null));
+        Assert.assertEquals(Decimals.DECIMAL32_NULL, constant.getDecimal32(null));
+        Assert.assertEquals(Decimals.DECIMAL64_NULL, constant.getDecimal64(null));
+        Decimal128 decimal128 = new Decimal128();
+        constant.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
+        Decimal256 decimal256 = new Decimal256();
+        constant.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
 
         StringSink sink = new StringSink();
         constant.getLong256(null, sink);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,20 +26,14 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.pgwire.IPGWireServer;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
-import io.questdb.network.SuspendEvent;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.postgresql.jdbc.PgConnection;
 import org.postgresql.util.PSQLException;
 
@@ -50,12 +44,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.EXTENDED_FOR_PREPARED;
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.SIMPLE;
@@ -64,25 +55,10 @@ import static org.junit.Assert.*;
 /**
  * Class contains tests of PostgreSQL simple query statements containing multiple commands separated by ';'
  */
-@RunWith(Parameterized.class)
 public class PGMultiStatementMessageTest extends BasePGTest {
-
-    public PGMultiStatementMessageTest(LegacyMode legacyMode) {
-        super(legacyMode);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return legacyModeParams();
-    }
 
     @Test
     public void testAsyncPGCommandBlockDoesntProduceError() throws Exception {
-        // @Ignore in legacy mode
-        // IllegalStateException: Received resultset tuples, but no field structure for them
-        // https://github.com/questdb/questdb/issues/1777
-        // all of these commands are no-op (at the moment)
-        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 boolean result = statement.execute(
@@ -306,11 +282,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testBeginThenSelectReturnsSelectResult() throws Exception {
-        long m = CONN_AWARE_ALL;
-        if (legacyMode) {
-            m ^= CONN_AWARE_QUIRKS;
-        }
-        assertWithPgServer(m, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("BEGIN; select 2");
             assertResults(statement, hasResult, Result.ZERO, data(row(2L)));
@@ -319,11 +291,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testBlockWithEmptyQueriesAndComments() throws Exception {
-        // @Ignore in legacy mode
-        // In EXTENDED BINARY mode, legacy code seems to return an extra Empty Query message at the end.
-        // JDBC driver seems to react to this by not returning the previous correct result (for select 2),
-        // returning only three results in total.
-        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("select 1;" +
@@ -348,12 +315,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCachedPgStatementReturnsDataUsingProperFormatOnRecompilation() throws Exception {
-        long modes = CONN_AWARE_ALL;
-        if (legacyMode) {
-            // legacy code does not work in quirks mode
-            modes &= ~CONN_AWARE_QUIRKS;
-        }
-        assertWithPgServer(modes, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
                 boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text);");
                 assertResults(stmt, hasResult, zero());
@@ -409,13 +371,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
-            boolean hasResult = statement.execute("CLOSE");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("CLOSE;");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("CLOSE ALL");
+            boolean hasResult = statement.execute("CLOSE ALL");
             assertResults(statement, hasResult, Result.ZERO);
 
             hasResult = statement.execute("CLOSE ALL;");
@@ -431,18 +387,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCloseThenSelectReturnsSelectResult() throws Exception {
-        // legacy code fails in quirks mode, include quirks when legacy is removed
-        long m = CONN_AWARE_ALL;
-        if (legacyMode) {
-            m ^= CONN_AWARE_QUIRKS;
-        }
-        assertWithPgServer(m, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("CLOSE ALL; select 6");
             assertResults(statement, hasResult, Result.ZERO, data(row(6L)));
-
-            hasResult = statement.execute("CLOSE; select 7");
-            assertResults(statement, hasResult, Result.ZERO, data(row(7L)));
         });
     }
 
@@ -477,11 +425,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test
     public void testCommitThenSelectReturnsSelectResult() throws Exception {
         // legacy code fails in quirks mode, include quirks when legacy is removed
-        long m = CONN_AWARE_ALL;
-        if (legacyMode) {
-            m ^= CONN_AWARE_QUIRKS;
-        }
-        assertWithPgServer(m, (connection, binary, mode, port) -> {
+        assertWithPgServer(7L, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("COMMIT; select 3");
             assertResults(statement, hasResult, Result.ZERO, data(row(3L)));
@@ -489,24 +433,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testCreateAsSelectReturnsRightInsertCountLegacy() throws Exception {
-        Assume.assumeTrue(legacyMode);
-        assertWithPgServer(CONN_AWARE_SIMPLE, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE test as (select x from long_sequence(3)); " +
-                            "SELECT * from test;");
-
-            assertResults(statement, hasResult,
-                    count(3),
-                    data(row("1"), row("2"), row("3")));
-        });
-    }
-
-    @Test
-    public void testCreateAsSelectReturnsRightInsertCountModern() throws Exception {
-        Assume.assumeFalse(legacyMode);
+    public void testCreateAsSelectReturnsRightInsertCount() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -565,9 +492,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertAlterAddColumnThenRollbackLeavesEmptyTableWal() throws Exception {
-        // @Ignore in legacy mode
-        // ERROR: row value count does not match column count [expected=3, actual=2, tuple=1]
-        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -591,236 +515,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     Result.ZERO,
                     Result.EMPTY
             );
-        });
-    }
-
-    @Test
-    @Ignore("The final SELECT doesn't observe the effect of ALTER TABLE")
-    public void testCreateInsertAlterTableAddColumnSelectFromTableInBlock() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE TEST(l long); " +
-                            "INSERT INTO TEST VALUES(1); " +
-                            "ALTER TABLE TEST ADD COLUMN s STRING; " +
-                            "SELECT * from TEST;");
-            assertResults(statement, hasResult,
-                    Result.ZERO, count(1), Result.ZERO, data(row(1L, null)));
-        });
-    }
-
-    @Test
-    public void testCreateInsertAlterTableAddIndexSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple ALTER TABLE parsing from execution
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long, s symbol); " +
-                            "INSERT INTO test VALUES(4,'d'); " +
-                            "ALTER TABLE test ALTER COLUMN s ADD INDEX; " +
-                            "SELECT l,s from test;");
-            assertResults(statement, hasResult,
-                    Result.ZERO, count(1), Result.ZERO, data(row(4L, "d")));
-        });
-    }
-
-    @Test
-    public void testCreateInsertAlterTableAlterColumnCacheSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple ALTER TABLE parsing from execution
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long, s symbol); " +
-                            "INSERT INTO test VALUES(5,'e'); " +
-                            "ALTER TABLE test ALTER COLUMN s cache; " +
-                            "SELECT l,s from test;");
-            assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(5L, "e")));
-        });
-    }
-
-    @Test
-    public void testCreateInsertAlterTableAlterColumnNoCacheSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple ALTER TABLE parsing from execution
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long, s symbol); " +
-                            "INSERT INTO test VALUES(6,'f'); " +
-                            "ALTER TABLE test ALTER COLUMN s nocache; " +
-                            "SELECT l,s from test;");
-            assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(6L, "f")));
-        });
-    }
-
-    @Test
-    @Ignore("ALTER TABLE should fail due to partition already existing, but it passes")
-    public void testCreateInsertAlterTableAttachPartitionListAndSelectFromTableInBlockFails() throws Exception {
-        // this test confirms that command is parsed and executed properly
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            try {
-                statement.execute(
-                        "CREATE TABLE test(l long,ts timestamp) TIMESTAMP(ts) PARTITION BY YEAR; " +
-                                "INSERT INTO test VALUES(1970, 0); " +
-                                "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd')); " +
-                                "ALTER TABLE test ATTACH PARTITION LIST '2020'; " +
-                                "SELECT l FROM test;");
-                fail("PSQLException should be thrown");
-            } catch (PSQLException e) {
-                TestUtils.assertContains(e.getMessage(), "could not attach partition [table=test, detachStatus=ATTACH_ERR_PARTITION_EXISTS");
-            }
-        });
-    }
-
-    @Test
-    @Ignore("The final SELECT doesn't observe the effect of ALTER TABLE")
-    public void testCreateInsertAlterTableDropColumnSelectFromTableInBlock() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE TEST(l long, de string); " +
-                            "INSERT INTO TEST VALUES(1,'a'); " +
-                            "ALTER TABLE TEST DROP COLUMN de; " +
-                            "SELECT * from TEST;");
-            assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1L)));
-        });
-    }
-
-    @Test
-    @Ignore("The final SELECT doesn't observe the effect of ALTER TABLE")
-    public void testCreateInsertAlterTableDropPartitionList2SelectFromTableInBlock() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long,ts timestamp) timestamp(ts) partition by year; " +
-                            "INSERT INTO test VALUES(1970, 0); " +
-                            "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
-                            "INSERT INTO test VALUES(2021, to_timestamp('2021-03-01', 'yyyy-MM-dd'));" +
-                            "ALTER TABLE test DROP PARTITION LIST '1970', '2020'; " +
-                            "SELECT l from test;");
-            assertResults(statement, hasResult,
-                    Result.ZERO, count(1), count(1),
-                    count(1), Result.ZERO, data(row(2021L))
-            );
-        });
-    }
-
-    @Test
-    @Ignore("The final SELECT doesn't observe the effect of ALTER TABLE")
-    public void testCreateInsertAlterTableDropPartitionListSelectFromTableInBlock() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long,ts timestamp) timestamp(ts) partition by year; " +
-                            "INSERT INTO test VALUES(1970, 0); " +
-                            "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
-                            "ALTER TABLE test DROP PARTITION LIST '1970'; " +
-                            "SELECT l from test;");
-            assertResults(statement, hasResult,
-                    Result.ZERO, count(1), count(1), Result.ZERO, data(row(2020L)));
-        });
-    }
-
-    @Test
-    @Ignore("The final SELECT doesn't observe the effect of ALTER TABLE")
-    public void testCreateInsertAlterTableDropPartitionWhereSelectFromTableInBlock() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long,ts timestamp) timestamp(ts) partition by year; " +
-                            "INSERT INTO test VALUES(1970, 0); " +
-                            "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
-                            "INSERT INTO test VALUES(2021, to_timestamp('2021-03-01', 'yyyy-MM-dd'));" +
-                            "ALTER TABLE test DROP PARTITION WHERE ts <= to_timestamp('2020', 'yyyy'); " +
-                            "SELECT l from test;");
-            assertResults(statement, hasResult, Result.ZERO, count(1), count(1),
-                    count(1), Result.ZERO, data(row(2021L))
-            );
-        });
-    }
-
-    @Test
-    @Ignore("The final SELECT doesn't observe the effect of ALTER TABLE")
-    public void testCreateInsertAlterTableRenameColumnSelectFromTableInBlock() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE TEST(l long, de string); " +
-                            "INSERT INTO TEST VALUES(2,'b'); " +
-                            "ALTER TABLE TEST RENAME COLUMN de TO s; " +
-                            "SELECT l,s from TEST;");
-            assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(2L, "b")));
-        });
-    }
-
-    @Test
-    public void testCreateInsertAlterTableSetSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple ALTER TABLE parsing from execution
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long, de string); " +
-                            "INSERT INTO test VALUES(3,'c'); " +
-                            "ALTER TABLE test SET PARAM maxUncommittedRows = 150; " +
-                            "SELECT l,de FROM test;");
-            assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(3L, "c")));
-        });
-    }
-
-    @Test
-    @Ignore("QuestDB doesn't report inserted row count with insert-as-select")
-    public void testCreateInsertAsSelectAndSelectFromTableInBlock() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("CREATE TABLE test(l long, s string); " +
-                    "INSERT INTO test VALUES (20, 'z'); " +
-                    "INSERT INTO test VALUES (21, 'u'); " +
-                    "INSERT INTO test select l,s from test; " +
-                    "SELECT l,s from test;");
-            assertResults(statement, hasResult,
-                    Result.ZERO, count(1), count(1),
-                    count(2), /*this is wrong, qdb doesn't report row count for insert as select !*/
-                    data(row(20L, "z"), row(21L, "u"), row(20L, "z"), row(21L, "u"))
-            );
-        });
-    }
-
-    @Test
-    @Ignore("insert-as-select isn't transactional and commits data immediately")
-    public void testCreateInsertAsSelectInsertThenRollbackLeavesNonEmptyTable() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult =
-                    statement.execute("CREATE TABLE mytable(l long); " +
-                            "BEGIN; " +
-                            "INSERT INTO mytable select x from long_sequence(2); " +
-                            "INSERT INTO mytable VALUES(3); " +
-                            "ROLLBACK; " +
-                            "SELECT * From mytable; ");
-
-            assertResults(statement, hasResult, Result.ZERO, Result.ZERO, count(2),
-                    count(1), Result.ZERO, data(row(1L), row(2L))
-            );
-        });
-    }
-
-    @Test
-    @Ignore("QuestDB doesn't report inserted row count with insert-as-select")
-    public void testCreateInsertAsSelectReturnsProperUpdateCount() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute("CREATE TABLE test(l long, s string); " +
-                    "INSERT INTO test select x,'str' from long_sequence(20);");
-            assertResults(statement, hasResult, Result.ZERO, count(20));
         });
     }
 
@@ -870,46 +564,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
             boolean hasResult = statement.execute("select * from testA; select * from testB; ");
             assertResults(statement, hasResult, data(row(190L, "ka")), data(row("test", (short) 12)));
-        });
-    }
-
-    @Test
-    public void testCreateInsertDropTableSelectFromTableInBlockThrowsErrorBecauseTableDoesntExist() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple DROP TABLE parsing from execution
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            try {
-                Statement statement = connection.createStatement();
-                statement.execute(
-                        "CREATE TABLE testX(l long,ts timestamp); " +
-                                "INSERT INTO testX VALUES(1990, 0); " +
-                                "DROP TABLE testX;" +
-                                "SELECT l from testX;");
-            } catch (PSQLException e) {
-                int expectedPos = mode == SIMPLE || mode == EXTENDED_FOR_PREPARED ? 108 : 15;
-                assertEquals("ERROR: table does not exist [table=testX]\n  Position: " + expectedPos, e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testCreateInsertRenameTableSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple RENAME TABLE parsing from execution
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long,ts timestamp) timestamp(ts) partition by day; " +
-                            "INSERT INTO test VALUES(1989, 0); " +
-                            "RENAME TABLE test TO newtest; " +
-                            "SELECT l from newtest;"
-            );
-            assertResults(
-                    statement,
-                    hasResult,
-                    Result.ZERO,
-                    count(1),
-                    Result.ZERO,
-                    data(row(1989L))
-            );
         });
     }
 
@@ -1166,13 +820,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
-            boolean hasResult = statement.execute("DISCARD");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("DISCARD;");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("DISCARD ALL");
+            boolean hasResult = statement.execute("DISCARD ALL");
             assertResults(statement, hasResult, Result.ZERO);
 
             hasResult = statement.execute("DISCARD PLANS");
@@ -1191,11 +839,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testDiscardThenSelectReturnsSelectResult() throws Exception {
-        long m = CONN_AWARE_ALL;
-        if (legacyMode) {
-            m ^= CONN_AWARE_QUIRKS;
-        }
-        assertWithPgServer(m, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("DISCARD ALL; select 5");
             assertResults(statement, hasResult, Result.ZERO, data(row(5L)));
@@ -1263,69 +907,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        maxQueryTime = 100;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-            try (Statement statement = connection.createStatement()) {
-                statement.execute(
-                        "select * from test_data_unavailable(1, 10); " +
-                                "select * from test_data_unavailable(1, 10);");
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-            } finally {
-                // Make sure to close the event on the producer side.
-                Misc.free(eventRef.get());
-            }
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediatelyLegacy() throws Exception {
-        long m = CONN_AWARE_ALL;
-        if (legacyMode) {
-            m ^= CONN_AWARE_SIMPLE;
-        }
-        assertWithPgServer(m, (connection, binary, mode, port) -> {
-            int totalRows = 3;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            try (Statement statement = connection.createStatement()) {
-                boolean hasResult = statement.execute(
-                        "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + "); " +
-                                "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ");"
-                );
-                assertResults(
-                        statement,
-                        hasResult,
-                        data(
-                                row(1L, 1L, 1L),
-                                row(2L, 2L, 2L),
-                                row(3L, 3L, 3L)
-
-                        ),
-                        data(
-                                row(1L, 1L, 1L),
-                                row(2L, 2L, 2L),
-                                row(3L, 3L, 3L)
-
-                        )
-                );
-            }
-            Assert.assertEquals(2 * totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
     @Test // edge case - run the same query with binary protocol in extended mode and then the same in query block
     public void testQueryExecutedInBatchModeDoesNotUseCachedStatementBinaryFormat() throws Exception {
         // Exclude quirks, because they send P(arse) message for all SQL statements in the script
@@ -1390,11 +971,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testResetThenSelectReturnsSelectResult() throws Exception {
-        long m = CONN_AWARE_ALL;
-        if (legacyMode) {
-            m ^= CONN_AWARE_QUIRKS;
-        }
-        assertWithPgServer(m, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("RESET configuration_parameter; select 10");
             assertResults(statement, hasResult, Result.ZERO, data(row(10L)));
@@ -1482,11 +1059,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testRollbackThenSelectReturnsSelectResult() throws Exception {
-        long m = CONN_AWARE_ALL;
-        if (legacyMode) {
-            m ^= CONN_AWARE_QUIRKS;
-        }
-        assertWithPgServer(m, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("ROLLBACK TRANSACTION; select 4");
             assertResults(statement, hasResult, Result.ZERO, data(row(4L)));
@@ -1522,23 +1095,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     count(1),
                     data(row(3L, "three")),
                     Result.ZERO
-            );
-        });
-    }
-
-    @Test
-    public void testRunBlockWithCreateInsertTruncateSelectReturnsNoResult() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple TRUNCATE parsing from execution
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute(
-                    "CREATE TABLE TEST(l long, s string); " +
-                            "INSERT INTO TEST VALUES (3, 'three'); " +
-                            "/*some comment */ TRUNCATE TABLE TEST; " +
-                            "SELECT '1';");
-            assertResults(statement, hasResult, Result.ZERO, count(1),
-                    Result.ZERO, data(row("1"))
             );
         });
     }
@@ -1690,11 +1246,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testSetThenSelectReturnsSelectResult() throws Exception {
-        long m = CONN_AWARE_ALL;
-        if (legacyMode) {
-            m ^= CONN_AWARE_QUIRKS;
-        }
-        assertWithPgServer(m, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("SET a = 'b'; select 1");
             assertResults(statement, hasResult, Result.ZERO, data(row(1L)));
@@ -1755,11 +1307,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testUnlistenThenSelectReturnsSelectResult() throws Exception {
-        long m = CONN_AWARE_ALL;
-        if (legacyMode) {
-            m ^= CONN_AWARE_QUIRKS;
-        }
-        assertWithPgServer(m, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("UNLISTEN channel_name; select 8");
             assertResults(statement, hasResult, Result.ZERO, data(row(8L)));
@@ -1924,7 +1472,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     class PGTestSetup implements Closeable {
         final Connection connection;
-        final IPGWireServer server;
+        final PGServer server;
         final Statement statement;
 
         PGTestSetup(boolean useSimpleMode) throws SQLException, SqlException {

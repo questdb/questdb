@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,13 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.tasks.VectorAggregateTask;
 
 public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAggregateTask> {
+    private final static Log LOG = LogFactory.getLog(GroupByVectorAggregateJob.class);
 
     public GroupByVectorAggregateJob(MessageBus messageBus) {
         super(messageBus.getVectorAggregateQueue(), messageBus.getVectorAggregateSubSeq());
@@ -37,7 +40,13 @@ public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAg
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final VectorAggregateEntry entry = queue.get(cursor).entry;
-        entry.run(workerId, subSeq, cursor);
+        try {
+            entry.run(workerId, subSeq, cursor);
+        } catch (Throwable th) {
+            LOG.error().$("vectorized reduce error [workerId=").$(workerId)
+                    .$(", ex=").$(th)
+                    .I$();
+        }
         return true;
     }
 }

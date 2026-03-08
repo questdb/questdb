@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -72,21 +72,16 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static Function dispatchUnaryFunc(Function operand, int operandType) {
-        switch (ColumnType.tagOf(operandType)) {
-            case ColumnType.INT:
-                return new FuncIntIsNaN(operand);
-            case ColumnType.LONG:
-                return new FuncLongIsNaN(operand);
-            case ColumnType.DATE:
-                return new FuncDateIsNaN(operand);
-            case ColumnType.TIMESTAMP:
-                return new FuncTimestampIsNaN(operand);
-            case ColumnType.FLOAT:
-                return new FuncFloatIsNaN(operand);
-            default:
+        return switch (ColumnType.tagOf(operandType)) {
+            case ColumnType.INT -> new FuncIntIsNaN(operand);
+            case ColumnType.LONG -> new FuncLongIsNaN(operand);
+            case ColumnType.DATE -> new FuncDateIsNaN(operand);
+            case ColumnType.TIMESTAMP -> new FuncTimestampIsNaN(operand);
+            case ColumnType.FLOAT -> new FuncFloatIsNaN(operand);
+            default ->
                 // double
-                return new FuncDoubleIsNaN(operand);
-        }
+                    new FuncDoubleIsNaN(operand);
+        };
     }
 
     private static boolean isNullConstant(Function operand, int operandType) {

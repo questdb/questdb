@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,14 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
@@ -47,13 +53,16 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         this.metadata = metadata;
         recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
-        frameAddressCache = new PageFrameAddressCache(configuration);
+        frameAddressCache = new PageFrameAddressCache();
         frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
+        Misc.free(recordA);
+        Misc.free(recordB);
+        Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
     }
 
@@ -96,7 +105,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     }
 
     protected void init() {
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
+        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;
         frameCursor.toTop();

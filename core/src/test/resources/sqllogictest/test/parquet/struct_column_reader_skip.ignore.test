@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/struct_column_reader_skip.test
+# name: test/parquet/struct_column_reader_skip.test
 # description: Issue #3205: skip in struct column reader
 # group: [parquet]
 

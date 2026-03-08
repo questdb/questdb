@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -210,7 +210,7 @@ public final class Chars {
     }
 
     public static boolean empty(@Nullable CharSequence value) {
-        return value == null || value.length() < 1;
+        return value == null || value.isEmpty();
     }
 
     public static boolean endsWith(CharSequence cs, CharSequence ends) {
@@ -390,6 +390,25 @@ public final class Chars {
         return true;
     }
 
+    // Left side has to be lower-case.
+    public static boolean equalsLowerCaseAscii(@NotNull CharSequence lLC, @NotNull CharSequence r, int rLo, int rHi) {
+        if (lLC == r) {
+            return true;
+        }
+
+        int ll = lLC.length();
+        if (ll != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (lLC.charAt(i) != toLowerCaseAscii(r.charAt(i + rLo))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, int lLo, int lHi, @NotNull CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
@@ -457,18 +476,13 @@ public final class Chars {
     }
 
     /**
-     * Strictly greater than (&gt;) comparison of two UTF16 sequences in lexicographical
-     * order. For example, for:
-     * l = aaaaa
-     * r = aaaaaaa
-     * the l &gt; r will produce "false", however for:
-     * l = bbbb
-     * r = aaaaaaa
-     * the l &gt; r will produce "true", because b &gt; a.
+     * Strictly greater than (&gt;) comparison of two CharSequences in Unicode code point order.
+     * For well-formed UTF-16 input, this produces the same ordering as comparing the
+     * UTF-8 encoded byte sequences.
      *
      * @param l left sequence, can be null
      * @param r right sequence, can be null
-     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     * @return false if either argument is null, otherwise true if l is lexicographically greater than r
      */
     public static boolean greaterThan(@Nullable CharSequence l, @Nullable CharSequence r) {
         if (l == null || r == null) {
@@ -476,15 +490,18 @@ public final class Chars {
         }
         final int ll = l.length();
         final int rl = r.length();
-        final int min = Math.min(ll, rl);
-
-        for (int i = 0; i < min; i++) {
-            final int k = l.charAt(i) - r.charAt(i);
-            if (k != 0) {
-                return k > 0;
+        int i = 0;
+        int j = 0;
+        while (i < ll && j < rl) {
+            final int cpL = Character.codePointAt(l, i);
+            final int cpR = Character.codePointAt(r, j);
+            if (cpL != cpR) {
+                return cpL > cpR;
             }
+            i += Character.charCount(cpL);
+            j += Character.charCount(cpR);
         }
-        return ll > rl;
+        return i < ll;
     }
 
     public static int hashCode(@NotNull CharSequence value, int lo, int hi) {
@@ -532,6 +549,23 @@ public final class Chars {
         return value.hashCode();
     }
 
+    /**
+     * Searches for the first occurrence of a character sequence within the specified bounds of another character sequence.
+     * This method performs a case-sensitive search using an optimized string matching algorithm.
+     * <p>
+     * The search bounds are defined as {@code [seqLo, seqHi)} where {@code seqLo} is inclusive and
+     * {@code seqHi} is exclusive. The method searches for the complete term within these bounds.
+     * <p>
+     * If the term is empty (length 0), the method returns 0 as an empty string is considered to be
+     * found at the beginning of any sequence.
+     *
+     * @param seq   the character sequence to search within (must not be null)
+     * @param seqLo the lower bound (inclusive) of the search range
+     * @param seqHi the upper bound (exclusive) of the search range
+     * @param term  the character sequence to search for (must not be null)
+     * @return the index of the first occurrence of the term, or -1 if not found within bounds
+     * @throws StringIndexOutOfBoundsException if bounds are invalid for the given sequence
+     */
     public static int indexOf(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence term) {
         int termLen = term.length();
         if (termLen == 0) {
@@ -565,6 +599,31 @@ public final class Chars {
         return -1;
     }
 
+    /**
+     * Searches for the nth occurrence of a character sequence within the specified bounds of another character sequence.
+     * This method supports both forward and reverse searching based on the occurrence parameter.
+     * <p>
+     * The search bounds are defined as {@code [seqLo, seqHi)} where {@code seqLo} is inclusive and
+     * {@code seqHi} is exclusive.
+     * <p>
+     * <strong>Occurrence Parameter:</strong>
+     * <ul>
+     * <li>Positive values (1, 2, 3, ...): search forward for the 1st, 2nd, 3rd, ... occurrence</li>
+     * <li>Negative values (-1, -2, -3, ...): search backward for the 1st, 2nd, 3rd, ... occurrence from the end</li>
+     * <li>Zero (0): returns -1 immediately without searching</li>
+     * </ul>
+     * <p>
+     * If the term is empty (length 0), the method returns 0 as an empty string is considered to be
+     * found at the beginning of any sequence.
+     *
+     * @param seq        the character sequence to search within (must not be null)
+     * @param seqLo      the lower bound (inclusive) of the search range
+     * @param seqHi      the upper bound (exclusive) of the search range
+     * @param term       the character sequence to search for (must not be null)
+     * @param occurrence the occurrence number to find (positive for forward, negative for reverse, 0 returns -1)
+     * @return the index of the specified occurrence of the term, or -1 if not found within bounds
+     * @throws StringIndexOutOfBoundsException if bounds are invalid for the given sequence
+     */
     public static int indexOf(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence term, int occurrence) {
         int m = term.length();
         if (m == 0) {
@@ -634,18 +693,67 @@ public final class Chars {
         return -1;
     }
 
+    /**
+     * Searches for the first occurrence of a character in the entire character sequence.
+     * This is a convenience method that searches from the beginning of the sequence.
+     *
+     * @param seq the character sequence to search within
+     * @param c   the character to search for
+     * @return the index of the first occurrence of the character, or -1 if not found
+     */
     public static int indexOf(CharSequence seq, char c) {
         return indexOf(seq, 0, c);
     }
 
+    /**
+     * Searches for the first occurrence of a character starting from a specified position.
+     * This is a convenience method that searches from the given starting position to the end of the sequence.
+     *
+     * @param seq   the character sequence to search within
+     * @param seqLo the starting position (inclusive) to begin the search
+     * @param c     the character to search for
+     * @return the index of the first occurrence of the character, or -1 if not found
+     */
     public static int indexOf(CharSequence seq, final int seqLo, char c) {
         return indexOf(seq, seqLo, seq.length(), c);
     }
 
+    /**
+     * Searches for the first occurrence of a character within the specified bounds of a character sequence.
+     * This is a convenience method that searches for the 1st occurrence of the character.
+     *
+     * @param seq   the character sequence to search within
+     * @param seqLo the lower bound (inclusive) of the search range
+     * @param seqHi the upper bound (exclusive) of the search range
+     * @param c     the character to search for
+     * @return the index of the first occurrence of the character, or -1 if not found within bounds
+     */
     public static int indexOf(CharSequence seq, int seqLo, int seqHi, char c) {
         return indexOf(seq, seqLo, seqHi, c, 1);
     }
 
+    /**
+     * Searches for the nth occurrence of a character within the specified bounds of a character sequence.
+     * This method supports both forward and reverse searching based on the occurrence parameter.
+     * <p>
+     * The search bounds are defined as {@code [seqLo, seqHi)} where {@code seqLo} is inclusive and
+     * {@code seqHi} is exclusive.
+     * <p>
+     * <strong>Occurrence Parameter:</strong>
+     * <ul>
+     * <li>Positive values (1, 2, 3, ...): search forward for the 1st, 2nd, 3rd, ... occurrence</li>
+     * <li>Negative values (-1, -2, -3, ...): search backward for the 1st, 2nd, 3rd, ... occurrence from the end</li>
+     * <li>Zero (0): returns -1 immediately without searching</li>
+     * </ul>
+     *
+     * @param seq        the character sequence to search within
+     * @param seqLo      the lower bound (inclusive) of the search range
+     * @param seqHi      the upper bound (exclusive) of the search range
+     * @param ch         the character to search for
+     * @param occurrence the occurrence number to find (positive for forward, negative for reverse, 0 returns -1)
+     * @return the index of the specified occurrence of the character, or -1 if not found within bounds
+     * @throws StringIndexOutOfBoundsException if bounds are invalid for the given sequence
+     */
     public static int indexOf(CharSequence seq, int seqLo, int seqHi, char ch, int occurrence) {
         if (occurrence == 0) {
             return -1;
@@ -675,6 +783,24 @@ public final class Chars {
         return -1;
     }
 
+    /**
+     * Searches for the first occurrence of a character sequence within the specified bounds of another character sequence,
+     * ignoring case differences. This method performs a case-insensitive search using {@link Character#toLowerCase(char)}
+     * for character comparison.
+     * <p>
+     * The search bounds are defined as {@code [seqLo, seqHi)} where {@code seqLo} is inclusive and
+     * {@code seqHi} is exclusive. The method searches for the complete term within these bounds.
+     * <p>
+     * If the term is empty (length 0), the method returns 0 as an empty string is considered to be
+     * found at the beginning of any sequence.
+     *
+     * @param seq   the character sequence to search within (must not be null)
+     * @param seqLo the lower bound (inclusive) of the search range
+     * @param seqHi the upper bound (exclusive) of the search range
+     * @param term  the character sequence to search for (must not be null)
+     * @return the index of the first occurrence of the term (case-insensitive), or -1 if not found within bounds
+     * @throws StringIndexOutOfBoundsException if bounds are invalid for the given sequence
+     */
     public static int indexOfIgnoreCase(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence term) {
         int termLen = term.length();
         if (termLen == 0) {
@@ -706,7 +832,75 @@ public final class Chars {
         return -1;
     }
 
-    // Term has to be lower-case.
+    /**
+     * Searches for the last occurrence of a character that is not within quoted sections.
+     * This method treats double quotes (") as quote delimiters and ignores characters within quoted sections.
+     * This is a convenience method that searches the entire sequence.
+     *
+     * @param seq the character sequence to search within (must not be null)
+     * @param ch  the character to search for
+     * @return the index of the last unquoted occurrence of the character, or -1 if not found
+     */
+    public static int indexOfLastUnquoted(@NotNull CharSequence seq, char ch) {
+        return indexOfLastUnquoted(seq, ch, 0, seq.length());
+    }
+
+    /**
+     * Searches for the last occurrence of a character that is not within quoted sections,
+     * within the specified bounds of a character sequence.
+     * <p>
+     * This method treats double quotes (") as quote delimiters and tracks whether the current
+     * position is within a quoted section. Characters within quoted sections are ignored.
+     * The search bounds are defined as {@code [seqLo, seqHi)} where {@code seqLo} is inclusive and
+     * {@code seqHi} is exclusive.
+     * <p>
+     * The method scans forward through the sequence, toggling quote state when encountering
+     * quote characters, and remembers the last position where the target character was found
+     * outside of quotes.
+     *
+     * @param seq   the character sequence to search within (must not be null)
+     * @param ch    the character to search for
+     * @param seqLo the lower bound (inclusive) of the search range
+     * @param seqHi the upper bound (exclusive) of the search range
+     * @return the index of the last unquoted occurrence of the character, or -1 if not found
+     * @throws StringIndexOutOfBoundsException if bounds are invalid for the given sequence
+     */
+    public static int indexOfLastUnquoted(@NotNull CharSequence seq, char ch, int seqLo, int seqHi) {
+        boolean inQuotes = false;
+        int last = -1;
+        for (int i = seqLo; i < seqHi; i++) {
+            if (seq.charAt(i) == '\"') {
+                inQuotes = !inQuotes;
+            }
+            if (seq.charAt(i) == ch && !inQuotes) {
+                last = i;
+            }
+        }
+
+        return last;
+    }
+
+    /**
+     * Searches for the first occurrence of a pre-lowercased character sequence within the specified bounds
+     * of another character sequence, performing case-insensitive matching.
+     * <p>
+     * This method is optimized for cases where the search term is already in lowercase.
+     * The input sequence is converted to lowercase on-the-fly using {@link Character#toLowerCase(char)}
+     * for comparison with the pre-lowercased term.
+     * <p>
+     * The search bounds are defined as {@code [seqLo, seqHi)} where {@code seqLo} is inclusive and
+     * {@code seqHi} is exclusive. The method searches for the complete term within these bounds.
+     * <p>
+     * If the term is empty (length 0), the method returns 0 as an empty string is considered to be
+     * found at the beginning of any sequence.
+     *
+     * @param seq    the character sequence to search within (must not be null)
+     * @param seqLo  the lower bound (inclusive) of the search range
+     * @param seqHi  the upper bound (exclusive) of the search range
+     * @param termLC the pre-lowercased character sequence to search for (must not be null and must be lowercase)
+     * @return the index of the first occurrence of the term (case-insensitive), or -1 if not found within bounds
+     * @throws StringIndexOutOfBoundsException if bounds are invalid for the given sequence
+     */
     public static int indexOfLowerCase(@NotNull CharSequence seq, int seqLo, int seqHi, @NotNull CharSequence termLC) {
         int termLen = termLC.length();
         if (termLen == 0) {
@@ -738,43 +932,49 @@ public final class Chars {
         return -1;
     }
 
-    public static int indexOfUnquoted(@NotNull CharSequence seq, char ch) {
-        return indexOfUnquoted(seq, ch, 0, seq.length(), 1);
-    }
-
-    public static int indexOfUnquoted(@NotNull CharSequence seq, char ch, int seqLo, int seqHi, int occurrence) {
-        if (occurrence == 0) {
+    /**
+     * Searches for the first non-whitespace character within the specified bounds of a character sequence.
+     * This method allows efficient searching without creating substring objects, supporting both forward and
+     * reverse search directions.
+     * <p>
+     * The search uses {@link Character#isWhitespace(char)} to identify whitespace characters. This includes
+     * spaces, tabs, newlines, and other Unicode whitespace characters.
+     * <p>
+     * The search bounds are defined as {@code [seqLo, seqHi)} where {@code seqLo} is inclusive and
+     * {@code seqHi} is exclusive. If {@code seqLo >= seqHi}, the method returns -1.
+     * <p>
+     * <strong>Search Direction:</strong>
+     * <ul>
+     * <li>Forward (1): searches from {@code seqLo} toward {@code seqHi - 1}</li>
+     * <li>Reverse (-1): searches from {@code seqHi - 1} toward {@code seqLo}</li>
+     * <li>None (0): returns -1 immediately without searching</li>
+     * </ul>
+     *
+     * @param seq             the character sequence to search (must not be null)
+     * @param seqLo           the lower bound (inclusive) of the search range
+     * @param seqHi           the upper bound (exclusive) of the search range
+     * @param searchDirection 1 for forward search, -1 for reverse search, 0 to skip searching
+     * @return the index of the first non-whitespace character found, or -1 if none exists within bounds
+     * @throws StringIndexOutOfBoundsException if bounds are invalid for the given sequence
+     */
+    public static int indexOfNonWhitespace(@NotNull CharSequence seq, int seqLo, int seqHi, int searchDirection) {
+        if (searchDirection == 0) {
             return -1;
         }
 
-        int count = 0;
-        boolean inQuotes = false;
-        if (occurrence > 0) {
+        if (searchDirection > 0) {
             for (int i = seqLo; i < seqHi; i++) {
-                if (seq.charAt(i) == '\"') {
-                    inQuotes = !inQuotes;
-                }
-                if (seq.charAt(i) == ch && !inQuotes) {
-                    count++;
-                    if (count == occurrence) {
-                        return i;
-                    }
+                if (!Character.isWhitespace(seq.charAt(i))) {
+                    return i;
                 }
             }
-        } else {    // if occurrence is negative, search in reverse
+        } else { // if searchDirection is negative, search in reverse
             for (int i = seqHi - 1; i >= seqLo; i--) {
-                if (seq.charAt(i) == '\"') {
-                    inQuotes = !inQuotes;
-                }
-                if (seq.charAt(i) == ch && !inQuotes) {
-                    count--;
-                    if (count == occurrence) {
-                        return i;
-                    }
+                if (!Character.isWhitespace(seq.charAt(i))) {
+                    return i;
                 }
             }
         }
-
         return -1;
     }
 
@@ -785,6 +985,18 @@ public final class Chars {
             }
         }
         return true;
+    }
+
+    public static boolean isAsciiDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    public static boolean isAsciiLetter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    public static boolean isAsciiWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
     }
 
     public static boolean isBlank(CharSequence s) {
@@ -802,6 +1014,18 @@ public final class Chars {
         return true;
     }
 
+    public static boolean isDoubleQuote(char c) {
+        return c == '"';
+    }
+
+    public static boolean isDoubleQuoted(CharSequence s) {
+        if (s == null || s.length() < 2) {
+            return false;
+        }
+
+        return isDoubleQuote(s.charAt(0)) && isDoubleQuote(s.charAt(s.length() - 1));
+    }
+
     public static boolean isOnlyDecimals(CharSequence s) {
         int len = s.length();
         for (int i = len - 1; i > -1; i--) {
@@ -814,14 +1038,10 @@ public final class Chars {
     }
 
     public static boolean isQuote(char c) {
-        switch (c) {
-            case '\'':
-            case '"':
-            case '`':
-                return true;
-            default:
-                return false;
-        }
+        return switch (c) {
+            case '\'', '"', '`' -> true;
+            default -> false;
+        };
     }
 
     public static boolean isQuoted(CharSequence s) {
@@ -837,19 +1057,36 @@ public final class Chars {
         return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
     }
 
+    public static int lastIndexOf(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, char c) {
+        return indexOf(sequence, sequenceLo, sequenceHi, c, -1);
+    }
+
     /**
-     * Strictly greater than (&lt;) comparison of two UTF16 sequences in lexicographical
-     * order. For example, for:
-     * l = aaaaa
-     * r = aaaaaaa
-     * the l &gt; r will produce "false", however for:
-     * l = bbbb
-     * r = aaaaaaa
-     * the l &lt; r will produce "true", because b &lt; a.
+     * Returns the index of the last character that isn't c between sequenceLo and sequenceHi.
+     *
+     * @param sequence   the sequence to find the last index of.
+     * @param sequenceLo the low limit to start searching through the sequence.
+     * @param sequenceHi the hi limit to end searching through the sequence.
+     * @param c          the character to stop matching.
+     * @return the index of the last character that isn't c or -1 if there aren't any.
+     */
+    public static int lastIndexOfDifferent(@NotNull CharSequence sequence, int sequenceLo, int sequenceHi, char c) {
+        for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
+            if (sequence.charAt(i) != c) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Strictly less than (&lt;) comparison of two CharSequences in Unicode code point order.
+     * For well-formed UTF-16 input, this produces the same ordering as comparing the
+     * UTF-8 encoded byte sequences.
      *
      * @param l left sequence, can be null
      * @param r right sequence, can be null
-     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     * @return false if either argument is null, otherwise true if l is lexicographically less than r
      */
     public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r) {
         if (l == null || r == null) {
@@ -857,15 +1094,18 @@ public final class Chars {
         }
         final int ll = l.length();
         final int rl = r.length();
-        final int min = Math.min(ll, rl);
-
-        for (int i = 0; i < min; i++) {
-            final int k = l.charAt(i) - r.charAt(i);
-            if (k != 0) {
-                return k < 0;
+        int i = 0;
+        int j = 0;
+        while (i < ll && j < rl) {
+            final int cpL = Character.codePointAt(l, i);
+            final int cpR = Character.codePointAt(r, j);
+            if (cpL != cpR) {
+                return cpL < cpR;
             }
+            i += Character.charCount(cpL);
+            j += Character.charCount(cpR);
         }
-        return ll < rl;
+        return j < rl;
     }
 
     public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r, boolean negated) {
@@ -964,6 +1204,7 @@ public final class Chars {
      * @param args command line
      * @return list of 0-terminated strings
      */
+    @SuppressWarnings("resource")
     public static ObjList<Path> splitLpsz(CharSequence args) {
         final ObjList<Path> paths = new ObjList<>();
         int n = args.length();
@@ -1028,7 +1269,7 @@ public final class Chars {
     }
 
     public static boolean startsWith(CharSequence _this, char c) {
-        return _this.length() > 0 && _this.charAt(0) == c;
+        return !_this.isEmpty() && _this.charAt(0) == c;
     }
 
     public static boolean startsWithIgnoreCase(CharSequence cs, CharSequence startsWith) {
@@ -1242,7 +1483,7 @@ public final class Chars {
             case 1:
                 // invalid encoding, we can't have 1 byte remainder as
                 // even 1 byte encodes to 2 chars
-                throw CairoException.nonCritical().put("invalid base64 encoding [string=").put(encoded).put(']');
+                throw CairoException.nonCritical().put("invalid base64 encoding [string=").putAsPrintable(encoded).put(']');
             case 2:
                 wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
                 wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
@@ -1299,7 +1540,7 @@ public final class Chars {
             case 1:
                 // invalid encoding, we can't have 1 byte remainder as
                 // even 1 byte encodes to 2 chars
-                throw CairoException.nonCritical().put("invalid base64 encoding [string=").put(encoded).put(']');
+                throw CairoException.nonCritical().put("invalid base64 encoding [string=").putAsPrintable(encoded).put(']');
             case 2:
                 wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
                 wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;

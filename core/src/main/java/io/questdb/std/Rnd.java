@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,14 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.std.str.*;
+import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
 
 import java.util.Collections;
 import java.util.List;
@@ -34,7 +40,7 @@ public class Rnd {
     private static final double DOUBLE_UNIT = 0x1.0p-53; // 1.0 / (1L << 53)
     private static final float FLOAT_UNIT = 1 / ((float) (1 << 24));
     private static final long mask = (1L << 48) - 1;
-    private final StringSink sink = new StringSink();
+    private final StringSink array = new StringSink();
     private long s0;
     private long s1;
 
@@ -44,18 +50,6 @@ public class Rnd {
 
     public Rnd() {
         reset();
-    }
-
-    public static void main(String[] args) {
-        Rnd rnd = new Rnd();
-        Utf8StringSink utf8sink = new Utf8StringSink();
-        rnd.nextUtf8Str(512, utf8sink);
-
-        StringSink utf16sink = new StringSink();
-        if (!Utf8s.utf8ToUtf16(utf8sink, utf16sink)) {
-            throw new RuntimeException();
-        }
-        System.out.println(utf16sink);
     }
 
     public long getSeed0() {
@@ -68,6 +62,10 @@ public class Rnd {
 
     public boolean nextBoolean() {
         return nextLong() >>> (64 - 1) != 0;
+    }
+
+    public byte nextByte(byte boundary) {
+        return (byte) (nextByte() % boundary);
     }
 
     public byte nextByte() {
@@ -103,20 +101,189 @@ public class Rnd {
     }
 
     public CharSequence nextChars(int len) {
-        sink.clear();
-        nextChars(sink, len);
-        return sink;
+        array.clear();
+        nextChars(array, len);
+        return array;
     }
 
     // returns random bytes between 'B' and 'Z' for legacy reasons
-    public void nextChars(Utf16Sink sink, int len) {
+    public void nextChars(Utf16Sink array, int len) {
         for (int i = 0; i < len; i++) {
-            sink.put((char) (nextPositiveInt() % 25 + 66));
+            array.put((char) (nextPositiveInt() % 25 + 66));
         }
+    }
+
+    /**
+     * Generate a random Decimal128 into the provided sink.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @param sink The Decimal128 instance to populate with random values
+     */
+    public void nextDecimal128(Decimal128 sink) {
+        // Generate random scale between 0 and MAX_SCALE
+        int scale = nextInt(Decimal128.MAX_SCALE + 1);
+        // Generate random value - mix of small, medium and large values
+        int valueType = nextInt(4);
+        switch (valueType) {
+            case 0: // Small values (-1000 to 1000)
+                sink.of(0, nextLong() % 2000 - 1000, scale);
+                break;
+            case 1: // Medium values (up to int range)
+                sink.of(0, nextInt(), scale);
+                break;
+            case 2: // Large positive values
+                sink.of(nextLong() & 0x7FFFFFFFL, nextLong(), scale);
+                break;
+            default: // Large negative values
+                sink.of((1L << 63) | (nextLong() & 0x7FFFFFFFL), nextLong(), scale);
+                break;
+        }
+    }
+
+    /**
+     * Generate a random Decimal128 and return a new instance.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @return A new Decimal128 instance with random values
+     */
+    public Decimal128 nextDecimal128() {
+        Decimal128 result = new Decimal128();
+        nextDecimal128(result);
+        return result;
+    }
+
+    /**
+     * Generate a random Decimal256 into the provided sink.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @param sink The Decimal256 instance to populate with random values
+     */
+    public void nextDecimal256(Decimal256 sink) {
+        // Generate random scale between 0 and MAX_SCALE
+        int scale = nextInt(Decimal256.MAX_SCALE + 1);
+
+        // Generate random value - mix of small, medium and large values
+        int valueType = nextInt(6);  // More types for 256-bit range
+
+        switch (valueType) {
+            case 0: // Small values (-1000 to 1000)
+                sink.of(0, 0, 0, nextLong() % 2000 - 1000, scale);
+                break;
+            case 1: // Medium values (up to int range)
+                sink.of(0, 0, 0, nextInt(), scale);
+                break;
+            case 2: // Large 64-bit positive values
+                sink.of(0, 0, 0, nextLong() & Long.MAX_VALUE, scale);
+                break;
+            case 3: // Large 64-bit negative values
+                sink.of(0, 0, 0, nextLong() | Long.MIN_VALUE, scale);
+                break;
+            case 4: // Very large 128-bit values (using mid and low)
+                sink.of(0, 0, nextLong(), nextLong(), scale);
+                break;
+            default: // Ultra large 256-bit values (using all four longs)
+                long hh = nextLong();
+                while (hh >= Decimal256.MAX_VALUE.getHh() || hh <= Decimal256.MIN_VALUE.getHh()) {
+                    hh = nextLong();
+                }
+                sink.of(hh, nextLong(), nextLong(), nextLong(), scale);
+                break;
+        }
+    }
+
+    /**
+     * Generate a random Decimal256 and return a new instance.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @return A new Decimal256 instance with random values
+     */
+    public Decimal256 nextDecimal256() {
+        Decimal256 result = new Decimal256();
+        nextDecimal256(result);
+        return result;
+    }
+
+    public void nextDecimal64(Decimal64 sink) {
+        // Generate random scale between 0 and MAX_SCALE
+        int scale = nextInt(Decimal64.MAX_SCALE + 1);
+        // Generate random value - mix of small, medium and large values
+        int valueType = nextInt(4);
+        switch (valueType) {
+            case 0: // Small values (-1000 to 1000)
+                sink.of(nextLong() % 2000 - 1000, scale);
+                break;
+            case 1: // Medium values (up to int range)
+                sink.of(nextInt(), scale);
+                break;
+            case 2: // Large positive values (limited to avoid overflow in operations)
+                sink.of(nextLong() / 1000, scale);
+                break;
+            default: // Large negative values (limited to avoid overflow in operations)
+                sink.of(-(nextLong() / 1000), scale);
+                break;
+        }
+    }
+
+    /**
+     * Generate a random Decimal64 and return a new instance.
+     * This method generates a mix of small, medium, and large values with random scales.
+     *
+     * @return A new Decimal64 instance with random values
+     */
+    public Decimal64 nextDecimal64() {
+        Decimal64 result = new Decimal64();
+        nextDecimal64(result);
+        return result;
     }
 
     public double nextDouble() {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
+    }
+
+    public void nextDoubleArray(int maxDimCount, DirectArray array, int nanRate, int maxDimLen, int errorPosition) {
+        int dimCount = nextIntExp(maxDimCount - 1) + 1;
+        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
+
+        int size = 1;
+        for (int i = 0; i < dimCount; i++) {
+            int n = nextIntExp(maxDimLen) + 1;
+            array.setDimLen(i, n);
+            size *= n;
+        }
+
+        array.applyShape(errorPosition);
+
+        nextFlatDoubleArray(array, nanRate, size);
+    }
+
+    public void nextDoubleArray(int dimCount, DirectArray array, int nanRate, IntList dimLens, int errorPosition) {
+        assert dimLens.size() == dimCount;
+
+        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
+
+        int size = 1;
+        for (int i = 0; i < dimCount; i++) {
+            int n = dimLens.getQuick(i);
+            array.setDimLen(i, n);
+            size *= n;
+        }
+
+        array.applyShape(errorPosition);
+
+        nextFlatDoubleArray(array, nanRate, size);
+    }
+
+    public void nextFlatDoubleArray(DirectArray array, int nanRate, int size) {
+        MemoryA memA = array.startMemoryA();
+        for (int i = 0; i < size; i++) {
+            double val;
+            if (nanRate > 0 && nextInt(nanRate) == 0) {
+                val = Double.NaN;
+            } else {
+                val = nextDouble();
+            }
+            memA.putDouble(val);
+        }
     }
 
     public float nextFloat() {
@@ -180,6 +347,10 @@ public class Rnd {
         return l > 0 ? l : (l == Long.MIN_VALUE ? Long.MAX_VALUE : -l);
     }
 
+    public short nextShort(short boundary) {
+        return (short) (nextShort() % boundary);
+    }
+
     public short nextShort() {
         return (short) nextLong();
     }
@@ -193,20 +364,20 @@ public class Rnd {
         return new String(chars);
     }
 
-    public void nextUtf8AsciiStr(int len, Utf8Sink sink) {
+    public void nextUtf8AsciiStr(int len, Utf8Sink array) {
         for (int i = 0; i < len; i++) {
-            sink.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
+            array.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
         }
     }
 
     // https://stackoverflow.com/questions/1319022/really-good-bad-utf-8-example-test-data
-    public void nextUtf8Str(int len, Utf8Sink sink) {
+    public void nextUtf8Str(int len, Utf8Sink array) {
         for (int i = 0; i < len; i++) {
             // 5 is the exclusive upper limit for up to how many UTF8 bytes per character we generate
             int byteCount = Math.max(1, nextInt(5));
             switch (byteCount) {
                 case 1:
-                    sink.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
+                    array.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
                     break;
                 case 2:
                     while (true) {
@@ -219,7 +390,7 @@ public class Rnd {
                         if ((b1 & 30) == 0) {
                             continue;
                         }
-                        sink.put(b1).put(b2);
+                        array.put(b1).put(b2);
                         break;
                     }
                     break;
@@ -235,7 +406,7 @@ public class Rnd {
                         if (Character.isSurrogate(c)) {
                             continue;
                         }
-                        sink.put(b1).put(b2).put(b3);
+                        array.put(b1).put(b2).put(b3);
                         break;
                     }
                     break;
@@ -248,7 +419,7 @@ public class Rnd {
                         final byte b3 = nextUtf8ContinuationByte();
                         final byte b4 = nextUtf8ContinuationByte();
                         if (Character.isSupplementaryCodePoint(Utf8s.getUtf8Codepoint(b1, b2, b3, b4))) {
-                            sink.put(b1).put(b2).put(b3).put(b4);
+                            array.put(b1).put(b2).put(b3).put(b4);
                             break;
                         }
                     }
@@ -276,9 +447,26 @@ public class Rnd {
         }
     }
 
+    public <T> void shuffle(T[] array) {
+        for (int i = 1, n = array.length; i < n; i++) {
+            int swapTarget = nextInt(i + 1);
+
+            T tmp = array[i];
+            array[i] = array[swapTarget];
+            array[swapTarget] = tmp;
+        }
+    }
+
     public void syncWith(Rnd other) {
         this.s0 = other.s0;
         this.s1 = other.s1;
+    }
+
+    private int nextIntExp(int boundary) {
+        // Exponential distribution for generating integers
+        // This is a simple implementation that generates integers
+        // with a bias towards smaller values.
+        return (int) Math.exp(nextDouble() * Math.log(boundary));
     }
 
     private int nextIntForDouble(int bits) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,40 +33,9 @@ import org.junit.Test;
 import java.util.HashSet;
 
 public class LowerCaseCharSequenceHashSetTest {
-    @Test
-    public void testEqualsAndHashCode() {
-        final int items = 1000;
-
-        final LowerCaseCharSequenceHashSet setA = new LowerCaseCharSequenceHashSet();
-        final LowerCaseCharSequenceHashSet setB = new LowerCaseCharSequenceHashSet();
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-
-        for (int i = 0; i < items; i++) {
-            setA.add(Integer.toString(i));
-        }
-
-        Assert.assertNotEquals(setA, setB);
-
-        // Reverse the addition order, so that the elements of the underlying arrays aren't 1-to-1 between the sets.
-        for (int i = items - 1; i > -1; i--) {
-            setB.add(Integer.toString(i));
-        }
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-
-        setA.clear();
-        setB.clear();
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-    }
 
     @Test
     public void testSaturation() {
-
         final int N = 10_000;
         final Rnd rnd = new Rnd();
         final LowerCaseCharSequenceHashSet lowerCaseSet = new LowerCaseCharSequenceHashSet();
@@ -85,6 +54,7 @@ public class LowerCaseCharSequenceHashSetTest {
         // verify
         for (String s : referenceSet) {
             Assert.assertTrue(lowerCaseSet.contains(s));
+            Assert.assertTrue(lowerCaseSet.contains(s, 0, s.length()));
             Assert.assertFalse(lowerCaseSet.excludes(s));
             Assert.assertFalse(lowerCaseSet.excludes(s, 0, s.length()));
 

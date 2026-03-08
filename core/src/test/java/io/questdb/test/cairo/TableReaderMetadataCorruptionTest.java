@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,13 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -51,7 +57,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length + 10,
                 5,
-                "Index flag is only supported for SYMBOL at [6]" //failed validation on garbage flags value
+                "index flag is only supported for SYMBOL column type" //failed validation on garbage flags value
         );
     }
 
@@ -65,7 +71,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length + 1000,
                 5,
-                "File is too small, column types are missing 4096",
+                "file is too small, column types are missing",
                 4096,
                 4096
         );
@@ -143,7 +149,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length + 10,
                 5,
-                "File is too small, column types are missing",
+                "file is too small, column types are missing",
                 4906,
                 128
         );
@@ -159,7 +165,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 23,
-                "Timestamp"
+                "timestamp index is outside of range"
         );
     }
 
@@ -173,7 +179,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 -2,
-                "Timestamp"
+                "timestamp index is outside of range"
         );
     }
 
@@ -203,7 +209,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 5,
-                "Invalid column type"
+                "invalid column type"
         );
     }
 
@@ -228,13 +234,13 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         // because appender cannot truncate file to size smaller than default page size
         // when reader is open.
         if (Os.type != Os.WINDOWS) {
-            assertTransitionIndexValidation(99);
+            assertTransitionIndexValidation(99, "index flag is only supported for SYMBOL column type");
         }
     }
 
     @Test
     public void testTransitionIndexWhenColumnCountOverflows() throws Exception {
-        assertTransitionIndexValidation(Integer.MAX_VALUE - 1);
+        assertTransitionIndexValidation(Integer.MAX_VALUE - 1, "file is too small, column types are missing");
     }
 
     private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains) throws Exception {
@@ -288,7 +294,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 }
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-                    metadata.load(path.$());
+                    metadata.loadMetadata(path.$());
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);
@@ -297,11 +303,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertTransitionIndexValidation(int columnCount) throws Exception {
+    private void assertTransitionIndexValidation(int columnCount, String contains) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
 
-                CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
+                CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
 
                 String tableName = "all";
                 TableToken tableToken = engine.verifyTableName(tableName);
@@ -310,7 +316,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 long len = TestFilesFacadeImpl.INSTANCE.length(path.$());
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken)) {
-                    metadata.load();
+                    metadata.loadMetadata();
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                         mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);
@@ -322,7 +328,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                         metadata.prepareTransition(0);
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Invalid metadata at ");
+                        TestUtils.assertContains(e.getFlyweightMessage(), contains);
                     }
                 }
             }

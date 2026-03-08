@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,7 +43,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.regex.Matcher;
 
 public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
-
     private static final String SIGNATURE = "regexp_replace(SSS)";
 
     @Override
@@ -112,7 +111,56 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             return value;
         }
 
-        public CharSequence getStr(Record rec, StringBuilderSink sink) {
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return getStr(rec, sinkA);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr(rec, sinkB);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            pattern.init(symbolTableSource, executionContext);
+            matcher = RegexUtils.createMatcher(pattern, patternPos);
+            replacement.init(symbolTableSource, executionContext);
+            CharSequence cs = replacement.getStrA(null);
+            if (cs == null) {
+                replacementStr = null;
+            } else {
+                replacementStr = cs.toString();
+            }
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("regexp_replace(").val(value).val(',').val(pattern).val(',').val(replacement).val(')');
+        }
+
+        private CharSequence getStr(Record rec, StringBuilderSink sink) {
             if (matcher == null || replacementStr == null) {
                 return null;
             }
@@ -151,58 +199,10 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
                         .put(']');
             }
         }
-
-        @Override
-        public CharSequence getStrA(Record rec) {
-            return getStr(rec, sinkA);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr(rec, sinkB);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
-            matcher = RegexUtils.createMatcher(pattern, patternPos);
-            replacement.init(symbolTableSource, executionContext);
-            CharSequence cs = replacement.getStrA(null);
-            if (cs == null) {
-                replacementStr = null;
-            } else {
-                replacementStr = cs.toString();
-            }
-        }
-
-        @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public boolean isRuntimeConstant() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("regexp_replace(").val(value).val(',').val(pattern).val(',').val(replacement).val(')');
-        }
     }
 
     private static class StringBuilderSink implements CharSequence {
-        //#if jdk.version==8
-//$        private final StringBuffer buffer = new StringBuffer();
-//#else
         private final StringBuilder buffer = new StringBuilder();
-//#endif
 
         @Override
         public char charAt(int index) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,35 +24,52 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.security.DenyAllSecurityContext;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.line.LineUtils.from;
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 
-class LineTcpMeasurementEvent implements Closeable {
+public class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
     private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
-    private final MicrosecondClock clock;
+    private final Decimal256 decimal256 = new Decimal256();
     private final DefaultColumnTypes defaultColumnTypes;
     private final int maxColumnNameLength;
     private final PrincipalOnlySecurityContext principalOnlySecurityContext = new PrincipalOnlySecurityContext();
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
+    private final StringSink stringSink = new StringSink(16);
     private final boolean stringToCharCastAllowed;
-    private final LineTcpTimestampAdapter timestampAdapter;
+    private final byte timestampUnit;
     private boolean commitOnWriterClose;
     private TableUpdateDetails tableUpdateDetails;
     private int writerWorkerId;
@@ -60,8 +77,7 @@ class LineTcpMeasurementEvent implements Closeable {
     LineTcpMeasurementEvent(
             long bufLo,
             long bufSize,
-            MicrosecondClock clock,
-            LineTcpTimestampAdapter timestampAdapter,
+            byte timestampUnit,
             DefaultColumnTypes defaultColumnTypes,
             boolean stringToCharCastAllowed,
             int maxColumnNameLength,
@@ -70,9 +86,8 @@ class LineTcpMeasurementEvent implements Closeable {
         this.maxColumnNameLength = maxColumnNameLength;
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.buffer = new LineTcpEventBuffer(bufLo, bufSize);
-        this.clock = clock;
-        this.timestampAdapter = timestampAdapter;
         this.defaultColumnTypes = defaultColumnTypes;
+        this.timestampUnit = timestampUnit;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
     }
 
@@ -81,6 +96,7 @@ class LineTcpMeasurementEvent implements Closeable {
     public void close() {
         // this is concurrent writer release
         tableUpdateDetails = Misc.free(tableUpdateDetails);
+        Misc.free(sink);
     }
 
     public TableUpdateDetails getTableUpdateDetails() {
@@ -93,6 +109,14 @@ class LineTcpMeasurementEvent implements Closeable {
 
     public void releaseWriter() {
         tableUpdateDetails.releaseWriter(commitOnWriterClose);
+    }
+
+    private byte getOverloadTimestampUnit(byte unit) {
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS, CommonUtils.TIMESTAMP_UNIT_MICROS,
+                 CommonUtils.TIMESTAMP_UNIT_MILLIS -> unit;
+            default -> timestampUnit;
+        };
     }
 
     void append() throws CommitFailedException {
@@ -111,7 +135,7 @@ class LineTcpMeasurementEvent implements Closeable {
             long timestamp = buffer.readLong(address);
             address += Long.BYTES;
             if (timestamp == LineTcpParser.NULL_TIMESTAMP) {
-                timestamp = clock.getTicks();
+                timestamp = tableUpdateDetails.getTimestampDriver().getTicks();
             }
             row = writer.newRow(timestamp);
             final int nEntities = buffer.readInt(address);
@@ -156,7 +180,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         // column is added
                         row.cancel();
                         row = null;
-                        final int colType = defaultColumnTypes.MAPPED_COLUMN_TYPES[entityType];
+                        final int colType = defaultColumnTypes.mappedColumnTypes[entityType];
                         try {
                             writer.addColumn(columnName, colType, principalOnlySecurityContext.of(principal));
                         } catch (CairoException e) {
@@ -245,15 +269,24 @@ class LineTcpMeasurementEvent implements Closeable {
                         row.putLong128(colIndex, buffer.readLong(address), buffer.readLong(address + Long.BYTES));
                         address += Long.BYTES * 2;
                         break;
-                    case LineTcpParser.ENTITY_TYPE_VARCHAR: {
+                    case LineTcpParser.ENTITY_TYPE_VARCHAR:
                         final boolean ascii = buffer.readByte(address++) == 0;
                         Utf8Sequence s = buffer.readVarchar(address, ascii);
                         row.putVarchar(colIndex, s);
                         address += Integer.BYTES + s.size();
-                    }
-                    break;
+                        break;
+                    case LineTcpParser.ENTITY_TYPE_ARRAY:
+                        ArrayView array = buffer.readArray(address);
+                        row.putArray(colIndex, array);
+                        address += buffer.columnValueLength(entityType, address);
+                        break;
                     case ENTITY_TYPE_NULL:
                         // ignored, default nulls is used
+                        break;
+                    case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                        int columnType = buffer.readDecimal(address, decimal256);
+                        DecimalUtil.store(decimal256, row, colIndex, columnType);
+                        address += Byte.BYTES + Integer.BYTES + Decimal256.BYTES;
                         break;
                     default:
                         throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
@@ -266,7 +299,8 @@ class LineTcpMeasurementEvent implements Closeable {
         } catch (Throwable th) {
             LOG.error()
                     .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableToken())
-                    .$(", message=").$(th.getMessage())
+                    .$(", message=").$safe(th.getMessage())
+                    .$(", trace: ")
                     .$(th)
                     .I$();
             if (row != null) {
@@ -288,7 +322,7 @@ class LineTcpMeasurementEvent implements Closeable {
         securityContext.authorizeInsert(tud.getTableToken());
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            timestamp = timestampAdapter.getMicros(timestamp, parser.getTimestampUnit());
+            timestamp = from(tud.getTimestampDriver(), timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
         }
         buffer.addStructureVersion(buffer.getAddress(), localDetails.getMetadataVersion());
         // timestamp, entitiesWritten are written to the buffer after saving all fields
@@ -303,7 +337,7 @@ class LineTcpMeasurementEvent implements Closeable {
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
                 if (columnWriterIndex == tud.getTimestampIndex()) {
-                    timestamp = timestampAdapter.getMicros(entity.getLongValue(), entity.getUnit());
+                    timestamp = from(tud.getTimestampDriver(), entity.getLongValue(), entity.getUnit());
                     continue;
                 }
 
@@ -315,7 +349,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
                     securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
                     offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getPrincipal());
-                    colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
+                    colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entity);
                 } else if (!autoCreateNewColumns) {
                     throw newColumnsNotAllowed(colNameUtf16, tableUpdateDetails.getTableNameUtf16());
                 } else {
@@ -368,7 +402,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
                         }
                         case ColumnType.TIMESTAMP:
-                            long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(entity.getLongValue(), LineTcpParser.ENTITY_UNIT_NONE);
+                            long timestampValue = entity.getLongValue();
                             offset = buffer.addTimestamp(offset, timestampValue);
                             break;
                         case ColumnType.DATE:
@@ -381,11 +415,39 @@ class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addFloat(offset, entity.getLongValue());
                             break;
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
+                            if (entity.isBinaryFormat()) {
+                                sink.clear();
+                                Numbers.append(sink, entity.getLongValue());
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        sink,
+                                        localDetails.getSymbolLookup(columnWriterIndex));
+                            } else {
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entity.getValue(),
+                                        localDetails.getSymbolLookup(columnWriterIndex));
+                            }
+                            break;
+                        case ColumnType.DECIMAL8:
+                        case ColumnType.DECIMAL16:
+                        case ColumnType.DECIMAL32:
+                        case ColumnType.DECIMAL64:
+                        case ColumnType.DECIMAL128:
+                        case ColumnType.DECIMAL256:
+                            final int scale = ColumnType.getDecimalScale(colType);
+                            decimal256.ofLong(entity.getLongValue(), 0);
+                            if (scale != 0) {
+                                try {
+                                    decimal256.rescale(scale);
+                                } catch (NumericException ignored) {
+                                    throw boundsError(entity.getLongValue(), ColumnType.BYTE, tud.getTableNameUtf16(), nEntity);
+                                }
+                            }
+                            if (!decimal256.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
+                                throw boundsError(entity.getLongValue(), colType, tud.getTableNameUtf16(), nEntity);
+                            }
+                            offset = buffer.addDecimal(offset, decimal256, colType);
                             break;
                         default:
                             throw castError(tud.getTableNameUtf16(), "integer", colType, entity.getName());
@@ -401,11 +463,51 @@ class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addFloat(offset, (float) entity.getFloatValue());
                             break;
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
+                            if (entity.isBinaryFormat()) {
+                                sink.clear();
+                                Numbers.append(sink, entity.getFloatValue());
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        sink,
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                            } else {
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entity.getValue(),
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                            }
+                            break;
+                        case ColumnType.DECIMAL8:
+                        case ColumnType.DECIMAL16:
+                        case ColumnType.DECIMAL32:
+                        case ColumnType.DECIMAL64:
+                        case ColumnType.DECIMAL128:
+                        case ColumnType.DECIMAL256:
+                            final int precision = ColumnType.getDecimalPrecision(colType);
+                            final int scale = ColumnType.getDecimalScale(colType);
+                            if (entity.isBinaryFormat()) {
+                                double d = entity.getFloatValue();
+                                if (Numbers.isNull(d)) {
+                                    decimal256.ofNull();
+                                } else {
+                                    stringSink.clear();
+                                    Numbers.append(stringSink, entity.getFloatValue());
+                                    try {
+                                        decimal256.ofString(stringSink, precision, scale);
+                                    } catch (NumericException ignored) {
+                                        throw precisionLossError(tud.getTableNameUtf16(), entity.getName(), stringSink, colType);
+                                    }
+                                }
+                            } else {
+                                try {
+                                    decimal256.ofString(entity.getValue().asAsciiCharSequence(), precision, scale);
+                                } catch (NumericException ignored) {
+                                    throw precisionLossError(tud.getTableNameUtf16(), entity.getName(), entity.getValue(), colType);
+                                }
+                            }
+                            offset = buffer.addDecimal(offset, decimal256, colType);
                             break;
                         default:
                             throw castError(tud.getTableNameUtf16(), "float", colType, entity.getName());
@@ -413,9 +515,8 @@ class LineTcpMeasurementEvent implements Closeable {
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_STRING: {
-                    final int colTypeMeta = localDetails.getColumnTypeMeta(columnWriterIndex);
                     final DirectUtf8Sequence entityValue = entity.getValue();
-                    if (colTypeMeta == 0) { // not geohash
+                    if (!ColumnType.isGeoHash(colType)) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.IPv4:
                                 try {
@@ -459,29 +560,40 @@ class LineTcpMeasurementEvent implements Closeable {
                                     throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                                 }
                                 break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                final int precision = ColumnType.getDecimalPrecision(colType);
+                                final int scale = ColumnType.getDecimalScale(colType);
+                                try {
+                                    decimal256.ofString(entityValue.asAsciiCharSequence(), precision, scale);
+                                } catch (NumericException ignored) {
+                                    throw valueError(tud.getTableNameUtf16(), colType, entityValue, entity.getName());
+                                }
+                                offset = buffer.addDecimal(offset, decimal256, colType);
+                                break;
                             default:
                                 throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                         }
                     } else {
+                        final int colTypeMeta = localDetails.getColumnTypeMeta(columnWriterIndex);
                         offset = buffer.addGeoHash(offset, entityValue, colTypeMeta);
                     }
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_LONG256: {
-                    switch (ColumnType.tagOf(colType)) {
-                        case ColumnType.LONG256:
-                            offset = buffer.addLong256(offset, entity.getValue());
-                            break;
-                        case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
-                            break;
-                        default:
-                            throw castError(tud.getTableNameUtf16(), "long256", colType, entity.getName());
-                    }
+                    offset = switch (ColumnType.tagOf(colType)) {
+                        case ColumnType.LONG256 -> buffer.addLong256(offset, entity.getValue());
+                        case ColumnType.SYMBOL -> buffer.addSymbol(
+                                offset,
+                                entity.getValue(),
+                                localDetails.getSymbolLookup(columnWriterIndex)
+                        );
+                        default -> throw castError(tud.getTableNameUtf16(), "long256", colType, entity.getName());
+                    };
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_BOOLEAN: {
@@ -509,11 +621,19 @@ class LineTcpMeasurementEvent implements Closeable {
                             offset = buffer.addDouble(offset, entityValue);
                             break;
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
+                            if (entity.isBinaryFormat()) {
+                                sink.clear();
+                                sink.put(entity.getBooleanValue() ? 't' : 'f');
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        sink,
+                                        localDetails.getSymbolLookup(columnWriterIndex));
+                            } else {
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entity.getValue(),
+                                        localDetails.getSymbolLookup(columnWriterIndex));
+                            }
                             break;
                         default:
                             throw castError(tud.getTableNameUtf16(), "boolean", colType, entity.getName());
@@ -523,19 +643,30 @@ class LineTcpMeasurementEvent implements Closeable {
                 case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                     switch (ColumnType.tagOf(colType)) {
                         case ColumnType.TIMESTAMP:
-                            long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(entity.getLongValue(), entity.getUnit());
+                            long timestampValue = from(ColumnType.getTimestampDriver(colType), entity.getLongValue(), entity.getUnit());
                             offset = buffer.addTimestamp(offset, timestampValue);
                             break;
                         case ColumnType.DATE:
-                            long dateValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(entity.getLongValue(), entity.getUnit());
-                            offset = buffer.addDate(offset, dateValue / 1000);
+                            TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
+                            long dateValue = driver.toDate(from(driver, entity.getLongValue(), entity.getUnit()));
+                            offset = buffer.addDate(offset, dateValue);
                             break;
                         case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
+                            if (entity.isBinaryFormat()) {
+                                sink.clear();
+                                Numbers.append(sink, entity.getLongValue());
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        sink,
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                            } else {
+                                offset = buffer.addSymbol(
+                                        offset,
+                                        entity.getValue(),
+                                        localDetails.getSymbolLookup(columnWriterIndex)
+                                );
+                            }
                             break;
                         default:
                             throw castError(tud.getTableNameUtf16(), "timestamp", colType, entity.getName());
@@ -544,27 +675,49 @@ class LineTcpMeasurementEvent implements Closeable {
                 }
                 case LineTcpParser.ENTITY_TYPE_TAG:
                 case LineTcpParser.ENTITY_TYPE_SYMBOL: {
-                    switch (colType) {
-                        case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
-                            break;
-                        case ColumnType.VARCHAR:
-                            offset = buffer.addVarchar(offset, entity.getValue());
-                            break;
-                        case ColumnType.STRING:
-                            offset = buffer.addString(offset, entity.getValue());
-                            break;
-                        default:
-                            throw castError(tud.getTableNameUtf16(), "symbol", colType, entity.getName());
-                    }
+                    offset = switch (colType) {
+                        case ColumnType.SYMBOL -> buffer.addSymbol(
+                                offset,
+                                entity.getValue(),
+                                localDetails.getSymbolLookup(columnWriterIndex)
+                        );
+                        case ColumnType.VARCHAR -> buffer.addVarchar(offset, entity.getValue());
+                        case ColumnType.STRING -> buffer.addString(offset, entity.getValue());
+                        default -> throw castError(tud.getTableNameUtf16(), "symbol", colType, entity.getName());
+                    };
                     break;
                 }
+                case LineTcpParser.ENTITY_TYPE_ARRAY:
+                    if (ColumnType.isArray(colType)) {
+                        BorrowedArray array = entity.getArray();
+                        if (array.getType() != colType && !array.isNull()) {
+                            throw castError(tud.getTableNameUtf16(), ColumnType.nameOf(array.getType()), colType, entity.getName());
+                        }
+                        offset = buffer.addArray(offset, array);
+                        break;
+                    }
+                    throw castError(tud.getTableNameUtf16(), "array", colType, entity.getName());
                 case ENTITY_TYPE_NULL:
                     offset = buffer.addNull(offset);
+                    break;
+                case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                    final int scale = ColumnType.getDecimalScale(colType);
+                    decimal256.copyFrom(entity.getDecimalValue());
+                    if (decimal256.getScale() != scale) {
+                        try {
+                            decimal256.rescale(scale);
+                        } catch (NumericException ignored) {
+                            if (decimal256.getScale() > scale) {
+                                throw precisionLossError(tud.getTableNameUtf16(), entity.getName(), entity.getDecimalValue(), colType);
+                            } else {
+                                throw boundsError(entity.getDecimalValue(), colType, tud.getTableNameUtf16(), entity.getName().asAsciiCharSequence());
+                            }
+                        }
+                    }
+                    if (!decimal256.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
+                        throw boundsError(entity.getDecimalValue(), colType, tud.getTableNameUtf16(), nEntity);
+                    }
+                    offset = buffer.addDecimal(offset, decimal256, colType);
                     break;
                 default:
                     // unsupported types are ignored

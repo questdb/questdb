@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -79,6 +79,41 @@ public class BinarySearchTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testBinarySearchEqualScanDown() throws Exception {
+        assertMemoryLeak(() -> {
+            int rows = 63;
+            int size = rows * Long.BYTES;
+            try (MemoryCARWImpl mem = new MemoryCARWImpl(size, 1, MemoryTag.NATIVE_DEFAULT)) {
+                for (int i = 0; i < rows; i++) {
+                    mem.putLong(123);
+                }
+
+                assertEquals(rows - 1, binarySearch(mem, 123, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+            }
+        });
+    }
+
+    @Test
+    public void testBinarySearchEqualScanUpWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            int rows = 120;
+            int size = rows * Long.BYTES;
+            try (MemoryCARWImpl mem = new MemoryCARWImpl(size, 1, MemoryTag.NATIVE_DEFAULT)) {
+                for (int i = 0; i < rows; i++) {
+                    mem.putLong(0);
+                }
+
+                long memAddress = mem.getPageAddress(0);
+                long shift = memAddress / Long.BYTES;
+
+                long index = Vect.binarySearch64Bit(memAddress - shift * Long.BYTES, 0, shift, shift + rows - 1, BIN_SEARCH_SCAN_UP);
+                Assert.assertEquals(shift, index);
+            }
+        });
+    }
+
 
     @Test
     public void testBinarySearchOnArrayWithUniqueElements() throws Exception {

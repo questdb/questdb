@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -76,7 +76,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         this.recordSink = recordSink;
         ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
         mapValueTypes.add(RECORD_INDEX_VALUE_IDX, ColumnType.LONG);
-        mapValueTypes.add(TIMESTAMP_VALUE_IDX, ColumnType.TIMESTAMP);
+        mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
         Map latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
         this.cursor = new LatestByRecordCursor(latestByMap, timestampIndex);
         this.rowIndexesInitialCapacity = configuration.getSqlLatestByRowCount();
@@ -90,8 +90,6 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             cursor.of(baseCursor, recordSink, rowIndexes, rowIndexesInitialCapacity, executionContext.getCircuitBreaker());
@@ -226,6 +224,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             rowIndexesPos = 0;
             index = 0;
             isMapBuilt = false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return RecordCursor.fromBool(isMapBuilt) + baseCursor.preComputedStateSize();
         }
 
         @Override

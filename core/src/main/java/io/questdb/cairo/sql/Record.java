@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,10 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -61,6 +64,9 @@ public interface Record {
         return sink;
     };
 
+    default ArrayView getArray(int col, int columnType) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Gets the value of a binary column by index
@@ -122,6 +128,53 @@ public interface Record {
         return getLong(col);
     }
 
+    default void getDecimal128(int col, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the 16-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 16-bit signed integer
+     */
+    default short getDecimal16(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default void getDecimal256(int col, Decimal256 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the 32-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 32-bit signed integer
+     */
+    default int getDecimal32(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the 64-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 64-bit signed integer
+     */
+    default long getDecimal64(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the 8-bit decimal value by index.
+     *
+     * @param col numeric index of the column
+     * @return 8-bit signed integer
+     */
+    default byte getDecimal8(int col) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Gets the value of a double column by index

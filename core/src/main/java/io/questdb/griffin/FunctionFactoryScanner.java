@@ -52,8 +52,9 @@ public class FunctionFactoryScanner {
                 // Get the JAR or directory path from the current class's code source
                 String locationPath;
                 URL url = clazz.getProtectionDomain().getCodeSource().getLocation();
+
                 if (url != null) {
-                    locationPath = url.getPath().replace("file:", "");
+                    locationPath = url.toURI().getPath().replace("file:", "");
                 } else {
                     // If the location path is null, throw an error
                     throw new CairoError("no functions found in " + packageName + ", cannot determine location path");

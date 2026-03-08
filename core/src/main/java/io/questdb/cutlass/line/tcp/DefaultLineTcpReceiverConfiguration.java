@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,16 +27,18 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.Numbers;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
@@ -54,6 +56,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
             return 0;
         }
     };
+    private final CairoConfiguration cairoConfiguration;
+
+    public DefaultLineTcpReceiverConfiguration(CairoConfiguration cairoConfiguration) {
+        this.cairoConfiguration = cairoConfiguration;
+    }
 
     @Override
     public String getAuthDB() {
@@ -68,6 +75,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public boolean getAutoCreateNewTables() {
         return true;
+    }
+
+    @Override
+    public CairoConfiguration getCairoConfiguration() {
+        return cairoConfiguration;
     }
 
     @Override
@@ -105,6 +117,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
+    public int getDefaultCreateTimestampColumnType() {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public int getDefaultPartitionBy() {
         return PartitionBy.DAY;
     }
@@ -125,11 +142,6 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
-    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-        return SHARED_CONFIGURATION;
-    }
-
-    @Override
     public long getMaintenanceInterval() {
         return 100;
     }
@@ -142,6 +154,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public int getMaxMeasurementSize() {
         return 512;
+    }
+
+    @Override
+    public long getMaxRecvBufferSize() {
+        return Numbers.SIZE_1GB;
     }
 
     @Override
@@ -165,6 +182,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return SHARED_CONFIGURATION;
+    }
+
+    @Override
     public int getRecvBufferSize() {
         return 2048;
     }
@@ -175,8 +197,8 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
-    public LineTcpTimestampAdapter getTimestampAdapter() {
-        return LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE;
+    public byte getTimestampUnit() {
+        return CommonUtils.TIMESTAMP_UNIT_NANOS;
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import io.questdb.cairo.wal.WalMetrics;
 import io.questdb.cutlass.http.processors.HttpMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
-import io.questdb.cutlass.pgwire.PGWireMetrics;
+import io.questdb.cutlass.pgwire.PGMetrics;
 import io.questdb.metrics.GCMetrics;
 import io.questdb.metrics.HealthMetricsImpl;
 import io.questdb.metrics.MetricsRegistry;
@@ -54,12 +54,12 @@ public class Metrics implements Target, Mutable {
     private final JsonQueryMetrics jsonQueryMetrics;
     private final LineMetrics lineMetrics;
     private final MetricsRegistry metricsRegistry;
-    private final PGWireMetrics pgWireMetrics;
+    private final PGMetrics pgMetrics;
     private final Runtime runtime = Runtime.getRuntime();
     private final VirtualLongGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;
     private final VirtualLongGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;
     private final VirtualLongGauge.StatProvider jvmTotalMemRef = runtime::totalMemory;
-    private final TableWriterMetrics tableWriter;
+    private final TableWriterMetrics tableWriterMetrics;
     private final WalMetrics walMetrics;
     private final WorkerMetrics workerMetrics;
     private boolean enabled;
@@ -69,10 +69,10 @@ public class Metrics implements Target, Mutable {
         this.gcMetrics = new GCMetrics();
         this.jsonQueryMetrics = new JsonQueryMetrics(metricsRegistry);
         this.httpMetrics = new HttpMetrics(metricsRegistry);
-        this.pgWireMetrics = new PGWireMetrics(metricsRegistry);
+        this.pgMetrics = new PGMetrics(metricsRegistry);
         this.lineMetrics = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
-        this.tableWriter = new TableWriterMetrics(metricsRegistry);
+        this.tableWriterMetrics = new TableWriterMetrics(metricsRegistry);
         this.walMetrics = new WalMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
@@ -83,10 +83,10 @@ public class Metrics implements Target, Mutable {
     public void clear() {
         gcMetrics.clear();
         jsonQueryMetrics.clear();
-        pgWireMetrics.clear();
+        pgMetrics.clear();
         lineMetrics.clear();
         healthCheck.clear();
-        tableWriter.clear();
+        tableWriterMetrics.clear();
         walMetrics.clear();
         workerMetrics.clear();
         httpMetrics.clear();
@@ -121,8 +121,8 @@ public class Metrics implements Target, Mutable {
         return lineMetrics;
     }
 
-    public PGWireMetrics pgWireMetrics() {
-        return pgWireMetrics;
+    public PGMetrics pgWireMetrics() {
+        return pgMetrics;
     }
 
     @Override
@@ -134,7 +134,7 @@ public class Metrics implements Target, Mutable {
     }
 
     public TableWriterMetrics tableWriterMetrics() {
-        return tableWriter;
+        return tableWriterMetrics;
     }
 
     public WalMetrics walMetrics() {

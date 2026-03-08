@@ -1,2 +1,2 @@
 [toolchain]
-channel = "stable"
+channel = "nightly-2025-09-24"

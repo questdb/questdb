@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,15 +27,17 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.SqlException;
 
 public interface WindowContext {
-    boolean baseSupportsRandomAccess();
 
     int getExclusionKind();
 
     int getExclusionKindPos();
 
     int getFramingMode();
+
+    int getNullsDescPos();
 
     int getOrderByPos();
 
@@ -55,15 +57,17 @@ public interface WindowContext {
 
     int getTimestampIndex();
 
+    int getTimestampType();
+
     boolean isDefaultFrame();
 
     boolean isEmpty();
+
+    boolean isIgnoreNulls();
 
     boolean isOrdered();
 
     boolean isOrderedByDesignatedTimestamp();
 
-    boolean isIgnoreNulls();
-
-    int getNullsDescPos();
+    void validate(int position, boolean supportTNullsDesc) throws SqlException;
 }

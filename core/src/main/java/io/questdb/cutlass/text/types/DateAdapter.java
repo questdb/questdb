@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
@@ -43,8 +44,8 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
     }
 
     @Override
-    public long getTimestamp(DirectUtf8Sequence value) throws Exception {
-        return parseLong(value) * 1000;
+    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception {
+        return driver.fromDate(parseLong(value));
     }
 
     @Override

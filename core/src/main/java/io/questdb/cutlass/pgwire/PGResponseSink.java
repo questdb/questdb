@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 
 public interface PGResponseSink extends Utf8Sink {
@@ -95,6 +96,19 @@ public interface PGResponseSink extends Utf8Sink {
      */
     void putNetworkInt(int value);
 
+    /**
+     * Writes an int value to the buffer in PGWire network byte order (big-endian).
+     * <p>
+     * This method handles the necessary byte order conversion internally. Since QuestDB
+     * operates on a little-endian architecture, this method will reverse the bytes before
+     * writing to ensure PGWire compatibility.
+     *
+     * @param address to write the value to
+     * @param value   the int value to write
+     * @see #getSendBufferPtr() to retrieve a writable address
+     */
+    void putNetworkInt(long address, int value);
+
     void putNetworkLong(long value);
 
     /**
@@ -108,6 +122,29 @@ public interface PGResponseSink extends Utf8Sink {
      * @see #putDirectInt(int) for writing pre-reversed bytes
      */
     void putNetworkShort(short value);
+
+    /**
+     * Writes a short value to the buffer in PGWire network byte order (big-endian) to a specific position.
+     * <p>
+     * This method handles the necessary byte order conversion internally. Since QuestDB
+     * operates on little-endian architecture, this method will reverse the bytes before
+     * writing to ensure PGWire compatibility.
+     *
+     * @param address to write the value to
+     * @param value   the int value to write
+     * @see #getSendBufferPtr() to retrieve a writable address
+     */
+    void putNetworkShort(long address, short value);
+
+    /**
+     * Writes a portion of a Utf8Sequence to the buffer, up to available capacity.
+     *
+     * @param us     the Utf8Sequence to copy from
+     * @param offset the byte offset to start copying from
+     * @param length the maximum number of bytes to copy
+     * @return the actual number of bytes written (may be less than length if buffer is full)
+     */
+    int putPartial(Utf8Sequence us, int offset, int length);
 
     void putZ(CharSequence value);
 

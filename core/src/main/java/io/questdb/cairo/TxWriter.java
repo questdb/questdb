@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
@@ -111,6 +112,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void cancelRow() {
+        boolean allRowsCancelled = transientRowCount <= 1 && fixedRowCount == 0;
         if (transientRowCount == 1 && txPartitionCount > 1) {
             // we have to undo creation of partition
             txPartitionCount--;
@@ -120,8 +122,16 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             prevTransientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
         }
 
-        maxTimestamp = prevMaxTimestamp;
-        minTimestamp = prevMinTimestamp;
+        if (allRowsCancelled) {
+            maxTimestamp = Long.MIN_VALUE;
+            minTimestamp = Long.MAX_VALUE;
+            prevMinTimestamp = minTimestamp;
+            prevMaxTimestamp = maxTimestamp;
+        } else {
+            maxTimestamp = prevMaxTimestamp;
+            minTimestamp = prevMinTimestamp;
+        }
+
         recordStructureVersion++;
     }
 
@@ -228,25 +238,55 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return txPartitionCount > 1 || transientRowCount != prevTransientRowCount || prevPartitionTableVersion != partitionTableVersion;
     }
 
+    public boolean incrementPartitionSquashCounter(int partitionIndex) {
+        final int partitionRawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        int partitionSquashCounter = getPartitionSquashCountByRawIndex(partitionRawIndex);
+        if (partitionSquashCounter == PARTITION_SQUASH_COUNTER_MAX) {
+            // This means 16bit unsigned value is overflown.
+            // Return false so that the caller can fall back to an alternative way to track squashes.
+            return false;
+        }
+        setPartitionSquashCounterByRawIndex(partitionRawIndex, (short) (partitionSquashCounter + 1));
+        // Bump versions to make sure that incremental txn update will save the change
+        // and incremental txn read will read it
+        recordStructureVersion++;
+        partitionTableVersion++;
+        return true;
+    }
+
     public void initLastPartition(long timestamp) {
         txPartitionCount = 1;
         updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
     }
 
-    public boolean isActivePartition(long timestamp) {
-        return getPartitionTimestampByTimestamp(maxTimestamp) == timestamp;
+    public void insertPartition(int index, long partitionTimestamp, long size, long nameTxn) {
+        insertPartitionSizeByTimestamp(index * LONGS_PER_TX_ATTACHED_PARTITION, partitionTimestamp, size, nameTxn);
+    }
+
+    public boolean isInsideExistingPartition(long timestamp) {
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (index > -1 && index < attachedPartitions.size()) {
+            return true;
+        }
+
+        int prevPartition = (-index - 1) - LONGS_PER_TX_ATTACHED_PARTITION;
+        if (prevPartition > -1) {
+            long prevPartitionTs = attachedPartitions.getQuick(prevPartition + PARTITION_TS_OFFSET);
+            return getPartitionFloor(prevPartitionTs) == getPartitionFloor(timestamp);
+        }
+        return false;
     }
 
     @Override
-    public TxWriter ofRO(@Transient LPSZ path, int partitionBy) {
+    public TxWriter ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
         throw new IllegalStateException();
     }
 
-    public TxWriter ofRW(@Transient LPSZ path, int partitionBy) {
+    public TxWriter ofRW(@Transient LPSZ path) {
         clear();
         openTxnFile(ff, path);
         try {
-            super.initRO(txMemBase, partitionBy);
+            super.initRO(txMemBase);
             unsafeLoadAll();
         } catch (Throwable e) {
             if (txMemBase != null) {
@@ -258,6 +298,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             throw e;
         }
         return this;
+    }
+
+    public TxWriter ofRW(@Transient LPSZ path, int timestampType, int partitionBy) {
+        TxWriter t = ofRW(path);
+        t.initPartitionBy(timestampType, partitionBy);
+        return t;
     }
 
     public void removeAllPartitions() {
@@ -273,7 +319,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         dataVersion++;
     }
 
-    public void removeAttachedPartitions(long timestamp) {
+    public int removeAttachedPartitions(long timestamp) {
         recordStructureVersion++;
         final long partitionTimestampLo = getPartitionTimestampByTimestamp(timestamp);
         int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo);
@@ -285,8 +331,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             }
             attachedPartitions.setPos(lim);
             partitionTableVersion++;
+            return indexRaw / LONGS_PER_TX_ATTACHED_PARTITION;
         } else {
             assert false;
+            return -1;
         }
     }
 
@@ -489,7 +537,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void updateMaxTimestamp(long timestamp) {
         prevMaxTimestamp = maxTimestamp;
-        assert timestamp >= maxTimestamp;
         maxTimestamp = timestamp;
     }
 
@@ -670,6 +717,16 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
+        int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
+        long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
+        // Clear the existing squash counter bits
+        partitionSizeMasked &= ~PARTITION_SQUASH_COUNTER_MASK;
+        // Set the new squash counter value
+        partitionSizeMasked |= ((long) (partitionSquashCounter & PARTITION_SQUASH_COUNTER_MAX) << PARTITION_SQUASH_COUNTER_BIT_OFFSET);
+        attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
+    }
+
     private void storeSymbolCounts(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         for (int i = 0, n = symbolCountProviders.size(); i < n; i++) {
             long offset = getSymbolWriterIndexOffset(i);
@@ -722,7 +779,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
                 // remove partitions
                 this.fixedRowCount -= rowCount;
-                this.maxTimestamp = getMaxTimestamp();
                 this.transientRowCount = getPartitionSize(maxTimestampPartitionIndex);
             }
         }
@@ -751,6 +807,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
         recordStructureVersion++;
         updatePartitionSizeByRawIndex(index, partitionSize);
+        // New partition version is written, reset the squash counter.
+        setPartitionSquashCounterByRawIndex(index, (short) 0);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 }

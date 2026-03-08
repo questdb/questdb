@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,27 +25,19 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
-import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
-import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
-
-public class VarcharColumn extends VarcharFunction implements ScalarFunction {
-    private static final ObjList<VarcharColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
+public class VarcharColumn extends VarcharFunction implements ColumnFunction {
     private final int columnIndex;
 
     public VarcharColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 
-    public static VarcharColumn newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
-            return COLUMNS.getQuick(columnIndex);
-        }
-        return new VarcharColumn(columnIndex);
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -61,17 +53,5 @@ public class VarcharColumn extends VarcharFunction implements ScalarFunction {
     @Override
     public int getVarcharSize(Record rec) {
         return rec.getVarcharSize(columnIndex);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
-    }
-
-    static {
-        COLUMNS.setPos(STATIC_COLUMN_COUNT);
-        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new VarcharColumn(i));
-        }
     }
 }

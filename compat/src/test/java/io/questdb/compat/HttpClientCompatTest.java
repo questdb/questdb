@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,68 +24,91 @@
 
 package io.questdb.compat;
 
-import io.questdb.cutlass.http.client.Fragment;
+import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.MimeTypes;
+import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Server;
-import org.eclipse.jetty.server.handler.AbstractHandler;
+import org.eclipse.jetty.util.Callback;
 import org.junit.Assert;
 import org.junit.Test;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.nio.ByteBuffer;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class HttpClientCompatTest {
-    private static final int SERVER_PORT = 8080;
+    private static final int DEFAULT_SERVER_PORT = 8080;
+
+    @Test
+    public void testRequestWithExplicitHostAndPort() throws Exception {
+        final String expectedResponseA = "{\"server\": \"A\"}";
+        final String expectedResponseB = "{\"server\": \"B\"}";
+
+        int portA = DEFAULT_SERVER_PORT;
+        int portB = portA + 1;
+        Server serverA = startWebServer(portA, expectedResponseA);
+        Server serverB = startWebServer(portB, "{\"server\": \"B\"}");
+
+        try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+            HttpClient.Request request = client.newRequest("localhost", portA).GET().url("/test");
+            HttpClient.ResponseHeaders respHeaders = request.send(); // send request to default host/port
+            respHeaders.await();
+            assertResponse(respHeaders, expectedResponseA);
+
+            respHeaders = request.send("localhost", portB, DefaultHttpClientConfiguration.INSTANCE.getTimeout());
+            respHeaders.await();
+            assertResponse(respHeaders, expectedResponseB);
+        } finally {
+            serverA.stop();
+            serverB.stop();
+        }
+    }
 
     @Test
     public void testSmoke() throws Exception {
         final String expectedResponse = "{\"foobar\": \"barbaz\"}";
-        Server server = startWebServer(HttpStatus.OK_200, expectedResponse);
+        Server server = startWebServer();
         try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
-            try (HttpClient.ResponseHeaders respHeaders = client.newRequest("localhost", SERVER_PORT).GET().url("/test").send()) {
+            try (HttpClient.ResponseHeaders respHeaders = client.newRequest("localhost", DEFAULT_SERVER_PORT).GET().url("/test").send()) {
                 respHeaders.await();
-                Assert.assertEquals("200", Utf8s.toString(respHeaders.getStatusCode()));
-                Assert.assertEquals(MimeTypes.Type.APPLICATION_JSON.toString(), Utf8s.toString(respHeaders.getContentType()));
-
-                Assert.assertFalse(respHeaders.isChunked());
-                Response resp = respHeaders.getResponse();
-
-                Utf8StringSink sink = new Utf8StringSink();
-
-                Fragment fragment;
-                while ((fragment = resp.recv()) != null) {
-                    Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-                }
-
-                Assert.assertEquals(expectedResponse, sink.toString());
+                assertResponse(respHeaders, expectedResponse);
             }
         } finally {
             server.stop();
         }
     }
 
-    private static Server startWebServer(int statusCode, String response) throws Exception {
-        Server server = new Server(SERVER_PORT);
-        server.setHandler(new TestHandler(statusCode, response));
+    private static void assertResponse(HttpClient.ResponseHeaders respHeaders, String expectedResponseA) {
+        Assert.assertEquals("200", Utf8s.toString(respHeaders.getStatusCode()));
+        Assert.assertEquals(MimeTypes.Type.APPLICATION_JSON.toString(), Utf8s.toString(respHeaders.getContentType()));
+
+        Assert.assertFalse(respHeaders.isChunked());
+        Utf8StringSink sink = new Utf8StringSink();
+        respHeaders.getResponse().copyTextTo(sink);
+        Assert.assertEquals(expectedResponseA, sink.toString());
+    }
+
+    private static Server startWebServer() throws Exception {
+        return startWebServer(DEFAULT_SERVER_PORT, "{\"foobar\": \"barbaz\"}");
+    }
+
+    private static Server startWebServer(int port, String response) throws Exception {
+        Server server = new Server(port);
+        server.setHandler(new TestHandler(HttpStatus.OK_200, response));
         server.start();
         return server;
     }
 
-    static class TestHandler extends AbstractHandler {
+    static class TestHandler extends Handler.Abstract {
         private final String response;
         private final int statusCode;
 
@@ -95,18 +118,12 @@ public class HttpClientCompatTest {
         }
 
         @Override
-        public void handle(
-                String s,
-                Request baseRequest,
-                HttpServletRequest request,
-                HttpServletResponse response
-        ) throws IOException {
-            baseRequest.setHandled(true);
-
-            String method = baseRequest.getMethod();
+        public boolean handle(Request request, org.eclipse.jetty.server.Response response, Callback callback) throws Exception {
+            String method = request.getMethod();
             if (HttpMethod.GET.is(method)) {
                 response.setStatus(statusCode);
-                response.setContentType(MimeTypes.Type.APPLICATION_JSON.toString());
+                response.getHeaders().put("Content-Type", MimeTypes.Type.APPLICATION_JSON.toString());
+
                 try (
                         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
                         OutputStreamWriter writer = new OutputStreamWriter(outputStream, UTF_8)
@@ -115,12 +132,13 @@ public class HttpClientCompatTest {
                     writer.flush();
 
                     byte[] content = outputStream.toByteArray();
-                    response.setContentLength(content.length);
-                    try (OutputStream out = response.getOutputStream()) {
-                        out.write(content);
-                    }
+                    response.getHeaders().put("Content-Length", String.valueOf(content.length));
+                    response.write(true, ByteBuffer.wrap(content), callback);
+                    return true;
                 }
             }
+            callback.succeeded();
+            return true;
         }
     }
 }

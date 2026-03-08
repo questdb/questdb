@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,15 +34,19 @@ public interface TimestampSampler extends Sinkable {
         throw new UnsupportedOperationException();
     }
 
+    int getTimestampType();
+
+    long nextTimestamp(long timestamp, long numSteps);
+
     default long nextTimestamp(long timestamp) {
         return nextTimestamp(timestamp, 1);
     }
 
-    long nextTimestamp(long timestamp, int numSteps);
-
     long previousTimestamp(long timestamp);
 
     long round(long timestamp);
+
+    void setOffset(long timestamp);
 
     void setStart(long timestamp);
 }

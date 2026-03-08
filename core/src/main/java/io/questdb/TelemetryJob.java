@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,7 +52,12 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             telemetryConfigLogger = new TelemetryConfigLogger(engine);
 
             try (final SqlCompiler compiler = engine.getSqlCompiler()) {
-                final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+                final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
+                    @Override
+                    public boolean shouldLogSql() {
+                        return false;
+                    }
+                };
                 sqlExecutionContext.with(
                         engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
                         null,

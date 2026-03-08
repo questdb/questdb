@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -45,6 +46,8 @@ public interface MemoryA extends Closeable {
 
     void jumpTo(long offset);
 
+    void putArray(ArrayView array);
+
     long putBin(BinarySequence value);
 
     long putBin(long from, long len);
@@ -56,6 +59,10 @@ public interface MemoryA extends Closeable {
     void putByte(byte value);
 
     void putChar(char value);
+
+    void putDecimal128(long hi, long lo);
+
+    void putDecimal256(long hh, long hl, long lh, long ll);
 
     void putDouble(double value);
 
@@ -111,4 +118,6 @@ public interface MemoryA extends Closeable {
     void skip(long bytes);
 
     void truncate();
+
+    void zeroMem(int length);
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,17 +25,21 @@
 package io.questdb.std.datetime.millitime;
 
 
+import io.questdb.cairo.TimestampDateFormatFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.datetime.DateFormat;
 
 import java.util.function.Function;
 
 
-public class DateFormatFactory {
+public class DateFormatFactory implements TimestampDateFormatFactory {
     public static final DateFormatFactory INSTANCE = new DateFormatFactory();
     private final static ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = DateFormatFactory::map;
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
+
+    private DateFormatFactory() {
+    }
 
     /**
      * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is
@@ -47,6 +51,7 @@ public class DateFormatFactory {
      * @param pattern can be mutable and is not stored if same pattern already in cache.
      * @return compiled implementation of DateFormat
      */
+    @Override
     public DateFormat get(CharSequence pattern) {
         return cache.computeIfAbsent(pattern, mapper);
     }

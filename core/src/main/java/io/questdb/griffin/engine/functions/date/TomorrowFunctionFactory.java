@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,10 +48,14 @@ public class TomorrowFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func();
+        return new Func(sqlExecutionContext.getIntervalFunctionType());
     }
 
     private static class Func extends AbstractDayIntervalFunction {
+
+        protected Func(int intervalType) {
+            super(intervalType);
+        }
 
         @Override
         public String getName() {

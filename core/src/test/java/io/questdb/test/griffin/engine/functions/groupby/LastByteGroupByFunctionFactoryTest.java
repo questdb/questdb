@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,8 +32,10 @@ public class LastByteGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLastByte() throws Exception {
         assertQuery(
-                "a\n" +
-                        "3\n",
+                """
+                        a
+                        3
+                        """,
                 "select last(a) a from tab",
                 "create table tab as (select 1::byte a union select 2::byte a union select 3::byte a)",
                 null,

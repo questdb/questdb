@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
@@ -36,14 +38,12 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -51,43 +51,45 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.std.DirectLongLongHeap;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.tasks.GroupByMergeShardTask;
+import io.questdb.tasks.GroupByLongTopKTask;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
+
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final AtomicBooleanCircuitBreaker mergeCircuitBreaker; // used to signal cancellation to merge shard workers
-    private final SOUnboundedCountDownLatch mergeDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
-    private final AtomicInteger mergeStartedCounter = new AtomicInteger();
+    private final CairoConfiguration configuration;
     private final MessageBus messageBus;
+    private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker; // used to signal cancellation to merge shard workers
+    private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
+    private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
     private final VirtualRecord recordA;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
     private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private int frameLimit;
-    private PageFrameSequence<AsyncGroupByAtom> frameSequence;
+    private UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
     private boolean isDataMapBuilt;
     private boolean isOpen;
     private MapRecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
-            ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
-            MessageBus messageBus
+            @NotNull CairoEngine engine,
+            @NotNull MessageBus messageBus,
+            @NotNull ObjList<Function> recordFunctions
     ) {
-        this.groupByFunctions = groupByFunctions;
-        this.recordFunctions = recordFunctions;
+        this.configuration = engine.getConfiguration();
         this.messageBus = messageBus;
+        this.recordFunctions = recordFunctions;
         recordA = new VirtualRecord(recordFunctions);
         recordB = new VirtualRecord(recordFunctions);
-        mergeCircuitBreaker = new AtomicBooleanCircuitBreaker();
+        postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         isOpen = true;
     }
 
@@ -100,20 +102,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            isOpen = false;
-            Misc.clearObjList(groupByFunctions);
-            mapCursor = Misc.free(mapCursor);
-
-            if (frameSequence != null) {
-                LOG.debug()
-                        .$("closing [shard=").$(frameSequence.getShard())
-                        .$(", frameCount=").$(frameLimit)
-                        .I$();
-
-                if (frameLimit > -1) {
+            try {
+                if (frameSequence != null) {
                     frameSequence.await();
+                    frameSequence.reset();
                 }
-                frameSequence.clear();
+            } finally {
+                mapCursor = Misc.free(mapCursor);
+                isOpen = false;
             }
         }
     }
@@ -140,14 +136,31 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void longTopK(DirectLongLongHeap heap, int columnIndex) {
+    public void longTopK(DirectLongLongSortedList list, int columnIndex) {
         buildMapConditionally();
-        mapCursor.longTopK(heap, recordFunctions.getQuick(columnIndex));
+        final Function recordFunction = recordFunctions.getQuick(columnIndex);
+        // Only run in parallel when the function is thread-safe. This is a simplified check that won't
+        // pass for functions like count(varchar), but it's good enough for now since it'll pass for
+        // count() and count() over a fixed-size column.
+        //
+        // Later on, we can introduce a special method for GroupByFunction that will stand for aggregation
+        // thread-safety (the current value of the isThreadSafe() flag) while the isThreadSafe() flag
+        // will stand for read thread-safety, just like for non-GROUP BY functions.
+        if (recordFunction.isThreadSafe() && mapCursor == shardedCursor && mapCursor.size() > configuration.getGroupByParallelTopKThreshold()) {
+            parallelLongTopK(list, recordFunction);
+        } else {
+            mapCursor.longTopK(list, recordFunction);
+        }
     }
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newSymbolTable();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return isDataMapBuilt ? 1 : 0;
     }
 
     @Override
@@ -175,62 +188,30 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     private void buildMap() {
-        if (frameLimit == -1) {
-            frameSequence.prepareForDispatch();
-            frameLimit = frameSequence.getFrameCount() - 1;
-        }
-
-        int frameIndex = -1;
-        boolean allFramesActive = true;
-        try {
-            do {
-                final long cursor = frameSequence.next();
-                if (cursor > -1) {
-                    PageFrameReduceTask task = frameSequence.getTask(cursor);
-                    LOG.debug()
-                            .$("collected [shard=").$(frameSequence.getShard())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", active=").$(frameSequence.isActive())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-                    if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg());
-                    }
-
-                    allFramesActive &= frameSequence.isActive();
-                    frameIndex = task.getFrameIndex();
-
-                    frameSequence.collect(cursor, false);
-                } else if (cursor == -2) {
-                    break; // No frames to filter.
-                } else {
-                    Os.pause();
-                }
-            } while (frameIndex < frameLimit);
-        } catch (CairoException e) {
-            if (e.isInterruption()) {
-                throwTimeoutException();
-            } else {
-                throw e;
-            }
-        }
-
-        if (!allFramesActive) {
-            throwTimeoutException();
-        }
+        frameSequence.prepareForDispatch();
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.dispatchAndAwait();
 
         final AsyncGroupByAtom atom = frameSequence.getAtom();
 
+        final GroupByShardingContext shardingCtx = atom.getShardingContext();
         if (!atom.isSharded()) {
             // No sharding was necessary, so the maps are small, and we merge them ourselves.
-            final Map dataMap = atom.mergeOwnerMap();
+            final Map dataMap = shardingCtx.mergeOwnerMap();
             mapCursor = dataMap.getCursor();
         } else {
             // We had to shard the maps, so they must be big.
-            final ObjList<Map> shards = mergeShards(atom);
+            final ObjList<Map> shards = shardingCtx.mergeShards(
+                    messageBus,
+                    frameSequence.getWorkStealingStrategy(),
+                    circuitBreaker,
+                    postAggregationCircuitBreaker,
+                    postAggregationDoneLatch,
+                    postAggregationStartedCounter
+            );
+            if (postAggregationCircuitBreaker.checkIfTripped()) {
+                throwTimeoutException();
+            }
             // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
@@ -247,44 +228,51 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
-    private ObjList<Map> mergeShards(AsyncGroupByAtom atom) {
-        mergeCircuitBreaker.reset();
-        mergeStartedCounter.set(0);
-        mergeDoneLatch.reset();
+    private void parallelLongTopK(DirectLongLongSortedList destList, Function longFunc) {
+        postAggregationCircuitBreaker.reset();
+        postAggregationStartedCounter.set(0);
+        postAggregationDoneLatch.reset();
 
-        // First, make sure to shard all non-sharded maps, if any.
-        atom.shardAll();
-
-        // Next, merge each set of partial shard maps into the final shard map. This is done in parallel.
-        final int shardCount = atom.getShardCount();
-        final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
-        final MPSequence pubSeq = messageBus.getGroupByMergeShardPubSeq();
-        final MCSequence subSeq = messageBus.getGroupByMergeShardSubSeq();
-        final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(mergeStartedCounter);
+        final AsyncGroupByAtom atom = frameSequence.getAtom();
+        final RingQueue<GroupByLongTopKTask> queue = messageBus.getGroupByLongTopKQueue();
+        final MPSequence pubSeq = messageBus.getGroupByLongTopKPubSeq();
+        final MCSequence subSeq = messageBus.getGroupByLongTopKSubSeq();
+        final WorkStealingStrategy workStealingStrategy = frameSequence.getWorkStealingStrategy().of(postAggregationStartedCounter);
 
         int queuedCount = 0;
         int ownCount = 0;
         int reclaimed = 0;
         int total = 0;
-        int mergedCount = 0; // used for work stealing decisions
+        int processedCount = 0; // used for work stealing decisions
 
         try {
-            for (int i = 0; i < shardCount; i++) {
+            for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 while (true) {
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
-                        if (workStealingStrategy.shouldSteal(mergedCount)) {
-                            atom.mergeShard(-1, i);
+                        if (workStealingStrategy.shouldSteal(processedCount)) {
+                            final Map shard = atom.getDestShards().getQuick(shardIndex);
+                            final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
+                            shard.getCursor().longTopK(ownerList, longFunc);
                             ownCount++;
                             total++;
-                            mergedCount = mergeDoneLatch.getCount();
+                            processedCount = postAggregationDoneLatch.getCount();
                             break;
                         }
-                        mergedCount = mergeDoneLatch.getCount();
+                        processedCount = postAggregationDoneLatch.getCount();
                     } else {
-                        queue.get(cursor).of(mergeCircuitBreaker, mergeStartedCounter, mergeDoneLatch, atom, i);
+                        queue.get(cursor).of(
+                                postAggregationCircuitBreaker,
+                                postAggregationStartedCounter,
+                                postAggregationDoneLatch,
+                                atom,
+                                longFunc,
+                                shardIndex,
+                                destList.getOrder(),
+                                destList.getCapacity()
+                        );
                         pubSeq.done(cursor);
                         queuedCount++;
                         total++;
@@ -293,24 +281,23 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 }
             }
         } catch (Throwable th) {
-            mergeCircuitBreaker.cancel();
+            postAggregationCircuitBreaker.cancel();
             throw th;
         } finally {
             // All done? Great, start consuming the queue we just published.
             // How do we get to the end? If we consume our own queue there is chance we will be consuming
             // aggregation tasks not related to this execution (we work in concurrent environment).
             // To deal with that we need to check our latch.
-
-            while (!mergeDoneLatch.done(queuedCount)) {
+            while (!postAggregationDoneLatch.done(queuedCount)) {
                 if (circuitBreaker.checkIfTripped()) {
-                    mergeCircuitBreaker.cancel();
+                    postAggregationCircuitBreaker.cancel();
                 }
 
-                if (workStealingStrategy.shouldSteal(mergedCount)) {
+                if (workStealingStrategy.shouldSteal(processedCount)) {
                     long cursor = subSeq.next();
                     if (cursor > -1) {
-                        GroupByMergeShardTask task = queue.get(cursor);
-                        GroupByMergeShardJob.run(-1, task, subSeq, cursor, atom);
+                        GroupByLongTopKTask task = queue.get(cursor);
+                        GroupByLongTopKJob.run(-1, task, subSeq, cursor, atom);
                         reclaimed++;
                     } else {
                         Os.pause();
@@ -318,22 +305,37 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 } else {
                     Os.pause();
                 }
-                mergedCount = mergeDoneLatch.getCount();
+                processedCount = postAggregationDoneLatch.getCount();
             }
         }
 
-        if (mergeCircuitBreaker.checkIfTripped()) {
+        if (postAggregationCircuitBreaker.checkIfTripped()) {
             throwTimeoutException();
         }
 
-        atom.finalizeShardStats();
+        // Now merge everything into the destination list.
+        final DirectLongLongSortedList ownerList = atom.getOwnerLongTopKList();
+        if (ownerList != null) {
+            final DirectLongLongSortedList.Cursor cursor = ownerList.getCursor();
+            while (cursor.hasNext()) {
+                destList.add(cursor.index(), cursor.value());
+            }
+        }
+        final ObjList<DirectLongLongSortedList> perWorkerLists = atom.getPerWorkerLongTopKLists();
+        for (int i = 0, n = perWorkerLists.size(); i < n; i++) {
+            final DirectLongLongSortedList workerList = perWorkerLists.getQuick(i);
+            if (workerList != null) {
+                final DirectLongLongSortedList.Cursor cursor = workerList.getCursor();
+                while (cursor.hasNext()) {
+                    destList.add(cursor.index(), cursor.value());
+                }
+            }
+        }
 
-        LOG.debug().$("merge shards done [total=").$(total)
+        LOG.debug().$("parallel long top K done [total=").$(total)
                 .$(", ownCount=").$(ownCount)
                 .$(", reclaimed=").$(reclaimed)
                 .$(", queuedCount=").$(queuedCount).I$();
-
-        return atom.getDestShards();
     }
 
     private void throwTimeoutException() {
@@ -344,7 +346,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
-    void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
+    void of(UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
         if (!isOpen) {
             isOpen = true;
@@ -354,6 +356,5 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         this.circuitBreaker = executionContext.getCircuitBreaker();
         Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;
-        frameLimit = -1;
     }
 }

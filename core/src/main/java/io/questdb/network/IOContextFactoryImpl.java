@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakMutableObjectPool;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -63,11 +62,11 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
         Misc.free(contextPool);
     }
 
-    public C newInstance(long fd, @NotNull IODispatcher<C> dispatcher) {
+    public C newInstance(long fd) {
         WeakMutableObjectPool<C> pool = contextPool.get();
         C context = pool.pop();
         try {
-            return context.of(fd, dispatcher);
+            return context.of(fd);
         } catch (CairoException e) {
             if (e.isCritical()) {
                 context.close();

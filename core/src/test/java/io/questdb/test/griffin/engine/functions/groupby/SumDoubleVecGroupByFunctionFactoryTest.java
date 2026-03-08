@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -69,16 +69,22 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("sum\n" +
-                "null\n", "select sum(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 0.9822 from long_sequence(1)", "sum\n" +
-                "0.9822\n", false, true, false);
+        assertQuery("""
+                sum
+                null
+                """, "select sum(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 0.9822 from long_sequence(1)", """
+                sum
+                0.9822
+                """, false, true, false);
     }
 
     @Test
     public void testSimple() throws Exception {
         assertQuery(
-                "sum\n" +
-                        "59.886261325258\n",
+                """
+                        sum
+                        59.886261325258
+                        """,
                 "select round(sum(f), 12) sum from tab",
                 "create table tab as (select rnd_double(2) f from long_sequence(131))",
                 null,

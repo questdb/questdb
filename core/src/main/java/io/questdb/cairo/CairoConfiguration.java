@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,23 +33,23 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -58,19 +58,52 @@ import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
 
-    long O_ASYNC = 0x40;
-    long O_DIRECT = 0x4000;
-    long O_NONE = 0;
-    long O_SYNC = 0x80;
+    int O_ASYNC = 0x40;
+    int O_DIRECT = 0x4000;
+    int O_NONE = 0;
+    int O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
+
+    /**
+     * Flag to enable or disable symbol capacity auto-scaling. Auto-scaling means resizing
+     * symbol table data structures as the number of symbols in the table grows. Optimal sizing of
+     * these data structures ensures optimal ingres performance.
+     * <p>
+     * By default, the auto-scaling is enabled. This is optimal. You may want to disable auto-scaling in case
+     * something goes wrong.
+     *
+     * @return true - auto-scaling is enabled and false - otherwise.
+     */
+    boolean autoScaleSymbolCapacity();
+
+    /**
+     * No-zero positive value. It is used as percentage of symbol counts in
+     * the symbol table relative to the table capacity, after which table is resized. For example 0.8 would indicate
+     * that as soon as symbol count goes over 80% of the capacity, the symbol table is resized.
+     *
+     * @return resize threshold
+     */
+    double autoScaleSymbolCapacityThreshold();
+
+    boolean cairoResourcePoolTracingEnabled();
 
     default boolean disableColumnPurgeJob() {
         return false;
     }
 
     boolean enableTestFactories();
+
+    /**
+     * Exports subset of configuration parameters into a sink. Configuration
+     * parameters are exported in JSON format.
+     *
+     * @return true if anything was exported
+     */
+    default boolean exportConfiguration(CharSink<?> sink) {
+        return false;
+    }
 
     default boolean freeLeakedReaders() {
         return true;
@@ -93,17 +126,10 @@ public interface CairoConfiguration {
         return "crash+";
     }
 
+    boolean getAsyncMunmapEnabled();
+
     @NotNull
     String getAttachPartitionSuffix();
-
-    DateFormat getBackupDirTimestampFormat();
-
-    int getBackupMkDirMode();
-
-    // null disables backups
-    CharSequence getBackupRoot();
-
-    CharSequence getBackupTempDirName();
 
     int getBinaryEncodingMaxLength();
 
@@ -112,13 +138,49 @@ public interface CairoConfiguration {
     @NotNull
     BuildInformation getBuildInformation();
 
+    default boolean getBypassWalFdCache() {
+        // If wal fd re-usage is not allowed it means fd cache should not be used for wal and sequencer files.
+        // This typically means that those files be renamed/replaced outside QuestDB java code.
+        return getWalMaxSegmentFileDescriptorsCache() < 1;
+    }
+
     boolean getCairoSqlLegacyOperatorPrecedence();
+
+    @NotNull
+    default CheckpointListener getCheckpointListener() {
+        return DefaultCheckpointListener.INSTANCE;
+    }
+
+    /**
+     * Enable/disable full rebuild of bitmap indexes for symbol columns in partitions
+     */
+    boolean getCheckpointRecoveryRebuildColumnIndexes();
+
+    /**
+     * Maximum thread pool size for checkpoint recovery operations.
+     * The actual size is determined by clamping the available processor count between min and max.
+     */
+    int getCheckpointRecoveryThreadpoolMax();
+
+    /**
+     * Minimum thread pool size for checkpoint recovery operations.
+     * The actual size is determined by clamping the available processor count between min and max.
+     */
+    int getCheckpointRecoveryThreadpoolMin();
 
     @NotNull
     CharSequence getCheckpointRoot(); // same as root/../.checkpoint
 
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
+
+    /**
+     * Maximum size for a generated alias, the column will be truncated if it's longer than that. Note
+     * that this flag only works if isColumnAliasExpressionEnabled is enabled.
+     *
+     * @return the maximum size of a generated alias.
+     */
+    int getColumnAliasGeneratedMaxSize();
 
     int getColumnIndexerQueueCapacity();
 
@@ -132,14 +194,22 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
-    default long getCommitLatency() {
-        return 30_000_000; // 30s
-    }
+    long getCommitLatency();
 
     int getCommitMode();
 
+    int getCompileViewModelPoolCapacity();
+
     @NotNull
     CharSequence getConfRoot(); // same as root/../conf
+
+    /**
+     * Returns the forced copier type for testing, or COPIER_TYPE_DEFAULT for auto-selection.
+     * See RecordToRowCopierUtils.COPIER_TYPE_* constants.
+     */
+    default int getCopierType() {
+        return 0; // COPIER_TYPE_DEFAULT
+    }
 
     @NotNull
     LongSupplier getCopyIDSupplier();
@@ -169,6 +239,9 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
 
+    @Nullable
+    String getDbLogName();
+
     @NotNull
     String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
@@ -194,6 +267,8 @@ public interface CairoConfiguration {
     @NotNull
     FactoryProvider getFactoryProvider();
 
+    boolean getFileDescriptorCacheEnabled();
+
     int getFileOperationRetryCount();
 
     @NotNull
@@ -207,6 +282,8 @@ public interface CairoConfiguration {
 
     int getGroupByMergeShardQueueCapacity();
 
+    long getGroupByParallelTopKThreshold();
+
     int getGroupByPoolCapacity();
 
     long getGroupByPresizeMaxCapacity();
@@ -214,6 +291,8 @@ public interface CairoConfiguration {
     long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
+
+    int getGroupByTopKQueueCapacity();
 
     @NotNull
     default IOURingFacade getIOURingFacade() {
@@ -227,6 +306,8 @@ public interface CairoConfiguration {
     int getInactiveReaderMaxOpenPartitions();
 
     long getInactiveReaderTTL();
+
+    long getInactiveViewWalWriterTTL();
 
     long getInactiveWalWriterTTL();
 
@@ -263,13 +344,17 @@ public interface CairoConfiguration {
 
     long getMatViewInsertAsSelectBatchSize();
 
+    int getMatViewMaxRefreshIntervals();
+
     int getMatViewMaxRefreshRetries();
 
-    long getMatViewMinRefreshInterval();
+    long getMatViewMaxRefreshStepUs();
+
+    long getMatViewRefreshIntervalsUpdatePeriod();
 
     long getMatViewRefreshOomRetryTimeout();
 
-    int getMatViewRowsPerQueryEstimate();
+    long getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();
 
@@ -301,7 +386,6 @@ public interface CairoConfiguration {
 
     int getMkDirMode();
 
-    @NotNull
     default NanosecondClock getNanosecondClock() {
         return NanosecondClockImpl.INSTANCE;
     }
@@ -358,6 +442,26 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    long getParquetExportBatchSize();
+
+    double getParquetExportBloomFilterFpp();
+
+    int getParquetExportCompressionCodec();
+
+    int getParquetExportCompressionLevel();
+
+    int getParquetExportCopyReportFrequencyLines();
+
+    int getParquetExportDataPageSize();
+
+    int getParquetExportRowGroupSize();
+
+    CharSequence getParquetExportTableNamePrefix();
+
+    int getParquetExportVersion();
+
+    double getPartitionEncoderParquetBloomFilterFpp();
+
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
@@ -371,6 +475,12 @@ public interface CairoConfiguration {
     long getPartitionO3SplitMinSize();
 
     int getPartitionPurgeListCapacity();
+
+    int getPivotColumnPoolCapacity();
+
+    int getPoolSegmentSize();
+
+    int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
 
@@ -391,9 +501,13 @@ public interface CairoConfiguration {
 
     int getReaderPoolMaxSegments();
 
+    int getRecentWriteTrackerCapacity();
+
     int getRenameTableModelPoolCapacity();
 
     int getRepeatMigrationsFromVersion();
+
+    int getRmdirMaxDepth();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -407,8 +521,6 @@ public interface CairoConfiguration {
     boolean getSampleByDefaultAlignmentCalendar();
 
     int getSampleByIndexSearchPageSize();
-
-    int getScoreboardFormat();
 
     long getSequencerCheckInterval();
 
@@ -426,6 +538,10 @@ public interface CairoConfiguration {
 
     int getSqlAsOfJoinLookAhead();
 
+    int getSqlAsOfJoinMapEvacuationThreshold();
+
+    int getSqlAsOfJoinShortCircuitCacheCapacity();
+
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStoreSequencePoolCapacity();
@@ -436,10 +552,13 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null or empty input root disables "copy" SQL
-    CharSequence getSqlCopyInputRoot();
+    int getSqlCopyExportQueueCapacity();
 
-    CharSequence getSqlCopyInputWorkRoot();
+    @Nullable CharSequence getSqlCopyExportRoot();
+
+    @Nullable CharSequence getSqlCopyInputRoot();
+
+    @Nullable CharSequence getSqlCopyInputWorkRoot();
 
     int getSqlCopyLogRetentionDays();
 
@@ -463,6 +582,25 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    int getSqlHorizonJoinMaxOffsets();
+
+    /**
+     * When the number of intervals exceeds this threshold during bracket expansion,
+     * intervals are merged to prevent unbounded memory growth.
+     */
+    int getSqlIntervalIncrementalMergeThreshold();
+
+    /**
+     * Maximum recursion depth for bracket expansion in interval parsing (one level per bracket group).
+     */
+    int getSqlIntervalMaxBracketDepth();
+
+    /**
+     * Maximum number of intervals allowed after bracket expansion and merging.
+     * This limit prevents memory exhaustion from large non-adjacent interval sets.
+     */
+    int getSqlIntervalMaxIntervalsAfterMerge();
+
     int getSqlJitBindVarsMemoryMaxPages();
 
     int getSqlJitBindVarsMemoryPageSize();
@@ -471,9 +609,9 @@ public interface CairoConfiguration {
 
     int getSqlJitIRMemoryPageSize();
 
-    int getSqlJitMode();
+    int getSqlJitMaxInListSizeThreshold();
 
-    int getSqlJitPageAddressCacheThreshold();
+    int getSqlJitMode();
 
     int getSqlJoinContextPoolCapacity();
 
@@ -504,15 +642,27 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    int getSqlParallelFilterDispatchLimit();
+
     double getSqlParallelFilterPreTouchThreshold();
+
+    long getSqlParallelWorkStealingSpinTimeout();
 
     int getSqlParallelWorkStealingThreshold();
 
     int getSqlParquetFrameCacheCapacity();
 
+    int getSqlPivotMaxProducedColumns();
+
     int getSqlSmallMapKeyCapacity();
 
     long getSqlSmallMapPageSize();
+
+    int getSqlSmallPageFrameMaxRows();
+
+    int getSqlSmallPageFrameMinRows();
+
+    int getSqlSortKeyMaterializationThreshold();
 
     int getSqlSortKeyMaxPages();
 
@@ -546,6 +696,10 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    long getSymbolTableMaxAllocationPageSize();
+
+    long getSymbolTableMinAllocationPageSize();
+
     long getSystemDataAppendPageSize();
 
     int getSystemO3ColumnMemorySize();
@@ -571,7 +725,13 @@ public interface CairoConfiguration {
 
     int getTxnScoreboardEntryCount();
 
+    int getUnorderedPageFrameReduceQueueCapacity();
+
     int getVectorAggregateQueueCapacity();
+
+    int getViewLexerPoolCapacity();
+
+    int getViewWalWriterPoolMaxSegments();
 
     @NotNull
     VolumeDefinitions getVolumeDefinitions();
@@ -620,6 +780,8 @@ public interface CairoConfiguration {
 
     int getWalTxnNotificationQueueCapacity();
 
+    int getWalWriterMadviseMode();
+
     int getWalWriterPoolMaxSegments();
 
     int getWindowColumnPoolCapacity();
@@ -638,7 +800,7 @@ public interface CairoConfiguration {
 
     long getWriterCommandQueueSlotSize();
 
-    long getWriterFileOpenOpts();
+    int getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
 
@@ -648,6 +810,15 @@ public interface CairoConfiguration {
      * @return enable/disable flag for recovering from the checkpoint
      */
     boolean isCheckpointRecoveryEnabled();
+
+    /**
+     * This is a flag to enable/disable the generation of column alias based on the expression passed as a query.
+     *
+     * @return true if SqlParser should return the expression normalized instead of the default behavior.
+     */
+    boolean isColumnAliasExpressionEnabled();
+
+    boolean isCopierChunkedEnabled();
 
     boolean isDevModeEnabled();
 
@@ -659,11 +830,19 @@ public interface CairoConfiguration {
 
     boolean isMatViewParallelSqlEnabled();
 
+    boolean isMatViewRefreshMissingWalFilesFatal();
+
     boolean isMultiKeyDedupEnabled();
 
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
+
+    boolean isParquetExportRawArrayEncoding();
+
+    boolean isParquetExportStatisticsEnabled();
+
+    boolean isPartitionEncoderParquetRawArrayEncoding();
 
     boolean isPartitionEncoderParquetStatisticsEnabled();
 
@@ -679,13 +858,33 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelFilterEnabled();
 
-    boolean isSqlParallelFilterPreTouchEnabled();
-
     boolean isSqlParallelGroupByEnabled();
+
+    boolean isSqlParallelHorizonJoinEnabled();
 
     boolean isSqlParallelReadParquetEnabled();
 
+    boolean isSqlParallelTopKEnabled();
+
+    boolean isSqlParallelWindowJoinEnabled();
+
+    boolean isSqlParquetRowGroupPruningEnabled();
+
     boolean isTableTypeConversionEnabled();
+
+    /**
+     * When true (the default), TTL enforcement uses the minimum of the max timestamp in the table
+     * and the current wall clock time. This prevents accidental data loss when future timestamps
+     * are inserted into a table with TTL enabled.
+     * <p>
+     * When false, TTL enforcement uses only the max timestamp in the table, which can cause
+     * unexpected partition eviction if future timestamps are inserted.
+     *
+     * @return true if wall clock should be used for TTL enforcement (default), false otherwise
+     */
+    default boolean isTtlWallClockEnabled() {
+        return true;
+    }
 
     /**
      * A compatibility switch that controls validation of sample-by fill type.
@@ -729,8 +928,7 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
-    default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-    }
+    int maxArrayElementCount();
 
-    boolean useFastAsOfJoin();
+    boolean useWithinLatestByOptimisation();
 }

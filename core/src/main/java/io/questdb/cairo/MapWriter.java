@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -67,6 +67,14 @@ public interface MapWriter extends SymbolCountProvider {
             Misc.free(mem);
         }
     }
+
+    /**
+     * Column index in table writer metadata. This value is a pass-thru from table writer, and
+     * it used by table writer to look-back the column name when needed.
+     *
+     * @return column index or -1 if this is a NullWriter (noop writer)
+     */
+    int getColumnIndex();
 
     boolean getNullFlag();
 

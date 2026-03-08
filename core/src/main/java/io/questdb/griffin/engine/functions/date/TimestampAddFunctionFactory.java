@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -39,20 +41,32 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
-import org.jetbrains.annotations.Nullable;
 
+/**
+ * Factory for the dateadd function: dateadd(char period, int stride, timestamp).
+ *
+ * <p><b>IMPORTANT - Optimizer Integration:</b></p>
+ * <p>The SqlOptimiser intrinsically understands this function and pushes timestamp predicates
+ * through it when the timestamp column is wrapped in dateadd. For example:</p>
+ * <pre>
+ *   SELECT * FROM (SELECT dateadd('h', -1, timestamp) as ts FROM t) WHERE ts > '2022-01-01'
+ * </pre>
+ * <p>The optimizer detects the dateadd pattern and pushes the predicate down with an offset
+ * adjustment, enabling efficient interval scans on the underlying table.</p>
+ *
+ * <p><b>If this function's signature changes, the optimizer must be updated accordingly.</b></p>
+ * <p>Specifically, the following components depend on this function's signature:</p>
+ * <ul>
+ *   <li>{@code SqlOptimiser.detectTimestampOffset()} - extracts offset info from dateadd</li>
+ *   <li>{@code SqlOptimiser.isDateaddTimestampExpression()} - pattern matching</li>
+ *   <li>{@code QueryModel.timestampOffsetValue} - stores the stride as int</li>
+ *   <li>{@code WhereClauseParser.analyzeAndOffset()} - applies offset during interval extraction</li>
+ * </ul>
+ *
+ * @see io.questdb.griffin.SqlOptimiser
+ * @see io.questdb.griffin.model.QueryModel
+ */
 public class TimestampAddFunctionFactory implements FunctionFactory {
-
-    private static final LongAddIntFunction ADD_DAYS_FUNCTION = Timestamps::addDays;
-    private static final LongAddIntFunction ADD_HOURS_FUNCTION = Timestamps::addHours;
-    private static final LongAddIntFunction ADD_MICROS_FUNCTION = Timestamps::addMicros;
-    private static final LongAddIntFunction ADD_MILLIS_FUNCTION = Timestamps::addMillis;
-    private static final LongAddIntFunction ADD_MINUTES_FUNCTION = Timestamps::addMinutes;
-    private static final LongAddIntFunction ADD_MONTHS_FUNCTION = Timestamps::addMonths;
-    private static final LongAddIntFunction ADD_SECONDS_FUNCTION = Timestamps::addSeconds;
-    private static final LongAddIntFunction ADD_WEEKS_FUNCTION = Timestamps::addWeeks;
-    private static final LongAddIntFunction ADD_YEARS_FUNCTION = Timestamps::addYears;
 
     @Override
     public String getSignature() {
@@ -65,63 +79,35 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
         int stride;
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
 
         if (periodFunc.isConstant()) {
             char period = periodFunc.getChar(null);
-            LongAddIntFunction periodAddFunc = lookupAddFunction(period);
+            TimestampDriver.TimestampAddMethod periodAddFunc = ColumnType.getTimestampDriver(timestampType).getAddMethod(period);
             if (periodAddFunc == null) {
                 throw SqlException.$(argPositions.getQuick(0), "invalid time period [unit=").put(period).put(']');
             }
 
             if (strideFunc.isConstant()) {
                 if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
-                    return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc);
+                    return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc, timestampType);
                 } else {
                     throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
                 }
             }
-            return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc);
+            return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc, timestampType);
         }
-        return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc);
-    }
-
-    static @Nullable LongAddIntFunction lookupAddFunction(char period) {
-        switch (period) {
-            case 'u':
-                return ADD_MICROS_FUNCTION;
-            case 'T':
-                return ADD_MILLIS_FUNCTION;
-            case 's':
-                return ADD_SECONDS_FUNCTION;
-            case 'm':
-                return ADD_MINUTES_FUNCTION;
-            case 'h':
-                return ADD_HOURS_FUNCTION;
-            case 'd':
-                return ADD_DAYS_FUNCTION;
-            case 'w':
-                return ADD_WEEKS_FUNCTION;
-            case 'M':
-                return ADD_MONTHS_FUNCTION;
-            case 'y':
-                return ADD_YEARS_FUNCTION;
-            default:
-                return null;
-        }
-    }
-
-    @FunctionalInterface
-    interface LongAddIntFunction {
-        long add(long a, int b);
+        return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc, timestampType);
     }
 
     private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction {
         private final char period;
-        private final LongAddIntFunction periodAddFunction;
+        private final TimestampDriver.TimestampAddMethod periodAddFunction;
         private final int stride;
         private final Function timestampFunc;
 
-        public TimestampAddConstConstVar(char period, LongAddIntFunction periodAddFunction, int stride, Function timestampFunc) {
+        public TimestampAddConstConstVar(char period, TimestampDriver.TimestampAddMethod periodAddFunction, int stride, Function timestampFunc, int timestampType) {
+            super(timestampType);
             this.period = period;
             this.periodAddFunction = periodAddFunction;
             this.stride = stride;
@@ -150,11 +136,12 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
     private static class TimestampAddConstVarVar extends TimestampFunction implements BinaryFunction {
         private final char period;
-        private final LongAddIntFunction periodAddFunc;
+        private final TimestampDriver.TimestampAddMethod periodAddFunc;
         private final Function strideFunc;
         private final Function timestampFunc;
 
-        public TimestampAddConstVarVar(char period, LongAddIntFunction periodAddFunc, Function strideFunc, Function timestampFunc) {
+        public TimestampAddConstVarVar(char period, TimestampDriver.TimestampAddMethod periodAddFunc, Function strideFunc, Function timestampFunc, int timestampType) {
+            super(timestampType);
             this.period = period;
             this.periodAddFunc = periodAddFunc;
             this.strideFunc = strideFunc;
@@ -193,7 +180,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         private final int stridePosition;
         private final Function timestampFunc;
 
-        public TimestampAddFunc(Function periodFunc, Function strideFunc, int stridePosition, Function timestampFunc) {
+        public TimestampAddFunc(Function periodFunc, Function strideFunc, int stridePosition, Function timestampFunc, int timestampType) {
+            super(timestampType);
             this.periodFunc = periodFunc;
             this.strideFunc = strideFunc;
             this.stridePosition = stridePosition;
@@ -233,7 +221,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (timestamp == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return Timestamps.addPeriod(timestamp, period, stride);
+            return timestampDriver.add(timestamp, period, stride);
         }
 
         @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,11 +30,13 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
@@ -54,8 +56,11 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
+    ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
+
     RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel queryModel,
+            @Nullable @Transient InsertModel insertModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException;
@@ -71,9 +76,6 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     @TestOnly
     void setFullFatJoins(boolean fullFatJoins);
-
-    @TestOnly
-    ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     @TestOnly
     ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException;

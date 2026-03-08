@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.TelemetryConfigLogger;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
@@ -64,6 +65,7 @@ public class MetadataCache implements QuietCloseable {
     private final CharSequenceObjHashMap<CairoTable> tableMap = new CharSequenceObjHashMap<>();
     private ColumnVersionReader columnVersionReader;
     private MemoryCMR metaMem = Vm.getCMRInstance();
+    private TxReader txReader;
     private long version;
 
     public MetadataCache(CairoEngine engine) {
@@ -72,14 +74,15 @@ public class MetadataCache implements QuietCloseable {
 
     @Override
     public void close() {
-        this.metaMem = Misc.free(metaMem);
-        this.tableMap.clear();
+        metaMem = Misc.free(metaMem);
+        txReader = Misc.free(txReader);
+        tableMap.clear();
     }
 
     /**
      * Used on a background thread at startup to populate the cache.
      * Cache is also populated on-demand by SQL metadata functions.
-     * Takes a lock per table to not prevent ongoing probress of the database.
+     * Takes a lock per table to not prevent the ongoing progress of the database.
      * Generally completes quickly.
      */
     public void onStartupAsyncHydrator() {
@@ -101,7 +104,7 @@ public class MetadataCache implements QuietCloseable {
             }
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
-            l.$(e.getFlyweightMessage()).$();
+            l.$safe(e.getFlyweightMessage()).$();
         } finally {
             Path.clearThreadLocals();
         }
@@ -136,6 +139,7 @@ public class MetadataCache implements QuietCloseable {
     }
 
     private @NotNull ColumnVersionReader getColumnVersionReader() {
+        //noinspection ReplaceNullCheck
         if (columnVersionReader != null) {
             return columnVersionReader;
         }
@@ -149,16 +153,21 @@ public class MetadataCache implements QuietCloseable {
             return;
         }
 
+        if (token.isView()) {
+            // views do not have _meta file
+            // view metadata will be added to the cache when the view is compiled
+            return;
+        }
+
         Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
 
-        // set up dir path
+        // set up the dir path
         path.concat(token.getDirName());
 
         boolean isSoftLink = Files.isSoftLink(path.$());
 
-        // set up table path
-        path.concat(TableUtils.META_FILE_NAME)
-                .trimTo(path.size());
+        // set up the table path
+        path.concat(TableUtils.META_FILE_NAME).trimTo(path.size());
 
         // create table to work with
         CairoTable table = new CairoTable(token);
@@ -166,7 +175,7 @@ public class MetadataCache implements QuietCloseable {
         try {
             // open metadata
             metaMem.smallFile(engine.getConfiguration().getFilesFacade(), path.$(), MemoryTag.NATIVE_METADATA_READER);
-            TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
+            TableUtils.validateMeta(path, metaMem, null, ColumnType.VERSION);
 
             table.setMetadataVersion(Long.MIN_VALUE);
 
@@ -194,63 +203,92 @@ public class MetadataCache implements QuietCloseable {
                     .$(", version=").$(metadataVersion)
                     .I$();
 
-            table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
+            int partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+            table.setPartitionBy(partitionBy);
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
-            table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
+            int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
-            table.setIsSoftLink(isSoftLink);
+            table.setSoftLinkFlag(isSoftLink);
 
-            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, columnCount);
+            TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
             boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
             // populate columns
-            for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
-                int writerIndex = table.columnOrderMap.get(i);
+            for (int i = 0, n = table.columnOrderList.size(); i < n; i += 3) {
+                int writerIndex = table.columnOrderList.get(i);
+                // negative writer index columns were "replaced", as in renamed, or had their type changed
                 if (writerIndex < 0) {
                     continue;
                 }
 
-                CharSequence name = metaMem.getStrA(table.columnOrderMap.get(i + 1));
+                CharSequence name = metaMem.getStrA(table.columnOrderList.get(i + 1));
 
                 assert name != null;
                 int columnType = TableUtils.getColumnType(metaMem, writerIndex);
 
-                if (columnType > -1) {
-                    String columnName = Chars.toString(name);
-                    CairoColumn column = new CairoColumn();
+                // negative type means column was deleted
+                if (columnType < 0) {
+                    continue;
+                }
+                String columnName = Chars.toString(name);
+                CairoColumn column = new CairoColumn();
 
-                    LOG.debug().$("hydrating column [table=").$(token).$(", column=").utf8(columnName).I$();
+                LOG.debug().$("hydrating column [table=").$(token).$(", column=").$safe(columnName).I$();
 
-                    column.setName(columnName);
-                    table.upsertColumn(column);
+                column.setName(columnName);
 
-                    // Column positions already determined
-                    column.setPosition(table.getColumnCount() - 1);
-                    column.setType(columnType);
+                // Column positions already determined
+                column.setPosition(table.getColumnCount());
+                column.setType(columnType);
+                column.setIndexedFlag(TableUtils.isColumnIndexed(metaMem, writerIndex));
+                column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
+                column.setSymbolTableStaticFlag(true);
+                column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                column.setWriterIndex(writerIndex);
 
-                    if (column.getType() < 0) {
-                        // deleted
-                        continue;
+                boolean isDesignated = writerIndex == timestampWriterIndex;
+                column.setDesignatedFlag(isDesignated);
+                if (isDesignated) {
+                    // Timestamp index is the logical index of the column in the column list. Rather than
+                    // physical index of the column in the metadata file (writer index).
+                    table.setTimestampType(columnType);
+                    table.setTimestampIndex(table.getColumnCount());
+                }
+
+                if (column.isDedupKey()) {
+                    table.setDedupFlag(true);
+                }
+
+                if (columnType == ColumnType.SYMBOL) {
+                    if (isMetaFormatUpToDate) {
+                        column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
+                        column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
+                    } else {
+                        LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").$safe(columnName).I$();
+                        loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
                     }
+                }
 
-                    column.setIsIndexed(TableUtils.isColumnIndexed(metaMem, writerIndex));
-                    column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
-                    column.setIsSymbolTableStatic(true);
-                    column.setIsDedupKey(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-                    column.setWriterIndex(writerIndex);
-                    column.setIsDesignated(writerIndex == table.getTimestampIndex());
-                    if (columnType == ColumnType.SYMBOL) {
-                        if (isMetaFormatUpToDate) {
-                            column.setSymbolCapacity(TableUtils.getSymbolCapacity(metaMem, writerIndex));
-                            column.setSymbolCached(TableUtils.isSymbolCached(metaMem, writerIndex));
-                        } else {
-                            LOG.debug().$("updating symbol capacity [table=").$(token).$(", column=").utf8(columnName).I$();
-                            loadCapacities(column, token, path, engine.getConfiguration(), getColumnVersionReader());
-                        }
+                table.upsertColumn(column);
+            }
+
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                try {
+                    if (txReader == null) {
+                        txReader = new TxReader(engine.getConfiguration().getFilesFacade());
                     }
-                    if (column.getIsDedupKey()) {
-                        table.setIsDedup(true);
+                    Path txnPath = Path.getThreadLocal2(engine.getConfiguration().getDbRoot());
+                    txReader.ofRO(txnPath.concat(token.getDirName()).concat(TableUtils.TXN_FILE_NAME).$(), table.getTimestampType(), partitionBy);
+                    if (txReader.unsafeLoadAll()) {
+                        table.setHasParquetPartitions(txReader.hasParquetPartitions());
+                    } else {
+                        table.setHasParquetPartitions(true);
                     }
+                } catch (CairoException e) {
+                    LOG.error().$("could not read partition format, assuming parquet [table=").$(token)
+                            .$(", error=").$((Throwable) e).I$();
+                    table.setHasParquetPartitions(true);
                 }
             }
 
@@ -259,16 +297,16 @@ public class MetadataCache implements QuietCloseable {
         } catch (Throwable e) {
             // get rid of stale metadata
             tableMap.remove(token.getTableName());
-            // if we can't hydrate and table is not dropped, it's a critical error
+            // if we can't hydrate and the table is not dropped, it's a critical error
             LogRecord log = engine.isTableDropped(token) ? LOG.info() : LOG.critical();
             try {
                 log
                         .$("could not hydrate metadata [table=").$(token)
                         .$(", msg=");
                 if (e instanceof FlyweightMessageContainer) {
-                    log.$(((FlyweightMessageContainer) e).getFlyweightMessage());
+                    log.$safe(((FlyweightMessageContainer) e).getFlyweightMessage());
                 } else {
-                    log.$(e.getMessage());
+                    log.$safe(e.getMessage());
                 }
                 log.$(", errno=").$(e instanceof CairoException ? ((CairoException) e).errno : 0);
             } finally {
@@ -279,38 +317,44 @@ public class MetadataCache implements QuietCloseable {
             }
         } finally {
             Misc.free(metaMem);
+            Misc.free(txReader);
         }
     }
 
-    private void loadCapacities(CairoColumn column, TableToken token, Path path, CairoConfiguration configuration, ColumnVersionReader columnVersionReader) {
+    private void loadCapacities(
+            CairoColumn column,
+            TableToken token,
+            Path path,
+            CairoConfiguration configuration,
+            ColumnVersionReader columnVersionReader
+    ) {
         final CharSequence columnName = column.getName();
         final int writerIndex = column.getWriterIndex();
 
         try (columnVersionReader) {
-            LOG.debug().$("hydrating symbol metadata [table=").$(token).$(", column=").utf8(columnName).I$();
+            LOG.debug().$("hydrating symbol metadata [table=").$(token).$(", column=").$safe(columnName).I$();
 
             // get column version
             path.trimTo(configuration.getDbRoot().length()).concat(token);
             final int rootLen = path.size();
             path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
 
-            final long columnNameTxn;
+            final long symbolTableNameTxn;
             final FilesFacade ff = configuration.getFilesFacade();
             try (columnVersionReader) {
                 columnVersionReader.ofRO(ff, path.$());
-
                 columnVersionReader.readUnsafe();
-                columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+                symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
             }
 
-            // initialise symbol map memory
+            // initialize symbol map memory
             final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
             final int capacity;
             final byte isCached;
-            final LPSZ offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
+            final LPSZ offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, symbolTableNameTxn);
             long fd = TableUtils.openRO(ff, offsetFileName, LOG);
             try {
-                // use txn to find correct symbol entry
+                // use txn to find the correct symbol entry
                 capacity = ff.readNonNegativeInt(fd, capacityOffset);
                 isCached = ff.readNonNegativeByte(fd, SymbolMapWriter.HEADER_CACHE_ENABLED);
             } finally {
@@ -331,9 +375,9 @@ public class MetadataCache implements QuietCloseable {
             }
         } catch (CairoException ex) {
             // Don't stall startup.
-            LOG.error().$("could not load symbol metadata [table=").$(token).$(", column=").utf8(columnName)
+            LOG.error().$("could not load symbol metadata [table=").$(token).$(", column=").$safe(columnName)
                     .$(", errno=").$(ex.getErrno())
-                    .$(", message=").$(ex.getMessage())
+                    .$(", message=").$safe(ex.getMessage())
                     .I$();
         }
     }
@@ -380,7 +424,8 @@ public class MetadataCache implements QuietCloseable {
             CairoConfiguration configuration = engine.getConfiguration();
 
             // sys table
-            if (Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())) {
+            if (Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())
+                    && !Chars.startsWith(tableName, configuration.getParquetExportTableNamePrefix())) {
                 return false;
             }
 
@@ -423,7 +468,8 @@ public class MetadataCache implements QuietCloseable {
                         (cachedTable == null
                                 || cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()
                                 || cachedTable.getTableToken().getTableId() != latestTable.getTableToken().getTableId())
-                                && isVisibleTable(latestTable.getTableName())) {
+                                && isVisibleTable(latestTable.getTableName())
+                ) {
                     localCache.put(latestTable.getTableName(), latestTable);
                 }
             }
@@ -486,7 +532,7 @@ public class MetadataCache implements QuietCloseable {
             CairoTable entry = tableMap.get(tableName);
             if (entry != null && tableToken.equals(entry.getTableToken())) {
                 tableMap.remove(tableName);
-                LOG.info().$("dropped [table=").utf8(tableName).I$();
+                LOG.info().$("dropped [table=").$(tableToken).I$();
             }
         }
 
@@ -494,7 +540,7 @@ public class MetadataCache implements QuietCloseable {
          * @see MetadataCacheWriter#hydrateTable(TableToken)
          */
         @Override
-        public void hydrateTable(@NotNull TableWriterMetadata tableMetadata) {
+        public void hydrateTable(@NotNull TableMetadata tableMetadata) {
             if (engine.isTableDropped(tableMetadata.getTableToken())) {
                 // Table writer can still process some transactions when DROP table has already
                 // been executed, essentially updating dropped table. We should ignore such updates.
@@ -528,44 +574,50 @@ public class MetadataCache implements QuietCloseable {
             table.setPartitionBy(tableMetadata.getPartitionBy());
             table.setMaxUncommittedRows(tableMetadata.getMaxUncommittedRows());
             table.setO3MaxLag(tableMetadata.getO3MaxLag());
-
-            int timestampIndex = tableMetadata.getTimestampIndex();
-            table.setTimestampIndex(timestampIndex);
+            table.setHasParquetPartitions(tableMetadata.hasParquetPartitions());
+            int timestampWriterIndex = tableMetadata.getTimestampIndex();
+            table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
-            table.setIsSoftLink(engine.getConfiguration().getFilesFacade().isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
+            table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 
             for (int i = 0; i < columnCount; i++) {
                 final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(i);
-                CharSequence columnName = columnMetadata.getColumnName();
 
                 int columnType = columnMetadata.getColumnType();
-
                 if (columnType < 0) {
                     continue; // marked for deletion
                 }
 
-                LOG.debug().$("hydrating column [table=").$(tableToken).$(", column=").utf8(columnName).I$();
+                String columnName = columnMetadata.getColumnName();
+                LOG.debug().$("hydrating column [table=").$(tableToken).$(", column=").$safe(columnName).I$();
 
                 CairoColumn column = new CairoColumn();
 
-                column.setName(columnName); // check this, not sure the char sequence is preserved
+                column.setName(columnName);
                 column.setType(columnType);
                 int replacingIndex = columnMetadata.getReplacingIndex();
                 column.setPosition(replacingIndex > -1 ? replacingIndex : i);
-                column.setIsIndexed(columnMetadata.isSymbolIndexFlag());
+                column.setIndexedFlag(columnMetadata.isSymbolIndexFlag());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
-                column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());
-                column.setIsDedupKey(columnMetadata.isDedupKeyFlag());
-                column.setWriterIndex(columnMetadata.getWriterIndex());
-                column.setIsDesignated(column.getWriterIndex() == timestampIndex);
+                column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
+                column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());
 
-                if (column.getIsDedupKey()) {
-                    table.setIsDedup(true);
+                int writerIndex = columnMetadata.getWriterIndex();
+                column.setWriterIndex(writerIndex);
+
+                boolean isDesignated = writerIndex == timestampWriterIndex;
+                column.setDesignatedFlag(isDesignated);
+                if (isDesignated) {
+                    table.setTimestampIndex(table.getColumnCount());
+                }
+
+                if (column.isDedupKey()) {
+                    table.setDedupFlag(true);
                 }
 
                 if (ColumnType.isSymbol(column.getType())) {
-                    LOG.debug().$("hydrating symbol metadata [table=").$(tableToken).$(", column=").utf8(columnName).I$();
+                    LOG.debug().$("hydrating symbol metadata [table=").$(tableToken).$(", column=").$safe(columnName).I$();
                     column.setSymbolCapacity(tableMetadata.getSymbolCapacity(i));
                     column.setSymbolCached(tableMetadata.getSymbolCacheFlag(i));
                 }
@@ -577,7 +629,12 @@ public class MetadataCache implements QuietCloseable {
 
             for (int i = 0, n = table.columns.size(); i < n; i++) {
                 // Update column positions after sort
-                table.columns.getQuick(i).setPosition(i);
+                final CairoColumn column = table.columns.getQuick(i);
+                column.setPosition(i);
+                // Update designated timestamp index
+                if (column.isDesignated()) {
+                    table.setTimestampIndex(i);
+                }
                 // Update column name index map
                 table.columnNameIndexMap.put(table.columns.getQuick(i).getName(), i);
             }
@@ -601,6 +658,14 @@ public class MetadataCache implements QuietCloseable {
                 CairoTable fromTab = tableMap.valueAt(index);
                 tableMap.removeAt(index);
                 tableMap.put(toTableToken.getTableName(), new CairoTable(toTableToken, fromTab));
+            }
+        }
+
+        @Override
+        public void setHasParquetPartitions(@NotNull TableToken tableToken, boolean hasParquetPartitions) {
+            CairoTable table = tableMap.get(tableToken.getTableName());
+            if (table != null && tableToken.equals(table.getTableToken())) {
+                table.setHasParquetPartitions(hasParquetPartitions);
             }
         }
     }

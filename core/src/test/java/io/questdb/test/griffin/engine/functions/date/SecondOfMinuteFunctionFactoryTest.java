@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,6 +52,16 @@ public class SecondOfMinuteFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
+
+        assertQuery(
+                "second\n" +
+                        "21\n",
+                "select second('1901-07-11T22:00:21.555998123Z')",
+                null,
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -60,6 +70,16 @@ public class SecondOfMinuteFunctionFactoryTest extends AbstractCairoTest {
                 "second\n" +
                         "30\n",
                 "select second('1997-04-11T22:00:30.555555Z'::timestamp)",
+                null,
+                null,
+                true,
+                true
+        );
+
+        assertQuery(
+                "second\n" +
+                        "30\n",
+                "select second('1997-04-11T22:00:30.555555123Z'::timestamp_ns)",
                 null,
                 null,
                 true,

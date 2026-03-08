@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
@@ -41,6 +43,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int tableId;
     private TableToken tableToken;
     private int ttlHoursOrMonths;
+    private TxReader txReader;
     private boolean walEnabled;
 
     public TableWriterMetadata(TableToken tableToken) {
@@ -78,8 +81,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     public int getReplacingColumnIndex(int columnIndex) {
-        WriterTableColumnMetadata columnMeta = (WriterTableColumnMetadata) columnMetadata.get(columnIndex);
-        return columnMeta.getReplacingIndex();
+        return columnMetadata.get(columnIndex).getReplacingIndex();
     }
 
     @Override
@@ -117,6 +119,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public boolean hasParquetPartitions() {
+        return txReader != null && txReader.hasParquetPartitions();
+    }
+
+    @Override
     public boolean isIndexed(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
@@ -126,14 +133,14 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         return walEnabled;
     }
 
-    public final void reload(MemoryMR metaMem) {
+    public final void reload(@NotNull Utf8Sequence metaPath, MemoryMR metaMem) {
         this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap.clear();
         this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
-        TableUtils.validateMeta(metaMem, columnNameIndexMap, ColumnType.VERSION);
+        TableUtils.validateMeta(metaPath, metaMem, columnNameIndexMap, ColumnType.VERSION);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata.clear();
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
@@ -184,6 +191,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setO3MaxLag(long o3MaxLagUs) {
         this.o3MaxLag = o3MaxLagUs;
+    }
+
+    public void setTxReader(TxReader txReader) {
+        this.txReader = txReader;
     }
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {

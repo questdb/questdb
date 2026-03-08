@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -59,16 +60,16 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
         readOnlyUserContext = new SqlExecutionContextImpl(engine, 1).with(new ReadOnlyUserContext());
-        readOnlyUserContext.with(new AtomicBooleanCircuitBreaker());
+        readOnlyUserContext.with(new AtomicBooleanCircuitBreaker(engine));
 
         regularUserContext = new SqlExecutionContextImpl(engine, 1).with(new RegularUserContext());
-        regularUserContext.with(new AtomicBooleanCircuitBreaker());
+        regularUserContext.with(new AtomicBooleanCircuitBreaker(engine));
 
         adminUserContext1 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext());
-        adminUserContext1.with(new AtomicBooleanCircuitBreaker());
+        adminUserContext1.with(new AtomicBooleanCircuitBreaker(engine));
 
         adminUserContext2 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext());
-        adminUserContext2.with(new AtomicBooleanCircuitBreaker());
+        adminUserContext2.with(new AtomicBooleanCircuitBreaker(engine));
     }
 
     @Test
@@ -97,10 +98,10 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                     started.countDown();
                     try {
                         SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(new ReadOnlyUserContext());
-                        context.with(new AtomicBooleanCircuitBreaker());
+                        context.with(new AtomicBooleanCircuitBreaker(engine));
 
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            TestUtils.assertSql(compiler, context, query, sink, "t\n1\n");
+                            TestUtils.assertSql(compiler, context, query, new StringSink(), "t\n1\n");
                             Assert.fail("Query should have been cancelled");
                         } catch (Exception e) {
                             if (!e.getMessage().contains("cancelled by user")) {
@@ -130,9 +131,11 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
             try {
                 assertSql(
-                        "query\twas_cancelled\n" +
-                                "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n" +
-                                "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n",
+                        """
+                                query\twas_cancelled
+                                select 1 t from long_sequence(1) where sleep(120000)\ttrue
+                                select 1 t from long_sequence(1) where sleep(120000)\ttrue
+                                """,
                         "select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'"
                 );
             } finally {

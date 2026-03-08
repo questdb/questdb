@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface MetadataServiceStub extends MetadataService {
 
@@ -50,18 +51,18 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+    default void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
+        throw CairoException.critical(0).put("change symbol capacity does not update sequencer metadata");
+    }
+
+    @Override
+    default boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         throw CairoException.critical(0).put("convert native partition to parquet does not update sequencer metadata");
     }
 
     @Override
     default boolean convertPartitionParquetToNative(long partitionTimestamp) {
         throw CairoException.critical(0).put("convert parquet partition to native does not update sequencer metadata");
-    }
-
-    @Override
-    default void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
-        throw CairoException.critical(0).put("change symbol capacity does not update sequencer metadata");
     }
 
     @Override
@@ -108,6 +109,31 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStartUs,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    ) {
+        throw CairoException.critical(0).put("change of materialized view refresh settings does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMatViewRefreshLimit(int limitHoursOrMonths) {
+        throw CairoException.critical(0).put("change of materialized view refresh limit does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMatViewRefreshTimer(long startUs, int interval, char unit) {
+        throw CairoException.critical(0).put("change of materialized view refresh timer does not update sequencer metadata");
+    }
+
+    @Override
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         throw CairoException.critical(0).put("change of max uncommitted does not update sequencer metadata");
     }
@@ -118,7 +144,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths) {
+    default void setMetaTtl(int ttlHoursOrMonths) {
         throw CairoException.critical(0).put("change of TTL does not update sequencer metadata");
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.std.datetime.MicrosecondClock;
 
 public interface LineHttpProcessorConfiguration {
 
@@ -33,19 +33,25 @@ public interface LineHttpProcessorConfiguration {
 
     boolean autoCreateNewTables();
 
+    CairoConfiguration getCairoConfiguration();
+
     short getDefaultColumnTypeForFloat();
 
     short getDefaultColumnTypeForInteger();
 
     int getDefaultPartitionBy();
 
+    int getDefaultTimestampColumnType();
+
     CharSequence getInfluxPingVersion();
+
+    long getMaxRecvBufferSize();
 
     MicrosecondClock getMicrosecondClock();
 
     long getSymbolCacheWaitUsBeforeReload();
 
-    LineTcpTimestampAdapter getTimestampAdapter();
+    byte getTimestampUnit();
 
     boolean isEnabled();
 

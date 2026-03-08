@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class SumFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
@@ -43,23 +44,42 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count) {
+        if (count > 0) {
+            float acc = 0.0f;
+            boolean hasFinite = false;
+            final long hi = ptr + count * (long) Float.BYTES;
+            for (; ptr < hi; ptr += Float.BYTES) {
+                final float value = Unsafe.getUnsafe().getFloat(ptr);
+                if (Float.isFinite(value)) {
+                    acc += value;
+                    hasFinite = true;
+                }
+            }
+            if (hasFinite) {
+                mapValue.putFloat(valueIndex, acc);
+            } else {
+                mapValue.putFloat(valueIndex, Float.NaN);
+            }
+        }
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
-        if (Float.isFinite(value)) {
-            mapValue.putFloat(valueIndex, value);
-            mapValue.putLong(valueIndex + 1, 1);
-        } else {
-            mapValue.putFloat(valueIndex, 0f);
-            mapValue.putLong(valueIndex + 1, 0);
-        }
+        mapValue.putFloat(valueIndex, value);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
         if (Float.isFinite(value)) {
-            mapValue.addFloat(valueIndex, value);
-            mapValue.addLong(valueIndex + 1, 1);
+            final float sum = mapValue.getFloat(valueIndex);
+            if (Float.isFinite(sum)) {
+                mapValue.putFloat(valueIndex, sum + value);
+            } else {
+                mapValue.putFloat(valueIndex, value);
+            }
         }
     }
 
@@ -70,11 +90,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public float getFloat(Record rec) {
-        long valueCount = rec.getLong(valueIndex + 1);
-        if (valueCount > 0) {
-            return rec.getFloat(valueIndex);
-        }
-        return Float.NaN;
+        return rec.getFloat(valueIndex);
     }
 
     @Override
@@ -101,7 +117,6 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.FLOAT);
-        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -116,22 +131,30 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        float srcSum = srcValue.getFloat(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 1);
-        destValue.addFloat(valueIndex, srcSum);
-        destValue.addLong(valueIndex + 1, srcCount);
+        final float srcSum = srcValue.getFloat(valueIndex);
+        if (Float.isFinite(srcSum)) {
+            final float destSum = destValue.getFloat(valueIndex);
+            if (Float.isFinite(destSum)) {
+                destValue.putFloat(valueIndex, destSum + srcSum);
+            } else {
+                destValue.putFloat(valueIndex, srcSum);
+            }
+        }
     }
 
     @Override
     public void setFloat(MapValue mapValue, float value) {
         mapValue.putFloat(valueIndex, value);
-        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
-        mapValue.putLong(valueIndex + 1, 0);
+    }
+
+    @Override
+    public boolean supportsBatchComputation() {
+        return true;
     }
 
     @Override

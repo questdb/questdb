@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,10 +22,14 @@
  *
  ******************************************************************************/
 use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
+use num_traits::AsPrimitive;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
 
+pub const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
+
+// Don't forget to update VALUES when modifying this list.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ColumnTypeTag {
@@ -51,9 +55,49 @@ pub enum ColumnTypeTag {
     Long128 = 24,
     IPv4 = 25,
     Varchar = 26,
+    Array = 27,
+    Decimal8 = 28,
+    Decimal16 = 29,
+    Decimal32 = 30,
+    Decimal64 = 31,
+    Decimal128 = 32,
+    Decimal256 = 33,
 }
 
 impl ColumnTypeTag {
+    #[cfg(test)]
+    const VALUES: [Self; 29] = [
+        Self::Boolean,
+        Self::Byte,
+        Self::Short,
+        Self::Char,
+        Self::Int,
+        Self::Long,
+        Self::Date,
+        Self::Timestamp,
+        Self::Float,
+        Self::Double,
+        Self::String,
+        Self::Symbol,
+        Self::Long256,
+        Self::GeoByte,
+        Self::GeoShort,
+        Self::GeoInt,
+        Self::GeoLong,
+        Self::Binary,
+        Self::Uuid,
+        Self::Long128,
+        Self::IPv4,
+        Self::Varchar,
+        Self::Array,
+        Self::Decimal8,
+        Self::Decimal16,
+        Self::Decimal32,
+        Self::Decimal64,
+        Self::Decimal128,
+        Self::Decimal256,
+    ];
+
     /// If true, the column is encoded with both data and aux vectors.
     pub const fn is_var_size(self) -> bool {
         self.fixed_size().is_none()
@@ -64,27 +108,35 @@ impl ColumnTypeTag {
     /// N.B. Symbol columns are _also_ considered fixed size.
     pub const fn fixed_size(self) -> Option<usize> {
         match self {
-            ColumnTypeTag::Boolean | ColumnTypeTag::GeoByte | ColumnTypeTag::Byte => Some(1),
+            ColumnTypeTag::Boolean
+            | ColumnTypeTag::GeoByte
+            | ColumnTypeTag::Byte
+            | ColumnTypeTag::Decimal8 => Some(1),
 
-            ColumnTypeTag::Short | ColumnTypeTag::GeoShort | ColumnTypeTag::Char => Some(2),
+            ColumnTypeTag::Short
+            | ColumnTypeTag::GeoShort
+            | ColumnTypeTag::Char
+            | ColumnTypeTag::Decimal16 => Some(2),
 
             ColumnTypeTag::Float
             | ColumnTypeTag::Int
             | ColumnTypeTag::IPv4
             | ColumnTypeTag::GeoInt
-            | ColumnTypeTag::Symbol => Some(4),
+            | ColumnTypeTag::Symbol
+            | ColumnTypeTag::Decimal32 => Some(4),
 
             ColumnTypeTag::Double
             | ColumnTypeTag::Long
             | ColumnTypeTag::Date
             | ColumnTypeTag::GeoLong
-            | ColumnTypeTag::Timestamp => Some(8),
+            | ColumnTypeTag::Timestamp
+            | ColumnTypeTag::Decimal64 => Some(8),
 
-            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => Some(16),
+            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid | ColumnTypeTag::Decimal128 => Some(16),
 
-            ColumnTypeTag::Long256 => Some(32),
+            ColumnTypeTag::Long256 | ColumnTypeTag::Decimal256 => Some(32),
 
-            ColumnTypeTag::Binary | ColumnTypeTag::String | ColumnTypeTag::Varchar => None,
+            _ => None,
         }
     }
 
@@ -112,6 +164,13 @@ impl ColumnTypeTag {
             ColumnTypeTag::Long128 => "long128",
             ColumnTypeTag::IPv4 => "ipv4",
             ColumnTypeTag::Varchar => "varchar",
+            ColumnTypeTag::Array => "array",
+            ColumnTypeTag::Decimal8 => "decimal8",
+            ColumnTypeTag::Decimal16 => "decimal16",
+            ColumnTypeTag::Decimal32 => "decimal32",
+            ColumnTypeTag::Decimal64 => "decimal64",
+            ColumnTypeTag::Decimal128 => "decimal128",
+            ColumnTypeTag::Decimal256 => "decimal256",
         }
     }
 
@@ -119,7 +178,7 @@ impl ColumnTypeTag {
     // of constructing an invalid `ColumnType`, e.g. one without the appropriate
     // extra type info for Geo types.
     #[cfg(test)]
-    pub(crate) fn into_type(self) -> ColumnType {
+    pub(crate) const fn into_type(self) -> ColumnType {
         ColumnType::new(self, 0)
     }
 }
@@ -148,10 +207,16 @@ impl TryFrom<u8> for ColumnTypeTag {
             17 => Ok(ColumnTypeTag::GeoLong),
             18 => Ok(ColumnTypeTag::Binary),
             19 => Ok(ColumnTypeTag::Uuid),
-            21 => Ok(ColumnTypeTag::IPv4),
             24 => Ok(ColumnTypeTag::Long128),
             25 => Ok(ColumnTypeTag::IPv4),
             26 => Ok(ColumnTypeTag::Varchar),
+            27 => Ok(ColumnTypeTag::Array),
+            28 => Ok(ColumnTypeTag::Decimal8),
+            29 => Ok(ColumnTypeTag::Decimal16),
+            30 => Ok(ColumnTypeTag::Decimal32),
+            31 => Ok(ColumnTypeTag::Decimal64),
+            32 => Ok(ColumnTypeTag::Decimal128),
+            33 => Ok(ColumnTypeTag::Decimal256),
             _ => Err(fmt_err!(
                 InvalidType,
                 "unknown QuestDB column tag code: {}",
@@ -167,20 +232,55 @@ fn tag_of(col_type: i32) -> u8 {
 
 const TYPE_FLAG_DESIGNATED_TIMESTAMP: i32 = 1i32 << 17;
 
+/// Bit 20 represents the designated timestamp column order.
+/// For historical compatibility:
+/// - 0 = ascending order (default)
+/// - 1 = descending order
+const TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING: i32 = 1i32 << 20;
+const ARRAY_ELEMTYPE_FIELD_MASK: i32 = 0x3F;
+const ARRAY_ELEMTYPE_FIELD_POS: i32 = 8;
+const ARRAY_NDIMS_LIMIT: i32 = 32; // inclusive
+const ARRAY_NDIMS_FIELD_MASK: i32 = ARRAY_NDIMS_LIMIT - 1;
+const ARRAY_NDIMS_FIELD_POS: i32 = 14;
+const DECIMAL_SCALE_FIELD_MASK: i32 = 0xFF;
+const DECIMAL_SCALE_FIELD_POS: i32 = 18;
+const DECIMAL_PRECISION_FIELD_MASK: i32 = 0xFF;
+const DECIMAL_PRECISION_FIELD_POS: i32 = 8;
+
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Serialize, Ord, PartialOrd, Eq)]
 #[serde(transparent)]
 pub struct ColumnType {
-    // Optimization so `Option<ColumnType>` is the same size as `ColumnType`.
     code: NonZeroI32,
 }
 
 impl ColumnType {
-    pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
+    pub const fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
         let shifted_extra_type_info = extra_type_info << 8;
         let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
             .expect("column type code should never be zero");
         Self { code }
+    }
+
+    pub const fn new_decimal(precision: u8, scale: u8) -> Option<Self> {
+        if scale > precision {
+            return None;
+        }
+        let extra_type_info = (((precision as i32) & DECIMAL_PRECISION_FIELD_MASK)
+            << DECIMAL_PRECISION_FIELD_POS)
+            | (((scale as i32) & DECIMAL_SCALE_FIELD_MASK) << DECIMAL_SCALE_FIELD_POS);
+        let tag = match precision {
+            1..=2 => ColumnTypeTag::Decimal8,
+            3..=4 => ColumnTypeTag::Decimal16,
+            5..=9 => ColumnTypeTag::Decimal32,
+            10..=18 => ColumnTypeTag::Decimal64,
+            19..=38 => ColumnTypeTag::Decimal128,
+            39..=76 => ColumnTypeTag::Decimal256,
+            _ => return None,
+        };
+        Some(Self {
+            code: NonZeroI32::new(tag as i32 | extra_type_info).unwrap(),
+        })
     }
 
     pub fn code(&self) -> i32 {
@@ -192,7 +292,16 @@ impl ColumnType {
             && ((self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0)
     }
 
+    pub fn is_designated_timestamp_ascending(&self) -> bool {
+        self.is_designated()
+            && (self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING) == 0
+    }
+
     pub fn into_designated(self) -> CoreResult<ColumnType> {
+        self.into_designated_with_order(true)
+    }
+
+    pub fn into_designated_with_order(self, ascending: bool) -> CoreResult<ColumnType> {
         if self.tag() != ColumnTypeTag::Timestamp {
             return Err(fmt_err!(
                 InvalidType,
@@ -200,7 +309,28 @@ impl ColumnType {
                 self
             ));
         }
-        let code = NonZeroI32::new(self.code() | TYPE_FLAG_DESIGNATED_TIMESTAMP).unwrap();
+        let mut flags = TYPE_FLAG_DESIGNATED_TIMESTAMP;
+        if !ascending {
+            flags |= TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING;
+        }
+        let code = NonZeroI32::new(self.code() | flags).unwrap();
+        Ok(Self { code })
+    }
+
+    pub fn into_non_designated(self) -> CoreResult<ColumnType> {
+        if self.tag() != ColumnTypeTag::Timestamp {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid column type {}, only timestamp columns can have designated flag",
+                self
+            ));
+        }
+        let code = NonZeroI32::new(
+            self.code()
+                & !(TYPE_FLAG_DESIGNATED_TIMESTAMP
+                    | TYPE_FLAG_DESIGNATED_TIMESTAMP_ORDER_DESCENDING),
+        )
+        .unwrap();
         Ok(Self { code })
     }
 
@@ -210,6 +340,72 @@ impl ColumnType {
         col_tag_num
             .try_into()
             .expect("invalid column type tag, should already be validated")
+    }
+
+    pub fn array_dimensionality(&self) -> CoreResult<i32> {
+        if self.tag() != ColumnTypeTag::Array {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid column type {}, only array columns have dimensionality",
+                self
+            ));
+        }
+        let dim = ((self.code() >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
+        Ok(dim)
+    }
+
+    pub fn array_element_type(&self) -> CoreResult<ColumnTypeTag> {
+        if self.tag() != ColumnTypeTag::Array {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid column type {}, only array columns have element type",
+                self
+            ));
+        }
+        let tag = (self.code() >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK;
+        let tag = ColumnTypeTag::try_from(tag as u8)?;
+        Ok(tag)
+    }
+
+    pub fn has_flag(&self, flag: i32) -> bool {
+        let flag_shifted: i32 = flag << 8;
+        self.code.get() & flag_shifted == flag_shifted
+    }
+
+    pub fn decimal_scale(&self) -> u8 {
+        debug_assert!(
+            matches!(
+                self.tag(),
+                ColumnTypeTag::Decimal8
+                    | ColumnTypeTag::Decimal16
+                    | ColumnTypeTag::Decimal32
+                    | ColumnTypeTag::Decimal64
+                    | ColumnTypeTag::Decimal128
+                    | ColumnTypeTag::Decimal256
+            ),
+            "decimal_scale() should only be called on decimal column types"
+        );
+        ((self.code.get() >> DECIMAL_SCALE_FIELD_POS) & DECIMAL_SCALE_FIELD_MASK) as u8
+    }
+
+    pub fn decimal_precision(&self) -> u8 {
+        debug_assert!(
+            matches!(
+                self.tag(),
+                ColumnTypeTag::Decimal8
+                    | ColumnTypeTag::Decimal16
+                    | ColumnTypeTag::Decimal32
+                    | ColumnTypeTag::Decimal64
+                    | ColumnTypeTag::Decimal128
+                    | ColumnTypeTag::Decimal256
+            ),
+            "decimal_precision() should only be called on decimal column types"
+        );
+        ((self.code.get() >> DECIMAL_PRECISION_FIELD_POS) & DECIMAL_PRECISION_FIELD_MASK) as u8
+    }
+
+    pub fn is_symbol(&self) -> bool {
+        self.tag() == ColumnTypeTag::Symbol
     }
 }
 
@@ -256,6 +452,95 @@ impl<'de> Deserialize<'de> for ColumnType {
     }
 }
 
+pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<ColumnType> {
+    if !(1..=ARRAY_NDIMS_LIMIT).contains(&dim) {
+        return Err(fmt_err!(InvalidType, "invalid array dimensionality {dim}",));
+    }
+    if elem_type != ColumnTypeTag::Double {
+        return Err(fmt_err!(
+            InvalidType,
+            "unsupported array element type {}",
+            elem_type.name()
+        ));
+    }
+    let extra = ((dim - 1) & ARRAY_NDIMS_FIELD_MASK)
+        << (ARRAY_NDIMS_FIELD_POS - ARRAY_ELEMTYPE_FIELD_POS)
+        | ((elem_type as i32) & ARRAY_ELEMTYPE_FIELD_MASK);
+    Ok(ColumnType::new(ColumnTypeTag::Array, extra))
+}
+
+pub mod nulls {
+    pub const BYTE: i8 = 0;
+    pub const SHORT: i16 = 0;
+    pub const INT: i32 = i32::MIN;
+    pub const LONG: i64 = i64::MIN;
+    pub const IPV4: i32 = 0;
+    pub const FLOAT: f32 = f32::NAN;
+    pub const DOUBLE: f64 = f64::NAN;
+    pub const GEOHASH_BYTE: i8 = -1;
+    pub const GEOHASH_SHORT: i16 = -1;
+    pub const GEOHASH_INT: i32 = -1;
+    pub const GEOHASH_LONG: i64 = -1;
+    pub const SYMBOL: i32 = i32::MIN;
+    pub const TIMESTAMP: i64 = i64::MIN;
+    pub const UUID: u128 =
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128]);
+    pub const DECIMAL8: i8 = i8::MIN;
+    pub const DECIMAL16: i16 = i16::MIN;
+    pub const DECIMAL32: i32 = i32::MIN;
+    pub const DECIMAL64: i64 = i64::MIN;
+    pub const DECIMAL128: u128 =
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0]);
+    pub const DECIMAL256: [u128; 2] = [
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 0]),
+        u128::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+    ];
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Long128 {
+    pub lo: i64,
+    pub hi: i64,
+}
+
+impl Long128 {
+    pub const NULL: Self = Self {
+        lo: i64::MIN,
+        hi: i64::MIN,
+    };
+}
+
+impl AsPrimitive<Long128> for Long128 {
+    fn as_(self) -> Long128 {
+        self
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct Long256 {
+    pub l0: i64,
+    pub l1: i64,
+    pub l2: i64,
+    pub l3: i64,
+}
+
+impl Long256 {
+    pub const NULL: Self = Self {
+        l0: i64::MIN,
+        l1: i64::MIN,
+        l2: i64::MIN,
+        l3: i64::MIN,
+    };
+}
+
+impl AsPrimitive<Long256> for Long256 {
+    fn as_(self) -> Long256 {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +584,7 @@ mod tests {
         assert!(ColumnTypeTag::Binary.is_var_size());
         assert!(ColumnTypeTag::String.is_var_size());
         assert!(ColumnTypeTag::Varchar.is_var_size());
+        assert!(ColumnTypeTag::Array.is_var_size());
     }
 
     #[test]
@@ -312,5 +598,112 @@ mod tests {
         assert_eq!(ColumnTypeTag::Binary.fixed_size(), None);
         assert_eq!(ColumnTypeTag::String.fixed_size(), None);
         assert_eq!(ColumnTypeTag::Varchar.fixed_size(), None);
+        assert_eq!(ColumnTypeTag::Array.fixed_size(), None);
+        assert_eq!(ColumnTypeTag::Decimal8.fixed_size(), Some(1));
+        assert_eq!(ColumnTypeTag::Decimal16.fixed_size(), Some(2));
+        assert_eq!(ColumnTypeTag::Decimal32.fixed_size(), Some(4));
+        assert_eq!(ColumnTypeTag::Decimal64.fixed_size(), Some(8));
+        assert_eq!(ColumnTypeTag::Decimal128.fixed_size(), Some(16));
+        assert_eq!(ColumnTypeTag::Decimal256.fixed_size(), Some(32));
+    }
+
+    #[test]
+    fn test_array_dimensionality() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Array {
+                assert!(ColumnType::new(tag, 0).array_dimensionality().is_err());
+            }
+        }
+
+        let typ = encode_array_type(ColumnTypeTag::Double, 3);
+        assert!(typ.is_ok());
+        let dim = typ.unwrap().array_dimensionality();
+        assert!(dim.is_ok());
+        assert_eq!(dim.unwrap(), 3);
+    }
+
+    #[test]
+    fn test_designated() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Timestamp {
+                assert!(!ColumnType::new(tag, 0).is_designated());
+                assert!(ColumnType::new(tag, 0).into_designated().is_err());
+                assert!(ColumnType::new(tag, 0).into_non_designated().is_err());
+            }
+        }
+
+        let typ = ColumnType::new(ColumnTypeTag::Timestamp, 0).into_designated();
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+        assert!(typ.is_designated());
+        let typ = typ.into_non_designated();
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+        assert!(!typ.is_designated());
+        assert_eq!(typ, ColumnType::new(ColumnTypeTag::Timestamp, 0));
+        // into_non_designated must be idempotent
+        let typ = typ.into_non_designated();
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+        assert!(!typ.is_designated());
+    }
+
+    #[test]
+    fn test_designated_timestamp_ascending() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Timestamp {
+                assert!(!ColumnType::new(tag, 0).is_designated_timestamp_ascending());
+            }
+        }
+        let typ = ColumnType::new(ColumnTypeTag::Timestamp, 0);
+        assert!(!typ.is_designated_timestamp_ascending());
+
+        let typ_asc = ColumnType::new(ColumnTypeTag::Timestamp, 0)
+            .into_designated()
+            .unwrap();
+        assert!(typ_asc.is_designated());
+        assert!(typ_asc.is_designated_timestamp_ascending());
+
+        let typ_desc = ColumnType::new(ColumnTypeTag::Timestamp, 0)
+            .into_designated_with_order(false)
+            .unwrap();
+        assert!(typ_desc.is_designated());
+        assert!(!typ_desc.is_designated_timestamp_ascending());
+
+        let typ_non_designated = typ_asc.into_non_designated().unwrap();
+        assert!(!typ_non_designated.is_designated_timestamp_ascending());
+
+        let typ_non_designated = typ_desc.into_non_designated().unwrap();
+        assert!(!typ_non_designated.is_designated_timestamp_ascending());
+    }
+
+    #[test]
+    fn test_array_element_type() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Array {
+                assert!(ColumnType::new(tag, 0).array_element_type().is_err());
+            }
+        }
+
+        let typ = encode_array_type(ColumnTypeTag::Double, 3);
+        assert!(typ.is_ok());
+        let dim = typ.unwrap().array_element_type();
+        assert!(dim.is_ok());
+        assert_eq!(dim.unwrap(), ColumnTypeTag::Double);
+    }
+
+    #[test]
+    fn test_encode_array_type() {
+        let typ = encode_array_type(ColumnTypeTag::Double, 11);
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+
+        let elem_typ = typ.array_element_type();
+        assert!(elem_typ.is_ok());
+        assert_eq!(elem_typ.unwrap(), ColumnTypeTag::Double);
+
+        let dim = typ.array_dimensionality();
+        assert!(dim.is_ok());
+        assert_eq!(dim.unwrap(), 11);
     }
 }

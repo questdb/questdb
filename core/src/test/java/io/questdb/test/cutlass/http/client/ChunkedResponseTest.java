@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,12 @@ package io.questdb.test.cutlass.http.client;
 
 import io.questdb.cutlass.http.client.AbstractChunkedResponse;
 import io.questdb.cutlass.http.client.Fragment;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -40,13 +45,16 @@ public class ChunkedResponseTest {
     @Test
     public void testChunkSizeSplit() {
         String[] fragments = {
-                "10\r\n" +
-                        "abcdefghjklzxnmd\r\n" +
-                        "0a",
-                "\r\n" +
-                        "0123456789\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                """
+                10\r
+                abcdefghjklzxnmd\r
+                0a""",
+                """
+                \r
+                0123456789\r
+                00\r
+                \r
+                """
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }
@@ -54,13 +62,16 @@ public class ChunkedResponseTest {
     @Test
     public void testChunkSizeSplit2() {
         String[] fragments = {
-                "10\r\n" +
-                        "abcdefghjklzxnmd\r\n" +
-                        "0a\r",
-                "\n" +
-                        "0123456789\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                """
+                10\r
+                abcdefghjklzxnmd\r
+                0a\r""",
+                """
+                
+                0123456789\r
+                00\r
+                \r
+                """
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }
@@ -68,12 +79,16 @@ public class ChunkedResponseTest {
     @Test
     public void testChunkSizeSplit3() {
         String[] fragments = {
-                "10\r\n" +
-                        "abcdefghjklzxnmd\r\n" +
-                        "0a\r\n",
-                "0123456789\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                """
+                10\r
+                abcdefghjklzxnmd\r
+                0a\r
+                """,
+                """
+                0123456789\r
+                00\r
+                \r
+                """
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }
@@ -83,10 +98,13 @@ public class ChunkedResponseTest {
         String[] fragments = {
                 "10\r\n" +
                         "abcdefghjklzxnmd\r",
-                "\n0a\r\n" +
-                        "0123456789\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                """
+                
+                0a\r
+                0123456789\r
+                00\r
+                \r
+                """
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }
@@ -96,10 +114,13 @@ public class ChunkedResponseTest {
         String[] fragments = {
                 "10\r\n" +
                         "abcdefghjklzxnmd",
-                "\r\n0a\r\n" +
-                        "0123456789\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                """
+                \r
+                0a\r
+                0123456789\r
+                00\r
+                \r
+                """
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }
@@ -107,12 +128,16 @@ public class ChunkedResponseTest {
     @Test
     public void testChunkSizeSplit6() {
         String[] fragments = {
-                "10\r\n" +
-                        "abcdefghjklzxnmd\r\n0",
-                "a\r\n" +
-                        "0123456789\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                """
+                10\r
+                abcdefghjklzxnmd\r
+                0""",
+                """
+                a\r
+                0123456789\r
+                00\r
+                \r
+                """
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }
@@ -123,10 +148,13 @@ public class ChunkedResponseTest {
                 "10\r\n" +
                         "abcdefghjklzxnmd",
                 "\r",
-                "\n0a\r\n" +
-                        "0123456789\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                """
+                
+                0a\r
+                0123456789\r
+                00\r
+                \r
+                """
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }
@@ -134,12 +162,16 @@ public class ChunkedResponseTest {
     @Test
     public void testChunkSplit() {
         String[] fragments = {
-                "10\r\n" +
-                        "abcdefghjklzxnmd\r\n",
-                "0a\r\n" +
-                        "0123456789\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                """
+                10\r
+                abcdefghjklzxnmd\r
+                """,
+                """
+                0a\r
+                0123456789\r
+                00\r
+                \r
+                """
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }
@@ -182,12 +214,14 @@ public class ChunkedResponseTest {
     @Test
     public void testSingleFragment() {
         String[] fragments = {
-                "10\r\n" +
-                        "abcdefghjklzxnmd\r\n" +
-                        "0a\r\n" +
-                        "0123456789\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                """
+                10\r
+                abcdefghjklzxnmd\r
+                0a\r
+                0123456789\r
+                00\r
+                \r
+                """
         };
         assertResponse("abcdefghjklzxnmd0123456789", fragments);
     }

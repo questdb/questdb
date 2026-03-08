@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
@@ -34,17 +35,28 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class SqlExecutionContextStub implements SqlExecutionContext {
-    private final CairoEngine engine;
-
+public record SqlExecutionContextStub(CairoEngine engine) implements SqlExecutionContext {
     public SqlExecutionContextStub(@NotNull CairoEngine engine) {
         this.engine = engine;
+    }
+
+    @Override
+    public boolean allowNonDeterministicFunctions() {
+        return true;
+    }
+
+    @Override
+    public void changePageFrameSizes(int minRows, int maxRows) {
     }
 
     @Override
@@ -62,12 +74,15 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
+            char rowsLoUnit,
             int rowsLoExprPos,
             long rowsHi,
+            char rowsHiUnit,
             int rowsHiExprPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
+            int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
     ) {
@@ -93,6 +108,23 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
         return false;
     }
 
+    public Decimal128 getDecimal128() {
+        return null;
+    }
+
+    public Decimal256 getDecimal256() {
+        return null;
+    }
+
+    public Decimal64 getDecimal64() {
+        return null;
+    }
+
+    @Override
+    public int getIntervalFunctionType() {
+        return ColumnType.INTERVAL_TIMESTAMP_MICRO;
+    }
+
     @Override
     public int getJitMode() {
         return 0;
@@ -104,8 +136,28 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public long getNow() {
+    public long getNanosecondTimestamp() {
         return 0L;
+    }
+
+    @Override
+    public long getNow(int timestampType) {
+        return 0L;
+    }
+
+    @Override
+    public int getNowTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
+    public int getPageFrameMaxRows() {
+        return engine.getConfiguration().getSqlPageFrameMaxRows();
+    }
+
+    @Override
+    public int getPageFrameMinRows() {
+        return engine.getConfiguration().getSqlPageFrameMinRows();
     }
 
     @Override
@@ -129,6 +181,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int getSharedQueryWorkerCount() {
+        return 0;
+    }
+
+    @Override
     public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
         return null;
     }
@@ -139,7 +196,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public int getWorkerCount() {
+    public int hasInterval() {
         return 0;
     }
 
@@ -149,16 +206,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public boolean isCacheHit() {
-        return false;
-    }
-
-    @Override
-    public boolean isColumnPreTouchEnabled() {
-        return false;
-    }
-
-    @Override
-    public boolean isColumnPreTouchEnabledOverride() {
         return false;
     }
 
@@ -178,7 +225,32 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParquetRowGroupPruningEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isParallelTopKEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelHorizonJoinEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelWindowJoinEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
+        return false;
+    }
+
+    @Override
+    public boolean isValidationOnly() {
         return false;
     }
 
@@ -188,7 +260,28 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public RuntimeIntrinsicIntervalModel peekIntervalModel() {
+        return null;
+    }
+
+    @Override
+    public void popHasInterval() {
+    }
+
+    @Override
+    public void popIntervalModel() {
+    }
+
+    @Override
     public void popTimestampRequiredFlag() {
+    }
+
+    @Override
+    public void pushHasInterval(int hasInterval) {
+    }
+
+    @Override
+    public void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel) {
     }
 
     @Override
@@ -196,7 +289,15 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void resetFlags() {
+    public void reset() {
+    }
+
+    @Override
+    public void restoreToDefaultPageFrameSizes() {
+    }
+
+    @Override
+    public void setAllowNonDeterministicFunction(boolean value) {
     }
 
     @Override
@@ -212,11 +313,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
-    }
-
-    @Override
-    public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
+    public void setIntervalFunctionType(int intervalFunctionType) {
     }
 
     @Override
@@ -224,7 +321,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setNowAndFixClock(long now) {
+    public void setNowAndFixClock(long now, int nowTimestampType) {
     }
 
     @Override
@@ -237,6 +334,22 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+    }
+
+    @Override
+    public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
+    }
+
+    @Override
+    public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+    }
+
+    @Override
+    public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
+    }
+
+    @Override
+    public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
     }
 
     @Override

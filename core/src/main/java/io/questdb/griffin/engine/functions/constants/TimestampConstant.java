@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,26 +24,41 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
 
 public class TimestampConstant extends TimestampFunction implements ConstantFunction {
-    public static final TimestampConstant NULL = new TimestampConstant(Numbers.LONG_NULL);
+    public static final TimestampConstant TIMESTAMP_MICRO_NULL = new TimestampConstant(Numbers.LONG_NULL, ColumnType.TIMESTAMP_MICRO);
+    public static final TimestampConstant TIMESTAMP_NANO_NULL = new TimestampConstant(Numbers.LONG_NULL, ColumnType.TIMESTAMP_NANO);
     private final long value;
 
-    public TimestampConstant(long value) {
+    public TimestampConstant(long value, int columnType) {
+        super(columnType);
         this.value = value;
     }
 
-    public static TimestampConstant newInstance(long value) {
-        return value != Numbers.LONG_NULL ? new TimestampConstant(value) : NULL;
+    public static ConstantFunction newInstance(long value, int timestampType) {
+        return value != Numbers.LONG_NULL ? new TimestampConstant(value, timestampType) : ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
     }
 
     @Override
     public long getTimestamp(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof TimestampConstant that) {
+            return this.value == that.value;
+        }
+        return false;
     }
 
     @Override
@@ -53,6 +68,6 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(value);
+        sink.valISODate(timestampDriver, value);
     }
 }

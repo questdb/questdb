@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,11 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 
@@ -62,6 +64,11 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
+    public long preComputedStateSize() {
+        return cursorA.preComputedStateSize() + cursorB.preComputedStateSize();
+    }
+
+    @Override
     public long size() {
         final long sizeA = cursorA.size();
         final long sizeB = cursorB.size();
@@ -72,7 +79,7 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) {
         cursorA.skipRows(rowCount);
         if (rowCount.get() > 0) {
             cursorB.skipRows(rowCount);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,11 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.std.Numbers;
 
 public class FloatConstant extends FloatFunction implements ConstantFunction {
     public static final FloatConstant NULL = new FloatConstant(Float.NaN);
@@ -37,7 +39,7 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     }
 
     public static FloatConstant newInstance(float value) {
-        return value == value ? new FloatConstant(value) : NULL;
+        return Numbers.isFinite(value) ? new FloatConstant(value) : NULL;
     }
 
     @Override
@@ -46,10 +48,20 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isEquivalentTo(Function obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj instanceof FloatConstant that) {
+            return this.value == that.value;
+        }
+        return false;
+    }
+
+    @Override
     public boolean isNullConstant() {
         // NaN is used as a marker for NULL
-        // we can't use value != value because it will always be false
-        return value != value;
+        return Numbers.isNull(value);
     }
 
     @Override

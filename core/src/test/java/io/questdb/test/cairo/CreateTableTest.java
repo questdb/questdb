@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,9 +50,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
-/**
- * Test interactions between cast and index clauses in CREATE TABLE and CREATE TABLE AS SELECT statements .
- */
 @SuppressWarnings("SameParameterValue")
 public class CreateTableTest extends AbstractCairoTest {
 
@@ -75,10 +72,22 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableArrayWithMismatchedBrackets() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("create table x (arr double[);", 26, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double[)'");
+            assertException("create table x (arr double[][);", 28, "syntax error at column type definition, expected array type: 'DOUBLE[][]...', but found: 'double[][)'");
+            assertException("create table x (arr double]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
+            assertException("create table x (arr double[]]);", 16, "arr has an unmatched `]` - were you trying to define an array?");
+        });
+    }
+
+    @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast() throws Exception {
         assertQuery(
-                "x\n" +
-                        "1\n",
+                """
+                        x
+                        1
+                        """,
                 "select * from tab",
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as SYMBOL) AS x FROM long_sequence(1)" +
@@ -92,8 +101,10 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast2() throws Exception {
         assertQuery(
-                "x\n" +
-                        "1\n",
+                """
+                        x
+                        1
+                        """,
                 "select * from tab",
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as STRING) AS x FROM long_sequence(1)" +
@@ -411,6 +422,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 {"g", "DATE"},
                 {"h", "BINARY"},
                 {"t", "TIMESTAMP"},
+                {"n", "TIMESTAMP_NS"},
                 {"x", "SYMBOL"},
                 {"z", "STRING"},
                 {"y", "BOOLEAN"},
@@ -422,9 +434,8 @@ public class CreateTableTest extends AbstractCairoTest {
 
         execute("create table x (" + getColumnDefinitions(columnTypes) + ")");
         execute("create table tab (like x)");
-        assertSql("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tu\tgh1\tgh2\n", "tab");
+        assertSql("a\tb\tc\td\te\tf\tg\th\tt\tn\tx\tz\ty\tl\tu\tgh1\tgh2\n", "tab");
         assertColumnTypes(columnTypes);
-
     }
 
     @Test
@@ -455,11 +466,10 @@ public class CreateTableTest extends AbstractCairoTest {
         );
         execute("create table foo_clone ( like foo)");
         assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\ttrue\n" +
-                        "a\tINT\tfalse\t0\tfalse\t0\tfalse\ttrue\n" +
-                        "b\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n"
-                ,
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
+                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n" +
+                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
                 "SHOW COLUMNS FROM foo_clone"
         );
     }
@@ -602,10 +612,29 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableWithArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (arr double[]);");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'x' (\s
+                            \tarr DOUBLE[]
+                            );
+                            """,
+                    "show create table x;");
+        });
+    }
+
+    @Test
     public void testCreateTableWithIndex() throws Exception {
         execute("create table tab (s symbol), index(s)");
         assertSql("s\n", "select * from tab");
         assertColumnsIndexed("tab", "s");
+    }
+
+    @Test
+    public void testCreateTableWithInvalidArrayType() throws Exception {
+        assertMemoryLeak(() -> assertException("create table x (ts timestamp, arr varchar[]);", 34, "unsupported array element type [type=VARCHAR]"));
     }
 
     @Test
@@ -619,6 +648,60 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithNoIndex() throws Exception {
         execute("create table tab (s symbol) ");
         assertSql("s\n", "select * from tab");
+    }
+
+    @Test
+    public void testCreateTableWithTimestampNSColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ns timestamp_ns, s symbol) timestamp(ns) partition by DAY WAL;");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'x' (\s
+                            \tns TIMESTAMP_NS,
+                            \ts SYMBOL
+                            ) timestamp(ns) PARTITION BY DAY;
+                            """,
+                    "show create table x;");
+            execute("create table y (like x);");
+            assertSql("ns\ts\n", "select * from x");
+
+            try (TableReader reader = engine.getReader("x")) {
+                assertEquals(PartitionBy.DAY, reader.getPartitionedBy());
+                assertEquals(0, reader.getMetadata().getTimestampIndex());
+            }
+
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'y' ( \n" +
+                            "\tns TIMESTAMP_NS,\n" +
+                            "\ts SYMBOL\n" +
+                            ") timestamp(ns) PARTITION BY DAY;\n",
+                    "show create table y;");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
+                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n"
+                    ,
+                    "SHOW COLUMNS FROM y"
+            );
+
+            execute(
+                    "CREATE TABLE z (" +
+                            "ns TIMESTAMP_NS," +
+                            "a INT," +
+                            "b STRING" +
+                            ") " +
+                            "TIMESTAMP(ns) PARTITION BY DAY WAL " +
+                            "DEDUP UPSERT KEYS(ns, a)"
+            );
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'z' ( \n" +
+                            "\tns TIMESTAMP_NS,\n" +
+                            "\ta INT,\n" +
+                            "\tb STRING\n" +
+                            ") timestamp(ns) PARTITION BY DAY\n" +
+                            "DEDUP UPSERT KEYS(ns,a);\n",
+                    "show create table z;");
+        });
     }
 
     @Test

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,13 +53,15 @@ public class PartitionUpdater implements QuietCloseable {
 
     public void of(
             @Transient LPSZ srcPath,
-            long fileOpenOpts,
+            int fileOpenOpts,
             long fileSize,
             int timestampIndex,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
-            long dataPageSize
+            long dataPageSize,
+            double bloomFilterFpp
     ) {
         final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
@@ -72,8 +74,10 @@ public class PartitionUpdater implements QuietCloseable {
                 timestampIndex,
                 compressionCodec,
                 statisticsEnabled,
+                rawArrayEncoding,
                 rowGroupSize,
-                dataPageSize
+                dataPageSize,
+                bloomFilterFpp
         );
     }
 
@@ -87,6 +91,7 @@ public class PartitionUpdater implements QuietCloseable {
     public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
+        final int timestampIndex = descriptor.getTimestampIndex();
         try {
             assert ptr != 0;
             updateRowGroup(  // throws CairoException on error
@@ -99,6 +104,7 @@ public class PartitionUpdater implements QuietCloseable {
                     descriptor.getColumnNamesLen(),
                     descriptor.getColumnDataPtr(),
                     descriptor.getColumnDataLen(),
+                    timestampIndex,
                     rowCount
             );
         } finally {
@@ -115,8 +121,10 @@ public class PartitionUpdater implements QuietCloseable {
             int timestampIndex,
             long compressionCodec,
             boolean statisticsEnabled,
+            boolean rawArrayEncoding,
             long rowGroupSize,
-            long dataPageSize
+            long dataPageSize,
+            double bloomFilterFpp
     ) throws CairoException;
 
     private static native void destroy(long impl);
@@ -134,6 +142,7 @@ public class PartitionUpdater implements QuietCloseable {
             int columnNamesSize,
             long columnDataPtr,
             long columnDataSize,
+            int timestampIndex,
             long rowCount
     ) throws CairoException;
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,19 +28,21 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
@@ -53,6 +55,7 @@ import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -60,11 +63,13 @@ import org.jetbrains.annotations.Nullable;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<ReaderPool.R> {
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(QueryProgress.class);
     private final RecordCursorFactory base;
     private final RegisteredRecordCursor cursor;
     private final boolean jit;
+    private final RegisteredPageFrameCursor pageFrameCursor;
     private final QueryTrace queryTrace = new QueryTrace();
     private final ObjList<TableReader> readers = new ObjList<>();
     private final QueryRegistry registry;
@@ -77,6 +82,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         this.base = base;
         this.registry = registry;
         this.cursor = new RegisteredRecordCursor();
+        this.pageFrameCursor = new RegisteredPageFrameCursor();
         this.jit = base.usesCompiledFilter();
         queryTrace.queryText = Chars.toString(sqlText);
     }
@@ -92,12 +98,16 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     public static void logEnd(
             long sqlId,
-            @NotNull CharSequence sqlText,
+            CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
             long beginNanos,
             @Nullable ObjList<TableReader> leakedReaders,
             @Nullable QueryTrace queryTrace
     ) {
+        if (!executionContext.shouldLogSql() || sqlText == null) {
+            return;
+        }
+
         CairoEngine engine = executionContext.getCairoEngine();
         CairoConfiguration config = engine.getConfiguration();
         long durationNanos = config.getNanosecondClock().getTicks() - beginNanos;
@@ -117,7 +127,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 log.$("fin");
             }
             log.$(" [id=").$(sqlId)
-                    .$(", sql=`").utf8(sqlText)
+                    .$(", sql=`").$safe(sqlText)
                     .$("`, ").$(executionContext)
                     .$(", jit=").$(isJit)
                     .$(", time=").$(durationNanos);
@@ -157,7 +167,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     public static void logError(
             @Nullable Throwable e,
             long sqlId,
-            @NotNull CharSequence sqlText,
+            CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
             long beginNanos,
             @Nullable ObjList<TableReader> leakedReaders
@@ -184,17 +194,17 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 // We need guaranteed logging for errors, hence errorW() call.
 
                 log.$(" [id=").$(sqlId)
-                        .$(", sql=`").utf8(sqlText)
+                        .$(", sql=`").$safe(sqlText == null ? "**subquery**" : sqlText)
                         .$("`, ").$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
-                        .$(", msg=").$(message)
+                        .$(", msg=").$safe(message)
                         .$(", errno=").$(errno)
                         .$(", pos=").$(pos);
             } else {
                 // This is unknown exception, can be OOM that can cause exception in logging.
                 log.$(" [id=").$(sqlId)
-                        .$(", sql=`").utf8(sqlText)
+                        .$(", sql=`").$safe(sqlText == null ? "**subquery**" : sqlText)
                         .$("`, ").$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
@@ -215,15 +225,15 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     public static void logStart(
             long sqlId,
-            @NotNull CharSequence sqlText,
+            CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
             boolean jit
     ) {
-        if (executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe()) {
+        if (executionContext.shouldLogSql() && executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe() && sqlText != null) {
             LOG.info()
                     .$("exe")
                     .$(" [id=").$(sqlId)
-                    .$(", sql=`").utf8(sqlText)
+                    .$(", sql=`").$safe(sqlText)
                     .$("`, ").$(executionContext)
                     .$(", jit=").$(jit)
                     .I$();
@@ -233,11 +243,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     @Override
     public PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return base.execute(executionContext, collectSubSeq, order);
-    }
-
-    @Override
-    public boolean followedLimitAdvice() {
-        return base.followedLimitAdvice();
     }
 
     @Override
@@ -294,7 +299,35 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        return base.getPageFrameCursor(executionContext, order);
+        if (!base.supportsPageFrameCursor()) {
+            return null;
+        }
+        // IMPORTANT: getPageFrameCursor() and getCursor() are mutually exclusive in QueryProgress because it is TOP RecordCursorFactory.
+        // For streaming parquet exports, the caller may directly call getPageFrameCursor()
+        // instead of getCursor() to obtain PageFrame-based access to the data.
+        // Since these two methods are never called together in the same query execution,
+        // we must ensure that query registration (registry.register) and logging (logStart)
+        // are performed here as well, not just in getCursor().
+        // This ensures proper query tracking, cancellation support, and resource leak detection
+        // for both cursor-based and PageFrame-based data access paths.
+        if (!pageFrameCursor.isOpen) {
+            this.executionContext = executionContext;
+            CharSequence sqlText = queryTrace.queryText;
+            sqlId = registry.register(sqlText, executionContext);
+            beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
+            logStart(sqlId, sqlText, executionContext, jit);
+            try {
+                executionContext.getCairoEngine().configureThreadLocalReaderPoolSupervisor(this);
+                final PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
+                executionContext.getCairoEngine().removeThreadLocalReaderPoolSupervisor();
+                pageFrameCursor.of(baseCursor);
+            } catch (Throwable th) {
+                executionContext.getCairoEngine().removeThreadLocalReaderPoolSupervisor();
+                pageFrameCursor.close0(th);
+                throw th;
+            }
+        }
+        return pageFrameCursor;
     }
 
     @Override
@@ -308,13 +341,18 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     @Override
-    public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         return base.getTimeFrameCursor(executionContext);
     }
 
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
+    }
+
+    @Override
+    public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        return base.newTimeFrameCursor();
     }
 
     @Override
@@ -327,14 +365,14 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     public void onResourceReturned(ReaderPool.R resource) {
         int index = readers.remove(resource);
         // do not freak out if reader is not in the list after our cursor has been closed
-        if (index < 0 && cursor.isOpen) {
+        if (index < 0 && (cursor.isOpen || pageFrameCursor.isOpen)) {
             // when this happens, it could be down to a race condition
             // where readers list is cleared before borrowed resources are returned.
             // Last time, this occurred when pool entry was released before readers were cleared.
             // In this scenario, the returned pool entry got used by another query and
             // readers.clear() came in tangentially to this query.
             LOG.critical().$("returned reader is not in supervisor's list [tableName=")
-                    .$(resource.getTableToken().getTableName()).I$();
+                    .$(resource.getTableToken()).I$();
         }
     }
 
@@ -370,7 +408,35 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     private static void appendLeakedReaderNames(ObjList<TableReader> leakedReaders, int leakedReadersCount, LogRecord log) {
         for (int i = 0; i < leakedReadersCount; i++) {
-            log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken().getTableName());
+            log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken());
+        }
+    }
+
+    private void unregisterAndCleanup(@Nullable Throwable th) {
+        // When execution context is null, the cursor has never been opened.
+        // Otherwise, cursor open attempt has been made, but may not have fully succeeded.
+        // In this case we must be certain that we still track the reader leak
+        if (executionContext != null) {
+            try {
+                String sqlText = queryTrace.queryText;
+                if (th == null) {
+                    logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
+                } else {
+                    logError(th, sqlId, sqlText, executionContext, beginNanos, readers);
+                }
+            } finally {
+                // Unregister must follow the base cursor close call to avoid concurrent access
+                // to cleaned up circuit breaker.
+                registry.unregister(sqlId, executionContext);
+                if (executionContext.getCairoEngine().getConfiguration().freeLeakedReaders()) {
+                    Misc.freeObjListAndClear(readers);
+                } else {
+                    // just clearing readers should fail leak test
+                    readers.clear();
+                }
+                // make sure we never double-unregister queries
+                executionContext = null;
+            }
         }
     }
 
@@ -378,6 +444,108 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     protected void _close() {
         cursor.close();
         base.close();
+        pageFrameCursor.close();
+    }
+
+    class RegisteredPageFrameCursor implements PageFrameCursor {
+        private PageFrameCursor baseCursor;
+        private boolean isOpen = false;
+
+        private RegisteredPageFrameCursor() {
+        }
+
+        @Override
+        public void calculateSize(RecordCursor.Counter counter) {
+            baseCursor.calculateSize(counter);
+        }
+
+        @Override
+        public void close() {
+            close0(null);
+        }
+
+        @Override
+        public IntList getColumnIndexes() {
+            return baseCursor.getColumnIndexes();
+        }
+
+        @Override
+        public long getRemainingRowsInInterval() {
+            return baseCursor.getRemainingRowsInInterval();
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean isExternal() {
+            return baseCursor.isExternal();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public @Nullable PageFrame next(long skipTarget) {
+            return baseCursor.next(skipTarget);
+        }
+
+        public void of(PageFrameCursor baseCursor) {
+            this.baseCursor = baseCursor;
+            this.isOpen = true;
+        }
+
+        // Qodana false positive
+        @SuppressWarnings("unused")
+        @Override
+        public void releaseOpenPartitions() {
+            baseCursor.releaseOpenPartitions();
+        }
+
+        // Qodana false positive
+        @SuppressWarnings("unused")
+        @Override
+        public void setStreamingMode(boolean enabled) {
+            baseCursor.setStreamingMode(enabled);
+        }
+
+        @Override
+        public long size() {
+            return baseCursor.size();
+        }
+
+        @Override
+        public boolean supportsSizeCalculation() {
+            return baseCursor.supportsSizeCalculation();
+        }
+
+        @Override
+        public void toTop() {
+            baseCursor.toTop();
+        }
+
+        private void close0(@Nullable Throwable th) {
+            if (!isOpen && th == null) {
+                return;
+            }
+            try {
+                isOpen = false;
+                baseCursor = Misc.free(baseCursor);
+            } catch (Throwable th0) {
+                LOG.critical()
+                        .$("could not close pageFrame cursor")
+                        .$(" [id=").$(sqlId)
+                        .$(", sql=`").$safe(queryTrace.queryText)
+                        .$(", error=").$(th0)
+                        .I$();
+            } finally {
+                unregisterAndCleanup(th);
+            }
+        }
     }
 
     class RegisteredRecordCursor implements RecordCursor {
@@ -410,15 +578,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
-        public boolean hasNext() throws DataUnavailableException {
+        public boolean hasNext() {
             try {
                 return base.hasNext();
-            } catch (DataUnavailableException e) {
-                // this workflow is not yet in production and is incomplete
-                throw e;
-            } catch (Throwable e) {
-                close0(e);
-                throw e;
+            } catch (Throwable th) {
+                close0(th);
+                throw th;
             }
         }
 
@@ -438,17 +603,22 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public long preComputedStateSize() {
+            return base.preComputedStateSize();
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             base.recordAt(record, atRowId);
         }
 
         @Override
-        public long size() throws DataUnavailableException {
+        public long size() {
             return base.size();
         }
 
         @Override
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
+        public void skipRows(Counter rowCount) {
             base.skipRows(rowCount);
         }
 
@@ -458,37 +628,23 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         private void close0(@Nullable Throwable th) {
+            if (!isOpen && th == null) {
+                return;
+            }
             try {
                 if (isOpen) {
                     isOpen = false;
                     base = Misc.free(base);
                 }
+            } catch (Throwable th0) {
+                LOG.critical()
+                        .$("could not close record cursor")
+                        .$(" [id=").$(sqlId)
+                        .$(", sql=`").$safe(queryTrace.queryText)
+                        .$(", error=").$(th0)
+                        .I$();
             } finally {
-                // When execution context is null, the cursor has never been opened.
-                // Otherwise, cursor open attempt has been made, but may not have fully succeeded.
-                // In this case we must be certain that we still track the reader leak
-                if (executionContext != null) {
-                    try {
-                        String sqlText = queryTrace.queryText;
-                        if (th == null) {
-                            logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
-                        } else {
-                            logError(th, sqlId, sqlText, executionContext, beginNanos, readers);
-                        }
-                    } finally {
-                        // Unregister must follow the base cursor close call to avoid concurrent access
-                        // to cleaned up circuit breaker.
-                        registry.unregister(sqlId, executionContext);
-                        if (executionContext.getCairoEngine().getConfiguration().freeLeakedReaders()) {
-                            Misc.freeObjListAndClear(readers);
-                        } else {
-                            // just clearing readers should fail leak test
-                            readers.clear();
-                        }
-                        // make sure we never double-unregister queries
-                        executionContext = null;
-                    }
-                }
+                unregisterAndCleanup(th);
             }
         }
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,16 +40,13 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
 
-public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable, Sinkable {
-    public static final ObjectFactory<CreateTableOperationBuilderImpl> FACTORY = CreateTableOperationBuilderImpl::new;
+public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable {
     private static final IntList castGroups = new IntList();
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
@@ -65,6 +63,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private QueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
+    private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
@@ -83,7 +82,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public CreateTableOperationImpl build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
+    public CreateTableOperationImpl build(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sqlText
+    ) throws SqlException {
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -93,6 +96,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     selectTextPosition,
                     ignoreIfExists,
                     getPartitionByFromExpr(),
+                    partitionByExpr == null ? 0 : partitionByExpr.position,
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
                     timestampExpr != null ? timestampExpr.position : 0,
                     Chars.toString(volumeAlias),
@@ -105,7 +109,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     o3MaxLag,
                     columnModels,
                     batchSize,
-                    batchO3MaxLag
+                    batchO3MaxLag,
+                    tableKind
             );
         }
 
@@ -119,6 +124,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
                     getPartitionByFromExpr(),
+                    partitionByExpr == null ? 0 : partitionByExpr.position,
                     Chars.toString(volumeAlias),
                     volumePosition,
                     likeTableNameToken.getTableName(),
@@ -132,6 +138,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
                 getPartitionByFromExpr(),
+                partitionByExpr == null ? 0 : partitionByExpr.position,
                 Chars.toString(volumeAlias),
                 volumePosition,
                 ignoreIfExists,
@@ -169,6 +176,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
         walEnabled = false;
+        tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     }
 
     public int getColumnCount() {

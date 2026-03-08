@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 /**
- * Handles ORDER BY + LIMIT N on a single long column.
+ * Handles ORDER BY + LIMIT N on a single LONG or TIMESTAMP column.
  */
 public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     private final boolean ascending;
@@ -52,7 +52,7 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         super(metadata);
         assert lo > 0;
-        assert base.recordCursorSupportsLongTopK();
+        assert base.recordCursorSupportsLongTopK(columnIndex);
         this.base = base;
         this.columnIndex = columnIndex;
         this.lo = lo;
@@ -94,7 +94,7 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Long top K");
+        sink.type("Long Top K");
         sink.meta("lo").val(lo);
         sink.attr("keys").val('[');
         sink.putBaseColumnName(columnIndex);

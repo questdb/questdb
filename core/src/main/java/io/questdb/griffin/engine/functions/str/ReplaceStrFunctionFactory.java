@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -91,6 +91,11 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             this.oldSubStr = oldSubStr;
             this.newSubStr = newSubStr;
             this.maxLength = maxLength;
+        }
+
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_STRING_OP, TernaryFunction.super.getComplexity());
         }
 
         @Override

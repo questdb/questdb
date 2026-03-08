@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,11 +25,14 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
@@ -88,6 +91,7 @@ public class MemoryPARWImpl implements MemoryARW {
         this.memoryTag = memoryTag;
     }
 
+    @Override
     public long addressOf(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi) {
             return absolutePointer + offset;
@@ -157,6 +161,11 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
+    public ArrayView getArray(long offset) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final BinarySequence getBin(long offset) {
         final long len = getLong(offset);
         if (len == -1) {
@@ -189,6 +198,44 @@ public class MemoryPARWImpl implements MemoryARW {
             return Unsafe.getUnsafe().getChar(absolutePointer + offset);
         }
         return getChar0(offset);
+    }
+
+    @Override
+    public void getDecimal128(long offset, Decimal128 sink) {
+        sink.ofRaw(
+                getLong(offset),
+                getLong(offset + 8L)
+        );
+    }
+
+    @Override
+    public short getDecimal16(long offset) {
+        return getShort(offset);
+    }
+
+    @Override
+    public void getDecimal256(long offset, Decimal256 sink) {
+        sink.ofRaw(
+                getLong(offset),
+                getLong(offset + 8L),
+                getLong(offset + 16L),
+                getLong(offset + 24L)
+        );
+    }
+
+    @Override
+    public int getDecimal32(long offset) {
+        return getInt(offset);
+    }
+
+    @Override
+    public long getDecimal64(long offset) {
+        return getLong(offset);
+    }
+
+    @Override
+    public byte getDecimal8(long offset) {
+        return getByte(offset);
     }
 
     @Override
@@ -427,6 +474,11 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
+    public void putArray(ArrayView array) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final long putBin(BinarySequence value) {
         if (value == null) {
             putLong(TableUtils.NULL_LEN);
@@ -525,6 +577,52 @@ public class MemoryPARWImpl implements MemoryARW {
     public void putCharBytes(long offset, char value) {
         putByte(offset, (byte) (value & 0xff));
         putByte(offset + 1, (byte) ((value >> 8) & 0xff));
+    }
+
+    @Override
+    public void putDecimal128(long offset, long high, long low) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2 * Long.BYTES) {
+            Decimal128.put(high, low, absolutePointer + offset);
+        } else {
+            putLong(offset, high);
+            putLong(offset + Long.BYTES, low);
+        }
+    }
+
+    @Override
+    public void putDecimal128(long high, long low) {
+        if (pageHi - appendPointer > 2 * Long.BYTES - 1) {
+            Decimal128.put(high, low, appendPointer);
+            appendPointer += 2 * Long.BYTES;
+        } else {
+            putLong(high);
+            putLong(low);
+        }
+    }
+
+    @Override
+    public void putDecimal256(long offset, long hh, long hl, long lh, long ll) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Decimal256.BYTES) {
+            Decimal256.put(hh, hl, lh, ll, appendPointer + offset);
+        } else {
+            putLong(offset, hh);
+            putLong(offset + Long.BYTES, hl);
+            putLong(offset + Long.BYTES * 2, lh);
+            putLong(offset + Long.BYTES * 3, ll);
+        }
+    }
+
+    @Override
+    public void putDecimal256(long hh, long hl, long lh, long ll) {
+        if (pageHi - appendPointer > Decimal256.BYTES - 1) {
+            Decimal256.put(hh, hl, lh, ll, appendPointer);
+            appendPointer += Decimal256.BYTES;
+        } else {
+            putLong(hh);
+            putLong(hl);
+            putLong(lh);
+            putLong(ll);
+        }
     }
 
     @Override
@@ -644,8 +742,7 @@ public class MemoryPARWImpl implements MemoryARW {
             Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, hi);
             appendPointer += 16;
         } else {
-            putLong(lo);
-            putLong(hi);
+            putLong128Slow(lo, hi);
         }
     }
 
@@ -684,10 +781,8 @@ public class MemoryPARWImpl implements MemoryARW {
             Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, l3);
             appendPointer += Long256.BYTES;
         } else {
-            putLong(l0);
-            putLong(l1);
-            putLong(l2);
-            putLong(l3);
+            putLong128Slow(l0, l1);
+            putLong128Slow(l2, l3);
         }
     }
 
@@ -897,6 +992,7 @@ public class MemoryPARWImpl implements MemoryARW {
      *
      * @param bytes number of bytes to skip
      */
+    @Override
     public void skip(long bytes) {
         assert bytes >= 0;
         if (pageHi - appendPointer > bytes) {
@@ -914,6 +1010,18 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void zero() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void zeroMem(int length) {
+        if (pageHi - appendPointer >= length) {
+            Unsafe.getUnsafe().setMemory(appendPointer, length, (byte) 0);
+            appendPointer += length;
+        } else {
+            for (int i = 0; i < length; i++) {
+                putByte((byte) 0);
+            }
+        }
     }
 
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
@@ -1070,6 +1178,11 @@ public class MemoryPARWImpl implements MemoryARW {
 
     private void putByteRnd(long offset, byte value) {
         Unsafe.getUnsafe().putByte(jumpTo0(offset) + offsetInPage(offset), value);
+    }
+
+    private void putLong128Slow(long lo, long hi) {
+        putLong(lo);
+        putLong(hi);
     }
 
     private void putLong256Null() {
@@ -1273,7 +1386,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
     }
 
-    private class CharSequenceView extends AbstractCharSequence {
+    public class CharSequenceView extends AbstractCharSequence {
         private int len;
         private long offset;
 
@@ -1332,19 +1445,15 @@ public class MemoryPARWImpl implements MemoryARW {
     private class StraddlingPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
         @Override
         public void setAll(long l0, long l1, long l2, long l3) {
-            putLong(l0);
-            putLong(l1);
-            putLong(l2);
-            putLong(l3);
+            putLong128Slow(l0, l1);
+            putLong128Slow(l2, l3);
         }
 
         private void putLong256(@Nullable CharSequence hexString) {
             final int len;
             if (hexString == null || (len = hexString.length()) == 0) {
-                putLong(Long256Impl.NULL_LONG256.getLong0());
-                putLong(Long256Impl.NULL_LONG256.getLong1());
-                putLong(Long256Impl.NULL_LONG256.getLong2());
-                putLong(Long256Impl.NULL_LONG256.getLong3());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
             } else {
                 putLong256(hexString, 2, len);
             }
@@ -1357,10 +1466,8 @@ public class MemoryPARWImpl implements MemoryARW {
         private void putLong256(@Nullable Utf8Sequence hexString) {
             final int size;
             if (hexString == null || (size = hexString.size()) == 0) {
-                putLong(Long256Impl.NULL_LONG256.getLong0());
-                putLong(Long256Impl.NULL_LONG256.getLong1());
-                putLong(Long256Impl.NULL_LONG256.getLong2());
-                putLong(Long256Impl.NULL_LONG256.getLong3());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1());
+                putLong128Slow(Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
             } else {
                 putLong256(hexString.asAsciiCharSequence(), 2, size);
             }

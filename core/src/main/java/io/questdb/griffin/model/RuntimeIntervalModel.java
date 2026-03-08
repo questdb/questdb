@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -40,6 +42,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
 
@@ -48,21 +51,26 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private final ObjList<Function> dynamicRangeList;
     // These 2 are incoming model
     private final LongList intervals;
-    // This used to assemble result
+    private final int partitionBy;
+    private final StringSink sink = new StringSink();
+    private final TimestampDriver timestampDriver;
+    // This used to assemble the result
     private LongList outIntervals;
 
-    public RuntimeIntervalModel(LongList intervals) {
-        this(intervals, null);
+    public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList intervals) {
+        this(timestampDriver, partitionBy, intervals, null);
     }
 
-    public RuntimeIntervalModel(LongList staticIntervals, ObjList<Function> dynamicRangeList) {
+    public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList) {
         this.intervals = staticIntervals;
         this.dynamicRangeList = dynamicRangeList;
+        this.timestampDriver = timestampDriver;
+        this.partitionBy = partitionBy;
     }
 
     @Override
-    public boolean allIntervalsHitOnePartition(int partitionBy) {
-        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloorMethod(partitionBy));
+    public boolean allIntervalsHitOnePartition() {
+        return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(timestampDriver.getPartitionFloorMethod(partitionBy));
     }
 
     @Override
@@ -82,13 +90,38 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         outIntervals.add(intervals, 0, dynamicStart);
 
         // Evaluate intervals involving functions
-        addEvaluateDynamicIntervals(outIntervals, sqlExecutionContext);
+        int oldIntervalType = sqlExecutionContext.getIntervalFunctionType();
+        try {
+            sqlExecutionContext.setIntervalFunctionType(IntervalUtils.getIntervalType(timestampDriver.getTimestampType()));
+            addEvaluateDynamicIntervals(outIntervals, sqlExecutionContext);
+        } finally {
+            sqlExecutionContext.setIntervalFunctionType(oldIntervalType);
+        }
+
         return outIntervals;
     }
 
     @Override
     public void close() {
         Misc.freeObjList(dynamicRangeList);
+    }
+
+    public ObjList<Function> getDynamicRangeList() {
+        return dynamicRangeList;
+    }
+
+    public LongList getStaticIntervals() {
+        return intervals;
+    }
+
+    @Override
+    public TimestampDriver getTimestampDriver() {
+        return timestampDriver;
+    }
+
+    @Override
+    public boolean isStatic() {
+        return dynamicRangeList == null || dynamicRangeList.size() == 0;
     }
 
     @Override
@@ -102,25 +135,25 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         sink.val(',');
                     }
                     sink.val("(\"");
-                    valTs(sink, intervals.getQuick(i));
+                    valTs(sink, timestampDriver, intervals.getQuick(i));
                     sink.val("\",\"");
-                    valTs(sink, intervals.getQuick(i + 1));
+                    valTs(sink, timestampDriver, intervals.getQuick(i + 1));
                     sink.val("\")");
                 }
             } catch (SqlException e) {
-                LOG.error().$("Can't calculate intervals: ").$(e.getFlyweightMessage()).$();
+                LOG.error().$("Can't calculate intervals: ").$safe(e.getFlyweightMessage()).$();
             }
             sink.val(']');
         }
     }
 
-    private static void valTs(PlanSink sink, long l) {
+    private static void valTs(PlanSink sink, TimestampDriver driver, long l) {
         if (l == Numbers.LONG_NULL) {
             sink.val("MIN");
         } else if (l == Long.MAX_VALUE) {
             sink.val("MAX");
         } else {
-            sink.valISODate(l);
+            sink.valISODate(driver, l);
         }
     }
 
@@ -136,13 +169,35 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             boolean negated = operation > IntervalOperation.NEGATED_BORDERLINE;
             int divider = outIntervals.size();
 
+            // Get day filter mask (stored in high byte of periodCount)
+            int dayFilterMask = IntervalUtils.decodeDayFilterMask(intervals, i);
+
             if (dynamicFunction == null) {
                 // copy 4 longs to output and apply the operation
                 outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);
-                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+                IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
+                // Apply day filter if specified
+                if (dayFilterMask != 0) {
+                    // Check if the interval's lo timestamp matches the day filter
+                    long lo = outIntervals.getQuick(divider);
+                    int dayOfWeek = timestampDriver.getDayOfWeek(lo);
+                    if ((dayFilterMask & (1 << (dayOfWeek - 1))) == 0) {
+                        // Day doesn't match filter - remove this interval
+                        outIntervals.setPos(divider);
+                        continue;
+                    }
+                }
+            } else if (dynamicFunction instanceof CompiledTickExpression compiled) {
+                // Compiled tick expression with date variables ($now, $today, etc.)
+                // Re-evaluates the expression with the current "now" timestamp
+                compiled.init(null, sqlExecutionContext);
+                compiled.evaluate(outIntervals);
+                if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
+                    IntervalUtils.invert(outIntervals, divider);
+                }
             } else {
-                long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);
-                long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);
+                long lo = IntervalUtils.decodeIntervalLo(intervals, i);
+                long hi = IntervalUtils.decodeIntervalHi(intervals, i);
                 short adjustment = IntervalUtils.getEncodedAdjustment(intervals, i);
                 short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);
 
@@ -152,7 +207,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     long dynamicValue = getTimestamp(dynamicFunction, sqlExecutionContext);
                     long dynamicValue2 = 0;
                     if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
-                        // Both ends of BETWEEN are dynamic and different values. Take next dynamic point.
+                        // Both ends of BETWEEN are dynamic and different values. Take the next dynamic point.
                         i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
                         dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
                         dynamicFunction.init(null, sqlExecutionContext);
@@ -170,7 +225,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
                         // functions evaluated to null
                         if (!negated) {
-                            // return empty set if it's not negated
+                            // return an empty set if it's not negated
                             outIntervals.clear();
                             return;
                         } else {
@@ -186,6 +241,15 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         hi = tempHi;
                     }
 
+                    // Apply day filter if specified
+                    if (dayFilterMask != 0) {
+                        int dayOfWeek = timestampDriver.getDayOfWeek(lo);
+                        if ((dayFilterMask & (1 << (dayOfWeek - 1))) == 0) {
+                            // Day doesn't match filter - skip this interval
+                            continue;
+                        }
+                    }
+
                     outIntervals.extendAndSet(divider + 1, hi);
                     outIntervals.setQuick(divider, lo);
                     if (divider == 0 && negated) {
@@ -196,7 +260,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 } else {
                     if (ColumnType.isInterval(dynamicFunction.getType())) {
                         // This is subtraction or intersection with an Interval (not a single timestamp)
-                        final Interval interval = dynamicFunction.getInterval(null);
+                        final Interval interval = timestampDriver.fixInterval(dynamicFunction.getInterval(null), dynamicFunction.getType());
                         applyInterval(outIntervals, interval);
                         if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
                             IntervalUtils.invert(outIntervals, divider);
@@ -204,16 +268,17 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     } else {
                         // This is subtraction or intersection with a string interval (not a single timestamp)
                         final CharSequence strInterval = dynamicFunction.getStrA(null);
+                        final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
                         if (operation == IntervalOperation.INTERSECT_INTERVALS) {
-                            // This is intersection
-                            if (tryParseInterval(outIntervals, strInterval)) {
-                                // return empty set
+                            // This is an intersection
+                            if (tryParseInterval(outIntervals, strInterval, configuration)) {
+                                // return an empty set
                                 outIntervals.clear();
                                 return;
                             }
                         } else {
-                            // This is subtraction
-                            if (tryParseInterval(outIntervals, strInterval)) {
+                            // This is a subtraction
+                            if (tryParseInterval(outIntervals, strInterval, configuration)) {
                                 // full set
                                 negatedNothing(outIntervals, divider);
                                 continue;
@@ -225,29 +290,26 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             }
 
             // Do not apply operation (intersection, subtraction).
-            // If this is first element and no pre-calculated static intervals exist.
+            // If this is the first element and no pre-calculated static intervals exist.
             if (firstFuncApplied || divider > 0) {
                 switch (operation) {
-                    case IntervalOperation.INTERSECT:
-                    case IntervalOperation.INTERSECT_BETWEEN:
-                    case IntervalOperation.INTERSECT_INTERVALS:
-                    case IntervalOperation.SUBTRACT_INTERVALS:
-                        IntervalUtils.intersectInPlace(outIntervals, divider);
-                        break;
-                    case IntervalOperation.SUBTRACT:
-                    case IntervalOperation.SUBTRACT_BETWEEN:
-                        IntervalUtils.subtract(outIntervals, divider);
-                        break;
-                    // UNION cannot be the first thing at the moment.
-                    default:
-                        throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
+                    case IntervalOperation.INTERSECT, IntervalOperation.INTERSECT_BETWEEN,
+                         IntervalOperation.INTERSECT_INTERVALS, IntervalOperation.SUBTRACT_INTERVALS ->
+                            IntervalUtils.intersectInPlace(outIntervals, divider);
+                    case IntervalOperation.SUBTRACT, IntervalOperation.SUBTRACT_BETWEEN ->
+                            IntervalUtils.subtract(outIntervals, divider);
+                    case IntervalOperation.UNION ->
+                        // Union with previous intervals (used for bracket expansion)
+                            IntervalUtils.unionInPlace(outIntervals, divider);
+                    default ->
+                            throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
                 }
             }
             firstFuncApplied = true;
         }
     }
 
-    private boolean allIntervalsHitOnePartition(PartitionBy.PartitionFloorMethod floorMethod) {
+    private boolean allIntervalsHitOnePartition(TimestampDriver.TimestampFloorMethod floorMethod) {
         if (!isStatic()) {
             return false;
         }
@@ -265,8 +327,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     private void applyInterval(LongList outIntervals, Interval interval) {
-        IntervalUtils.applyInterval(interval, outIntervals, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+        IntervalUtils.encodeInterval(interval, IntervalOperation.INTERSECT, outIntervals);
+        IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
     }
 
     private long getTimestamp(Function dynamicFunction, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -275,7 +337,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             final CharSequence value = dynamicFunction.getStrA(null);
             if (value != null) {
                 try {
-                    return IntervalUtils.parseFloorPartialTimestamp(value);
+                    return timestampDriver.parseFloorLiteral(value);
                 } catch (NumericException e) {
                     return Numbers.LONG_NULL;
                 }
@@ -287,17 +349,14 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             assert factory != null;
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 if (cursor.hasNext()) {
-                    return cursor.getRecord().getTimestamp(0);
+                    return timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
                 } else {
                     return Numbers.LONG_NULL;
                 }
             }
+        } else {
+            return timestampDriver.from(dynamicFunction.getTimestamp(null), ColumnType.getTimestampType(functionType));
         }
-        return dynamicFunction.getTimestamp(null);
-    }
-
-    private boolean isStatic() {
-        return dynamicRangeList == null || dynamicRangeList.size() == 0;
     }
 
     private void negatedNothing(LongList outIntervals, int divider) {
@@ -308,11 +367,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval) {
+    private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval, CairoConfiguration configuration) {
         if (strInterval != null) {
             try {
-                IntervalUtils.parseIntervalEx(strInterval, 0, strInterval.length(), 0, outIntervals, IntervalOperation.INTERSECT);
-                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, strInterval, outIntervals, 0, sink, true);
             } catch (SqlException e) {
                 return true;
             }

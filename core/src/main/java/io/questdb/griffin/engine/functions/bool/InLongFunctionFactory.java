@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,13 +35,14 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.DirectLongHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 
 public class InLongFunctionFactory implements FunctionFactory {
@@ -97,17 +98,37 @@ public class InLongFunctionFactory implements FunctionFactory {
         }
 
         if (constCount == argCount) {
-            LongList inVals = new LongList(args.size() - 1);
-            parseToLong(args, argPositions, inVals);
-            if (inVals.size() == 0) {
-                return new InLongSingleConstFunction(args.getQuick(0), inVals.getQuick(0));
-            } else if (inVals.size() == 2) {
-                return new InLongTwoConstFunction(args.getQuick(0), inVals.getQuick(0), inVals.getQuick(1));
+            switch (argCount) {
+                case 1:
+                    return new InLongSingleConstFunction(
+                            args.getQuick(0),
+                            parseValue(argPositions, args.getQuick(1),
+                                    1));
+                case 2:
+                    return new InLongTwoConstFunction(
+                            args.getQuick(0),
+                            parseValue(
+                                    argPositions,
+                                    args.getQuick(1),
+                                    1),
+                            parseValue(
+                                    argPositions,
+                                    args.getQuick(2),
+                                    2)
+                    );
+                default:
+                    DirectLongHashSet inVals = new DirectLongHashSet(argCount, MemoryTag.NATIVE_FUNC_RSS);
+                    try {
+                        parseToLong(args, argPositions, inVals);
+                        return new InLongConstFunction(args.getQuick(0), inVals);
+                    } catch (Throwable e) {
+                        Misc.free(inVals);
+                        throw e;
+                    }
             }
-            return new InLongConstFunction(args.getQuick(0), inVals);
         }
 
-        if (runtimeConstCount == argCount || runtimeConstCount + constCount == argCount) {
+        if (runtimeConstCount + constCount == argCount) {
             final IntList positions = new IntList();
             positions.addAll(argPositions);
             return new InLongRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions);
@@ -120,12 +141,11 @@ public class InLongFunctionFactory implements FunctionFactory {
     private static void parseToLong(
             ObjList<Function> args,
             IntList argPositions,
-            LongList outLongList
+            DirectLongHashSet outLongSet
     ) throws SqlException {
         for (int i = 1, n = args.size(); i < n; i++) {
-            outLongList.add(parseValue(argPositions, args.getQuick(i), i));
+            outLongSet.add(parseValue(argPositions, args.getQuick(i), i));
         }
-        outLongList.sort();
     }
 
     private static long parseValue(IntList argPositions, Function func, int i) throws SqlException {
@@ -161,12 +181,18 @@ public class InLongFunctionFactory implements FunctionFactory {
     }
 
     private static class InLongConstFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final LongList inList;
+        private final DirectLongHashSet inSet;
         private final Function tsFunc;
 
-        public InLongConstFunction(Function tsFunc, LongList longList) {
+        public InLongConstFunction(Function tsFunc, DirectLongHashSet inSet) {
             this.tsFunc = tsFunc;
-            this.inList = longList;
+            this.inSet = inSet;
+        }
+
+        @Override
+        public void close() {
+            UnaryFunction.super.close();
+            Misc.free(inSet);
         }
 
         @Override
@@ -177,7 +203,7 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long val = tsFunc.getLong(rec);
-            return negated != inList.binarySearch(val, Vect.BIN_SEARCH_SCAN_UP) >= 0;
+            return negated != inSet.contains(val);
         }
 
         @Override
@@ -186,12 +212,12 @@ public class InLongFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val(" not");
             }
-            sink.val(" in ").val(inList);
+            sink.val(" in ").val(inSet);
         }
     }
 
     private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
-        private final LongList inList;
+        private final DirectLongHashSet inSet;
         private final Function keyFunc;
         private final IntList valueFunctionPositions;
         private final ObjList<Function> valueFunctions;
@@ -201,25 +227,31 @@ public class InLongFunctionFactory implements FunctionFactory {
             // value functions also contain key function at 0 index.
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
-            this.inList = new LongList(valueFunctions.size() - 1);
+            this.inSet = new DirectLongHashSet(valueFunctions.size() - 1, MemoryTag.NATIVE_FUNC_RSS);
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return valueFunctions;
+        }
+
+        @Override
+        public void close() {
+            MultiArgFunction.super.close();
+            Misc.free(inSet);
         }
 
         @Override
         public boolean getBool(Record rec) {
             long val = keyFunc.getLong(rec);
-            return negated != inList.binarySearch(val, Vect.BIN_SEARCH_SCAN_UP) >= 0;
+            return negated != inSet.contains(val);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
-            inList.clear();
-            parseToLong(valueFunctions, valueFunctionPositions, inList);
+            inSet.clear();
+            parseToLong(valueFunctions, valueFunctionPositions, inSet);
         }
 
         @Override
@@ -228,7 +260,7 @@ public class InLongFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val(" not");
             }
-            sink.val(" in ").val(inList);
+            sink.val(" in ").val(inSet);
         }
     }
 
@@ -302,7 +334,7 @@ public class InLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
-import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -65,7 +65,7 @@ public class FunctionFactoryCache {
                             case "=":
                                 addFactoryToList(factories, createNegatingFactory("!=", factory));
                                 addFactoryToList(factories, createNegatingFactory("<>", factory));
-                                if (descriptor.getArgTypeMask(0) != descriptor.getArgTypeMask(1)) {
+                                if (descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)) {
                                     FunctionFactory swappingFactory = createSwappingFactory("=", factory);
                                     addFactoryToList(factories, swappingFactory);
                                     addFactoryToList(factories, createNegatingFactory("!=", swappingFactory));
@@ -99,11 +99,16 @@ public class FunctionFactoryCache {
                         cursorFunctionNames.add(name);
                     } else if (factory.isRuntimeConstant()) {
                         runtimeConstantFunctionNames.add(name);
+                    } else if (factory.shouldSwapArgs() && descriptor.getSigArgCount() == 2 &&
+                            descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)
+                    ) {
+                        FunctionFactory swappingFactory = createSwappingFactory(name, factory);
+                        addFactoryToList(factories, swappingFactory);
                     }
                 } catch (SqlException e) {
                     LOG.error().$((Sinkable) e)
-                            .$(" [signature=").$(factory.getSignature())
-                            .$(", class=").$(factory.getClass().getName())
+                            .$(" [signature=").$safe(factory.getSignature())
+                            .$(", class=").$safe(factory.getClass().getName())
                             .I$();
                 }
             }
@@ -129,6 +134,15 @@ public class FunctionFactoryCache {
 
     public boolean isGroupBy(CharSequence name) {
         return name != null && groupByFunctionNames.contains(name);
+    }
+
+    /**
+     * Returns true if the function is a pure window function (like row_number, rank)
+     * that cannot be used as an aggregate. Functions like sum, count, avg that can
+     * be both aggregate and window functions return false.
+     */
+    public boolean isPureWindowFunction(CharSequence name) {
+        return isWindow(name) && !isGroupBy(name);
     }
 
     public boolean isRuntimeConstant(CharSequence name) {
@@ -177,6 +191,6 @@ public class FunctionFactoryCache {
     }
 
     private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
-        return new SwappingArgsFunctionFactory(name, factory);
+        return new ArgSwappingFunctionFactory(name, factory);
     }
 }

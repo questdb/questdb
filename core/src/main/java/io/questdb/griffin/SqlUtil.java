@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,23 +24,34 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DoubleArrayParser;
+import io.questdb.cairo.arr.VarcharArrayParser;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -49,22 +60,24 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
+import static io.questdb.std.GenericLexer.unquote;
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 public class SqlUtil {
-
-    static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
-    private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
-    private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
+    static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
+    private static final DateFormat[] IMPLICIT_CAST_FORMATS;
+    private static final int IMPLICIT_CAST_FORMATS_SIZE;
     private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
@@ -76,29 +89,254 @@ public class SqlUtil {
         model.setArtificialStar(true);
     }
 
-    // used by Copier assembler
-    @SuppressWarnings("unused")
-    public static long dateToTimestamp(long millis) {
-        return millis != Numbers.LONG_NULL ? millis * 1000L : millis;
+    public static long castPGDates(CharSequence value, int fromColumnType, TimestampDriver driver) {
+        final int hi = value.length();
+        for (int i = 0; i < IMPLICIT_CAST_FORMATS_SIZE; i++) {
+            try {
+                return driver.fromDate(IMPLICIT_CAST_FORMATS[i].parse(value, 0, hi, EN_LOCALE));
+            } catch (NumericException ignore) {
+            }
+        }
+        throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
+    }
+
+    public static void collectAllTableAndViewNames(
+            @NotNull QueryModel model,
+            @NotNull ObjList<CharSequence> outTableNames,
+            boolean viewsOnly
+    ) {
+        QueryModel m = model;
+        do {
+            if (!viewsOnly) {
+                final ExpressionNode tableNameExpr = m.getTableNameExpr();
+                if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                    outTableNames.add(unquote(tableNameExpr.token));
+                }
+            }
+
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null) {
+                outTableNames.add(unquote(viewNameExpr.token));
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectAllTableAndViewNames(joinModel, outTableNames, viewsOnly);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectAllTableAndViewNames(unionModel, outTableNames, viewsOnly);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+    }
+
+    public static void collectAllTableNames(
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceHashSet outTableNames,
+            @Nullable IntList outTableNamePositions
+    ) {
+        QueryModel m = model;
+        do {
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                if (outTableNames.add(unquote(tableNameExpr.token)) && outTableNamePositions != null) {
+                    outTableNamePositions.add(tableNameExpr.position);
+                }
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+    }
+
+    public static void collectTableAndColumnReferences(
+            @NotNull CairoEngine engine,
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        QueryModel m = model;
+        do {
+            // Process columns in SELECT clause
+            final ObjList<QueryColumn> columns = m.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                if (column != null && column.getAst() != null) {
+                    collectColumnReferencesFromExpression(engine, column.getAst(), m, depMap);
+                }
+            }
+
+            // Process WHERE clause
+            final ExpressionNode whereClause = m.getWhereClause();
+            if (whereClause != null) {
+                collectColumnReferencesFromExpression(engine, whereClause, m, depMap);
+            }
+
+            // Process JOIN conditions
+            final ObjList<ExpressionNode> joinColumns = m.getJoinColumns();
+            collectColumnReferencesFromJoinColumns(engine, joinColumns, m, depMap);
+
+            // Process GROUP BY
+            final ObjList<ExpressionNode> groupBy = m.getGroupBy();
+            for (int i = 0, n = groupBy.size(); i < n; i++) {
+                final ExpressionNode groupByExpr = groupBy.getQuick(i);
+                if (groupByExpr != null) {
+                    collectColumnReferencesFromExpression(engine, groupByExpr, m, depMap);
+                }
+            }
+
+            // Process ORDER BY
+            final ObjList<ExpressionNode> orderBy = m.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                final ExpressionNode orderByExpr = orderBy.getQuick(i);
+                if (orderByExpr != null) {
+                    collectColumnReferencesFromExpression(engine, orderByExpr, m, depMap);
+                }
+            }
+
+            // Process tables directly referenced
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                String tableName = unquote(tableNameExpr.token).toString();
+                if (!depMap.contains(tableName)) {
+                    depMap.put(tableName, new LowerCaseCharSequenceHashSet());
+                }
+            }
+
+            // Process views
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null) {
+                String viewName = unquote(viewNameExpr.token).toString();
+                if (!depMap.contains(viewName)) {
+                    depMap.put(viewName, new LowerCaseCharSequenceHashSet());
+                }
+            }
+
+            // Process join models
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    collectColumnReferencesFromJoinColumns(engine, joinModel.getJoinColumns(), m, depMap);
+                    collectTableAndColumnReferences(engine, joinModel, depMap);
+                }
+            }
+
+            // Process union models
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectTableAndColumnReferences(engine, unionModel, depMap);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+    }
+
+    /**
+     * Creates a unique column alias for expressions with O(1) amortized complexity by tracking
+     * the next sequence number for each base alias in the provided map.
+     */
+    public static CharSequence createExprColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
+            LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
+            int maxLength,
+            boolean nonLiteral
+    ) {
+        // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
+        final int baseLen = base.length();
+        final int indexOfDot = Chars.indexOfLastUnquoted(base, '.');
+        final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1;
+        boolean quote = nonLiteral
+                ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || disallowedAliases.contains(base))
+                : indexOfDot > -1 && disallowedAliases.contains(base, indexOfDot + 1, base.length());
+
+        // early exit for simple cases
+        if (!prefixedLiteral && !quote && aliasToColumnMap.excludes(base)
+                && baseLen > 0 && baseLen <= maxLength && base.charAt(baseLen - 1) != ' ') {
+            return base;
+        }
+
+        final int start = prefixedLiteral ? indexOfDot + 1 : 0;
+        int len = baseLen - start;
+        final CharacterStoreEntry entry = store.newEntry();
+        final int entryLen = entry.length();
+        if (quote) {
+            entry.put('"');
+            len += 2;
+        }
+        entry.put(base, start, baseLen);
+
+        final int truncatedLen = Math.min(len, maxLength - (quote ? 1 : 0));
+        // Save the base entry length for sequence tracking (before any sequence suffix)
+        final int baseEntryLen = entry.length();
+
+        // Look up the starting sequence for this base alias
+        int sequence = nextAliasSequenceMap.get(entry.toImmutable());
+        if (sequence == -1) {
+            sequence = 1;
+        }
+
+        int seqSize = 0;
+        while (true) {
+            if (sequence > 1) {
+                seqSize = (int) Math.log10(sequence) + 2; // Remember the _
+            }
+            len = Math.min(truncatedLen, maxLength - seqSize - (quote ? 1 : 0));
+
+            // We don't want the alias to finish with a space.
+            if (!quote && len > 0 && base.charAt(start + len - 1) == ' ') {
+                final int lastSpace = Chars.lastIndexOfDifferent(base, start, start + len, ' ') - start;
+                if (lastSpace > 0) {
+                    len = lastSpace + 1;
+                }
+            }
+
+            entry.trimTo(entryLen + len - (quote ? 1 : 0));
+            if (sequence > 1) {
+                entry.put('_');
+                entry.put(sequence);
+            }
+            if (quote) {
+                entry.put('"');
+            }
+            final CharSequence alias = entry.toImmutable();
+            if (len > 0 && aliasToColumnMap.excludes(alias)) {
+                // Update the sequence tracker for next time
+                final int aliasLen = entry.length();
+                entry.trimTo(baseEntryLen);
+                nextAliasSequenceMap.put(entry.toImmutable(), sequence + 1);
+                // Revert entry to the alias
+                entry.trimTo(aliasLen);
+                return entry.toImmutable();
+            }
+            sequence++;
+        }
     }
 
     public static long expectMicros(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
         final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
+        final int k = findEndOfDigitsPos(tok, len, position);
 
         try {
             long interval = Numbers.parseLong(tok, 0, k);
@@ -106,40 +344,46 @@ public class SqlUtil {
             if (nChars > 2) {
                 throw SqlException.$(position + k, "expected 1/2 letter interval qualifier in ").put(tok);
             }
+            TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
 
             switch (tok.charAt(k)) {
                 case 's':
                     if (nChars == 1) {
                         // seconds
-                        return interval * Timestamps.SECOND_MICROS;
+                        return driver.fromSeconds(interval);
                     }
                     break;
                 case 'm':
                     if (nChars == 1) {
                         // minutes
-                        return interval * Timestamps.MINUTE_MICROS;
+                        return driver.fromMinutes((int) interval);
                     } else {
                         if (tok.charAt(k + 1) == 's') {
                             // millis
-                            return interval * Timestamps.MILLI_MICROS;
+                            return driver.fromMillis((int) interval);
                         }
                     }
                     break;
                 case 'h':
                     if (nChars == 1) {
                         // hours
-                        return interval * Timestamps.HOUR_MICROS;
+                        return driver.fromHours((int) interval);
                     }
                     break;
                 case 'd':
                     if (nChars == 1) {
                         // days
-                        return interval * Timestamps.DAY_MICROS;
+                        return driver.fromDays((int) interval);
                     }
                     break;
                 case 'u':
                     if (nChars == 2 && tok.charAt(k + 1) == 's') {
-                        return interval;
+                        return driver.fromMicros(interval);
+                    }
+                    break;
+                case 'n':
+                    if (nChars == 2 && tok.charAt(k + 1) == 's') {
+                        return driver.fromNanos(interval);
                     }
                     break;
                 default:
@@ -153,22 +397,8 @@ public class SqlUtil {
     }
 
     public static long expectSeconds(CharSequence tok, int position) throws SqlException {
-        int k = -1;
-
         final int len = tok.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = tok.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier in ").put(tok);
-        }
+        final int k = findEndOfDigitsPos(tok, len, position);
 
         try {
             long interval = Numbers.parseLong(tok, 0, k);
@@ -181,11 +411,11 @@ public class SqlUtil {
                 case 's': // seconds
                     return interval;
                 case 'm': // minutes
-                    return interval * Timestamps.MINUTE_SECONDS;
+                    return interval * Micros.MINUTE_SECONDS;
                 case 'h': // hours
-                    return interval * Timestamps.HOUR_SECONDS;
+                    return interval * Micros.HOUR_SECONDS;
                 case 'd': // days
-                    return interval * Timestamps.DAY_SECONDS;
+                    return interval * Micros.DAY_SECONDS;
                 default:
                     break;
             }
@@ -225,6 +455,22 @@ public class SqlUtil {
             if (lineComment) {
                 if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
                     lineComment = false;
+                } else {
+                    // Check if token contains a newline (can happen with unbalanced quotes in comments)
+                    for (int i = 0, n = cs.length(); i < n; i++) {
+                        char c = cs.charAt(i);
+                        if (c == '\n' || c == '\r') {
+                            // Found newline inside token - reposition lexer to after newline
+                            int newPos = lexer.lastTokenPosition() + i + 1;
+                            // Skip \r\n sequence
+                            if (c == '\r' && i + 1 < n && cs.charAt(i + 1) == '\n') {
+                                newPos++;
+                            }
+                            lexer.backTo(newPos, null);
+                            lineComment = false;
+                            break;
+                        }
+                    }
                 }
                 continue;
             }
@@ -292,6 +538,22 @@ public class SqlUtil {
             if (lineComment) {
                 if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
                     lineComment = false;
+                } else {
+                    // Check if token contains a newline (can happen with unbalanced quotes in comments)
+                    for (int i = 0, n = cs.length(); i < n; i++) {
+                        char c = cs.charAt(i);
+                        if (c == '\n' || c == '\r') {
+                            // Found newline inside token - reposition lexer to after newline
+                            int newPos = lexer.lastTokenPosition() + i + 1;
+                            // Skip \r\n sequence
+                            if (c == '\r' && i + 1 < n && cs.charAt(i + 1) == '\n') {
+                                newPos++;
+                            }
+                            lexer.backTo(newPos, null);
+                            lineComment = false;
+                            break;
+                        }
+                    }
                 }
                 continue;
             }
@@ -331,6 +593,12 @@ public class SqlUtil {
             }
         }
         return null;
+    }
+
+    public static RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
+        final QueryModel queryModel = model.getQueryModel();
+        assert queryModel != null;
+        return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
     }
 
     public static byte implicitCastAsByte(long value, int fromType) {
@@ -475,6 +743,16 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static double implicitCastFloatAsDouble(float value) {
+        if (Numbers.isNull(value)) {
+            return Double.NaN;
+        }
+
+        return value;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static int implicitCastFloatAsInt(float value) {
         if (value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
             return (int) value;
@@ -533,6 +811,36 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static double implicitCastIntAsDouble(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Double.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastIntAsFloat(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Float.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastIntAsLong(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Long.MIN_VALUE;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static short implicitCastIntAsShort(int value) {
         if (value != Numbers.INT_NULL) {
             return implicitCastAsShort(value, ColumnType.INT);
@@ -556,6 +864,27 @@ public class SqlUtil {
         }
         return 0;
     }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static double implicitCastLongAsDouble(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Double.NaN;
+        } else {
+            return (double) value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastLongAsFloat(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Float.NaN;
+        } else {
+            return (float) value;
+        }
+    }
+
 
     @SuppressWarnings("unused")
     // used by the row copier
@@ -596,7 +925,7 @@ public class SqlUtil {
     }
 
     public static char implicitCastStrAsChar(CharSequence value) {
-        if (value == null || value.length() == 0) {
+        if (value == null || value.isEmpty()) {
             return 0;
         }
 
@@ -607,8 +936,9 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.CHAR);
     }
 
+    @SuppressWarnings("unused")
     public static long implicitCastStrAsDate(CharSequence value) {
-        return implicitCastStrVarcharAsDate0(value, ColumnType.STRING);
+        return MillisTimestampDriver.INSTANCE.implicitCast(value, ColumnType.STRING);
     }
 
     public static double implicitCastStrAsDouble(CharSequence value) {
@@ -678,7 +1008,7 @@ public class SqlUtil {
     }
 
     public static Long256Constant implicitCastStrAsLong256(CharSequence value) {
-        if (value == null || value.length() == 0) {
+        if (value == null || value.isEmpty()) {
             return Long256NullConstant.INSTANCE;
         }
         int start = 0;
@@ -712,12 +1042,8 @@ public class SqlUtil {
         }
     }
 
-    public static long implicitCastStrAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.STRING);
-    }
-
     public static void implicitCastStrAsUuid(CharSequence str, Uuid uuid) {
-        if (str == null || str.length() == 0) {
+        if (str == null || str.isEmpty()) {
             uuid.ofNull();
             return;
         }
@@ -740,8 +1066,23 @@ public class SqlUtil {
         }
     }
 
-    public static long implicitCastSymbolAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.SYMBOL);
+    public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
+        try {
+            // the parser will handle the weak dimensionality case (-1)
+            parser.of(value, ColumnType.decodeWeakArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        return parser;
+    }
+
+    public static ArrayView implicitCastStringAsVarcharArray(CharSequence value, VarcharArrayParser parser, int expectedType) {
+        try {
+            parser.of(value, ColumnType.decodeWeakArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        return parser;
     }
 
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
@@ -779,8 +1120,8 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.CHAR);
     }
 
-    public static long implicitCastVarcharAsDate(CharSequence value) {
-        return implicitCastStrVarcharAsDate0(value, ColumnType.VARCHAR);
+    public static long implicitCastVarcharAsDate(Utf8Sequence value) {
+        return MillisTimestampDriver.INSTANCE.implicitCastVarchar(value);
     }
 
     public static double implicitCastVarcharAsDouble(Utf8Sequence value) {
@@ -792,6 +1133,16 @@ public class SqlUtil {
             }
         }
         return Double.NaN;
+    }
+
+    public static ArrayView implicitCastVarcharAsDoubleArray(Utf8Sequence value, DoubleArrayParser parser, int expectedType) {
+        try {
+            // the parser will handle the weak dimensionality case (-1)
+            parser.of(value.asAsciiCharSequence(), ColumnType.decodeWeakArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, expectedType);
+        }
+        return parser;
     }
 
     public static float implicitCastVarcharAsFloat(Utf8Sequence value) {
@@ -836,10 +1187,6 @@ public class SqlUtil {
         }
     }
 
-    public static long implicitCastVarcharAsTimestamp(CharSequence value) {
-        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
-    }
-
     public static boolean isNotPlainSelectModel(QueryModel model) {
         return model.getTableName() != null
                 || model.getGroupBy().size() > 0
@@ -879,92 +1226,204 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
-    /**
-     * Parses partial representation of timestamp with time zone.
-     *
-     * @param value            the characters representing timestamp
-     * @param tupleIndex       the tuple index for insert SQL, which inserts multiple rows at once
-     * @param targetColumnType the target column type, which might be different from timestamp
-     * @return epoch offset
-     * @throws ImplicitCastException inconvertible type error.
-     */
-    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int sourceColumnType, int targetColumnType) {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
+    public static int parseArrayDimensionality(GenericLexer lexer, int columnType, int typeTagPosition) throws SqlException {
+        if (ColumnType.tagOf(columnType) == ColumnType.ARRAY) {
+            throw SqlException.position(typeTagPosition).put("the system supports type-safe arrays, e.g. `type[]`. Supported types are: DOUBLE. More types incoming.");
         }
+        boolean hasNumericDimensionality = false;
+        int dimensionalityFirstPos = -1;
+        int dim = 0;
+        do {
+            CharSequence tok = fetchNext(lexer);
+            if (Chars.equalsNc(tok, '[')) {
+                // Check for whitespace before '[' in array type declaration
+                int openBracketPosition = lexer.lastTokenPosition();
+                if (openBracketPosition > 0 && Character.isWhitespace(lexer.getContent().charAt(openBracketPosition - 1))) {
+                    throw SqlException.position(openBracketPosition)
+                            .put("array type requires no whitespace between type and brackets");
+                }
+
+                // could be a start of array type
+                tok = fetchNext(lexer);
+
+                if (Chars.equalsNc(tok, ']')) {
+                    dim++;
+                } else {
+                    // check if someone is trying to specify numeric dimensionality, e.g. double[1]
+                    try {
+                        Numbers.parseInt(tok);
+                        hasNumericDimensionality = true;
+                        if (dimensionalityFirstPos == -1) {
+                            dimensionalityFirstPos = lexer.lastTokenPosition();
+                        }
+                        continue;
+                    } catch (NumericException ignore) {
+                        // never mind
+                    }
+
+                    // we are looking at something like `type[something` right now, lets consume the rest of the
+                    // lexer until we hit one of the following: `]`, `,` or `)` to get the complete picture of
+                    // what the user provide. We will show what we see and offer what we expect to see.
+
+                    // we will fail here regardless, so we do not care about the state of the parser
+                    int stopPos;
+                    do {
+                        int p = lexer.lastTokenPosition();
+                        tok = fetchNext(lexer);
+                        if (tok == null || Chars.equals(tok, ']') || Chars.equals(tok, ',') || Chars.equals(tok, ')')) {
+                            if (!Chars.equalsNc(tok, ']')) {
+                                stopPos = p;
+                            } else {
+                                stopPos = lexer.lastTokenPosition();
+                            }
+                            break;
+                        }
+                    } while (true);
+
+                    SqlException e = SqlException.position(openBracketPosition)
+                            .put("syntax error at column type definition, expected array type: '")
+                            .put(ColumnType.nameOf(columnType));
+
+                    // add dimensionality we found so far
+                    for (int i = 0, n = dim + 1; i < n; i++) {
+                        e.put("[]");
+                    }
+                    e.put("...', but found: '")
+                            .put(lexer.getContent(), typeTagPosition, stopPos)
+                            .put('\'');
+
+                    throw e;
+                }
+            } else {
+                lexer.unparseLast();
+                break;
+            }
+        } while (true);
+
+        if (hasNumericDimensionality) {
+            throw SqlException.$(dimensionalityFirstPos, "arrays do not have a fixed size, remove the number");
+        }
+        return dim;
     }
 
-    public static short toPersistedTypeTag(CharSequence tok, int tokPosition) throws SqlException {
-        final short typeTag = ColumnType.tagOf(tok);
-        if (typeTag == -1) {
+    public static int toPersistedType(@NotNull CharSequence tok, int tokPosition) throws SqlException {
+        final int columnType = ColumnType.typeOf(tok);
+        if (columnType == -1) {
             throw SqlException.$(tokPosition, "unsupported column type: ").put(tok);
         }
-        if (ColumnType.isPersisted(typeTag)) {
-            return typeTag;
+        if (ColumnType.isPersisted(ColumnType.tagOf(columnType))) {
+            return columnType;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
-
     }
 
-    private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.VARCHAR || columnType == ColumnType.STRING;
-        try {
-            return DateFormatUtils.parseDate(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.DATE);
+    // tableName and columnName have to be string objects,
+    // they will be used in the view definition
+    private static void addDependency(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap, String tableName, String columnName) {
+        LowerCaseCharSequenceHashSet columns = depMap.get(tableName);
+        if (columns == null) {
+            columns = new LowerCaseCharSequenceHashSet();
+            depMap.put(tableName, columns);
         }
+        columns.add(columnName);
     }
 
-    private static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR || columnType == ColumnType.SYMBOL;
-
-        if (value != null) {
-            try {
-                return Numbers.parseLong(value);
-            } catch (NumericException ignore) {
-            }
-
-            // Parse as ISO with variable length.
-            try {
-                return IntervalUtils.parseFloorPartialTimestamp(value);
-            } catch (NumericException ignore) {
-            }
-
-            final int hi = value.length();
-            for (int i = 0; i < DATE_FORMATS_FOR_TIMESTAMP_SIZE; i++) {
-                try {
-                    //
-                    return DATE_FORMATS_FOR_TIMESTAMP[i].parse(value, 0, hi, EN_LOCALE) * 1000L;
-                } catch (NumericException ignore) {
+    private static void collectColumnReferencesFromExpression(
+            @NotNull CairoEngine engine,
+            @NotNull ExpressionNode expr,
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
+    ) {
+        // Handle column literals (e.g., table.column or column)
+        if (expr.type == ExpressionNode.LITERAL) {
+            CharSequence token = expr.token;
+            if (token != null) {
+                int dot = Chars.indexOfLastUnquoted(token, '.');
+                if (dot > -1) {
+                    // This is a qualified column reference: table.column
+                    String tableName = unquote(token.subSequence(0, dot)).toString();
+                    String columnName = unquote(token.subSequence(dot + 1, token.length())).toString();
+                    if (engine.getTableTokenIfExists(tableName) != null) {
+                        addDependency(depMap, tableName, columnName);
+                    }
+                } else {
+                    final QueryModel nestedModel = model.getNestedModel();
+                    final CharSequence tableName = nestedModel != null ? nestedModel.getTableName() : model.getTableName();
+                    if (tableName != null && engine.getTableTokenIfExists(tableName) != null) {
+                        addDependency(depMap, tableName.toString(), expr.token.toString());
+                    }
                 }
             }
-
-            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
         }
-        return Numbers.LONG_NULL;
+
+        // Recursively process function arguments and operators
+        for (int i = 0, n = expr.args.size(); i < n; i++) {
+            collectColumnReferencesFromExpression(engine, expr.args.getQuick(i), model, depMap);
+        }
+
+        // Process left and right hand sides for operators
+        if (expr.lhs != null) {
+            collectColumnReferencesFromExpression(engine, expr.lhs, model, depMap);
+        }
+        if (expr.rhs != null) {
+            collectColumnReferencesFromExpression(engine, expr.rhs, model, depMap);
+        }
     }
 
-    static CharSequence createColumnAlias(
-            CharacterStore store,
-            CharSequence base,
-            int indexOfDot,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap
+    private static void collectColumnReferencesFromJoinColumns(
+            @NotNull CairoEngine engine,
+            @NotNull ObjList<ExpressionNode> joinColumns,
+            @NotNull QueryModel model,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
-        return createColumnAlias(store, base, indexOfDot, aliasToColumnMap, false);
+        for (int i = 0, n = joinColumns.size(); i < n; i++) {
+            final ExpressionNode joinColumn = joinColumns.getQuick(i);
+            if (joinColumn != null) {
+                collectColumnReferencesFromExpression(engine, joinColumn, model, depMap);
+            }
+        }
     }
 
+    private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {
+        int k = -1;
+        // look for end of digits
+        for (int i = 0; i < tokLen; i++) {
+            char c = tok.charAt(i);
+            if (c < '0' || c > '9') {
+                k = i;
+                break;
+            }
+        }
+
+        if (k == -1) {
+            throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
+        }
+        return k;
+    }
+
+    /**
+     * Creates a unique column alias with O(1) amortized complexity by tracking the next sequence
+     * number for each base alias in the provided map.
+     *
+     * @param store                character store for creating the alias string
+     * @param base                 base name for the alias
+     * @param indexOfDot           index of the last dot in base, or -1 if none
+     * @param aliasToColumnMap     set of existing aliases to check for uniqueness
+     * @param nextAliasSequenceMap map tracking next sequence number for each base alias (updated in place)
+     * @param nonLiteral           whether this is a non-literal expression
+     * @return unique alias
+     */
     static CharSequence createColumnAlias(
             CharacterStore store,
             CharSequence base,
             int indexOfDot,
-            LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap,
+            AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
+            LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
             boolean nonLiteral
     ) {
         final boolean disallowed = nonLiteral && disallowedAliases.contains(base);
 
-        // short and sweet version
+        // early exit for simple cases
         if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
             return base;
         }
@@ -985,17 +1444,28 @@ public class SqlUtil {
             }
         }
 
-        int len = characterStoreEntry.length();
-        int sequence = 0;
+        final int baseAliasLen = characterStoreEntry.length();
+
+        // Look up the starting sequence for this base alias
+        int sequence = nextAliasSequenceMap.get(characterStoreEntry.toImmutable());
+        if (sequence == -1) {
+            sequence = 0;
+        }
+
         while (true) {
             if (sequence > 0) {
-                characterStoreEntry.trimTo(len);
+                characterStoreEntry.trimTo(baseAliasLen);
                 characterStoreEntry.put(sequence);
             }
             sequence++;
-            CharSequence alias = characterStoreEntry.toImmutable();
-            if (aliasToColumnMap.excludes(alias)) {
-                return alias;
+            if (aliasToColumnMap.excludes(characterStoreEntry.toImmutable())) {
+                // Update the sequence tracker for next time
+                final int aliasLen = characterStoreEntry.length();
+                characterStoreEntry.trimTo(baseAliasLen);
+                nextAliasSequenceMap.put(characterStoreEntry.toImmutable(), sequence);
+                // Revert entry to the alias
+                characterStoreEntry.trimTo(aliasLen);
+                return characterStoreEntry.toImmutable();
             }
         }
     }
@@ -1046,12 +1516,12 @@ public class SqlUtil {
         final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");
 
         // we are using "millis" compiler deliberately because clients encode millis into strings
-        DATE_FORMATS_FOR_TIMESTAMP = new DateFormat[]{
+        IMPLICIT_CAST_FORMATS = new DateFormat[]{
                 PG_DATE_Z_FORMAT,
                 PG_DATE_MILLI_TIME_Z_FORMAT,
                 pgDateTimeFormat
         };
 
-        DATE_FORMATS_FOR_TIMESTAMP_SIZE = DATE_FORMATS_FOR_TIMESTAMP.length;
+        IMPLICIT_CAST_FORMATS_SIZE = IMPLICIT_CAST_FORMATS.length;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,13 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryOM;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -56,7 +62,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, long opts, int madviseOpts) {
+    public void configureAuxMemMA(FilesFacade ff, MemoryMA auxMem, LPSZ fileName, long dataAppendPageSize, int memoryTag, int opts, int madviseOpts) {
         auxMem.of(
                 ff,
                 fileName,
@@ -76,7 +82,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
+    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, int opts) {
         auxMem.ofOffset(
                 ff,
                 fd,
@@ -99,7 +105,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long rowLo,
             long rowHi,
             int memoryTag,
-            long opts
+            int opts
     ) {
         dataMem.ofOffset(
                 ff,
@@ -172,6 +178,24 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long getMinAuxVectorSize() {
         return Long.BYTES;
+    }
+
+    @Override
+    public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
+        for (int row = 0; row < rowCount; row++) {
+            long offset = Unsafe.getUnsafe().getLong(auxMemAddr + (long) row * Long.BYTES);
+            long iLen = Unsafe.getUnsafe().getLong(auxMemAddr + (long) (row + 1) * Long.BYTES) - offset;
+            long dLen = Unsafe.getUnsafe().getInt(dataMemAddr + offset);
+            int lenLen = 4;
+            long dataLen = dLen * 2;
+            long dStorageLen = dLen > 0 ? dataLen + lenLen : lenLen;
+            if (iLen != dStorageLen) {
+                // Swiss cheese hole in var col file
+                return true;
+            }
+        }
+        return false;
+
     }
 
     @Override
@@ -271,7 +295,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
         assert tgtAuxAddr != 0;
 
         // add max offset so that we do not have conditionals inside loop
-        final long offset = Vect.sortVarColumn(
+        final long offset = Vect.sortStringColumn(
                 sortedTimestampsAddr,
                 sortedTimestampsRowCount,
                 srcDataAddr,
@@ -285,7 +309,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount) {
+    public long setAppendAuxMemAppendPosition(MemoryMA auxMem, MemoryMA dataMem, int columnType, long rowCount) {
         // For STRING storage aux vector (mem) contains N+1 offsets. Where N is the
         // row count. Offset indexes are 0 based, so reading Nth element of the vector gives
         // the size of the data vector.
@@ -326,12 +350,12 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void setFullAuxVectorNull(long auxMemAddr, long rowCount) {
-        Vect.setVarColumnRefs32Bit(auxMemAddr, 0, rowCount + 1);
+        Vect.setStringColumnNullRefs(auxMemAddr, 0, rowCount + 1);
     }
 
     @Override
     public void setPartAuxVectorNull(long auxMemAddr, long initialOffset, long columnTop) {
-        Vect.setVarColumnRefs32Bit(auxMemAddr, initialOffset, columnTop);
+        Vect.setStringColumnNullRefs(auxMemAddr, initialOffset, columnTop);
     }
 
     @Override
@@ -343,12 +367,10 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long dstAddr,
             long dstAddrSize
     ) {
-        assert (srcHi - srcLo + 2) * 8 <= dstAddrSize;
         // +2 because
         // 1. srcHi is inclusive
         // 2. we copy 1 extra entry due to N+1 string aux vector structure
-
+        assert (srcHi - srcLo + 2) * 8 <= dstAddrSize;
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
     }
 }
-

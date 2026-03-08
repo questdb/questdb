@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,13 +24,17 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -48,15 +52,17 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -76,46 +82,73 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  * - in volume
  * <p>
  * Other than that, at the execution phase the query is compiled and optimized
- * and validated. All columns are added to the create table operation
- * and key SAMPLE BY columns and timestamp are marked as dedup keys. Sampling interval
+ * and validated. Sampling interval
  * and unit are also parsed at this stage as we want to support GROUP BY timestamp_floor(ts)
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
-    private final IntList baseKeyColumnNamePositions = new IntList();
-    private final ObjList<String> baseKeyColumnNames = new ObjList<>();
-    private final CharSequenceHashSet baseTableDedupKeys = new CharSequenceHashSet();
     private final String baseTableName;
     private final int baseTableNamePosition;
+    private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final MatViewDefinition matViewDefinition = new MatViewDefinition();
+    private final boolean deferred;
+    private final int periodDelay;
+    private final char periodDelayUnit;
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
+    private final int timerInterval;
+    private final char timerUnit;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
+    private final MatViewDefinition viewDefinition = new MatViewDefinition();
+    private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
+    private int periodLength;
+    private char periodLengthUnit;
     private long samplingInterval;
     private char samplingIntervalUnit;
+    private long timerStartUs;
+    private String timerTimeZone;
 
     public CreateMatViewOperationImpl(
+            @NotNull CairoConfiguration configuration,
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
             int refreshType,
+            boolean deferred,
             @NotNull String baseTableName,
             int baseTableNamePosition,
             @Nullable String timeZone,
-            @Nullable String timeZoneOffset
+            @Nullable String timeZoneOffset,
+            int timerInterval,
+            char timerUnit,
+            long timerStartUs,
+            @Nullable String timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
     ) {
+        this.configuration = configuration;
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
         this.refreshType = refreshType;
+        this.deferred = deferred;
         this.baseTableName = baseTableName;
         this.baseTableNamePosition = baseTableNamePosition;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
+        this.timerInterval = timerInterval;
+        this.timerUnit = timerUnit;
+        this.timerStartUs = timerStartUs;
+        this.timerTimeZone = timerTimeZone;
+        this.periodLength = periodLength;
+        this.periodLengthUnit = periodLengthUnit;
+        this.periodDelay = periodDelay;
+        this.periodDelayUnit = periodDelayUnit;
     }
 
     @Override
@@ -163,7 +196,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public MatViewDefinition getMatViewDefinition() {
-        return matViewDefinition;
+        return viewDefinition;
     }
 
     @Override
@@ -248,21 +281,37 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void init(TableToken matViewToken) {
-        matViewDefinition.init(
+        viewDefinition.init(
                 refreshType,
+                deferred,
+                baseTableTimestampType,
                 matViewToken,
-                Chars.toString(createTableOperation.getSelectText()),
+                createTableOperation.getSelectText(),
                 baseTableName,
                 samplingInterval,
                 samplingIntervalUnit,
                 timeZone,
-                timeZoneOffset
+                timeZoneOffset,
+                0, // refreshLimitHoursOrMonths can only be set via ALTER
+                timerInterval,
+                timerUnit,
+                timerStartUs,
+                timerTimeZone,
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
         );
     }
 
     @Override
     public boolean isDedupKey(int index) {
         return createTableOperation.isDedupKey(index);
+    }
+
+    @Override
+    public boolean isDeferred() {
+        return deferred;
     }
 
     @Override
@@ -293,9 +342,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromModel(
-            SqlExecutionContext sqlExecutionContext,
-            FunctionFactoryCache functionFactoryCache,
-            QueryModel queryModel
+            @NotNull SqlExecutionContext sqlExecutionContext,
+            @NotNull FunctionFactoryCache functionFactoryCache,
+            @NotNull QueryModel queryModel
     ) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
@@ -331,12 +380,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
             final int timestampType = timestampModel.getColumnType();
             // type can be -1 for create table as select because types aren't known yet
-            if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) {
+            if (!ColumnType.isTimestamp(timestampType) && timestampType != ColumnType.UNDEFINED) {
                 throw SqlException.position(timestampPos)
                         .put("TIMESTAMP column expected [actual=")
                         .put(ColumnType.nameOf(timestampType)).put(']');
             }
-            timestampModel.setIsDedupKey(); // set dedup for timestamp column
         }
 
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
@@ -382,7 +430,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                                 .put("TIMESTAMP column does not exist or not present in select list [name=")
                                 .put(queryColumn.getName()).put(']');
                     }
-                    timestampModel.setIsDedupKey(); // set dedup for timestamp column
                 }
             }
         }
@@ -394,57 +441,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // Parse sampling interval expression.
         final CharSequence interval = GenericLexer.unquote(intervalExpr);
-        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(interval, intervalPos);
+        final int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, intervalPos, "sample");
         assert samplingIntervalEnd < interval.length();
-        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos);
+        samplingInterval = TimestampSamplerFactory.parsePositiveInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
         assert samplingInterval > 0;
         samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
-
-        // Check if PARTITION BY wasn't specified in SQL, so that we need
-        // to assign it based on the sampling interval.
-        if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
-            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
-                    samplingInterval,
-                    samplingIntervalUnit,
-                    0
-            );
-            final long approxBucketMicros = timestampSampler.getApproxBucketSize();
-            final int partitionBy = approxBucketMicros > Timestamps.HOUR_MICROS ? PartitionBy.YEAR
-                    : approxBucketMicros > Timestamps.MINUTE_MICROS ? PartitionBy.MONTH
-                    : PartitionBy.DAY;
-            createTableOperation.setPartitionBy(partitionBy);
-            final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
-            if (ttlHoursOrMonths > 0) {
-                // Don't forget to validate TTL against PARTITION BY.
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
-            }
-        }
-
-        // Mark key columns as dedup keys.
-        baseKeyColumnNames.clear();
-        baseKeyColumnNamePositions.clear();
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
-                    // SAMPLE BY/GROUP BY key, add as dedup key.
                     final CreateTableColumnModel columnModel = createColumnModelMap.get(column.getName());
                     if (columnModel == null) {
                         throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
                     }
-                    columnModel.setIsDedupKey();
-                    // Copy column names into builder to be validated later.
-                    copyBaseTableColumnNames(
-                            column.getAst(),
-                            queryModel,
-                            baseTableName,
-                            baseKeyColumnNames,
-                            baseKeyColumnNamePositions,
-                            selectTextPosition
-                    );
-
                     copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
                 }
             }
@@ -452,11 +463,48 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // Don't forget to reset augmented columns in create table op with what we have scraped.
         createTableOperation.initColumnMetadata(createColumnModelMap);
+
+        if (periodLength == -1) {
+            // It's PERIOD (SAMPLE BY INTERVAL) which means that we need to align the period to the SAMPLE BY bucket.
+            periodLength = (int) Math.min(samplingInterval, Integer.MAX_VALUE);
+            periodLengthUnit = samplingIntervalUnit;
+            CreateMatViewOperation.validateMatViewPeriodLength(periodLength, periodLengthUnit, intervalPos);
+            final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                    MicrosTimestampDriver.INSTANCE,
+                    periodLength,
+                    periodLengthUnit,
+                    intervalPos
+            );
+            assert timerTimeZone == null;
+            timerTimeZone = timeZone;
+            TimeZoneRules tzRulesMicros = null;
+            if (timerTimeZone != null) {
+                try {
+                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                } catch (CairoException e) {
+                    throw SqlException.position(intervalPos).put(e.getFlyweightMessage());
+                }
+            }
+            if (timeZoneOffset != null) {
+                final long val = Dates.parseOffset(timeZoneOffset);
+                if (val == Numbers.LONG_NULL) {
+                    throw SqlException.position(intervalPos).put("invalid offset: ").put(timeZoneOffset);
+                }
+                if (Numbers.decodeLowInt(val) != 0) {
+                    throw SqlException.position(intervalPos).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
+                }
+            }
+            final long nowMicros = configuration.getMicrosecondClock().getTicks();
+            final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
+            timerStartUs = periodSamplerMicros.round(nowLocalMicros);
+        }
     }
 
     @Override
     public void validateAndUpdateMetadataFromSelect(
-            RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata
+            @NotNull RecordMetadata selectMetadata,
+            @NotNull TableReaderMetadata baseTableMetadata,
+            int scanDirection
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
@@ -466,114 +514,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         .put("materialized view query is required to have designated timestamp");
             }
         }
-        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
-        // Key column validation (best-effort):
-        // Option 1. Base table has no dedup.
-        //           Any key columns are fine in this case.
-        // Option 2. Base table has dedup columns.
-        //           Key columns in mat view query must be a subset of the base table's dedup columns.
-        //           That's to avoid situation when dedup upsert rewrites key column values leading to
-        //           inconsistent mat view data.
-        baseTableDedupKeys.clear();
-        for (int i = 0, n = baseTableMetadata.getColumnCount(); i < n; i++) {
-            if (baseTableMetadata.isDedupKey(i)) {
-                baseTableDedupKeys.add(baseTableMetadata.getColumnName(i));
-            }
-        }
-        if (baseTableDedupKeys.size() > 0) {
-            for (int i = 0, n = baseKeyColumnNames.size(); i < n; i++) {
-                final CharSequence baseKeyColumnName = baseKeyColumnNames.get(i);
-                final int baseKeyColumnIndex = baseTableMetadata.getColumnIndexQuiet(baseKeyColumnName);
-                if (baseKeyColumnIndex > -1 && !baseTableMetadata.isDedupKey(baseKeyColumnIndex)) {
-                    throw SqlException.position(baseKeyColumnNamePositions.get(i) + selectTextPosition)
-                            .put("key column must be one of the base table's dedup keys")
-                            .put(" [columnName=").put(baseKeyColumnName)
-                            .put(", baseTableName=").put(baseTableName)
-                            .put(", baseTableDedupKeys=").put(baseTableDedupKeys)
-                            .put(']');
-                }
-            }
-        }
-    }
-
-    /**
-     * Copies base table column names present in the given node into the target set.
-     * The node may contain multiple columns/aliases, e.g. `concat(sym1, sym2)`, which are searched
-     * down to their names in the base table.
-     * <p>
-     * Used to find the list of base table columns used in mat view query keys (best-effort validation).
-     */
-    private static void copyBaseTableColumnNames(
-            ExpressionNode node,
-            QueryModel model,
-            CharSequence baseTableName,
-            ObjList<String> baseKeyColumnNames,
-            IntList baseKeyColumnNamePositions,
-            int selectTextPosition
-    ) throws SqlException {
-        if (node != null && model != null) {
-            if (node.type == ExpressionNode.LITERAL) {
-                if (model.getTableName() != null) {
-                    // We've found a lowest-level model. Let's check if the column belongs to it.
-                    final int dotIndex = Chars.indexOf(node.token, '.');
-                    if (dotIndex > -1) {
-                        if (Chars.equalsIgnoreCase(model.getName(), node.token, 0, dotIndex)) {
-                            if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
-                                throw SqlException.position(node.position + selectTextPosition)
-                                        .put("only base table columns can be used as materialized view keys")
-                                        .put(" [invalid key=").put(node.token)
-                                        .put(']');
-                            }
-                            baseKeyColumnNames.add(Chars.toString(node.token, dotIndex + 1, node.token.length()));
-                            baseKeyColumnNamePositions.add(node.position);
-                            return;
-                        }
-                    } else {
-                        if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
-                            throw SqlException.position(node.position + selectTextPosition)
-                                    .put("only base table columns can be used as materialized view keys")
-                                    .put(" [invalid key=").put(node.token)
-                                    .put(']');
-                        }
-                        baseKeyColumnNames.add(Chars.toString(node.token));
-                        baseKeyColumnNamePositions.add(node.position);
-                        return;
-                    }
-                } else {
-                    // Check nested model.
-                    final QueryColumn column = model.getAliasToColumnMap().get(node.token);
-                    copyBaseTableColumnNames(
-                            column != null ? column.getAst() : node,
-                            model.getNestedModel(),
-                            baseTableName,
-                            baseKeyColumnNames,
-                            baseKeyColumnNamePositions,
-                            selectTextPosition
-                    );
-                }
-            }
-
-            // Check node children for functions/operators.
-            for (int i = 0, n = node.args.size(); i < n; i++) {
-                copyBaseTableColumnNames(node.args.getQuick(i), model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
-            }
-            if (node.lhs != null) {
-                copyBaseTableColumnNames(node.lhs, model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
-            }
-            if (node.rhs != null) {
-                copyBaseTableColumnNames(node.rhs, model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
-            }
-
-            // Check join models.
-            for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-                copyBaseTableColumnNames(node, model.getJoinModels().getQuick(i), baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
-            }
-        }
+        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
+        updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
+        this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }
 
     private static void copyBaseTableSymbolColumnCapacity(
-            ExpressionNode columnNode,
-            QueryModel queryModel,
+            @Nullable ExpressionNode columnNode,
+            @Nullable QueryModel queryModel,
             @NotNull CreateTableColumnModel columnModel,
             @NotNull CharSequence baseTableName,
             @NotNull TableMetadata baseTableMetadata
@@ -650,7 +598,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, QueryModel queryModel) {
-        final int dotIndex = Chars.indexOf(columnNode.token, '.');
+        final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
         if (dotIndex > -1) {
             if (Chars.equalsIgnoreCase(queryModel.getName(), columnNode.token, 0, dotIndex)) {
                 return columnNode.token.subSequence(dotIndex + 1, columnNode.token.length());
@@ -721,6 +669,30 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 if (tmpLiterals.contains(column.getAlias())) {
                     tmpColumnIndexes.add(i);
                 }
+            }
+        }
+    }
+
+    private void updateMatViewTablePartitionBy(int timestampType) throws SqlException {
+        // Check if PARTITION BY wasn't specified in SQL, so that we need
+        // to assign it based on the sampling interval.
+        if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
+                    timestampDriver,
+                    samplingInterval,
+                    samplingIntervalUnit,
+                    0
+            );
+            final long approxBucket = timestampSampler.getApproxBucketSize();
+            final int partitionBy = approxBucket > timestampDriver.fromHours(1) ? PartitionBy.YEAR
+                    : approxBucket > timestampDriver.fromMinutes(1) ? PartitionBy.MONTH
+                    : PartitionBy.DAY;
+            createTableOperation.setPartitionBy(partitionBy);
+            final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
+            if (ttlHoursOrMonths > 0) {
+                // Don't forget to validate TTL against PARTITION BY.
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
             }
         }
     }

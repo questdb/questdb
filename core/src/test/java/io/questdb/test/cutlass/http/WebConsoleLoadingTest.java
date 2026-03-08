@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,12 +29,8 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.client.Response;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -95,19 +91,8 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
     private void assertRequest(HttpClient.Request request, int responseCode, String expectedResponse) {
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
-
             TestUtils.assertEquals(String.valueOf(responseCode), responseHeaders.getStatusCode());
-
-            final Utf8StringSink sink = new Utf8StringSink();
-
-            Fragment fragment;
-            final Response response = responseHeaders.getResponse();
-            while ((fragment = response.recv()) != null) {
-                Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-            }
-
-            TestUtils.assertEquals(expectedResponse, sink.toString());
-            sink.clear();
+            HttpUtils.assertChunkedBody(responseHeaders, expectedResponse);
         }
     }
 

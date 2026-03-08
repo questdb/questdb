@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,16 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.Telemetry;
+import io.questdb.TelemetryEvent;
+import io.questdb.TelemetryOrigin;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRangeParser;
 import io.questdb.cutlass.http.HttpRawSocket;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpResponseHeader;
@@ -52,6 +57,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.TelemetryTask;
 
 import java.io.Closeable;
 
@@ -59,10 +65,10 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 import static java.net.HttpURLConnection.HTTP_MOVED_PERM;
 import static java.net.HttpURLConnection.HTTP_NOT_FOUND;
 
-public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
+public class StaticContentProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
     private static final LocalValue<StaticContentProcessorState> LV = new LocalValue<>();
-    private final Utf8Sequence webConsoleContextPath;
+    private final StaticContentProcessorConfiguration configuration;
     private final FilesFacade ff;
     private final String httpProtocolVersion;
     private final String keepAliveHeader;
@@ -70,10 +76,11 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private final PrefixedPath prefixedPath;
     private final HttpRangeParser rangeParser = new HttpRangeParser();
     private final byte requiredAuthType;
+    private final Telemetry<TelemetryTask> telemetry;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
-    private final StaticContentProcessorConfiguration configuration;
+    private final Utf8Sequence webConsoleContextPath;
 
-    public StaticContentProcessor(HttpFullFatServerConfiguration configuration) {
+    public StaticContentProcessor(CairoEngine engine, HttpFullFatServerConfiguration configuration) {
         this.configuration = configuration.getStaticContentProcessorConfiguration();
         this.mimeTypes = configuration.getStaticContentProcessorConfiguration().getMimeTypesCache();
         this.prefixedPath = new PrefixedPath(configuration.getStaticContentProcessorConfiguration().getPublicDirectory());
@@ -82,6 +89,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
         this.requiredAuthType = configuration.getStaticContentProcessorConfiguration().getRequiredAuthType();
         this.webConsoleContextPath = new Utf8String(configuration.getContextPathWebConsole());
+        this.telemetry = engine.getTelemetry();
     }
 
     @Override
@@ -90,8 +98,23 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
+    public HttpRequestProcessor getDefaultProcessor() {
+        return this;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
     public byte getRequiredAuthType() {
         return requiredAuthType;
+    }
+
+    @Override
+    public boolean ignoreConnectionLimitCheck() {
+        return true;
     }
 
     public LogRecord logInfoWithFd(HttpConnectionContext context) {
@@ -176,6 +199,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_STATIC_CONTENT);
         int n = Utf8s.lastIndexOfAscii(path, '.');
         if (n == -1) {
             logInfoWithFd(context).$("missing extension [file=").$(path).$(']').$();

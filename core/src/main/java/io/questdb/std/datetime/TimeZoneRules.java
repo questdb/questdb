@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,11 +27,10 @@ package io.questdb.std.datetime;
 public interface TimeZoneRules {
 
     /**
-     * Returns gap (forward clock shift) duration for the given local timestamp.
-     * May be used to align SAMPLE BY buckets, so that they don't start at non-existing
-     * local time, i.e. in a gap.
+     * If the local epoch is a Daylight Saving Transition gap in forward time shift,
+     * this method returns the offset of the timestamp to the beginning of the gap.
      */
-    long getGapDuration(long localEpoch);
+    long getDstGapOffset(long localEpoch);
 
     long getLocalOffset(long localEpoch);
 

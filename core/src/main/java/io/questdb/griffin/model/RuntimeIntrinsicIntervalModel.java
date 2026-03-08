@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -32,7 +33,11 @@ import io.questdb.std.QuietCloseable;
 
 public interface RuntimeIntrinsicIntervalModel extends QuietCloseable, Plannable {
 
-    boolean allIntervalsHitOnePartition(int partitionBy);
+    boolean allIntervalsHitOnePartition();
 
     LongList calculateIntervals(SqlExecutionContext sqlExecutionContext) throws SqlException;
+
+    TimestampDriver getTimestampDriver();
+
+    boolean isStatic();
 }

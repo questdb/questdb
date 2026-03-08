@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,23 @@
 
 package io.questdb.test.griffin.engine.functions.constants;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class TimestampConstantTest {
     @Test
-    public void testConstant() {
-        TimestampConstant constant = new TimestampConstant(909120909900L);
+    public void testTimestampConstant() {
+        TimestampConstant constant = new TimestampConstant(909120909900L, ColumnType.TIMESTAMP_MICRO);
         Assert.assertTrue(constant.isConstant());
         Assert.assertEquals(909120909900L, constant.getTimestamp(null));
+    }
+
+    @Test
+    public void testTimestampNSConstant() {
+        TimestampConstant constant = new TimestampConstant(909120909900000L, ColumnType.TIMESTAMP_NANO);
+        Assert.assertTrue(constant.isConstant());
+        Assert.assertEquals(909120909900000L, constant.getTimestamp(null));
     }
 }

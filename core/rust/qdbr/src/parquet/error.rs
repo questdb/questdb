@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 use crate::allocator::{take_last_alloc_error, AllocFailure};
-use crate::cairo::CairoException;
+use qdb_core::cairo::CairoException;
 use qdb_core::error::{CoreError, CoreErrorReason};
 use std::alloc::AllocError;
 use std::backtrace::{Backtrace, BacktraceStatus};
@@ -108,27 +108,19 @@ impl ParquetError {
         let last_index = self.context.len().saturating_sub(1);
         for (index, context) in self.context.iter().rev().enumerate() {
             if index == last_index {
-                write!(f, "{}", context)?;
+                write!(f, "{context}")?;
             } else {
-                write!(f, "{}: ", context)?;
+                write!(f, "{context}: ")?;
             }
         }
 
         // Then the source's cause, if there is one.
         if let Some(source) = source {
             if self.context.is_empty() {
-                write!(f, "{}", source)?;
+                write!(f, "{source}")?;
             } else {
-                write!(f, ": {}", source)?;
+                write!(f, ": {source}")?;
             }
-        }
-        Ok(())
-    }
-
-    fn fmt_msg_with_backtrace<W: Write>(&self, f: &mut W) -> std::fmt::Result {
-        self.fmt_msg(f)?;
-        if self.backtrace.status() == BacktraceStatus::Captured {
-            write!(f, "\n{}", self.backtrace)?;
         }
         Ok(())
     }
@@ -184,7 +176,7 @@ impl Debug for ParquetError {
         writeln!(f, "ParquetError\n    Reason: {:?}", self.reason)?;
         writeln!(f, "    Context:")?;
         for line in self.context.iter().rev() {
-            writeln!(f, "        {}", line)?;
+            writeln!(f, "        {line}")?;
         }
         if self.backtrace.status() == BacktraceStatus::Captured {
             writeln!(f, "    Backtrace:\n{}", self.backtrace)?;
@@ -196,15 +188,6 @@ impl Debug for ParquetError {
 impl Display for ParquetError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.fmt_msg(f)?;
-        Ok(())
-    }
-}
-
-pub struct ParquetErrorWithBacktraceDisplay<'a>(&'a ParquetError);
-
-impl Display for ParquetErrorWithBacktraceDisplay<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt_msg_with_backtrace(f)?;
         Ok(())
     }
 }
@@ -306,7 +289,12 @@ where
 }
 
 macro_rules! fmt_err {
-    ($cause: ident, $($arg:tt)*) => {
+    ($cause:ident($inner:expr), $($arg:tt)*) => {
+        crate::parquet::error::ParquetError::with_descr(
+            crate::parquet::error::ParquetErrorReason::$cause($inner),
+            format!($($arg)*))
+    };
+    ($cause:ident, $($arg:tt)*) => {
         crate::parquet::error::ParquetError::with_descr(
             crate::parquet::error::ParquetErrorReason::$cause,
             format!($($arg)*))

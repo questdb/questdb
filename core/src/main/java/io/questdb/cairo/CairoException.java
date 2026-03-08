@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import io.questdb.std.Files;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -40,15 +39,23 @@ import org.jetbrains.annotations.Nullable;
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
 
     public static final int ERRNO_ACCESS_DENIED_WIN = 5;
+    public static final int ERRNO_EACCES_LINUX = 13;
+    public static final int ERRNO_EACCES_MACOS = 13;
+    public static final int ERRNO_EPERM_LINUX = 1;
+    public static final int ERRNO_EPERM_MACOS = 1;
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
+    // psync_cvcontinue sets two bits in the error code to indicate whether the wait timed out (0x100) or there were no waiters (0x200).
+    // Error #316 (0x13C) is the timed out bit bitwise OR'd with ETIMEDOUT (60).
+    public static final int ERRNO_FILE_READ_TIMEOUT_MACOS = 316;
     public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = METADATA_VALIDATION - 1;
     private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
     public static final int METADATA_VALIDATION_RECOVERABLE = TABLE_DROPPED - 1;
     public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
     public static final int TABLE_DOES_NOT_EXIST = PARTITION_MANIPULATION_RECOVERABLE - 1;
-    public static final int MAT_VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
+    public static final int VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
+    public static final int MAT_VIEW_DOES_NOT_EXIST = VIEW_DOES_NOT_EXIST - 1;
     public static final int TXN_BLOCK_APPLY_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
@@ -63,6 +70,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean interruption; // used when a query times out
     private int messagePosition;
     private boolean outOfMemory;
+    private boolean preferencesOutOfDateError = false;
 
     public static CairoException authorization() {
         return nonCritical().setAuthorizationError();
@@ -131,6 +139,15 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return instance(PARTITION_MANIPULATION_RECOVERABLE);
     }
 
+    public static CairoException preferencesOutOfDate(long currentVersion, long expectedVersion) {
+        return nonCritical().setPreferencesOutOfDateError()
+                .put("preferences view is out of date [currentVersion=")
+                .put(currentVersion)
+                .put(", expectedVersion=")
+                .put(expectedVersion)
+                .put(']');
+    }
+
     public static CairoException queryCancelled(long fd) {
         CairoException exception = nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
         if (fd > -1) {
@@ -172,8 +189,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(", tableName=").put(tableToken.getTableName()).put(']');
     }
 
-    public boolean errnoFileCannotRead() {
-        return Files.errnoFileCannotRead(errno);
+    public static CairoException viewDoesNotExist(CharSequence viewName) {
+        return critical(VIEW_DOES_NOT_EXIST).put("view does not exist [view=").put(viewName).put(']');
     }
 
     public int getErrno() {
@@ -230,7 +247,17 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isCritical() {
-        return errno != NON_CRITICAL && errno != PARTITION_MANIPULATION_RECOVERABLE && errno != METADATA_VALIDATION_RECOVERABLE;
+        return errno != NON_CRITICAL
+                && errno != PARTITION_MANIPULATION_RECOVERABLE
+                && errno != METADATA_VALIDATION_RECOVERABLE
+                && errno != TABLE_DROPPED
+                && errno != MAT_VIEW_DOES_NOT_EXIST
+                && errno != VIEW_DOES_NOT_EXIST
+                && errno != TABLE_DOES_NOT_EXIST;
+    }
+
+    public boolean isFileCannotRead() {
+        return Files.isErrnoFileCannotRead(errno);
     }
 
     public boolean isHousekeeping() {
@@ -247,6 +274,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isOutOfMemory() {
         return outOfMemory;
+    }
+
+    public boolean isPreferencesOutOfDateError() {
+        return preferencesOutOfDateError;
     }
 
     public boolean isTableDoesNotExist() {
@@ -307,11 +338,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
-    public CairoException setAuthorizationError() {
-        this.authorizationError = true;
-        return this;
-    }
-
     public CairoException setCacheable(boolean cacheable) {
         this.cacheable = cacheable;
         return this;
@@ -345,8 +371,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         sink.putAscii('[').put(errno).putAscii("]: ").put(message);
     }
 
-    public CairoException ts(long timestamp) {
-        TimestampFormatUtils.appendDateTime(message, timestamp);
+    public CairoException ts(int timestampType, long timestamp) {
+        ColumnType.getTimestampDriver(timestampType).append(message, timestamp);
+        return this;
+    }
+
+    public CairoException ts(TimestampDriver driver, long timestamp) {
+        driver.append(message, timestamp);
         return this;
     }
 
@@ -359,7 +390,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     // N.B.: Change the API with care! This method is called from native code via JNI.
-    // See `struct CairoException` in the `qdbr` Rust crate.
+    // See `struct CairoException` in the `qdb-core` Rust crate.
     @SuppressWarnings("unused")
     private static CairoException paramInstance(
             int errno, // pass `NON_CRITICAL` (-1) to create a non-critical exception
@@ -372,6 +403,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(message);
         ex.nativeBacktrace.put(nativeBacktrace);
         return ex;
+    }
+
+    private CairoException setAuthorizationError() {
+        this.authorizationError = true;
+        return this;
+    }
+
+    private CairoException setPreferencesOutOfDateError() {
+        this.preferencesOutOfDateError = true;
+        return this;
     }
 
     protected void clear(int errno) {

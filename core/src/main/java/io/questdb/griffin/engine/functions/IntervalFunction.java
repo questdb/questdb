@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,16 +25,30 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class IntervalFunction implements ScalarFunction {
+public abstract class IntervalFunction implements Function {
+    protected int intervalType;
+
+    protected IntervalFunction(int intervalType) {
+        assert ColumnType.isInterval(intervalType);
+        this.intervalType = intervalType;
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public BinarySequence getBin(Record rec) {
@@ -63,6 +77,36 @@ public abstract class IntervalFunction implements ScalarFunction {
 
     @Override
     public long getDate(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final byte getDecimal8(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -178,7 +222,7 @@ public abstract class IntervalFunction implements ScalarFunction {
 
     @Override
     public int getType() {
-        return ColumnType.INTERVAL;
+        return intervalType;
     }
 
     @Override
@@ -194,5 +238,9 @@ public abstract class IntervalFunction implements ScalarFunction {
     @Override
     public int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    protected void setType(int intervalType) {
+        this.intervalType = intervalType;
     }
 }

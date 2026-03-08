@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,37 +60,6 @@ public class IntHashSetTest {
         for (int i = 0; i < N; i++) {
             Assert.assertTrue(set.contains(rnd.nextPositiveInt()));
         }
-    }
-
-    @Test
-    public void testEqualsAndHashCode() {
-        final int items = 100;
-
-        final IntHashSet setA = new IntHashSet();
-        final IntHashSet setB = new IntHashSet();
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-
-        for (int i = 0; i < items; i++) {
-            setA.add(i);
-        }
-
-        Assert.assertNotEquals(setA, setB);
-
-        // Reverse the addition order, so that the elements of the underlying arrays aren't 1-to-1 between the sets.
-        for (int i = items - 1; i > -1; i--) {
-            setB.add(i);
-        }
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-
-        setA.clear();
-        setB.clear();
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
     }
 
     @Test

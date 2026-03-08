@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -65,8 +66,6 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
@@ -109,11 +108,13 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(filter);
+        Misc.free(cursor);
     }
 
     private static class NestedLoopLeftRecordCursor extends AbstractJoinCursor {
         private final Function filter;
         private final OuterJoinRecord record;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMasterHasNextPending;
         private boolean isMatch;
         private boolean masterHasNext;
@@ -133,6 +134,7 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public boolean hasNext() {
             while (true) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (isMasterHasNextPending) {
                     masterHasNext = masterCursor.hasNext();
                     isMasterHasNextPending = false;
@@ -143,6 +145,7 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
                 }
 
                 while (slaveCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     if (filter.getBool(record)) {
                         isMatch = true;
                         return true;
@@ -160,6 +163,11 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
                 record.hasSlave(true);
                 isMasterHasNextPending = true;
             }
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return masterCursor.preComputedStateSize() + slaveCursor.preComputedStateSize();
         }
 
         @Override
@@ -183,6 +191,7 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             filter.init(this, executionContext);
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
+            circuitBreaker = executionContext.getCircuitBreaker();
         }
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -160,7 +160,7 @@ public class TextDelimiterScanner implements Closeable {
         byte delimiter = Byte.MIN_VALUE;
 
         if (lineCount < 2) {
-            LOG.info().$("not enough lines [table=").$(tableName).$(']').$();
+            LOG.info().$("not enough lines [table=").$safe(tableName).$(']').$();
             throw NotEnoughLinesException.$("not enough lines [table=").put(tableName).put(']');
         }
 
@@ -228,8 +228,8 @@ public class TextDelimiterScanner implements Closeable {
         // exclude '.' as delimiter
         if (delimiter != '.' && lastDelimiterStdDev < maxRequiredDelimiterStdDev) {
             LOG.info()
-                    .$("scan result [table=`").$(tableName)
-                    .$("`, delimiter='").$((char) delimiter)
+                    .$("scan result [table=").$safe(tableName)
+                    .$(", delimiter='").$((char) delimiter)
                     .$("', priority=").$(lastDelimiterPriority)
                     .$(", mean=").$(lastDelimiterMean)
                     .$(", stddev=").$(lastDelimiterStdDev)

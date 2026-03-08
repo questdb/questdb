@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -96,12 +96,12 @@ inline uint32_t ceil_pow_2(uint32_t v) {
 }
 
 template<class T, class V>
-inline int64_t scroll_up(T data, int64_t high, V value) {
+inline int64_t scroll_up(T data, int64_t low, int64_t high, V value) {
     do {
-        if (high > 0) {
+        if (high > low) {
             high--;
         } else {
-            return 0;
+            return high;
         }
     } while (data[high] == value);
     return high + 1;
@@ -162,7 +162,7 @@ inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_
         } else {
             // In case of multiple equal values, find the first
             return scan_dir == -1 ?
-                   scroll_up(data, mid, midVal) :
+                   scroll_up(data, low, mid, midVal) :
                    scroll_down(data, mid, high, midVal);
         }
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -35,7 +35,7 @@ import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -47,6 +47,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     public LineTcpReceiverConfigurationWrapper(Metrics metrics) {
         this.metrics = metrics;
         delegate.set(null);
+    }
+
+    @Override
+    public long getAcceptLoopTimeout() {
+        return getDelegate().getAcceptLoopTimeout();
     }
 
     @Override
@@ -72,6 +77,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public int getBindPort() {
         return getDelegate().getBindPort();
+    }
+
+    @Override
+    public CairoConfiguration getCairoConfiguration() {
+        return getDelegate().getCairoConfiguration();
     }
 
     @Override
@@ -112,6 +122,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public short getDefaultColumnTypeForInteger() {
         return getDelegate().getDefaultColumnTypeForInteger();
+    }
+
+    @Override
+    public int getDefaultCreateTimestampColumnType() {
+        return getDelegate().getDefaultCreateTimestampColumnType();
     }
 
     @Override
@@ -165,11 +180,6 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-        return getDelegate().getIOWorkerPoolConfiguration();
-    }
-
-    @Override
     public int getInitialBias() {
         return getDelegate().getInitialBias();
     }
@@ -210,6 +220,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
+    public long getMaxRecvBufferSize() {
+        return getDelegate().getMaxRecvBufferSize();
+    }
+
+    @Override
     public Metrics getMetrics() {
         return metrics;
     }
@@ -237,6 +252,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public NetworkFacade getNetworkFacade() {
         return getDelegate().getNetworkFacade();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return getDelegate().getNetworkWorkerPoolConfiguration();
     }
 
     @Override
@@ -280,8 +300,8 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public LineTcpTimestampAdapter getTimestampAdapter() {
-        return getDelegate().getTimestampAdapter();
+    public byte getTimestampUnit() {
+        return getDelegate().getTimestampUnit();
     }
 
     @Override

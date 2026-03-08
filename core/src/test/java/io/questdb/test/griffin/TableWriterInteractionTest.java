@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -42,7 +42,7 @@ public class TableWriterInteractionTest extends AbstractCairoTest {
             model.col("x", ColumnType.SYMBOL).indexed(true, 256);
             AbstractCairoTest.create(model);
 
-            long ts = TimestampFormatUtils.parseTimestamp("2019-04-29T12:00:04.877721Z");
+            long ts = MicrosFormatUtils.parseTimestamp("2019-04-29T12:00:04.877721Z");
             try (TableWriter w = getWriter("xyz")) {
                 TableWriter.Row r = w.newRow(ts);
 

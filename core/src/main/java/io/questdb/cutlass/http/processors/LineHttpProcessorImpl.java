@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,46 +25,73 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
-import io.questdb.cutlass.http.HttpMultipartContentListener;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpMultipartContentProcessor;
+import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Zip;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
+import static io.questdb.cutlass.http.HttpRequestValidator.*;
 import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.*;
-import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
-public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartContentListener {
+public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, HttpRequestHandler {
     private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding");
-    private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
+    private static final Log LOG = LogFactory.getLog(LineHttpProcessorImpl.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
     private static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
-    private final LineHttpProcessorConfiguration configuration;
     private final CairoEngine engine;
+    private final HttpFullFatServerConfiguration httpConfiguration;
+    private final LineHttpProcessorConfiguration lineConfiguration;
     private final int maxResponseContentLength;
     private final int recvBufferSize;
     private LineHttpProcessorState state;
 
-    public LineHttpProcessorImpl(CairoEngine engine, int recvBufferSize, int maxResponseContentLength, LineHttpProcessorConfiguration configuration) {
+    public LineHttpProcessorImpl(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
         this.engine = engine;
-        this.recvBufferSize = recvBufferSize;
-        this.maxResponseContentLength = maxResponseContentLength;
-        this.configuration = configuration;
+        this.recvBufferSize = httpConfiguration.getRecvBufferSize();
+        this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
+        this.lineConfiguration = httpConfiguration.getLineHttpProcessorConfiguration();
+        this.httpConfiguration = httpConfiguration;
+    }
+
+    @Override
+    public String getName() {
+        return ActiveConnectionTracker.PROCESSOR_ILP_HTTP;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public short getSupportedRequestTypes() {
+        return METHOD_POST | NON_MULTIPART_REQUEST | MULTIPART_REQUEST;
     }
 
     @Override
     public void onChunk(long lo, long hi) {
-        this.state.parse(lo, hi);
+        if (state.isGzipEncoded()) {
+            state.inflateAndParse(lo, hi);
+        } else {
+            state.parse(lo, hi);
+        }
     }
 
     @Override
@@ -75,27 +102,33 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
         }
     }
 
+    @Override
     public void onHeadersReady(HttpConnectionContext context) {
         state = LV.get(context);
         if (state == null) {
-            state = new LineHttpProcessorState(recvBufferSize, maxResponseContentLength, engine, configuration);
+            state = new LineHttpProcessorState(recvBufferSize, maxResponseContentLength, engine, lineConfiguration);
             LV.set(context, state);
         } else {
             state.clear();
         }
 
-        // Method
         HttpRequestHeader requestHeader = context.getRequestHeader();
-        if (!Utf8s.equalsNcAscii("POST", requestHeader.getMethod())) {
-            state.reject(METHOD_NOT_SUPPORTED, "Not Found", context.getFd());
+
+        if (!httpConfiguration.isAcceptingWrites()) {
+            state.reject(NOT_ACCEPTING_WRITES, "this instance cannot receive writes", context.getFd());
             return;
         }
 
         // Encoding
         Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);
-        if (encoding != null && Utf8s.endsWithAscii(encoding, "gzip")) {
-            state.reject(ENCODING_NOT_SUPPORTED, "gzip encoding is not supported", context.getFd());
-            return;
+        state.setGzipEncoded(encoding != null && Utf8s.equalsIgnoreCaseAscii("gzip", encoding));
+        if (state.isGzipEncoded()) {
+            long inflateStream = Zip.inflateInitGzip();
+            if (inflateStream < 0) {
+                state.reject(ENCODING_NOT_SUPPORTED, "failed to initialise gzip decompression", context.getFd());
+                return;
+            }
+            state.setInflateStream(inflateStream);
         }
 
         byte timestampPrecision;
@@ -104,18 +137,18 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
             int len = precision.size();
             if ((len == 1 && precision.byteAt(0) == 'n') || (len == 2 && precision.byteAt(0) == 'n' && precision.byteAt(1) == 's')) {
                 // V2 influx client sends "n" and V3 sends "ns"
-                timestampPrecision = ENTITY_UNIT_NANO;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_NANOS;
             } else if ((len == 1 && precision.byteAt(0) == 'u') || (len == 2 && precision.byteAt(0) == 'u' && precision.byteAt(1) == 's')) {
                 // V2 influx client sends "u" and V3 sends "us"
-                timestampPrecision = ENTITY_UNIT_MICRO;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_MICROS;
             } else if (len == 2 && precision.byteAt(0) == 'm' && precision.byteAt(1) == 's') {
-                timestampPrecision = ENTITY_UNIT_MILLI;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_MILLIS;
             } else if (len == 1 && precision.byteAt(0) == 's') {
-                timestampPrecision = ENTITY_UNIT_SECOND;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_SECONDS;
             } else if (len == 1 && precision.byteAt(0) == 'm') {
-                timestampPrecision = ENTITY_UNIT_MINUTE;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_MINUTES;
             } else if (len == 1 && precision.byteAt(0) == 'h') {
-                timestampPrecision = ENTITY_UNIT_HOUR;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_HOURS;
             } else {
                 LOG.info().$("unsupported precision [url=")
                         .$(requestHeader.getUrl())
@@ -125,7 +158,7 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
                 return;
             }
         } else {
-            timestampPrecision = ENTITY_UNIT_NANO;
+            timestampPrecision = CommonUtils.TIMESTAMP_UNIT_NANOS;
         }
 
         state.of(context.getFd(), timestampPrecision, context.getSecurityContext());
@@ -156,6 +189,7 @@ public class LineHttpProcessorImpl implements LineHttpProcessor, HttpMultipartCo
             sendErrorContent(context);
         }
         engine.getMetrics().lineMetrics().totalIlpHttpBytesGauge().add(context.getTotalReceived());
+        state.cleanupGzip();
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,11 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.MemoryTag;
@@ -199,9 +201,12 @@ public class TableReaderReloadTest extends AbstractCairoTest {
 
         final Rnd rnd = new Rnd();
         final int bufferSize = 1024;
+        int timestampType = TestUtils.generateRandom(LOG).nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        increment = timestampDriver.fromMicros(increment);
         long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, partitionBy);
-        model.timestamp();
+        model.timestamp(timestampType);
         AbstractCairoTest.create(model);
 
         long timestamp = 0;

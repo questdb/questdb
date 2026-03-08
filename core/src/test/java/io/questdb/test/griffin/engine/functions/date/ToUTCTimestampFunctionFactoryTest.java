@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,11 +26,30 @@ package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public ToUTCTimestampFunctionFactoryTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testAreaName() throws Exception {
@@ -194,9 +213,9 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarTimezone() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "to_utc\n" +
-                        "2020-03-12T23:10:00.000000Z\n",
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select '-07:40' zone)"
+                replaceTimestampSuffix("to_utc\n" +
+                        "2020-03-12T23:10:00.000000Z\n", timestampType.getTypeName()),
+                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as " + timestampType.getTypeName() + "), zone) from (select '-07:40' zone)"
         ));
     }
 
@@ -215,6 +234,8 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
             String timestamp,
             String timeZone
     ) throws SqlException {
+        expected = replaceTimestampSuffix(expected, timestampType.getTypeName());
+        timestamp = replaceTimestampSuffix(timestamp, timestampType.getTypeName());
         assertSql(
                 expected,
                 "select to_utc('" +

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,6 +70,11 @@ public class HttpClientException extends RuntimeException {
 
     public HttpClientException put(@Nullable CharSequence cs) {
         message.put(cs);
+        return this;
+    }
+
+    public HttpClientException putSize(long value) {
+        message.putSize(value);
         return this;
     }
 }

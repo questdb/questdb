@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -85,11 +85,8 @@ public final class Uuid implements Sinkable {
         }
     }
 
-    // this method is used by byte-code generator
-    // Note that the arguments are of weird pattern: aLo, aHi, bHi, bLo
-    // this is because of alternation of the order when using getLong128Hi, getLong128Lo
-    // instead as A, B records.
-    public static int compare(long aLo, long bHi, long aHi, long bLo) {
+    // this method is used by RecordComparatorCompiler byte-code generator
+    public static int compare(long aHi, long aLo, long bHi, long bLo) {
         // the impl intentionally uses unsigned comparisons
         // note: there is a bug in OpenJDK impl: https://bugs.openjdk.org/browse/JDK-7025832
         // so this method generates a different ordering than UUID compareTo() from JDK

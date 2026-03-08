@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,13 +37,13 @@ public interface TableNameRegistry extends Closeable {
      * calling code should treat it as table does not exist on queries, table already exists on "create" operations
      * and table does not exit on "drop" operations.
      */
-    TableToken LOCKED_DROP_TOKEN = new TableToken("__locked_drop__", "__locked_drop__", Integer.MAX_VALUE - 1, false, false, false);
+    TableToken LOCKED_DROP_TOKEN = new TableToken("__locked_drop__", "__locked_drop__", null, Integer.MAX_VALUE - 1, false, false, false);
     /**
      * Table token that is used to lock table name during table creation. It is not a valid table token and the
      * calling code should treat it as table does not exist on queries, table retry on "create" operations
      * and table does not exit on "drop" operations.
      */
-    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false, false, false);
+    TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", null, Integer.MAX_VALUE, false, false, false);
 
     static boolean isLocked(TableToken tableToken) {
         return tableToken == LOCKED_TOKEN || tableToken == LOCKED_DROP_TOKEN;
@@ -80,7 +80,7 @@ public interface TableNameRegistry extends Closeable {
      * @param dirName directory name
      * @return resolves private table name to TableToken. If no token exists, returns null
      */
-    TableToken getTableTokenByDirName(String dirName);
+    @Nullable TableToken getTableTokenByDirName(CharSequence dirName);
 
     /**
      * Returns total count of table tokens. Among live tables it can count dropped tables which are not fully deleted yet.
@@ -103,7 +103,7 @@ public interface TableNameRegistry extends Closeable {
      * @param dirName directory name
      * @return If table does not exist, returns null otherwise returns TableToken
      */
-    TableToken getTokenByDirName(CharSequence dirName);
+    @Nullable TableToken getTokenByDirName(CharSequence dirName);
 
     /**
      * Checks that table token does not belong to a dropped table.
@@ -129,11 +129,12 @@ public interface TableNameRegistry extends Closeable {
      * @param tableName table name
      * @param dirName   private table name, e.g. the directory where the table files are stored
      * @param tableId   unique table id
+     * @param isView    true if the table is a view
      * @param isMatView true if the table is a materialized view
      * @param isWal     true if table is WAL enabled
      * @return table token or null if table name with the same tableId, private name is already registered
      */
-    TableToken lockTableName(String tableName, String dirName, int tableId, boolean isMatView, boolean isWal);
+    TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isWal);
 
     /**
      * Purges token from registry after table, and it's WAL segments have been removed on disk. This method is
@@ -149,9 +150,9 @@ public interface TableNameRegistry extends Closeable {
     void reconcile();
 
     /**
-     * Registers table name and releases lock. This method must be called after {@link #lockTableName(String, String, int, boolean, boolean)}.
+     * Registers table name and releases lock. This method must be called after {@link #lockTableName(String, String, int, boolean, boolean, boolean)}.
      *
-     * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean, boolean)}
+     * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean, boolean, boolean)}
      */
     void registerName(TableToken tableToken);
 
@@ -192,10 +193,10 @@ public interface TableNameRegistry extends Closeable {
     void resetMemory();
 
     /**
-     * Unlocks table name. This method must be called after {@link #lockTableName(String, String, int, boolean, boolean)}.
+     * Unlocks table name. This method must be called after {@link #lockTableName(String, String, int, boolean, boolean, boolean)}.
      * If table name is not locked, does nothing.
      *
-     * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean, boolean)}
+     * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean, boolean, boolean)}
      */
     void unlockTableName(TableToken tableToken);
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,7 +55,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected long partitionLimit;
     protected int partitionLo;
     protected TableReader reader;
-    protected long size = -1;
     protected long sizeSoFar = 0;
     private int initialIntervalsHi;
     private int initialIntervalsLo;
@@ -115,7 +114,12 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     @Override
     public long size() {
-        return size > -1 ? size : computeSize();
+        return -1;
+    }
+
+    @Override
+    public boolean supportsSizeCalculation() {
+        return true;
     }
 
     @Override
@@ -130,7 +134,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     private void calculateRanges(TableReader reader, LongList intervals) {
-        size = -1;
         if (intervals.size() > 0) {
             if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
                 cullIntervals(reader, intervals);
@@ -150,89 +153,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
             initialPartitionHi = 0;
         }
         toTop();
-    }
-
-    /**
-     * Best effort size calculation.
-     */
-    private long computeSize() {
-        int intervalsLo = this.intervalsLo;
-        int intervalsHi = this.intervalsHi;
-        int partitionLo = this.partitionLo;
-        int partitionHi = this.partitionHi;
-        long partitionLimit = this.partitionLimit;
-        long size = this.sizeSoFar;
-
-        while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
-            // We don't need to worry about column tops and null column because we
-            // are working with timestamp. Timestamp column cannot be added to existing table.
-            long rowCount;
-            try {
-                rowCount = reader.openPartition(partitionLo);
-            } catch (DataUnavailableException e) {
-                // The data is in cold storage, close the event and give up on size calculation.
-                Misc.free(e.getEvent());
-                return -1;
-            }
-
-            if (rowCount > 0) {
-                final TimestampFinder timestampFinder = initTimestampFinder(partitionLo, rowCount);
-
-                final long intervalLo = intervals.getQuick(intervalsLo * 2);
-                final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
-
-                final long partitionTimestampLo = timestampFinder.minTimestamp();
-                // interval is wholly above partition, skip interval
-                if (partitionTimestampLo > intervalHi) {
-                    intervalsLo++;
-                    continue;
-                }
-
-                final long partitionTimestampHi = timestampFinder.maxTimestamp();
-                // interval is wholly below partition, skip partition
-                if (partitionTimestampHi < intervalLo) {
-                    partitionLimit = 0;
-                    partitionLo++;
-                    continue;
-                }
-
-                // calculate intersection
-                long lo;
-                if (partitionTimestampLo >= intervalLo) {
-                    lo = 0;
-                } else {
-                    // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
-                    // and then do index + 1 to skip to top of where we need to be.
-                    lo = timestampFinder.findTimestamp(intervalLo - 1, partitionLimit == -1 ? 0 : partitionLimit, rowCount - 1) + 1;
-                }
-
-                // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
-                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1) + 1;
-                if (lo < hi) {
-                    size += (hi - lo);
-
-                    // we do have whole partition of fragment?
-                    if (hi == rowCount) {
-                        // whole partition, will need to skip to next one
-                        partitionLimit = 0;
-                        partitionLo++;
-                    } else {
-                        // only fragment, need to skip to next interval
-                        partitionLimit = hi;
-                        intervalsLo++;
-                    }
-                    continue;
-                }
-                // interval yielded empty partition frame
-                partitionLimit = hi;
-                intervalsLo++;
-            } else {
-                // partition was empty, just skip to next
-                partitionLo++;
-            }
-        }
-
-        return this.size = size;
     }
 
     private void cullIntervals(TableReader reader, LongList intervals) {
@@ -282,7 +202,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
-        if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+        if (reader.getPartitionFormatFromMetadata(partitionIndex) == PartitionFormat.PARQUET) {
             return parquetTimestampFinder.of(reader, partitionIndex, timestampIndex);
         }
         return nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);

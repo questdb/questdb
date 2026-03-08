@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,11 +29,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 
 public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinFastRecordCursor cursor;
@@ -43,7 +44,8 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
-            int columnSplit
+            int columnSplit,
+            long toleranceInterval
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -52,7 +54,10 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                configuration.getSqlAsOfJoinLookAhead()
+                masterFactory.getMetadata().getTimestampType(),
+                slaveFactory.getMetadata().getTimestampType(),
+                configuration.getSqlAsOfJoinLookAhead(),
+                toleranceInterval
         );
     }
 
@@ -64,7 +69,7 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
-        TimeFrameRecordCursor slaveCursor = null;
+        TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
             cursor.of(masterCursor, slaveCursor);
@@ -88,7 +93,7 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join Fast Scan");
+        sink.type("AsOf Join Fast");
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -102,33 +107,52 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
 
     private static class AsOfJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
 
+        private final long toleranceInterval;
+        private long slaveTimestamp = Numbers.LONG_NULL;
+
         public AsOfJoinFastRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
-                int lookahead
+                int masterTimestampType,
+                int slaveTimestampType,
+                int lookahead,
+                long toleranceInterval
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+            this.toleranceInterval = toleranceInterval;
         }
 
         @Override
         public boolean hasNext() {
-            if (isMasterHasNextPending) {
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            }
-            if (masterHasNext) {
-                final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            if (masterCursor.hasNext()) {
+                final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 if (masterTimestamp < lookaheadTimestamp) {
-                    isMasterHasNextPending = true;
+                    if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
+                        record.hasSlave(false);
+                    }
                     return true;
                 }
                 nextSlave(masterTimestamp);
-                isMasterHasNextPending = true;
+                if (toleranceInterval != Numbers.LONG_NULL && record.hasSlave()) {
+                    slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                    record.hasSlave(slaveTimestamp >= masterTimestamp - toleranceInterval);
+                }
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            slaveTimestamp = Numbers.LONG_NULL;
         }
     }
 }

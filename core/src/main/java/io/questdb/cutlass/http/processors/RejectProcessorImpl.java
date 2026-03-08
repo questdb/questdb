@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,8 +30,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8StringSink;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
@@ -39,11 +40,11 @@ import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 public class RejectProcessorImpl implements RejectProcessor {
     private static final Log LOG = LogFactory.getLog(RejectProcessorImpl.class);
     protected final HttpConnectionContext httpConnectionContext;
-    private final StringSink rejectMessage = new StringSink();
+    private final Utf8StringSink rejectMessage = new Utf8StringSink();
     protected byte authenticationType = AUTH_TYPE_NONE;
     protected int rejectCode = 0;
-    protected CharSequence rejectCookieName = null;
-    protected CharSequence rejectCookieValue = null;
+    protected ObjList<CharSequence> rejectCookieNames = new ObjList<>();
+    protected ObjList<CharSequence> rejectCookieValues = new ObjList<>();
     protected boolean shutdownWrite = false;
 
     public RejectProcessorImpl(HttpConnectionContext httpConnectionContext) {
@@ -54,20 +55,15 @@ public class RejectProcessorImpl implements RejectProcessor {
     public void clear() {
         rejectCode = 0;
         authenticationType = AUTH_TYPE_NONE;
-        rejectCookieName = null;
-        rejectCookieValue = null;
+        rejectCookieNames.clear();
+        rejectCookieValues.clear();
         rejectMessage.clear();
         shutdownWrite = false;
     }
 
     @Override
-    public Utf16Sink getMessageSink() {
+    public CharSink<?> getMessageSink() {
         return rejectMessage;
-    }
-
-    @Override
-    public boolean isErrorProcessor() {
-        return true;
     }
 
     @Override
@@ -81,7 +77,7 @@ public class RejectProcessorImpl implements RejectProcessor {
         if (rejectCode == HTTP_UNAUTHORIZED) {
             handleHttpUnauthorized(response);
         } else {
-            response.sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
+            response.sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieNames, rejectCookieValues);
         }
 
         if (shutdownWrite) {
@@ -92,7 +88,7 @@ public class RejectProcessorImpl implements RejectProcessor {
 
     @Override
     public RejectProcessor reject(int rejectCode) {
-        LOG.error().$("rejecting request [code=").$(rejectCode).I$();
+        LOG.error().$(rejectMessage).$(" [code=").$(rejectCode).I$();
         this.rejectCode = rejectCode;
         return this;
     }
@@ -113,8 +109,8 @@ public class RejectProcessorImpl implements RejectProcessor {
 
     @Override
     public RejectProcessor withCookie(CharSequence cookieName, CharSequence cookieValue) {
-        this.rejectCookieName = cookieName;
-        this.rejectCookieValue = cookieValue;
+        rejectCookieNames.add(cookieName);
+        rejectCookieValues.add(cookieValue);
         return this;
     }
 
