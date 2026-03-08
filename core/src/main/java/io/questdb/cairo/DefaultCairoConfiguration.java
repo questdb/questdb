@@ -39,6 +39,7 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -691,6 +692,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getParquetExportBloomFilterFpp() {
+        return PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP;
+    }
+
+    @Override
     public int getParquetExportCompressionCodec() {
         return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
@@ -726,6 +732,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getParquetExportVersion() {
         return ParquetVersion.PARQUET_VERSION_V1;
+    }
+
+    @Override
+    public double getPartitionEncoderParquetBloomFilterFpp() {
+        return PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP;
     }
 
     @Override
@@ -1550,6 +1561,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelHorizonJoinEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelReadParquetEnabled() {
         return true;
     }
@@ -1560,12 +1576,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSqlParallelHorizonJoinEnabled() {
+    public boolean isSqlParallelWindowJoinEnabled() {
         return true;
     }
 
     @Override
-    public boolean isSqlParallelWindowJoinEnabled() {
+    public boolean isSqlParquetRowGroupPruningEnabled() {
         return true;
     }
 
