@@ -505,12 +505,26 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     private void applyConvertPartition(MetadataService svc, boolean toParquet) {
-        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
-        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
+        // Check if we have bloom filter options (only for toParquet conversion)
+        // Data layout with bloom filter: extraInfo = [ts1, pos1, ts2, pos2, ..., fpp_bits], extraStrInfo = [bloomFilterColumns]
+        // Data layout without bloom filter: extraInfo = [ts1, pos1, ts2, pos2, ...], extraStrInfo = []
+        CharSequence bloomFilterColumns = null;
+        double fpp = Double.NaN;
+        int partitionCount;
+
+        if (toParquet && activeExtraStrInfo.size() > 0) {
+            bloomFilterColumns = activeExtraStrInfo.getStrA(0);
+            fpp = Double.longBitsToDouble(extraInfo.getQuick(extraInfo.size() - 1));
+            partitionCount = (extraInfo.size() - 1) / 2;
+        } else {
+            partitionCount = extraInfo.size() / 2;
+        }
+
+        for (int i = 0; i < partitionCount; i++) {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
             final boolean result;
             if (toParquet) {
-                result = svc.convertPartitionNativeToParquet(partitionTimestamp);
+                result = svc.convertPartitionNativeToParquet(partitionTimestamp, bloomFilterColumns, fpp);
             } else {
                 result = svc.convertPartitionParquetToNative(partitionTimestamp);
             }
