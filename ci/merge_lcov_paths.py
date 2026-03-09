@@ -14,8 +14,8 @@ class LcovMerger:
 
     def normalize_path(self, path):
         """Remove CI-specific path prefixes"""
-        # Remove /azp/_work/N/s/ or /home/agent/_work/N/s/ prefix
-        path = re.sub(r'(/azp/_work|/home/agent/_work)/\d+/s/', '', path)
+        # Remove /azp/_work/N/s/, /home/agent/_work/N/s/, or /home/vsts/work/N/s/ prefix
+        path = re.sub(r'(/azp/_work|/home/agent/_work|/home/vsts/work)/\d+/s/', '', path)
         return path
 
     def parse_and_merge_lcov(self, filepath):

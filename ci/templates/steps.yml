@@ -270,13 +270,22 @@ steps:
       printf 'Merging profile files:\n%s\n' "${PROFRAW_FILES[@]}"
       llvm-profdata merge -sparse -o $(testset).profdata "${PROFRAW_FILES[@]}"
 
-      # Generate LCOV against this job's own libquestdbr.so to avoid
-      # counter hash mismatches when merging across independently compiled binaries.
+      # Generate LCOV using both object files:
+      # 1. The cargo target dir binary (matches cargo-test profraw counters)
+      # 2. The classes dir binary loaded by JVM via Os.java (matches JNI profraw counters)
+      # cargo test may relink the dylib, changing counter hashes, so the binary
+      # in the cargo target dir no longer matches the JNI profraw recorded earlier.
       RUST_TARGET_DIR=core/target/rust-maven-plugin/qdbr/debug
+      OBJECT_ARGS=(--object "$RUST_TARGET_DIR/libquestdbr.so")
+      JNI_LIB=$(find core/target/classes/io/questdb/bin -name 'libquestdbr.so' -print -quit 2>/dev/null)
+      if [ -n "$JNI_LIB" ] && [ "$JNI_LIB" != "$RUST_TARGET_DIR/libquestdbr.so" ]; then
+        echo "Adding JNI-loaded binary as second object: $JNI_LIB"
+        OBJECT_ARGS+=(--object "$JNI_LIB")
+      fi
       llvm-cov export \
         --format=lcov \
         --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-        --object "$RUST_TARGET_DIR/libquestdbr.so" \
+        "${OBJECT_ARGS[@]}" \
         --instr-profile=$(testset).profdata \
         > $(testset).lcov
       echo "Generated $(testset).lcov ($(wc -l < $(testset).lcov) lines)"
