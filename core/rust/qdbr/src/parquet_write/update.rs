@@ -238,9 +238,11 @@ impl ParquetUpdater {
         )?;
 
         if self.is_rewrite {
-            self.parquet_file.write(row_group, &bloom_hashes).with_context(|_| {
-                format!("Failed to write row group {row_group_id} in rewrite mode")
-            })
+            self.parquet_file
+                .write(row_group, &bloom_hashes)
+                .with_context(|_| {
+                    format!("Failed to write row group {row_group_id} in rewrite mode")
+                })
         } else {
             // Track the old row group's bytes that will become dead space.
             let rg_idx = row_group_id as usize;
@@ -263,11 +265,7 @@ impl ParquetUpdater {
         }
     }
 
-    pub fn insert_row_group(
-        &mut self,
-        partition: &Partition,
-        position: i16,
-    ) -> ParquetResult<()> {
+    pub fn insert_row_group(&mut self, partition: &Partition, position: i16) -> ParquetResult<()> {
         let options = self.row_group_options();
         let (row_group, bloom_hashes) = create_row_group(
             partition,
@@ -280,9 +278,11 @@ impl ParquetUpdater {
         )?;
 
         if self.is_rewrite {
-            self.parquet_file.write(row_group, &bloom_hashes).with_context(|_| {
-                format!("Failed to write row group at position {position} in rewrite mode")
-            })
+            self.parquet_file
+                .write(row_group, &bloom_hashes)
+                .with_context(|_| {
+                    format!("Failed to write row group at position {position} in rewrite mode")
+                })
         } else {
             self.parquet_file
                 .insert(row_group, position, &bloom_hashes)

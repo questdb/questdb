@@ -288,7 +288,6 @@ impl<W: Write> ChunkedWriter<W> {
 
 pub type BloomHashes = Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
 
-
 pub fn create_row_group(
     partition: &Partition,
     offset: usize,
