@@ -83,10 +83,13 @@ impl<'a> BaseVarDictDecoder<'a> {
             total_key_len += str_len;
         }
 
-        Ok(Self {
-            dict_values,
-            avg_key_len: total_key_len as f32 / dict_page.num_values as f32,
-        })
+        let avg_key_len = if dict_page.num_values == 0 {
+            0.0
+        } else {
+            total_key_len as f32 / dict_page.num_values as f32
+        };
+
+        Ok(Self { dict_values, avg_key_len })
     }
 }
 

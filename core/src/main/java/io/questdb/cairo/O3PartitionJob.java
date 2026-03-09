@@ -127,6 +127,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
                 final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
                 final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
+                final double bloomFilterFpp = cairoConfiguration.getPartitionEncoderParquetBloomFilterFpp();
 
                 // partitionUpdater is the owner of the partitionDecoder descriptor
                 final int opts = cairoConfiguration.getWriterFileOpenOpts();
@@ -139,7 +140,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         statisticsEnabled,
                         rawArrayEncoding,
                         rowGroupSize,
-                        dataPageSize
+                        dataPageSize,
+                        bloomFilterFpp
                 );
 
                 // The O3 range [srcOooLo, srcOooHi] has been split into intervals between row group minimums: [rowGroupN-1.min, rowGroupN.min].

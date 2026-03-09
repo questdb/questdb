@@ -26,9 +26,6 @@ package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
 
-import static io.questdb.cutlass.qwp.protocol.QwpTimestampDecoder.ENCODING_GORILLA;
-import static io.questdb.cutlass.qwp.protocol.QwpTimestampDecoder.ENCODING_UNCOMPRESSED;
-
 /**
  * Streaming cursor for TIMESTAMP and TIMESTAMP_NANOS columns.
  * <p>
@@ -41,6 +38,9 @@ import static io.questdb.cutlass.qwp.protocol.QwpTimestampDecoder.ENCODING_UNCOM
  * The cursor maintains Gorilla decoder state internally for streaming decoding.
  */
 public final class QwpTimestampColumnCursor implements QwpColumnCursor {
+
+    public static final byte ENCODING_GORILLA = 0x01;
+    public static final byte ENCODING_UNCOMPRESSED = 0x00;
 
     private final QwpGorillaDecoder gorillaDecoder = new QwpGorillaDecoder();
     private boolean currentIsNull;

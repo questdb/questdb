@@ -25,6 +25,7 @@ fn write_file() -> Result<Vec<u8>> {
     let options = WriteOptions {
         write_statistics: true,
         version: Version::V1,
+        bloom_filter_fpp: 0.01,
     };
 
     let schema = SchemaDescriptor::new(
@@ -50,7 +51,7 @@ fn write_file() -> Result<Vec<u8>> {
     let writer = Cursor::new(vec![]);
     let mut writer = FileWriter::new(writer, schema, options, None);
 
-    writer.write(DynIter::new(columns))?;
+    writer.write(DynIter::new(columns), &[])?;
     writer.end(None)?;
 
     Ok(writer.into_inner().into_inner())

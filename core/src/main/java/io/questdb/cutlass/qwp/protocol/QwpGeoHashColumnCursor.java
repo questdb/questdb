@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Unsafe;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
@@ -141,7 +142,7 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
         offset += decodeResult.bytesRead;
 
         // Validate precision
-        if (precision < QwpGeoHashDecoder.MIN_BITS || precision > QwpGeoHashDecoder.MAX_BITS) {
+        if (precision < ColumnType.GEOBYTE_MIN_BITS || precision > ColumnType.GEOLONG_MAX_BITS) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,
                     "invalid GeoHash precision: " + precision
