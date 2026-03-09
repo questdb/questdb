@@ -211,6 +211,17 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
         // if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
         if (limit == currentValues) {
+            // Refresh the comparator's left side before comparing. The left side
+            // was pre-set by prepareComparatorLeftSideIfAtMaxCapacity() at the end
+            // of the previous put() call. For Parquet frames with VARCHAR_SLICE
+            // columns, the stored reference is a flyweight pointing to decoded row
+            // group data. That data may have been freed between put() calls (e.g.,
+            // by PageFrameMemoryPool.releaseParquetBuffers() or cache eviction),
+            // so we must re-navigate to the min/max row to ensure the reference is
+            // backed by live memory.
+            assert minMaxRowId != -1;
+            sourceCursor.recordAt(ownedRecord, minMaxRowId);
+            comparator.setLeft(ownedRecord);
             int cmp = comparator.compare(currentRecord);
 
             if (isFirstN && cmp <= 0) { // bigger than max for firstN/bottomN

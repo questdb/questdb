@@ -1276,6 +1276,54 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharSliceOrderByLimitMultipleRowGroups() throws Exception {
+        // Regression test: the Async Top K path stores a comparator reference
+        // pointing to decoded Parquet row group data. Between frames,
+        // releaseParquetBuffers() frees that data, leaving a dangling pointer.
+        // The comparator then reads freed memory, producing wrong sort results.
+        // We use many small row groups and ORDER BY varchar LIMIT to trigger
+        // the LimitedSizeLongTreeChain cross-frame comparison path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " x AS id," +
+                    " rnd_varchar(5, 20, 0) AS v" +
+                    " FROM long_sequence(50_000))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                // Use a very small row group size (10) to create many row groups
+                // (5,000), ensuring the Async Top K workers process many frames
+                // and release buffers between them.
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        10,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // ORDER BY varchar LIMIT triggers the Async Top K execution plan
+                // in the parallel path. Run multiple times to catch non-determinism.
+                // Use ORDER BY v, id to break ties deterministically.
+                for (int i = 0; i < 5; i++) {
+                    sink.clear();
+                    sink.put("SELECT * FROM read_parquet('x.parquet') ORDER BY v, id LIMIT 10");
+                    assertSqlCursors0("SELECT * FROM x ORDER BY v, id LIMIT 10");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testVarcharSliceOrderByWithNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (SELECT" +
