@@ -33,9 +33,9 @@ import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.PublicPassthroughConfiguration;
 import io.questdb.ServerConfiguration;
-import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
@@ -3203,112 +3203,106 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     /**
-     * Wrapper for ServerConfiguration that allows overriding the CairoConfiguration.
-     */
-    private static class ServerConfigurationWrapper implements ServerConfiguration {
-        private final CairoConfiguration cairoConfig;
-        private final ServerConfiguration delegate;
-
-        ServerConfigurationWrapper(ServerConfiguration delegate, CairoConfiguration cairoConfig) {
-            this.delegate = delegate;
-            this.cairoConfig = cairoConfig;
-        }
+         * Wrapper for ServerConfiguration that allows overriding the CairoConfiguration.
+         */
+        private record ServerConfigurationWrapper(ServerConfiguration delegate,
+                                                  CairoConfiguration cairoConfig) implements ServerConfiguration {
 
         @Override
-        public CairoConfiguration getCairoConfiguration() {
-            return cairoConfig;
-        }
+            public CairoConfiguration getCairoConfiguration() {
+                return cairoConfig;
+            }
 
-        @Override
-        public WorkerPoolConfiguration getExportPoolConfiguration() {
-            return delegate.getExportPoolConfiguration();
-        }
+            @Override
+            public WorkerPoolConfiguration getExportPoolConfiguration() {
+                return delegate.getExportPoolConfiguration();
+            }
 
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return delegate.getFactoryProvider();
-        }
+            @Override
+            public FactoryProvider getFactoryProvider() {
+                return delegate.getFactoryProvider();
+            }
 
-        @Override
-        public HttpServerConfiguration getHttpMinServerConfiguration() {
-            return delegate.getHttpMinServerConfiguration();
-        }
+            @Override
+            public HttpServerConfiguration getHttpMinServerConfiguration() {
+                return delegate.getHttpMinServerConfiguration();
+            }
 
-        @Override
-        public HttpFullFatServerConfiguration getHttpServerConfiguration() {
-            return delegate.getHttpServerConfiguration();
-        }
+            @Override
+            public HttpFullFatServerConfiguration getHttpServerConfiguration() {
+                return delegate.getHttpServerConfiguration();
+            }
 
-        @Override
-        public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
-            return delegate.getLineTcpReceiverConfiguration();
-        }
+            @Override
+            public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+                return delegate.getLineTcpReceiverConfiguration();
+            }
 
-        @Override
-        public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
-            return delegate.getLineUdpReceiverConfiguration();
-        }
+            @Override
+            public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
+                return delegate.getLineUdpReceiverConfiguration();
+            }
 
-        @Override
-        public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-            return delegate.getMatViewRefreshPoolConfiguration();
-        }
+            @Override
+            public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+                return delegate.getMatViewRefreshPoolConfiguration();
+            }
 
-        @Override
-        public MemoryConfiguration getMemoryConfiguration() {
-            return delegate.getMemoryConfiguration();
-        }
+            @Override
+            public MemoryConfiguration getMemoryConfiguration() {
+                return delegate.getMemoryConfiguration();
+            }
 
-        @Override
-        public Metrics getMetrics() {
-            return delegate.getMetrics();
-        }
+            @Override
+            public Metrics getMetrics() {
+                return delegate.getMetrics();
+            }
 
-        @Override
-        public MetricsConfiguration getMetricsConfiguration() {
-            return delegate.getMetricsConfiguration();
-        }
+            @Override
+            public MetricsConfiguration getMetricsConfiguration() {
+                return delegate.getMetricsConfiguration();
+            }
 
-        @Override
-        public PGConfiguration getPGWireConfiguration() {
-            return delegate.getPGWireConfiguration();
-        }
+            @Override
+            public PGConfiguration getPGWireConfiguration() {
+                return delegate.getPGWireConfiguration();
+            }
 
-        @Override
-        public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
-            return delegate.getPublicPassthroughConfiguration();
-        }
+            @Override
+            public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
+                return delegate.getPublicPassthroughConfiguration();
+            }
 
-        @Override
-        public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
-            return delegate.getSharedWorkerPoolNetworkConfiguration();
-        }
+            @Override
+            public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+                return delegate.getSharedWorkerPoolNetworkConfiguration();
+            }
 
-        @Override
-        public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
-            return delegate.getSharedWorkerPoolQueryConfiguration();
-        }
+            @Override
+            public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
+                return delegate.getSharedWorkerPoolQueryConfiguration();
+            }
 
-        @Override
-        public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
-            return delegate.getSharedWorkerPoolWriteConfiguration();
-        }
+            @Override
+            public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+                return delegate.getSharedWorkerPoolWriteConfiguration();
+            }
 
-        @Override
-        public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
-            return delegate.getViewCompilerPoolConfiguration();
-        }
+            @Override
+            public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
+                return delegate.getViewCompilerPoolConfiguration();
+            }
 
-        @Override
-        public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
-            return delegate.getWalApplyPoolConfiguration();
-        }
+            @Override
+            public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
+                return delegate.getWalApplyPoolConfiguration();
+            }
 
-        @Override
-        public void init(io.questdb.cairo.CairoEngine engine, FreeOnExit freeOnExit) {
-            delegate.init(engine, freeOnExit);
+            @Override
+            public void init(CairoEngine engine, FreeOnExit freeOnExit) {
+                delegate.init(engine, freeOnExit);
+            }
         }
-    }
 
     private static class TestFilesFacade extends TestFilesFacadeImpl {
 
