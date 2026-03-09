@@ -105,7 +105,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     private static final QwpUdpReceiverConfiguration STRESS_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
-            return 1;
+            return 100_000;
         }
 
         @Override
