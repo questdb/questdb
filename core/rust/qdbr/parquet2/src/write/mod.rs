@@ -27,12 +27,14 @@ pub type RowGroupIter<'a, E> =
     DynIter<'a, std::result::Result<DynStreamingIterator<'a, CompressedPage, E>, E>>;
 
 /// Write options of different interfaces on this crate
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct WriteOptions {
     /// Whether to write statistics, including indexes
     pub write_statistics: bool,
     /// Which Parquet version to use
     pub version: Version,
+    /// False positive probability for bloom filters
+    pub bloom_filter_fpp: f64,
 }
 
 /// The parquet version to use
