@@ -444,6 +444,8 @@ public interface CairoConfiguration {
 
     long getParquetExportBatchSize();
 
+    double getParquetExportBloomFilterFpp();
+
     int getParquetExportCompressionCodec();
 
     int getParquetExportCompressionLevel();
@@ -457,6 +459,8 @@ public interface CairoConfiguration {
     CharSequence getParquetExportTableNamePrefix();
 
     int getParquetExportVersion();
+
+    double getPartitionEncoderParquetBloomFilterFpp();
 
     int getPartitionEncoderParquetCompressionCodec();
 
@@ -867,6 +871,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelTopKEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
+
+    boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isTableTypeConversionEnabled();
 

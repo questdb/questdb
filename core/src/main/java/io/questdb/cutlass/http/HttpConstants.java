@@ -38,6 +38,8 @@ public final class HttpConstants {
     public static final char COOKIE_SEPARATOR = ';';
     public static final char COOKIE_VALUE_SEPARATOR = '=';
     public static final String DELETED_COOKIE = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    public static final Utf8String EXPORT_PARQUET_OPTION_BLOOM_FILTER_COLUMNS = new Utf8String("bloom_filter_columns");
+    public static final Utf8String EXPORT_PARQUET_OPTION_BLOOM_FILTER_FPP = new Utf8String("bloom_filter_fpp");
     public static final Utf8String EXPORT_PARQUET_OPTION_COMPRESSION_CODEC = new Utf8String("compression_codec");
     public static final Utf8String EXPORT_PARQUET_OPTION_COMPRESSION_LEVEL = new Utf8String("compression_level");
     public static final Utf8String EXPORT_PARQUET_OPTION_DATA_PAGE_SIZE = new Utf8String("data_page_size");

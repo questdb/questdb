@@ -34,6 +34,7 @@ use parquet2::read::{read_metadata_with_footer_bytes, read_metadata_with_size};
 use parquet2::write;
 use parquet2::write::footer_cache::FooterCache;
 use parquet2::write::{ParquetFile, Version};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read as _, Seek, SeekFrom};
 
@@ -47,6 +48,7 @@ pub struct ParquetUpdater {
     row_group_size: Option<usize>,
     data_page_size: Option<usize>,
     raw_array_encoding: bool,
+    bloom_filter_columns: HashSet<usize>,
     file_metadata: FileMetaData,
     accumulated_unused_bytes: u64,
     old_footer_size: u64,
@@ -69,6 +71,7 @@ impl ParquetUpdater {
         compression_options: CompressionOptions,
         row_group_size: Option<usize>,
         data_page_size: Option<usize>,
+        bloom_filter_fpp: f64,
     ) -> ParquetResult<Self> {
         fn version_from(value: i32) -> ParquetResult<Version> {
             match value {
@@ -131,10 +134,28 @@ impl ParquetUpdater {
             }
         }
 
+        // Detect which columns had bloom filters in the original file.
+        let bloom_filter_columns = if let Some(first_rg) = metadata.row_groups.first() {
+            first_rg
+                .columns()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, col)| {
+                    if col.metadata().bloom_filter_offset.is_some() {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            HashSet::new()
+        };
+
         let version = version_from(metadata.version)?;
         let created_by = metadata.created_by.clone();
         let schema = metadata.schema_descr.clone();
-        let options = write::WriteOptions { write_statistics, version };
+        let options = write::WriteOptions { write_statistics, version, bloom_filter_fpp };
 
         let (parquet_file, accumulated_unused_bytes) = if is_rewrite {
             // Rewrite mode: write to a fresh file
@@ -190,6 +211,7 @@ impl ParquetUpdater {
             raw_array_encoding,
             row_group_size,
             data_page_size,
+            bloom_filter_columns,
             file_metadata,
             accumulated_unused_bytes,
             old_footer_size,
@@ -201,11 +223,11 @@ impl ParquetUpdater {
 
     pub fn replace_row_group(
         &mut self,
-        partition: &Partition<'_>,
+        partition: &Partition,
         row_group_id: i16,
     ) -> ParquetResult<()> {
         let options = self.row_group_options();
-        let row_group = create_row_group(
+        let (row_group, bloom_hashes) = create_row_group(
             partition,
             0,
             partition.columns[0].row_count,
@@ -216,7 +238,7 @@ impl ParquetUpdater {
         )?;
 
         if self.is_rewrite {
-            self.parquet_file.write(row_group).with_context(|_| {
+            self.parquet_file.write(row_group, &bloom_hashes).with_context(|_| {
                 format!("Failed to write row group {row_group_id} in rewrite mode")
             })
         } else {
@@ -236,18 +258,18 @@ impl ParquetUpdater {
             }
 
             self.parquet_file
-                .replace(row_group, Some(row_group_id))
+                .replace(row_group, Some(row_group_id), &bloom_hashes)
                 .with_context(|_| format!("Failed to replace row group {row_group_id}"))
         }
     }
 
     pub fn insert_row_group(
         &mut self,
-        partition: &Partition<'_>,
+        partition: &Partition,
         position: i16,
     ) -> ParquetResult<()> {
         let options = self.row_group_options();
-        let row_group = create_row_group(
+        let (row_group, bloom_hashes) = create_row_group(
             partition,
             0,
             partition.columns[0].row_count,
@@ -258,12 +280,12 @@ impl ParquetUpdater {
         )?;
 
         if self.is_rewrite {
-            self.parquet_file.write(row_group).with_context(|_| {
+            self.parquet_file.write(row_group, &bloom_hashes).with_context(|_| {
                 format!("Failed to write row group at position {position} in rewrite mode")
             })
         } else {
             self.parquet_file
-                .insert(row_group, position)
+                .insert(row_group, position, &bloom_hashes)
                 .with_context(|_| format!("Failed to insert row group at position {position}"))
         }
     }
@@ -427,6 +449,8 @@ impl ParquetUpdater {
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
             raw_array_encoding: self.raw_array_encoding,
+            bloom_filter_columns: self.bloom_filter_columns.clone(),
+            bloom_filter_fpp: self.parquet_file.options().bloom_filter_fpp,
         }
     }
 }
@@ -438,6 +462,7 @@ mod tests {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::compression::CompressionOptions;
     use parquet2::write::{ParquetFile, Version};
+    use std::collections::HashSet;
     use std::env;
     use std::error::Error;
     use std::fs::File;
@@ -445,7 +470,9 @@ mod tests {
     use std::io::Write;
     use std::ptr::null;
 
-    use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
+    use crate::parquet_write::file::{
+        create_row_group, ParquetWriter, WriteOptions, DEFAULT_BLOOM_FILTER_FPP,
+    };
     use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 
     use arrow::datatypes::ToByteSlice;
@@ -462,7 +489,7 @@ mod tests {
         };
     }
 
-    fn make_column<T>(name: &'static str, col_type: ColumnType, values: &[T]) -> Column<'static> {
+    fn make_column<T>(name: &'static str, col_type: ColumnType, values: &[T]) -> Column {
         Column::from_raw_data(
             0,
             name,
@@ -526,21 +553,27 @@ mod tests {
             row_group_size: None,
             data_page_size: None,
             raw_array_encoding: false,
+            bloom_filter_columns: HashSet::new(),
+            bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
         };
 
-        let options = write::WriteOptions { write_statistics: true, version: Version::V1 };
+        let options = write::WriteOptions {
+            write_statistics: true,
+            version: Version::V1,
+            bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+        };
 
-        let row_group = create_row_group(
+        let (row_group, bloom_hashes) = create_row_group(
             &new_partition,
             0,
             col1_extra.len(),
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
-            foptions,
+            foptions.clone(),
             false,
         )?;
 
-        let replace_row_group = create_row_group(
+        let (replace_row_group, replace_bloom_hashes) = create_row_group(
             &new_partition,
             0,
             col1_extra.len(),
@@ -564,8 +597,8 @@ mod tests {
             metadata.into_thrift(),
             None,
         );
-        parquet_file.replace(row_group, None)?;
-        parquet_file.replace(replace_row_group, Some(0))?;
+        parquet_file.append(row_group, &bloom_hashes)?;
+        parquet_file.replace(replace_row_group, Some(0), &replace_bloom_hashes)?;
         parquet_file.end(None)?;
 
         buf.set_position(0);

@@ -1,7 +1,10 @@
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
-use crate::parquet_write::file::{ChunkedWriter, ParquetWriter, DEFAULT_ROW_GROUP_SIZE};
+use crate::parquet_write::file::{
+    ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
+};
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::ops::Sub;
@@ -11,7 +14,7 @@ use std::slice;
 use crate::allocator::QdbAllocator;
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
-use jni::sys::{jboolean, jint, jlong, jshort};
+use jni::sys::{jboolean, jdouble, jint, jlong, jshort};
 use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
@@ -58,6 +61,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     raw_array_encoding: jboolean,
     row_group_size: jlong,
     data_page_size: jlong,
+    bloom_filter_fpp: jdouble,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
         // reader_fd and writer_fd must be distinct OS file descriptors.
@@ -108,6 +112,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             compression_options,
             row_group_size,
             data_page_size,
+            bloom_filter_fpp,
         )
     };
 
@@ -127,14 +132,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_destroy(
-    mut env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
 ) {
     if updater.is_null() {
-        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-        err.add_context("error in PartitionUpdater.destroy");
-        return err.into_cairo_exception().throw(&mut env);
+        return;
     }
 
     let _ = unsafe { Box::from_raw(updater) };
@@ -308,6 +311,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
+    bloom_filter_column_indexes: *const jint,
+    bloom_filter_column_count: jint,
+    bloom_filter_fpp: jdouble,
 ) {
     let encode = || -> ParquetResult<()> {
         let partition = create_partition_descriptor(
@@ -342,8 +348,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         } else {
             None
         };
-
         let version = version_from_i32(version)?;
+
+        let bloom_filter_cols = build_bloom_filter_set(
+            bloom_filter_column_indexes,
+            bloom_filter_column_count,
+            partition.columns.len(),
+        )?;
 
         let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
         let mut file = file.with_context(|_| {
@@ -368,6 +379,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_row_group_size(row_group_size)
             .with_data_page_size(data_page_size)
             .with_sorting_columns(sorting_columns)
+            .with_bloom_filter_columns(bloom_filter_cols)
+            .with_bloom_filter_fpp(bloom_filter_fpp)
             .finish(partition)
             .map(|_| ())
             .context("ParquetWriter::finish failed")
@@ -381,7 +394,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                     table_name_ptr,
                     table_name_size as usize,
                 ))
-                .expect("invalid table name utf8")
+                .unwrap_or("!!invalid table name utf8!!")
             };
             err.add_context(format!(
                 "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
@@ -403,12 +416,19 @@ fn create_partition_descriptor(
     col_data_len: jlong,
     row_count: jlong,
     timestamp_index: jint,
-) -> ParquetResult<Partition<'static>> {
+) -> ParquetResult<Partition> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
     let col_data_len = col_data_len as usize;
     const COL_DATA_ENTRY_SIZE: usize = 9;
-    assert_eq!(col_data_len % COL_DATA_ENTRY_SIZE, 0);
+    if !col_data_len.is_multiple_of(COL_DATA_ENTRY_SIZE) {
+        return Err(fmt_err!(
+            Layout,
+            "col_data_len {} is not a multiple of {}",
+            col_data_len,
+            COL_DATA_ENTRY_SIZE
+        ));
+    }
 
     let mut col_names = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))
@@ -470,6 +490,28 @@ fn create_partition_descriptor(
 
     let partition = Partition { table, columns };
     Ok(partition)
+}
+
+fn build_bloom_filter_set(
+    indexes_ptr: *const jint,
+    count: jint,
+    max_columns: usize,
+) -> ParquetResult<HashSet<usize>> {
+    if indexes_ptr.is_null() || count <= 0 {
+        return Ok(HashSet::new());
+    }
+    let indexes = unsafe { slice::from_raw_parts(indexes_ptr, count as usize) };
+    let mut out = HashSet::with_capacity(indexes.len());
+    for &i in indexes {
+        if i < 0 || (i as usize) >= max_columns {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid bloom filter column index: {i}"
+            ));
+        }
+        out.insert(i as usize);
+    }
+    Ok(out)
 }
 
 fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
@@ -552,7 +594,7 @@ impl Write for BufferWriter {
 }
 
 pub struct StreamingParquetWriter {
-    partition: Partition<'static>,
+    partition: Partition,
     // We need Box<Vec<u8>> here to ensure the Vec itself has a stable heap address
     #[allow(clippy::box_collection)]
     current_buffer: Box<Vec<u8, QdbAllocator>>,
@@ -561,7 +603,7 @@ pub struct StreamingParquetWriter {
 
     // Fields for accumulating partitions across multiple writeChunk calls
     row_group_size: usize,
-    pending_partitions: Vec<Partition<'static>>,
+    pending_partitions: Vec<Partition>,
     first_partition_start: usize,
     accumulated_rows: usize,
     // Cumulative count of rows that have been fully written to row groups.
@@ -590,6 +632,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_size: jlong,
     data_page_size: jlong,
     version: jint,
+    bloom_filter_column_indexes: *const jint,
+    bloom_filter_column_count: jint,
+    bloom_filter_fpp: jdouble,
 ) -> *mut StreamingParquetWriter {
     let create = || -> ParquetResult<StreamingParquetWriter> {
         let partition_template = create_partition_template(
@@ -638,6 +683,17 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let buffer_writer = unsafe {
             BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 16)
         };
+        let bloom_filter_cols = build_bloom_filter_set(
+            bloom_filter_column_indexes,
+            bloom_filter_column_count,
+            partition_template.columns.len(),
+        )?;
+        let bloom_fpp = if bloom_filter_fpp > 0.0 && bloom_filter_fpp < 1.0 {
+            bloom_filter_fpp
+        } else {
+            DEFAULT_BLOOM_FILTER_FPP
+        };
+
         let parquet_writer = ParquetWriter::new(buffer_writer)
             .with_version(version_from_i32(version)?)
             .with_compression(compression_options)
@@ -645,7 +701,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_raw_array_encoding(raw_array_encoding != 0)
             .with_row_group_size(row_group_size_opt)
             .with_data_page_size(data_page_size_opt)
-            .with_sorting_columns(sorting_columns.clone());
+            .with_sorting_columns(sorting_columns.clone())
+            .with_bloom_filter_columns(bloom_filter_cols)
+            .with_bloom_filter_fpp(bloom_fpp);
         let chunked_writer = parquet_writer.chunked(parquet_schema, encodings)?;
 
         let effective_row_group_size = row_group_size_opt.unwrap_or(DEFAULT_ROW_GROUP_SIZE);
@@ -883,7 +941,7 @@ fn create_partition_template(
     col_meta_data_ptr: *const i64,
     timestamp_index: jint,
     timestamp_descending: jboolean,
-) -> ParquetResult<Partition<'static>> {
+) -> ParquetResult<Partition> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
 
@@ -926,7 +984,7 @@ fn create_partition_template(
 }
 
 fn update_partition_data(
-    partition: &mut Partition<'static>,
+    partition: &mut Partition,
     col_data_ptr: *const i64,
     row_count: usize,
 ) -> ParquetResult<()> {
@@ -1051,11 +1109,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 }
 
 fn convert_row_group_buffers_to_partition(
-    partition_template: &Partition<'static>,
+    partition_template: &Partition,
     row_group_bufs: &crate::parquet_read::RowGroupBuffers,
     row_count: usize,
     symbol_data_ptr: jlong,
-) -> ParquetResult<Partition<'static>> {
+) -> ParquetResult<Partition> {
     use qdb_core::col_type::ColumnTypeTag;
 
     let mut new_partition = Partition {

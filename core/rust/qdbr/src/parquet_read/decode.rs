@@ -779,6 +779,27 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            _,
+            ColumnTypeTag::Date,
+        ) => {
+            let dict_decoder =
+                ConvertablePrimitiveDictDecoder::try_new(dict_page, DayToMillisConverter::new())?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::TIMESTAMP,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
         (encoding, dict, logical_type, ColumnTypeTag::Double) => {
             let scale = match logical_type {
                 Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
@@ -3240,13 +3261,13 @@ mod tests {
         }
     }
 
-    fn create_fix_column<'a>(
+    fn create_fix_column(
         id: i32,
         row_count: usize,
         name: &'static str,
-        primary_data: &'a [u8],
+        primary_data: &[u8],
         col_type: ColumnType,
-    ) -> Column<'a> {
+    ) -> Column {
         Column::from_raw_data(
             id,
             name,
@@ -3265,14 +3286,14 @@ mod tests {
         .unwrap()
     }
 
-    fn create_var_column<'a>(
+    fn create_var_column(
         id: i32,
         row_count: usize,
         name: &'static str,
-        primary_data: &'a [u8],
-        aux_data: &'a [u8],
+        primary_data: &[u8],
+        aux_data: &[u8],
         col_type: ColumnType,
-    ) -> Column<'a> {
+    ) -> Column {
         Column::from_raw_data(
             id,
             name,
@@ -3291,15 +3312,15 @@ mod tests {
         .unwrap()
     }
 
-    fn create_symbol_column<'a>(
+    fn create_symbol_column(
         id: i32,
         row_count: usize,
         name: &'static str,
-        primary_data: &'a [u8],
-        chars_data: &'a [u8],
-        offsets: &'a [u64],
+        primary_data: &[u8],
+        chars_data: &[u8],
+        offsets: &[u64],
         col_type: ColumnType,
-    ) -> Column<'a> {
+    ) -> Column {
         Column::from_raw_data(
             id,
             name,
@@ -4240,6 +4261,177 @@ mod tests {
                 .unwrap();
                 assert_eq!(bufs.data_vec.as_slice(), expected.as_slice());
             }
+        }
+    }
+
+    fn make_date_type() -> PrimitiveType {
+        PrimitiveType {
+            field_info: FieldInfo {
+                name: "date_col".to_string(),
+                repetition: Repetition::Optional,
+                id: None,
+            },
+            logical_type: Some(PrimitiveLogicalType::Date),
+            converted_type: None,
+            physical_type: PhysicalType::Int32,
+        }
+    }
+
+    const MILLIS_PER_DAY: i64 = 86_400_000;
+    const DATE_NULL: [u8; 8] = i64::MIN.to_le_bytes();
+
+    #[test]
+    fn test_decode_date_dict_unfiltered() {
+        // Date dictionary stores INT32 days, decoder converts to i64 millis.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_days = [100i32, 200, 365];
+        let dict_page = make_dict_page_i32(&dict_days);
+
+        let indices = [0u32, 1, 2, 1, 0, 2];
+        let primitive_type = make_date_type();
+
+        let mut expected = Vec::new();
+        for &idx in &indices {
+            let day = dict_days[idx as usize];
+            let millis = (day as i64) * MILLIS_PER_DAY;
+            expected.extend_from_slice(&millis.to_le_bytes());
+        }
+
+        for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
+            let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let col_info = QdbMetaCol {
+                column_type: ColumnTypeTag::Date.into_type(),
+                column_top: 0,
+                format: None,
+            };
+
+            decode_page(
+                &page,
+                Some(&dict_page),
+                &mut bufs,
+                col_info,
+                0,
+                indices.len(),
+            )
+            .unwrap();
+
+            assert_eq!(
+                bufs.data_vec.as_slice(),
+                expected.as_slice(),
+                "Date dict decode mismatch for encoding {:?}",
+                encoding
+            );
+            assert_eq!(bufs.aux_size, 0, "aux_size should be 0 for Date column");
+        }
+    }
+
+    #[test]
+    fn test_decode_date_dict_filtered_no_fill_nulls() {
+        // Filtered decode without filling nulls for non-matching rows.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_days = [10i32, 50, 100];
+        let dict_page = make_dict_page_i32(&dict_days);
+        let indices = [0u32, 1, 2, 1, 0];
+        let primitive_type = make_date_type();
+        let rows_filter = vec![1i64, 3]; // Select rows 1 and 3
+
+        let mut expected = Vec::new();
+        for &row in &rows_filter {
+            let idx = indices[row as usize];
+            let millis = (dict_days[idx as usize] as i64) * MILLIS_PER_DAY;
+            expected.extend_from_slice(&millis.to_le_bytes());
+        }
+
+        for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
+            let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let col_info = QdbMetaCol {
+                column_type: ColumnTypeTag::Date.into_type(),
+                column_top: 0,
+                format: None,
+            };
+
+            decode_page_filtered::<false>(
+                &page,
+                Some(&dict_page),
+                &mut bufs,
+                col_info,
+                0,
+                indices.len(),
+                0,
+                0,
+                indices.len(),
+                &rows_filter,
+            )
+            .unwrap();
+
+            assert_eq!(
+                bufs.data_vec.as_slice(),
+                expected.as_slice(),
+                "Date dict filtered decode mismatch for encoding {:?}",
+                encoding
+            );
+            assert_eq!(bufs.aux_size, 0, "aux_size should be 0 for Date column");
+        }
+    }
+
+    #[test]
+    fn test_decode_date_dict_filtered_fill_nulls() {
+        // Filtered decode with nulls filled for non-matching rows.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let dict_days = [7i32, 30, 365];
+        let dict_page = make_dict_page_i32(&dict_days);
+        let indices = [0u32, 1, 2, 1, 0];
+        let primitive_type = make_date_type();
+        let rows_filter = vec![0i64, 2, 4]; // Select rows 0, 2, 4
+
+        let mut expected = Vec::new();
+        for (row, &idx) in indices.iter().enumerate() {
+            if rows_filter.contains(&(row as i64)) {
+                let millis = (dict_days[idx as usize] as i64) * MILLIS_PER_DAY;
+                expected.extend_from_slice(&millis.to_le_bytes());
+            } else {
+                expected.extend_from_slice(&DATE_NULL);
+            }
+        }
+
+        for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
+            let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let col_info = QdbMetaCol {
+                column_type: ColumnTypeTag::Date.into_type(),
+                column_top: 0,
+                format: None,
+            };
+
+            decode_page_filtered::<true>(
+                &page,
+                Some(&dict_page),
+                &mut bufs,
+                col_info,
+                0,
+                indices.len(),
+                0,
+                0,
+                indices.len(),
+                &rows_filter,
+            )
+            .unwrap();
+
+            assert_eq!(
+                bufs.data_vec.as_slice(),
+                expected.as_slice(),
+                "Date dict filtered fill_nulls decode mismatch for encoding {:?}",
+                encoding
+            );
+            assert_eq!(bufs.aux_size, 0, "aux_size should be 0 for Date column");
         }
     }
 

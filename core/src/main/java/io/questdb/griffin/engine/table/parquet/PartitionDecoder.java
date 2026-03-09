@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -76,6 +77,33 @@ public class PartitionDecoder implements QuietCloseable {
     }
 
     public static native void destroyDecodeContext(long decodeContextPtr);
+
+    /**
+     * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
+     * <p>
+     * Filter list format: 3 longs per filter
+     * - Long 0: encoded(column_index, count, op) - lower 32 bits: column_index, next 24 bits: count, upper 8 bits: op
+     * - Long 1: values_ptr
+     * - Long 2: column_type
+     *
+     * @param rowGroupIndex the row group index to check
+     * @param filters       filter descriptors: [encoded(col_idx, count, op), ptr, column_type] per filter
+     * @param filterBufEnd  exclusive end address of the filter values buffer, used for native bounds checking
+     * @return true if the row group can be safely skipped
+     */
+    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
+        assert ptr != 0;
+        assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
+        return canSkipRowGroup(
+                ptr,
+                rowGroupIndex,
+                fileAddr,
+                fileSize,
+                filters.getAddress(),
+                (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER),
+                filterBufEnd
+        );
+    }
 
     @Override
     public void close() {
@@ -282,6 +310,16 @@ public class PartitionDecoder implements QuietCloseable {
         return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
     }
 
+    private static native boolean canSkipRowGroup(
+            long decoderPtr,
+            int rowGroupIndex,
+            long filePtr,
+            long fileSize,
+            long filtersPtr,
+            int filterCount,
+            long filterBufEnd
+    ) throws CairoException;
+
     private static native long columnCountOffset();
 
     private static native long columnIdsOffset();
@@ -357,6 +395,10 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroup
     ) throws CairoException;
 
+    private static native long rowCountOffset();
+
+    private static native long rowGroupCountOffset();
+
     private static native long rowGroupMaxTimestamp(
             long decoderPtr,
             long fileAddr,
@@ -372,10 +414,6 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroupIndex,
             int timestampColumnIndex
     ) throws CairoException;
-
-    private static native long rowCountOffset();
-
-    private static native long rowGroupCountOffset();
 
     private static native long rowGroupSizesPtrOffset();
 

@@ -96,7 +96,8 @@ public class PartitionUpdater implements QuietCloseable {
             boolean statisticsEnabled,
             boolean rawArrayEncoding,
             long rowGroupSize,
-            long dataPageSize
+            long dataPageSize,
+            double bloomFilterFpp
     ) {
         final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
@@ -113,7 +114,8 @@ public class PartitionUpdater implements QuietCloseable {
                 statisticsEnabled,
                 rawArrayEncoding,
                 rowGroupSize,
-                dataPageSize
+                dataPageSize,
+                bloomFilterFpp
         );
     }
 
@@ -159,7 +161,8 @@ public class PartitionUpdater implements QuietCloseable {
             boolean statisticsEnabled,
             boolean rawArrayEncoding,
             long rowGroupSize,
-            long dataPageSize
+            long dataPageSize,
+            double bloomFilterFpp
     ) throws CairoException;
 
     private static native void destroy(long impl);

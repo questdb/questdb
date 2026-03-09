@@ -281,7 +281,7 @@ pub fn column_type_to_parquet_type(
             PhysicalType::Int32,
             repetition,
             None,
-            None,
+            Some(PrimitiveLogicalType::Integer(IntegerType::UInt32)),
             Some(column_id),
         )?),
         ColumnTypeTag::Decimal8
@@ -314,15 +314,15 @@ pub fn column_type_to_parquet_type(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Column<'a> {
+pub struct Column {
     pub id: i32,
-    pub name: &'a str,
+    pub name: &'static str,
     pub data_type: ColumnType,
     pub row_count: usize,
     pub column_top: usize,
-    pub primary_data: &'a [u8],
-    pub secondary_data: &'a [u8],
-    pub symbol_offsets: &'a [u64],
+    pub primary_data: &'static [u8],
+    pub secondary_data: &'static [u8],
+    pub symbol_offsets: &'static [u64],
     pub designated_timestamp: bool,
     /// Passed by QuestDB during writes to indicate that the column contains no null values.
     /// Currently only Symbol dataType columns support this flag.
@@ -330,11 +330,11 @@ pub struct Column<'a> {
     pub designated_timestamp_ascending: bool,
 }
 
-impl<'a> Column<'a> {
+impl Column {
     #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
     pub fn from_raw_data(
         id: i32,
-        name: &'a str,
+        name: &'static str,
         column_type: i32,
         column_top: i64,
         row_count: usize,
@@ -395,13 +395,13 @@ impl<'a> Column<'a> {
     }
 }
 
-pub struct Partition<'a> {
+pub struct Partition {
     pub table: String,
-    pub columns: Vec<Column<'a>>,
+    pub columns: Vec<Column>,
 }
 
 pub fn to_parquet_schema(
-    partition: &Partition<'_>,
+    partition: &Partition,
     raw_array_encoding: bool,
 ) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
@@ -448,7 +448,7 @@ pub fn to_parquet_schema(
     ))
 }
 
-pub fn to_encodings(partition: &Partition<'_>) -> Vec<Encoding> {
+pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
     partition
         .columns
         .iter()
