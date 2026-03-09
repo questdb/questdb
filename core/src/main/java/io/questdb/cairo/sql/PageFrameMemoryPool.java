@@ -127,8 +127,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
-            // todo: looks like a leak
-            final ParquetBuffers parquetBuffers = nextFreeBufferAndDecode(frameIndex, usageBit);
+            @SuppressWarnings("resource") final ParquetBuffers parquetBuffers = nextFreeBufferAndDecode(frameIndex, usageBit);
             record.init(
                     frameIndex,
                     format,
