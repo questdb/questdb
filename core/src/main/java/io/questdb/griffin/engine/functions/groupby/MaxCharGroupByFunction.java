@@ -44,7 +44,7 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Character.BYTES;
             char max = 0;
@@ -54,7 +54,10 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
                     max = value;
                 }
             }
-            mapValue.putChar(valueIndex, max);
+            final char existing = mapValue.getChar(valueIndex);
+            if (max > existing || existing == 0) {
+                mapValue.putChar(valueIndex, max);
+            }
         }
     }
 

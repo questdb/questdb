@@ -468,6 +468,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Async Group By workers: 1
+                              vectorized: true
                               values: [first(x)]
                               filter: null
                                 PageFrame
@@ -822,6 +823,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Async Group By workers: 1
+                              vectorized: true
                               values: [last(x)]
                               filter: null
                                 PageFrame
@@ -2633,6 +2635,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Async Group By workers: 1
+                              vectorized: true
                               values: [first(x)]
                               filter: null
                                 PageFrame
@@ -2728,6 +2731,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Async Group By workers: 1
+                              vectorized: true
                               values: [last(x)]
                               filter: null
                                 PageFrame

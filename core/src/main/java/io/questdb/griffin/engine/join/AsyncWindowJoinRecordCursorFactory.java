@@ -497,9 +497,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         final long ptr = slaveColumnSinkPtrs.get(mapIndex);
                         if (ptr != 0) {
                             final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
                         } else { // no-arg function, e.g. count()
-                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                         }
                     }
                 }
@@ -621,9 +621,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             final long ptr = slaveColumnSinkPtrs.get(mapIndex);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
                             } else { // no-arg function, e.g. count()
-                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                             }
                         }
                     }
@@ -1239,9 +1239,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                             final long ptr = slaveColumnSinkPtrs.get(mapIndex);
                             if (ptr != 0) {
                                 final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
                             } else { // no-arg function, e.g. count()
-                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                                groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                             }
                         }
                     }
@@ -1394,9 +1394,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                                 final long ptr = slaveColumnSinkPtrs.get(mapIndex);
                                 if (ptr != 0) {
                                     final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
-                                    groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo));
+                                    groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * rowLo, (int) (rowHi - rowLo), 0);
                                 } else { // no-arg function, e.g. count()
-                                    groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                                    groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                                 }
                             }
                         }
